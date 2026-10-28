@@ -1,6 +1,6 @@
 import type { JSPluginErrorFields } from '@/features/settings/components/js-plugins/js-plugin-errors'
 
-export type EnableTrust = 'trusted' | 'untrusted_signer' | 'unsigned'
+export type EnableTrust = 'trusted' | 'untrusted_signer' | 'unsigned' | 'marketplace'
 
 export type EnableFlowState = {
   pluginId: string
@@ -50,15 +50,19 @@ export type EnableFailure = {
   siteProvider?: boolean
 }
 
+function countsAsTrusted(trust: EnableTrust) {
+  return trust === 'trusted' || trust === 'marketplace'
+}
+
 export function enableFlowOffersUntrusted(state: EnableFlowState) {
-  return !state.siteProvider && state.trust !== 'trusted'
+  return !state.siteProvider && !countsAsTrusted(state.trust)
 }
 
 function needsTrust(state: EnableFlowState) {
   if (state.trustAccepted) return false
   if (state.permissions.length > 0) return true
   if (state.siteProvider) return false
-  return state.trust !== 'trusted'
+  return !countsAsTrusted(state.trust)
 }
 
 function requestOf(state: EnableFlowState): EnableRequest {

@@ -207,6 +207,56 @@ describe('enable flow', () => {
     expect(stateOf(failed).dialog).toBeNull()
   })
 
+  it('treats marketplace as already trusted', () => {
+    const started = beginEnable({ pluginId: 'acme.example', version: '1.2.0', trust: 'marketplace' })
+    expect(started.type).toBe('request')
+    expect(enableFlowOffersUntrusted(stateOf(started))).toBe(false)
+    if (started.type !== 'request') return
+    expect(started.request).toEqual({ pluginId: 'acme.example', version: '1.2.0' })
+    expect(started.request.confirmUntrusted).toBeUndefined()
+  })
+
+  it('asks for permissions on a marketplace plugin without confirm_untrusted', () => {
+    const started = beginEnable({
+      pluginId: 'auto.example',
+      version: '1.0.0',
+      trust: 'marketplace',
+      permissions: ['notify'],
+    })
+    expect(started.type).toBe('dialog')
+    expect(stateOf(started).dialog).toBe('trust')
+    expect(enableFlowOffersUntrusted(stateOf(started))).toBe(false)
+    const accepted = acceptEnableDialog(stateOf(started))
+    expect(accepted).toMatchObject({
+      type: 'request',
+      request: { pluginId: 'auto.example', version: '1.0.0', grantPermissions: ['notify'] },
+    })
+    if (accepted.type === 'request') expect(accepted.request.confirmUntrusted).toBeUndefined()
+  })
+
+  it('still confirms hosts for a marketplace plugin', () => {
+    const started = beginEnable({
+      pluginId: 'acme.example',
+      version: '1.0.0',
+      trust: 'marketplace',
+      siteProvider: true,
+    })
+    expect(started.type).toBe('request')
+    if (started.type !== 'request') return
+    expect(started.request.confirmUntrusted).toBeUndefined()
+    const asked = failEnable(started.state, {
+      code: 'js_plugin_hosts_required',
+      fields: { hosts: ['api.example.com'] },
+    })
+    expect(stateOf(asked).dialog).toBe('hosts')
+    const accepted = acceptEnableDialog(stateOf(asked))
+    expect(accepted).toMatchObject({
+      type: 'request',
+      request: { confirmHosts: ['api.example.com'] },
+    })
+    if (accepted.type === 'request') expect(accepted.request.confirmUntrusted).toBeUndefined()
+  })
+
   it('resumes confirm_untrusted from the request that was already sent', () => {
     const resumed = resumeEnableFlow({
       pluginId: 'auto.example',
