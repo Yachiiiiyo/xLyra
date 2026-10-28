@@ -16,22 +16,18 @@ func runBuild(args []string) {
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
 	}
-	built, err := buildProject(dir)
+	built, _, pkg, err := assembled(dir)
 	if err != nil {
 		fatal(err)
 	}
-	if _, pkg, _, err := built.assemble(); err != nil {
-		fatal(err)
-	} else {
-		target := *out
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(dir, target)
-		}
-		if err := writeTree(target, built.Files); err != nil {
-			fatal(err)
-		}
-		fmt.Fprintf(os.Stdout, "built %s@%s -> %s\n", pkg.Manifest.ID, pkg.Manifest.Version, target)
+	target := *out
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(dir, target)
 	}
+	if err := writeTree(target, built.Files); err != nil {
+		fatal(err)
+	}
+	fmt.Fprintf(os.Stdout, "built %s@%s -> %s\n", pkg.Manifest.ID, pkg.Manifest.Version, target)
 }
 
 func writeTree(root string, files map[string][]byte) error {

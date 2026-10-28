@@ -33,11 +33,12 @@ cd my-relay-probe
 manifest.json            插件清单
 src/index.ts             钩子实现
 fixtures/example.json    测试样本
+assets/icon.png          可选
 tsconfig.json
 types/xlyra.d.ts         类型声明（和 npm 包 @yachiyo-5i/xlyra-plugin-sdk 一致）
 ```
 
-插件 id 默认取目录名，也可以用 `--id` 指定。id 规则见[清单](./manifest.md)。
+`assets/icon.png` 可选，规范见[图标](./manifest.md#图标)。插件 id 默认取目录名，也可以用 `--id` 指定。id 规则见[清单](./manifest.md)。
 
 ## 3. 写插件
 

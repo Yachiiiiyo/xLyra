@@ -29,6 +29,7 @@
 | `name`、`description` | 否 | 管理端展示 |
 | `license` | 否 | 你为插件选的许可证，管理端展示，xLyra 不做判断 |
 | `xlyra` | 否 | 兼容的 xLyra 版本。只支持 `>=x.y.z`，可用空格写多个条件。当前 xLyra 版本低于要求时，插件会被拒绝上传或加载（本地开发版本不检查） |
+| `icon` | 否 | 包内 PNG 的相对路径，可选。规则见[图标](#图标) |
 | `sha256` | 自动 | `{"plugin.js": "<hex>"}`，必须与包内 `plugin.js` 一致，否则拒绝 |
 
 ## quota_probe 部分
@@ -126,7 +127,7 @@
 | `siteType` | 是 | `<id>/<name>`。左侧等于清单 `id`（3–64 位，小写字母、数字、`.`、`-`，首尾是字母或数字）；右侧以小写字母开头，后面最多 31 位小写字母、数字或 `_` |
 | `display.name` | 是 | 展示名。字符串，或按语言分的对象（最多 8 种语言，每种不超过 400 字节）。管理端按界面语言展示：精确匹配语言码，再匹配前缀（`zh-CN` 用 `zh`）；日文界面同时认 `ja` 和 `jp`。没有当前语言时用 `en`，再没有用 `zh`，还没有则用其余非空值。建议至少写 `zh` 和 `en` |
 | `display.subtitle` | 否 | 副标题，规则与 `name` 相同 |
-| `display.icon` | 否 | 包内相对路径，扩展名只能是 `.png` 或 `.webp`。文件必须存在，文件头要符合格式，不超过 64 KiB。声明之后，管理端用 `GET /api/v1/plugin-icons/{插件 id}` 取这张图，需要管理端会话。站点类型的 `icon_url` 带 `?v=`，值是包 SHA256 的前 16 位，换包后变化，用来让浏览器重新取图 |
+| `display.icon` | 否 | 包内相对路径，扩展名只能是 `.png` 或 `.webp`。文件必须存在，文件头要符合格式，不超过 64 KiB。声明之后，管理端用 `GET /api/v1/plugin-icons/{插件 id}` 取这张图，需要管理端会话。站点类型的 `icon_url` 带 `?v=`，值是包 SHA256 的前 16 位，换包后变化，用来让浏览器重新取图。也可以改用顶层 `icon`，见[图标](#图标) |
 | `display.brandColor` | 否 | `#RRGGBB` |
 | `hosts` | 是 | 1–16 个小写 DNS 主机名，不能重复。不能带协议、端口、路径，至少含一个 `.`，不能是 IP，不能以 `.` 或 `-` 开头或结尾 |
 | `credential.model` | 是 | `api_key` 或 `account_pool`。`api_key` 不能再写 `credential.fields`、`accessTokenField`、`refreshTokenField`、`expiresAtField`、`expiresFrom`、`identity`、`display`、`regions`、`defaultRegion`、`login`、`refresh`、`import`、`selection`、`ui`。`account_pool` 的 `models` 只能是 `perAccount: true`，或者整段省略 |
@@ -162,6 +163,35 @@
 
 启用这个类型时，包必须由受信密钥签名，并且每次启用都要再次确认完整的 `hosts`。确认结果记成 `host:<主机名>`。确认之后，站点 `base_url`、通用适配器发出的请求和网关转发的上游地址，主机都必须在这份列表里：按主机名精确匹配（不含端口，不做子域通配），重定向也不得离开列表。分步钩子在同源限制之外再做一次同样的主机检查。
 
+## 图标
+
+所有 kind 都可以在清单顶层声明图标，推荐放在 `assets/icon.png`：
+
+```json
+"icon": "assets/icon.png"
+```
+
+路径是包内相对路径，不能以 `/` 开头，不能含 `..`、`\` 或 `:`。不声明也可以。
+
+硬性要求：
+
+- 只能是 PNG，文件头要符合 PNG
+- 不超过 64 KiB
+- 必须是方形，边长 64–1024 像素（建议 256 或 512）
+
+xLyra 只有深色主题，图标底板是 `#181b22`。两种做法都合格：
+
+- **不透明满版方形（推荐）**。图标自带底色，在任何背景上都一样。不要自己做圆角，圆角由 xLyra 处理。
+- **透明背景**。请使用浅色或明亮的图形，比如白色、亮蓝。透明背景上的黑色、深灰、深蓝图形会被拒绝。
+
+判定方式：图标有透明区域（不透明像素不足 98%，alpha 不低于 250 算不透明），并且按透明度加权的平均亮度低于 0.13，就会被拒绝。0.13 对应底板 `#181b22` 上 WCAG 3:1 对比度。全透明也会被拒绝。不透明满版图标不限制亮度。
+
+图标显示在插件市场的卡片和详情、已安装列表，以及版本管理。没有图标时显示名称首字。
+
+这些命令和入口会检查：`xlyra-plugin verify`、`build`、`pack`，管理端上传，插件市场安装和上架审核。`verify` 通过时会打印尺寸、不透明占比和平均亮度。
+
+`site_provider` 如果写了 `siteProvider.display.icon`，先用它；没有再用顶层 `icon`。`display.icon` 仍可以是 PNG 或 WebP，也不套用上面的方形和亮度规则。新插件建议统一用顶层 `icon`。站点类型目录里的 `icon_url`（站点创建页）也遵循同样的顺序。
+
 ## 包里的文件
 
 `.xlp` 就是一个 zip，里面有：
@@ -170,6 +200,7 @@
 manifest.json
 plugin.js              打包后的单文件 ES 模块
 fixtures/*.json        除 site_provider 外至少一个
+assets/icon.png        可选，见上面的图标
 signature.json         可选，签名后才有
 ```
 

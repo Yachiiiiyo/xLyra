@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -456,4 +459,157 @@ func TestBuildProjectIncludesSiteProviderIcon(t *testing.T) {
 	if _, _, _, err := built.assemble(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestVerifyPrintsTopLevelIcon(t *testing.T) {
+	dir := newProject(t, jsplugin.KindQuotaProbe, "acme-icon")
+	pngBytes := cliSolidPNG(t, 64, 64, color.NRGBA{255, 255, 255, 255})
+	writeProjectIcon(t, dir, "assets/icon.png", pngBytes)
+	if err := setTopLevelIcon(dir, "assets/icon.png"); err != nil {
+		t.Fatal(err)
+	}
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(built.Files["assets/icon.png"]) != string(pngBytes) {
+		t.Fatalf("build did not copy the icon (%d bytes)", len(built.Files["assets/icon.png"]))
+	}
+	raw, _, _, err := built.assemble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() { err = verifyPackage(raw) })
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "icon assets/icon.png 64x64 不透明 100% 亮度 1.00\n") {
+		t.Fatalf("verify output:\n%s", out)
+	}
+}
+
+func TestPackRejectsDarkTransparentIcon(t *testing.T) {
+	dir := newProject(t, jsplugin.KindQuotaProbe, "acme-dark")
+	writeProjectIcon(t, dir, "assets/icon.png", cliGlyphPNG(t, color.NRGBA{0, 0, 0, 255}))
+	if err := setTopLevelIcon(dir, "assets/icon.png"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := assembled(dir)
+	want := "图标有透明背景且图形偏暗，在 xLyra 的深色界面上看不清（平均亮度 0.00，要求不低于 0.13）。请改用不透明底色的方形图标，或使用浅色/明亮的图形"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("build err = %v", err)
+	}
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, _, err := built.assemble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPackage(raw); err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("pack err = %v", err)
+	}
+}
+
+func TestBuildCopiesBothDeclaredIcons(t *testing.T) {
+	dir := newProject(t, jsplugin.KindSiteProvider, "acme-both")
+	pngBytes := cliSolidPNG(t, 64, 64, color.NRGBA{10, 20, 30, 255})
+	display := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 7}
+	writeProjectIcon(t, dir, "assets/icon.png", pngBytes)
+	writeProjectIcon(t, dir, "assets/mark.png", display)
+	if err := setTopLevelIcon(dir, "assets/icon.png"); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(dir, "manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := strings.Replace(string(raw), `"subtitle":`, `"icon": "assets/mark.png",
+      "subtitle":`, 1)
+	if next == string(raw) {
+		t.Fatal("manifest has no subtitle")
+	}
+	if err := os.WriteFile(manifestPath, []byte(next), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(built.Files["assets/icon.png"]) != string(pngBytes) || string(built.Files["assets/mark.png"]) != string(display) {
+		t.Fatal("both icons were not copied")
+	}
+}
+
+func TestInitHintsAtOptionalIcon(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "acme-init")
+	out := captureStdout(t, func() {
+		runInit([]string{"--kind", jsplugin.KindQuotaProbe, "--id", "acme-init", dir})
+	})
+	if !strings.Contains(out, "可选：在 manifest 里加 \"icon\": \"assets/icon.png\"，规范见文档") {
+		t.Fatalf("init output:\n%s", out)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"icon"`) {
+		t.Fatalf("template included icon:\n%s", raw)
+	}
+}
+
+func setTopLevelIcon(dir, iconPath string) error {
+	manifestPath := filepath.Join(dir, "manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
+	}
+	next := strings.Replace(string(raw), `"license": "MIT",`, `"license": "MIT",
+  "icon": "`+iconPath+`",`, 1)
+	if next == string(raw) {
+		return fmt.Errorf("manifest has no license field")
+	}
+	return os.WriteFile(manifestPath, []byte(next), 0o644)
+}
+
+func writeProjectIcon(t *testing.T, dir, name string, body []byte) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func cliSolidPNG(t *testing.T, w, h int, c color.NRGBA) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = c.R, c.G, c.B, c.A
+	}
+	return cliEncodePNG(t, img)
+}
+
+func cliGlyphPNG(t *testing.T, c color.NRGBA) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	for y := 16; y < 48; y++ {
+		for x := 16; x < 48; x++ {
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	return cliEncodePNG(t, img)
+}
+
+func cliEncodePNG(t *testing.T, img image.Image) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }

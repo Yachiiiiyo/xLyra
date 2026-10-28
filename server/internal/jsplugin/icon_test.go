@@ -31,7 +31,7 @@ func TestSiteProviderIconFromVersions(t *testing.T) {
 		CreatedAt: base,
 	}
 
-	got, err := siteProviderIconFromVersions([]store.JSPluginVersion{newer, enabled})
+	got, err := pluginIconFromVersions([]store.JSPluginVersion{newer, enabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestSiteProviderIconFromVersions(t *testing.T) {
 		t.Fatalf("enabled icon = %q %q %d", got.ContentType, got.SHA256, len(got.Bytes))
 	}
 
-	got, err = siteProviderIconFromVersions([]store.JSPluginVersion{disabled})
+	got, err = pluginIconFromVersions([]store.JSPluginVersion{disabled})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestSiteProviderIconFromVersions(t *testing.T) {
 		t.Fatalf("disabled icon = %q %d", got.ContentType, len(got.Bytes))
 	}
 
-	got, err = siteProviderIconFromVersions([]store.JSPluginVersion{older, latest})
+	got, err = pluginIconFromVersions([]store.JSPluginVersion{older, latest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +56,11 @@ func TestSiteProviderIconFromVersions(t *testing.T) {
 	}
 
 	for _, row := range []store.JSPluginVersion{noIcon, missing, other} {
-		if _, err := siteProviderIconFromVersions([]store.JSPluginVersion{row}); !errors.Is(err, ErrPluginIconNotFound) {
+		if _, err := pluginIconFromVersions([]store.JSPluginVersion{row}); !errors.Is(err, ErrPluginIconNotFound) {
 			t.Fatalf("status %s icon %q: err = %v", row.Status, row.PluginID, err)
 		}
 	}
-	if _, err := siteProviderIconFromVersions(nil); !errors.Is(err, ErrPluginIconNotFound) {
+	if _, err := pluginIconFromVersions(nil); !errors.Is(err, ErrPluginIconNotFound) {
 		t.Fatalf("missing plugin: %v", err)
 	}
 

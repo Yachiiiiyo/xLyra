@@ -274,6 +274,18 @@ func TestApplySiteProvidersConcurrent(t *testing.T) {
 	}
 }
 
+func TestSiteProviderIconURLFallsBackToTopLevelIcon(t *testing.T) {
+	plugin := compileIconProvider(t, "plain.example", "", nil, "")
+	if got := siteProviderIconURL(plugin); got != "" {
+		t.Fatalf("no icon declared: %q", got)
+	}
+	plugin.Manifest.Icon = "assets/icon.png"
+	want := "/api/v1/plugin-icons/plain.example?v=" + plugin.PackageSHA256()[:16]
+	if got := siteProviderIconURL(plugin); got != want {
+		t.Fatalf("top-level icon: %q, want %q", got, want)
+	}
+}
+
 func TestConvertSiteProviderIconURL(t *testing.T) {
 	svc := site.NewService(nil, "test-master-key")
 	logger, _ := discardLogger()

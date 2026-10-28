@@ -15,7 +15,7 @@ func (h Handler) GetPluginIcon(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
 		return
 	}
-	icon, err := h.jsPlugins.SiteProviderIcon(r.Context(), chi.URLParam(r, "pluginID"))
+	icon, err := h.jsPlugins.PluginIcon(r.Context(), chi.URLParam(r, "pluginID"))
 	if errors.Is(err, jsplugin.ErrPluginIconNotFound) {
 		h.writeError(w, r, http.StatusNotFound, "not_found", "plugin icon not found")
 		return

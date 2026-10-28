@@ -154,7 +154,7 @@ func startRouterWithSiteService(t *testing.T, st *store.Store, oauth *oauthsvc.S
 		siteProviderCurrent = prevCurrent
 		siteProviderMu.Unlock()
 	})
-	_, _ = NewRouterWithGatewayWithOAuth(bg, &tasks, testConfig(), logger, st, nil, "test-master-key", oauth, shared)
+	_, _, _ = NewRouterWithGatewayWithOAuth(bg, &tasks, testConfig(), logger, st, nil, "test-master-key", oauth, shared)
 }
 
 func createPluginSite(t *testing.T, svc *site.Service, name, siteType, baseURL string) store.Site {
