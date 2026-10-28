@@ -1,0 +1,460 @@
+[
+  {
+    "name": "revocation_match/digest_manual_upload",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1tYW4iLCJ0YXJnZXQiOnsidHlwZSI6InZlcnNpb24iLCJwbHVnaW5JZCI6IndhbmcucXVvdGEtZm9vIiwidmVyc2lvbiI6IjEuMC4xIiwicGFja2FnZURpZ2VzdCI6ImQ0ZDdlNzE0OTI5YTZmODNhODQxYWNkNzJhODRhOGY1YWY0MzRlZGVjNTk3MTNkYjAxMWZkM2RhYjliY2U0NjUifSwibGV2ZWwiOiJzZWN1cml0eSIsInJlYXNvbiI6InNlY3VyaXR5IGlzc3VlIiwiYXQiOiIyMDI2LTExLTAxVDA4OjMwOjAwWiIsInJvbGxiYWNrVG8iOiIxLjAuMCJ9XX0=\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"bQsaMu0DGCihwPG7TqUI9Ijk8K+U5XWAHUQh/hNubIBN+/Ykj+3koaevsZAKc80bKj3JHr6xpWusY4K4spivAw==\"}]}",
+      "target": {
+        "pluginId": "other.plugin",
+        "version": "9.9.9",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": false
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [
+        {
+          "entryId": "rev-man",
+          "action": "disable",
+          "rollbackTo": "1.0.0"
+        }
+      ],
+      "compare": 0
+    }
+  },
+  {
+    "name": "revocation_match/deprecated_rollback_ignored",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1kZXAiLCJ0YXJnZXQiOnsidHlwZSI6InZlcnNpb24iLCJwbHVnaW5JZCI6IndhbmcucXVvdGEtZm9vIiwidmVyc2lvbiI6IjEuMC4xIiwicGFja2FnZURpZ2VzdCI6ImQ0ZDdlNzE0OTI5YTZmODNhODQxYWNkNzJhODRhOGY1YWY0MzRlZGVjNTk3MTNkYjAxMWZkM2RhYjliY2U0NjUifSwibGV2ZWwiOiJkZXByZWNhdGVkIiwicmVhc29uIjoic2VjdXJpdHkgaXNzdWUiLCJhdCI6IjIwMjYtMTEtMDFUMDg6MzA6MDBaIiwicm9sbGJhY2tUbyI6IjEuMC4wIn1dfQ==\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"W0t6g8STAgBvinP4WgF6qlfSPV4zg57+wmJhB9v8Lb3sOOB1MmGwZvRTfBs1SrjzSHRX0FQ5EmXVgcRN/JpyBA==\"}]}",
+      "target": {
+        "pluginId": "wang.quota-foo",
+        "version": "1.0.1",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": true
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [
+        {
+          "entryId": "rev-dep",
+          "action": "notify"
+        }
+      ],
+      "compare": 0
+    }
+  },
+  {
+    "name": "revocation_match/developer_key_attested",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1kZXYiLCJ0YXJnZXQiOnsidHlwZSI6ImRldmVsb3BlcktleSIsImZpbmdlcnByaW50IjoiU0hBMjU2OnRNSHM2SmpzNGs0azVnRWpMNVhHb1lseGFKb04xbW5tMTRJWVUzd2h3NGs9In0sImxldmVsIjoic2VjdXJpdHkiLCJyZWFzb24iOiJrZXkgaXNzdWUiLCJhdCI6IjIwMjYtMTEtMDFUMDg6MzA6MDBaIn1dfQ==\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"9nHvZtOIoy16mBE2MA4MsaRk85zroYAQA941SbeBFtWHSFurIb4N4S5Ym+DwJzOcuz4HXvhCKE8ceuuU19BeDw==\"}]}",
+      "target": {
+        "pluginId": "wang.quota-foo",
+        "version": "1.0.1",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": true
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "revocation_match/developer_key_manual",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1kZXYiLCJ0YXJnZXQiOnsidHlwZSI6ImRldmVsb3BlcktleSIsImZpbmdlcnByaW50IjoiU0hBMjU2OnRNSHM2SmpzNGs0azVnRWpMNVhHb1lseGFKb04xbW5tMTRJWVUzd2h3NGs9In0sImxldmVsIjoic2VjdXJpdHkiLCJyZWFzb24iOiJrZXkgaXNzdWUiLCJhdCI6IjIwMjYtMTEtMDFUMDg6MzA6MDBaIn1dfQ==\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"9nHvZtOIoy16mBE2MA4MsaRk85zroYAQA941SbeBFtWHSFurIb4N4S5Ym+DwJzOcuz4HXvhCKE8ceuuU19BeDw==\"}]}",
+      "target": {
+        "pluginId": "wang.quota-foo",
+        "version": "1.0.1",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": false
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [
+        {
+          "entryId": "rev-dev",
+          "action": "notify"
+        }
+      ],
+      "compare": 0
+    }
+  },
+  {
+    "name": "revocation_match/plugin_attested_disable",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1wbHVnIiwidGFyZ2V0Ijp7InR5cGUiOiJwbHVnaW4iLCJwbHVnaW5JZCI6IndhbmcucXVvdGEtZm9vIn0sImxldmVsIjoic2VjdXJpdHkiLCJyZWFzb24iOiJwbHVnaW4gaXNzdWUiLCJhdCI6IjIwMjYtMTEtMDFUMDg6MzA6MDBaIn1dfQ==\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"v9c/dkgjRg1thLL0gR+dRZo7YJiknpT7vHsR7K34zpMQxu7x19qbY3cw/rg9Igfz0cJ7qsqf4SAqj4ognZuvAQ==\"}]}",
+      "target": {
+        "pluginId": "wang.quota-foo",
+        "version": "1.0.1",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": true
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [
+        {
+          "entryId": "rev-plug",
+          "action": "disable"
+        }
+      ],
+      "compare": 0
+    }
+  },
+  {
+    "name": "revocation_match/plugin_attested_deprecated",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1wbHVnIiwidGFyZ2V0Ijp7InR5cGUiOiJwbHVnaW4iLCJwbHVnaW5JZCI6IndhbmcucXVvdGEtZm9vIn0sImxldmVsIjoiZGVwcmVjYXRlZCIsInJlYXNvbiI6InBsdWdpbiBpc3N1ZSIsImF0IjoiMjAyNi0xMS0wMVQwODozMDowMFoifV19\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"R72JpIfFSGetNWHtGQtoDCfswgG7qGJYGiTTIYDhqpFQnE/inB0QgK0GNJn/h25fzB23gBu+RHTH1XhuPRVdDw==\"}]}",
+      "target": {
+        "pluginId": "wang.quota-foo",
+        "version": "1.0.1",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": true
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [
+        {
+          "entryId": "rev-plug",
+          "action": "notify"
+        }
+      ],
+      "compare": 0
+    }
+  },
+  {
+    "name": "revocation_match/plugin_manual_notify",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      },
+      "revocations": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "revocations": "{\"payloadType\":\"application/vnd.xlyra.revocations+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjM3LCJnZW5lcmF0ZWRBdCI6IjIwMjYtMTEtMDFUMDg6MDA6MDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0wOFQwODowMDowMFoiLCJlbnRyaWVzIjpbeyJpZCI6InJldi1wbHVnIiwidGFyZ2V0Ijp7InR5cGUiOiJwbHVnaW4iLCJwbHVnaW5JZCI6IndhbmcucXVvdGEtZm9vIn0sImxldmVsIjoic2VjdXJpdHkiLCJyZWFzb24iOiJwbHVnaW4gaXNzdWUiLCJhdCI6IjIwMjYtMTEtMDFUMDg6MzA6MDBaIn1dfQ==\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"v9c/dkgjRg1thLL0gR+dRZo7YJiknpT7vHsR7K34zpMQxu7x19qbY3cw/rg9Igfz0cJ7qsqf4SAqj4ognZuvAQ==\"}]}",
+      "target": {
+        "pluginId": "wang.quota-foo",
+        "version": "1.0.1",
+        "packageDigest": "d4d7e714929a6f83a841acd72a84a8f5af434edec59713db011fd3dab9bce465",
+        "signerFingerprint": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k=",
+        "attested": false
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [
+        {
+          "entryId": "rev-plug",
+          "action": "notify"
+        }
+      ],
+      "compare": 0
+    }
+  }
+]
