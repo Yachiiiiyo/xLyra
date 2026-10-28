@@ -47,6 +47,7 @@
     "models": "Models",
     "apiKeys": "API Keys",
     "operations": "Operations",
+    "system": "System",
     "routes": "Routes",
     "requests": "Requests",
     "trafficFlow": "Traffic Flow",
@@ -58,8 +59,9 @@
     "globalSettings": "Global Settings",
     "notificationConfig": "Notification Config",
     "modelsPrice": "Models Price",
-    "developer": "Developer",
+    "developer": "Plugins",
     "backup": "Configuration Backup",
+    "xlyraCloud": "xLyra Cloud",
     "profile": "Profile"
   },
   "app": {

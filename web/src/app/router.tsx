@@ -20,7 +20,8 @@ const AnalyticsPage = lazyNamed(() => import('@/routes/analytics'), 'AnalyticsPa
 const AgentPage = lazyNamed(() => import('@/routes/agent'), 'AgentPage')
 const AuditLogsPage = lazyNamed(() => import('@/routes/audit-logs-page'), 'AuditLogsPage')
 const BackupSettingsPage = lazyNamed(() => import('@/routes/settings/backup-settings-page'), 'BackupSettingsPage')
-const DeveloperSettingsPage = lazyNamed(() => import('@/routes/settings/developer-settings-page'), 'DeveloperSettingsPage')
+const XlyraCloudSettingsPage = lazyNamed(() => import('@/routes/system/xlyra-cloud-settings-page'), 'XlyraCloudSettingsPage')
+const PluginsSettingsPage = lazyNamed(() => import('@/routes/system/plugins-settings-page'), 'PluginsSettingsPage')
 const dashboardModule = import('@/routes/dashboard')
 const DashboardPage = lazyNamed(() => dashboardModule, 'DashboardPage')
 const GeneralSettingsPage = lazyNamed(() => import('@/routes/settings/global/general-settings-page'), 'GeneralSettingsPage')
@@ -96,8 +97,15 @@ export const appRouter = createBrowserRouter([
           },
           { path: 'agent', element: lazyElement(<AgentSettingsPage />) },
           { path: 'models-price', element: lazyElement(<ModelsPriceSettingsPage />) },
-          { path: 'developer', element: lazyElement(<DeveloperSettingsPage />) },
           { path: 'backup', element: lazyElement(<BackupSettingsPage />) },
+        ],
+      },
+      {
+        path: 'system',
+        children: [
+          { index: true, element: <Navigate to="/system/xlyra-cloud" replace /> },
+          { path: 'xlyra-cloud', element: lazyElement(<XlyraCloudSettingsPage />) },
+          { path: 'plugins', element: lazyElement(<PluginsSettingsPage />) },
         ],
       },
       { path: '*', element: lazyElement(<NotFoundPage />) },

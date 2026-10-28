@@ -47,6 +47,7 @@
     "models": "模型",
     "apiKeys": "API 密钥",
     "operations": "运维",
+    "system": "系统",
     "routes": "路由",
     "requests": "请求",
     "trafficFlow": "实时流图",
@@ -58,8 +59,9 @@
     "globalSettings": "全局设置",
     "notificationConfig": "通知配置",
     "modelsPrice": "模型价格",
-    "developer": "开发者",
+    "developer": "插件",
     "backup": "配置备份",
+    "xlyraCloud": "xLyra Cloud",
     "profile": "个人信息"
   },
   "app": {

@@ -1,5 +1,5 @@
 import { JSPluginsSettingsWorkspace } from '@/features/settings/components/js-plugins/js-plugins-settings-workspace'
 
-export function DeveloperSettingsPage() {
+export function PluginsSettingsPage() {
   return <JSPluginsSettingsWorkspace />
 }
