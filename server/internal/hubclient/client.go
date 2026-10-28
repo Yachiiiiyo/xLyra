@@ -1,0 +1,590 @@
+package hubclient
+
+import (
+	"bytes"
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"runtime"
+	"runtime/debug"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"xlyra/server/internal/crypto"
+	"xlyra/server/internal/httpclient"
+	"xlyra/server/internal/store"
+	"xlyra/server/internal/version"
+)
+
+const (
+	MaxPollSeconds     = 600
+	revokedMessage     = "已在账号侧解除连接"
+	clockSkewMessage   = "系统时间偏差过大"
+	defaultHTTPTimeout = 5 * time.Second
+)
+
+var ErrAlreadyBound = errors.New("实例已连接")
+
+// HubError is a structured error returned by the Hub.
+type HubError struct {
+	Status     int
+	Code       string
+	Message    string
+	ServerTime string
+}
+
+func (e *HubError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Code != "" {
+		return e.Code
+	}
+	return "Hub 请求失败"
+}
+
+type Options struct {
+	AllowInsecureLocal     bool
+	HeartbeatInterval      time.Duration
+	FirstHeartbeatDelay    time.Duration
+	HasFirstHeartbeatDelay bool
+	BackoffMin             time.Duration
+	BackoffMax             time.Duration
+	PollInterval           time.Duration
+	LeaseRetry             time.Duration
+	LeaseTTL               time.Duration
+	LeaseRefresh           time.Duration
+	HTTPTimeout            time.Duration
+	Logger                 *slog.Logger
+	Audit                  func(context.Context, string, map[string]any)
+	Now                    func() time.Time
+}
+
+type PairingInfo struct {
+	UserCode  string `json:"user_code"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+type Status struct {
+	Status          string       `json:"status"`
+	InstanceName    string       `json:"instance_name"`
+	UserDisplayName string       `json:"user_display_name"`
+	HubURL          string       `json:"hub_url"`
+	BoundAt         *string      `json:"bound_at"`
+	LastSyncAt      *string      `json:"last_sync_at"`
+	LastError       string       `json:"last_error"`
+	LastErrorAt     *string      `json:"last_error_at"`
+	Pairing         *PairingInfo `json:"pairing"`
+	MaxPollSeconds  int          `json:"max_poll_seconds"`
+}
+
+type pendingPair struct {
+	userCode  string
+	expiresAt time.Time
+	interval  time.Duration
+}
+
+type Client struct {
+	repo       store.HubBindingRepository
+	plugins    store.JSPluginRepository
+	masterKey  string
+	hubURL     func(context.Context) (string, error)
+	http       *http.Client
+	allowLocal bool
+	owner      string
+	logger     *slog.Logger
+	audit      func(context.Context, string, map[string]any)
+	now        func() time.Time
+
+	heartbeatEvery time.Duration
+	firstDelay     time.Duration
+	hasFirstDelay  bool
+	backoffMin     time.Duration
+	backoffMax     time.Duration
+	pollEvery      time.Duration
+	leaseRetry     time.Duration
+	leaseTTL       time.Duration
+	leaseRefresh   time.Duration
+
+	mu              sync.Mutex
+	pending         *pendingPair
+	developer       developerCache
+	submissions     map[string]Submission
+	developerWarnAt time.Time
+}
+
+func New(repo store.HubBindingRepository, plugins store.JSPluginRepository, masterKey string, hubURL func(context.Context) (string, error), opts Options) *Client {
+	if opts.HeartbeatInterval <= 0 {
+		opts.HeartbeatInterval = 15 * time.Minute
+	}
+	if opts.BackoffMin <= 0 {
+		opts.BackoffMin = 30 * time.Second
+	}
+	if opts.BackoffMax <= 0 {
+		opts.BackoffMax = time.Hour
+	}
+	if opts.LeaseRetry <= 0 {
+		opts.LeaseRetry = 15 * time.Second
+	}
+	if opts.LeaseTTL <= 0 {
+		opts.LeaseTTL = 2 * time.Minute
+	}
+	if opts.LeaseRefresh <= 0 {
+		opts.LeaseRefresh = 30 * time.Second
+	}
+	if opts.HTTPTimeout <= 0 {
+		opts.HTTPTimeout = defaultHTTPTimeout
+	}
+	if hubURL == nil {
+		hubURL = func(context.Context) (string, error) {
+			return "", errors.New("未缓存已验签的市场 root")
+		}
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &Client{
+		repo:           repo,
+		plugins:        plugins,
+		masterKey:      masterKey,
+		hubURL:         hubURL,
+		http:           newHTTPClient(opts.HTTPTimeout, opts.AllowInsecureLocal),
+		allowLocal:     opts.AllowInsecureLocal,
+		owner:          newOwner(),
+		logger:         opts.Logger,
+		audit:          opts.Audit,
+		now:            now,
+		heartbeatEvery: opts.HeartbeatInterval,
+		firstDelay:     opts.FirstHeartbeatDelay,
+		hasFirstDelay:  opts.HasFirstHeartbeatDelay,
+		backoffMin:     opts.BackoffMin,
+		backoffMax:     opts.BackoffMax,
+		pollEvery:      opts.PollInterval,
+		leaseRetry:     opts.LeaseRetry,
+		leaseTTL:       opts.LeaseTTL,
+		leaseRefresh:   opts.LeaseRefresh,
+	}
+}
+
+func newHTTPClient(timeout time.Duration, allowPrivate bool) *http.Client {
+	dialer := httpclient.NewGuardedDialer(timeout)
+	if !allowPrivate {
+		base := dialer.Control
+		dialer.Control = func(network, address string, c syscall.RawConn) error {
+			if base != nil {
+				if err := base(network, address, c); err != nil {
+					return err
+				}
+			}
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return fmt.Errorf("blocked dial to %q: %w", address, err)
+			}
+			ip := net.ParseIP(host)
+			if ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+				return fmt.Errorf("blocked connection to private address %s", ip)
+			}
+			return nil
+		}
+	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			ResponseHeaderTimeout: timeout,
+			DialContext:           dialer.DialContext,
+		},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func newOwner() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = "unknown"
+	}
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return host
+	}
+	return host + ":" + strconv.Itoa(os.Getpid()) + ":" + base64.RawURLEncoding.EncodeToString(nonce[:])
+}
+
+func (c *Client) Status(ctx context.Context) (Status, error) {
+	row, err := c.repo.Get(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	view := statusFromRow(row)
+	code := strings.TrimSpace(row.PairingCodeHint)
+	if row.Status == store.HubStatusPairing && code != "" && row.PairingExpiresAt != nil && c.now().Before(*row.PairingExpiresAt) {
+		exp := row.PairingExpiresAt.UTC().Format(time.RFC3339)
+		view.Pairing = &PairingInfo{UserCode: code, ExpiresAt: exp}
+	}
+	if _, hubErr := c.hubURL(ctx); hubErr != nil && view.LastError == "" {
+		view.LastError = hubErr.Error()
+	}
+	return view, nil
+}
+
+func (c *Client) Report(ctx context.Context) (Report, error) {
+	plugins, err := c.plugins.ListPlugins(ctx)
+	if err != nil {
+		return Report{}, err
+	}
+	versions, err := c.plugins.ListVersionHeaders(ctx)
+	if err != nil {
+		return Report{}, err
+	}
+	return BuildReport(version.Current().Version, currentPlatform(), SelectPlugins(plugins, versions), c.now()), nil
+}
+
+func currentPlatform() Platform {
+	return Platform{OS: runtime.GOOS, Arch: runtime.GOARCH, Runtime: runtime.Version()}
+}
+
+// StartPairing calls the Hub once. It is the only synchronous Hub call on a request path.
+func (c *Client) StartPairing(ctx context.Context, name string) (Status, error) {
+	row, err := c.repo.Get(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	if row.Status == store.HubStatusBound {
+		return Status{}, ErrAlreadyBound
+	}
+	hub, err := c.hubURL(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	identity, err := c.repo.EnsureIdentity(ctx, c.generateIdentity)
+	if err != nil {
+		return Status{}, err
+	}
+	name = defaultName(name)
+	info := version.Current()
+	body, err := json.Marshal(map[string]any{
+		"publicKey":    identity.PublicKey,
+		"name":         name,
+		"xlyraVersion": info.Version,
+		"platform":     currentPlatform(),
+	})
+	if err != nil {
+		return Status{}, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
+	defer cancel()
+	status, raw, err := c.post(callCtx, hub, "/api/instance/pair/start", body, nil)
+	if err != nil {
+		return Status{}, err
+	}
+	if status < 200 || status >= 300 {
+		return Status{}, hubError(status, raw)
+	}
+	var resp struct {
+		UserCode        string `json:"userCode"`
+		PollToken       string `json:"pollToken"`
+		ExpiresAt       string `json:"expiresAt"`
+		IntervalSeconds int    `json:"intervalSeconds"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil || resp.UserCode == "" || resp.PollToken == "" {
+		return Status{}, errors.New("Hub 返回的配对响应无效")
+	}
+	expires, err := time.Parse(time.RFC3339, resp.ExpiresAt)
+	if err != nil {
+		return Status{}, errors.New("Hub 返回的配对过期时间无效")
+	}
+	enc, err := crypto.EncryptSecret(c.masterKey, resp.PollToken)
+	if err != nil {
+		return Status{}, err
+	}
+	if err := c.repo.SavePairing(ctx, hub, enc, name, resp.UserCode, expires); err != nil {
+		return Status{}, err
+	}
+	interval := time.Duration(resp.IntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = 3 * time.Second
+	}
+	c.mu.Lock()
+	c.pending = &pendingPair{userCode: resp.UserCode, expiresAt: expires, interval: interval}
+	c.mu.Unlock()
+	return c.Status(ctx)
+}
+
+func (c *Client) CancelPairing(ctx context.Context) error {
+	c.mu.Lock()
+	c.pending = nil
+	c.mu.Unlock()
+	return c.repo.ClearPairing(ctx, "")
+}
+
+// Unbind asks the Hub to drop the instance, then clears the local link either way.
+func (c *Client) Unbind(ctx context.Context) error {
+	row, err := c.repo.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if row.Status == store.HubStatusBound && row.InstanceID != "" {
+		c.bestEffortUnbind(ctx, row)
+	}
+	c.mu.Lock()
+	c.pending = nil
+	c.developer = developerCache{}
+	c.submissions = nil
+	c.mu.Unlock()
+	return c.repo.ClearBinding(ctx, store.HubStatusUnbound, "")
+}
+
+func (c *Client) bestEffortUnbind(ctx context.Context, row store.HubBinding) {
+	priv, err := c.privateKey(row)
+	if err != nil {
+		return
+	}
+	hub := row.HubURL
+	if hub == "" {
+		hub, err = c.hubURL(ctx)
+		if err != nil {
+			return
+		}
+	}
+	callCtx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
+	defer cancel()
+	_, _, _ = c.post(callCtx, hub, "/api/instance/unbind", nil, &signedRequest{
+		instanceID: row.InstanceID,
+		privateKey: priv,
+	})
+}
+
+func (c *Client) generateIdentity() (string, string, error) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	enc, err := crypto.EncryptSecret(c.masterKey, base64.StdEncoding.EncodeToString(priv))
+	if err != nil {
+		return "", "", err
+	}
+	return base64.StdEncoding.EncodeToString(pub), enc, nil
+}
+
+func (c *Client) privateKey(row store.HubBinding) (ed25519.PrivateKey, error) {
+	plain, err := crypto.DecryptSecret(c.masterKey, row.PrivateKeyEnc)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(plain)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) != ed25519.PrivateKeySize {
+		return nil, errors.New("实例私钥无效")
+	}
+	return ed25519.PrivateKey(raw), nil
+}
+
+type signedRequest struct {
+	instanceID string
+	privateKey ed25519.PrivateKey
+}
+
+func (c *Client) post(ctx context.Context, hub, path string, body []byte, signed *signedRequest) (int, []byte, error) {
+	contentType := ""
+	if body != nil {
+		contentType = "application/json"
+	}
+	return c.exchange(ctx, http.MethodPost, hub, path, "", body, contentType, signed)
+}
+
+func (c *Client) exchange(ctx context.Context, method, hub, path, rawQuery string, body []byte, contentType string, signed *signedRequest) (int, []byte, error) {
+	endpoint, err := c.endpoint(hub, path)
+	if err != nil {
+		return 0, nil, err
+	}
+	if rawQuery != "" {
+		endpoint += "?" + rawQuery
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if signed != nil {
+		unix := c.now().Unix()
+		message := CanonicalMessage(method, path, unix, body)
+		req.Header.Set("X-XLyra-Instance", signed.instanceID)
+		req.Header.Set("X-XLyra-Timestamp", strconv.FormatInt(unix, 10))
+		req.Header.Set("X-XLyra-Signature", Sign(signed.privateKey, message))
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return 0, nil, errors.New("连接 Hub 超时")
+		}
+		return 0, nil, errors.New("连接 Hub 失败")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return 0, nil, errors.New("Hub 重定向被拒绝")
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return resp.StatusCode, nil, errors.New("读取 Hub 响应失败")
+	}
+	return resp.StatusCode, raw, nil
+}
+
+func (c *Client) endpoint(hub, path string) (string, error) {
+	if err := c.validateHub(hub); err != nil {
+		return "", err
+	}
+	u, err := url.Parse(hub)
+	if err != nil {
+		return "", errors.New("Hub 地址无效")
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return u.Scheme + "://" + u.Host + path, nil
+}
+
+func (c *Client) validateHub(hub string) error {
+	u, err := url.Parse(strings.TrimSpace(hub))
+	if err != nil || u.Host == "" || u.User != nil {
+		return errors.New("Hub 地址无效")
+	}
+	host := u.Hostname()
+	if u.Scheme == "https" {
+		return nil
+	}
+	if c.allowLocal && u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1") {
+		return nil
+	}
+	return errors.New("Hub 地址必须是 https")
+}
+
+func hubError(status int, raw []byte) error {
+	var body struct {
+		ServerTime string `json:"serverTime"`
+		Error      struct {
+			Code       string `json:"code"`
+			Message    string `json:"message"`
+			ServerTime string `json:"serverTime"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &body)
+	code := body.Error.Code
+	if code == "" {
+		code = "invalid_request"
+	}
+	message := body.Error.Message
+	if message == "" {
+		message = "Hub 请求失败"
+	}
+	serverTime := body.Error.ServerTime
+	if serverTime == "" {
+		serverTime = body.ServerTime
+	}
+	return &HubError{Status: status, Code: code, Message: message, ServerTime: serverTime}
+}
+
+func statusFromRow(row store.HubBinding) Status {
+	status := row.Status
+	if status == "" {
+		status = store.HubStatusUnbound
+	}
+	return Status{
+		Status:          status,
+		InstanceName:    row.InstanceName,
+		UserDisplayName: row.UserDisplayName,
+		HubURL:          row.HubURL,
+		BoundAt:         formatTime(row.BoundAt),
+		LastSyncAt:      formatTime(row.LastSyncAt),
+		LastError:       row.LastError,
+		LastErrorAt:     formatTime(row.LastErrorAt),
+		MaxPollSeconds:  MaxPollSeconds,
+	}
+}
+
+func formatTime(value *time.Time) *string {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	text := value.UTC().Format(time.RFC3339)
+	return &text
+}
+
+func defaultName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		host, err := os.Hostname()
+		if err != nil || strings.TrimSpace(host) == "" {
+			return "xLyra"
+		}
+		name = strings.TrimSpace(host)
+	}
+	if len(name) > 80 {
+		name = name[:80]
+	}
+	return name
+}
+
+func (c *Client) warn(message string, args ...any) {
+	if c.logger != nil {
+		c.logger.Warn(message, args...)
+	}
+}
+
+func (c *Client) recordAudit(ctx context.Context, action string, metadata map[string]any) {
+	if c.audit == nil {
+		return
+	}
+	c.audit(ctx, action, metadata)
+}
+
+func (c *Client) noteError(ctx context.Context, message string) {
+	if message == "" {
+		return
+	}
+	if err := c.repo.RecordError(ctx, message, c.now()); err != nil && ctx.Err() == nil {
+		c.warn("hub binding error was not saved", "error", err.Error())
+	}
+}
+
+func (c *Client) sleep(ctx context.Context, wait time.Duration) error {
+	if wait < 0 {
+		wait = 0
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func panicError(rec any) string {
+	return fmt.Sprintf("%v\n%s", rec, debug.Stack())
+}
