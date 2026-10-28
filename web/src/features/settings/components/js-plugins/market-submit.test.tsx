@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { hubDeveloperQueryKeys } from '@/features/settings/api/hub-developer'
+import { cloudDeveloperQueryKeys } from '@/features/settings/api/cloud-developer'
 import type { JSPluginListItem } from '@/features/settings/api/js-plugins'
 import { APIError } from '@/lib/http'
 import common from '@/locales/zh/common.json'
@@ -106,7 +106,7 @@ describe('market submit entry', () => {
     }))).toBe(false)
   })
 
-  it('shows hub unavailable instead of not a developer when developer identity cannot be read', () => {
+  it('shows cloud unavailable instead of not a developer when developer identity cannot be read', () => {
     const markup = render(
       <MarketSubmitActions
         plugin={plugin({ owned: true, market_ahead: true })}
@@ -118,14 +118,14 @@ describe('market submit entry', () => {
     expect(markup).not.toContain('还不是开发者')
     expect(markup).not.toContain('当前账号不是已激活的开发者')
     expect(markup).toContain('disabled=""')
-    const text = submitErrorText(i18n.getFixedT('zh', 'settings'), new APIError('当前账号不是已激活的开发者', 502, 'hub_unavailable'))
+    const text = submitErrorText(i18n.getFixedT('zh', 'settings'), new APIError('当前账号不是已激活的开发者', 502, 'cloud_unavailable'))
     expect(text).toBe('暂时无法读取开发者身份，提交到市场暂不可用')
     expect(submitErrorText(i18n.getFixedT('zh', 'settings'), new APIError('当前账号不是已激活的开发者', 409, 'not_developer'))).toBe('当前账号不是已激活的开发者')
   })
 
   it('does not show a clickable submit button when the cache is empty and the query is pending review', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
-    client.setQueryData(hubDeveloperQueryKeys.submissions('acme.demo'), { id: 'sub-1', status: 'in_review' })
+    client.setQueryData(cloudDeveloperQueryKeys.submissions('acme.demo'), { id: 'sub-1', status: 'in_review' })
     const markup = render(
       <MarketSubmitActions plugin={plugin({ owned: true, market_ahead: true })} onOpen={() => {}} />,
       client,

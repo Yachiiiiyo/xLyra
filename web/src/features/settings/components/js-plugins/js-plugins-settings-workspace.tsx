@@ -39,7 +39,7 @@ import { fetchPluginMarketSettings, installPluginMarketPlugin, pluginMarketQuery
 import { marketInstallErrorText } from '@/features/settings/components/plugin-market/install-error'
 import { PluginPolicySelect } from '@/features/settings/components/plugin-market/policy-select'
 import { isUpdatePolicy, updateReasonText } from '@/features/settings/components/plugin-market/update-reason'
-import { fetchHubDeveloper, hubDeveloperQueryKeys, submitHubPlugin } from '@/features/settings/api/hub-developer'
+import { fetchCloudDeveloper, cloudDeveloperQueryKeys, submitCloudPlugin } from '@/features/settings/api/cloud-developer'
 import { MarketSubmitActions, MarketSubmitDialog } from '@/features/settings/components/js-plugins/market-submit'
 import { submissionStatusLabel, submitErrorText } from '@/features/settings/components/js-plugins/market-submit-model'
 import {
@@ -185,8 +185,8 @@ export function JSPluginsSettingsWorkspace() {
   const { tab, selectTab, params, setParams } = usePluginsTab(marketEnabled)
 
   const developerQuery = useQuery({
-    queryKey: hubDeveloperQueryKeys.developer(),
-    queryFn: ({ signal }) => fetchHubDeveloper(false, signal),
+    queryKey: cloudDeveloperQueryKeys.developer(),
+    queryFn: ({ signal }) => fetchCloudDeveloper(false, signal),
   })
   const uploadedQuery = useQuery({
     queryKey: jsPluginQueryKeys.uploaded(),
@@ -356,7 +356,7 @@ export function JSPluginsSettingsWorkspace() {
   const submitMutation = useMutation({
     mutationFn: (changelog: string) => {
       if (!submitPlugin?.id || !submitPlugin.local_version) throw new Error('missing plugin')
-      return submitHubPlugin({ pluginId: submitPlugin.id, version: submitPlugin.local_version, changelog })
+      return submitCloudPlugin({ pluginId: submitPlugin.id, version: submitPlugin.local_version, changelog })
     },
     onSuccess: (result) => {
       const pluginId = submitPlugin?.id
@@ -364,7 +364,7 @@ export function JSPluginsSettingsWorkspace() {
       setSubmitError('')
       setSubmitPlugin(null)
       void queryClient.invalidateQueries({ queryKey: jsPluginQueryKeys.uploaded() })
-      if (pluginId) void queryClient.invalidateQueries({ queryKey: hubDeveloperQueryKeys.submissions(pluginId) })
+      if (pluginId) void queryClient.invalidateQueries({ queryKey: cloudDeveloperQueryKeys.submissions(pluginId) })
     },
     onError: (error: unknown) => {
       if (developerQuery.data?.unavailable && error instanceof APIError && error.code === 'not_developer') {
@@ -531,8 +531,8 @@ export function JSPluginsSettingsWorkspace() {
   const trustedKeyCount = trustedKeysQuery.data?.length ?? 0
 
   const refresh = () => {
-    void fetchHubDeveloper(true).then((profile) => {
-      queryClient.setQueryData(hubDeveloperQueryKeys.developer(), profile)
+    void fetchCloudDeveloper(true).then((profile) => {
+      queryClient.setQueryData(cloudDeveloperQueryKeys.developer(), profile)
       if (profile.status !== 'active') void uploadedQuery.refetch()
     }).catch(() => {
       void uploadedQuery.refetch()

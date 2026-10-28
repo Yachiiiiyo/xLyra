@@ -1,41 +1,41 @@
 import { apiFetch } from '@/lib/http'
 
-export type HubBindingStatus = 'unbound' | 'pairing' | 'bound' | 'revoked'
+export type CloudBindingStatus = 'unbound' | 'pairing' | 'bound' | 'revoked'
 
-export type HubBindingPairing = {
+export type CloudBindingPairing = {
   user_code: string
   expires_at: string
 }
 
-export type HubBinding = {
-  status: HubBindingStatus
+export type CloudBinding = {
+  status: CloudBindingStatus
   instance_name: string
   user_display_name: string
-  hub_url: string
+  cloud_url: string
   bound_at: string | null
   last_sync_at: string | null
   last_error: string
   last_error_at: string | null
-  pairing: HubBindingPairing | null
+  pairing: CloudBindingPairing | null
   max_poll_seconds: number
 }
 
-const hubBindingStatuses = new Set<HubBindingStatus>(['unbound', 'pairing', 'bound', 'revoked'])
+const cloudBindingStatuses = new Set<CloudBindingStatus>(['unbound', 'pairing', 'bound', 'revoked'])
 
-export const hubBindingQueryKeys = {
-  all: ['settings', 'hub-binding'] as const,
+export const cloudBindingQueryKeys = {
+  all: ['settings', 'cloud-binding'] as const,
 }
 
-export function parseHubBinding(raw: unknown): HubBinding {
+export function parseCloudBinding(raw: unknown): CloudBinding {
   const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
-  const status = typeof value.status === 'string' && hubBindingStatuses.has(value.status as HubBindingStatus)
-    ? value.status as HubBindingStatus
+  const status = typeof value.status === 'string' && cloudBindingStatuses.has(value.status as CloudBindingStatus)
+    ? value.status as CloudBindingStatus
     : 'unbound'
   return {
     status,
     instance_name: stringField(value.instance_name),
     user_display_name: stringField(value.user_display_name),
-    hub_url: stringField(value.hub_url),
+    cloud_url: stringField(value.cloud_url),
     bound_at: nullableString(value.bound_at),
     last_sync_at: nullableString(value.last_sync_at),
     last_error: stringField(value.last_error),
@@ -47,31 +47,31 @@ export function parseHubBinding(raw: unknown): HubBinding {
   }
 }
 
-export async function fetchHubBinding(signal?: AbortSignal) {
-  return parseHubBinding(await apiFetch<unknown>('/api/v1/hub-binding', { signal }))
+export async function fetchCloudBinding(signal?: AbortSignal) {
+  return parseCloudBinding(await apiFetch<unknown>('/api/v1/cloud-binding', { signal }))
 }
 
-export async function pairHubBinding(name?: string) {
+export async function pairCloudBinding(name?: string) {
   const trimmed = name?.trim()
-  return parseHubBinding(await apiFetch<unknown>('/api/v1/hub-binding/pair', {
+  return parseCloudBinding(await apiFetch<unknown>('/api/v1/cloud-binding/pair', {
     method: 'POST',
     body: trimmed ? { name: trimmed } : {},
   }))
 }
 
-export async function cancelHubPairing() {
-  await apiFetch<void>('/api/v1/hub-binding/pair', { method: 'DELETE' })
+export async function cancelCloudPairing() {
+  await apiFetch<void>('/api/v1/cloud-binding/pair', { method: 'DELETE' })
 }
 
-export async function disconnectHubBinding() {
-  await apiFetch<void>('/api/v1/hub-binding', { method: 'DELETE' })
+export async function disconnectCloudBinding() {
+  await apiFetch<void>('/api/v1/cloud-binding', { method: 'DELETE' })
 }
 
 /** 只允许 https，以及本地开发的 http://localhost / 127.0.0.1。 */
-export function hubConsoleURL(hubURL: string, userCode?: string) {
+export function cloudConsoleURL(cloudURL: string, userCode?: string) {
   let parsed: URL
   try {
-    parsed = new URL(hubURL.trim())
+    parsed = new URL(cloudURL.trim())
   } catch {
     return null
   }
@@ -90,7 +90,7 @@ export function hubConsoleURL(hubURL: string, userCode?: string) {
   return consoleURL.toString()
 }
 
-function parsePairing(raw: unknown): HubBindingPairing | null {
+function parsePairing(raw: unknown): CloudBindingPairing | null {
   if (!raw || typeof raw !== 'object') return null
   const value = raw as Record<string, unknown>
   const userCode = stringField(value.user_code)

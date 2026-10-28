@@ -22,20 +22,20 @@ import {
 import { InputOTP } from '@/components/ui/input-otp'
 import { formatRelativeTime } from '@/features/agent/lib/relative-time'
 import {
-  cancelHubPairing,
-  disconnectHubBinding,
-  fetchHubBinding,
-  hubBindingQueryKeys,
-  hubConsoleURL,
-  pairHubBinding,
-  type HubBinding,
-  type HubBindingStatus,
-} from '@/features/settings/api/hub-binding'
-import { fetchHubDeveloper, hubDeveloperQueryKeys, type HubDeveloper } from '@/features/settings/api/hub-developer'
+  cancelCloudPairing,
+  disconnectCloudBinding,
+  fetchCloudBinding,
+  cloudBindingQueryKeys,
+  cloudConsoleURL,
+  pairCloudBinding,
+  type CloudBinding,
+  type CloudBindingStatus,
+} from '@/features/settings/api/cloud-binding'
+import { fetchCloudDeveloper, cloudDeveloperQueryKeys, type CloudDeveloper } from '@/features/settings/api/cloud-developer'
 import { APIError } from '@/lib/http'
 import { toast } from '@/lib/toast'
 
-const hubBindingPollMs = 2000
+const cloudBindingPollMs = 2000
 
 export function XlyraCloudSettingsPage() {
   const { t, i18n } = useTranslation(['settings', 'common'])
@@ -43,7 +43,7 @@ export function XlyraCloudSettingsPage() {
   const [visible, setVisible] = useState(isPageVisible)
   const [disconnectOpen, setDisconnectOpen] = useState(false)
   const [dismissedPairingKey, setDismissedPairingKey] = useState<string | null>(null)
-  const previousStatus = useRef<HubBinding['status'] | undefined>(undefined)
+  const previousStatus = useRef<CloudBinding['status'] | undefined>(undefined)
 
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -53,15 +53,15 @@ export function XlyraCloudSettingsPage() {
   }, [])
 
   const bindingQuery = useQuery({
-    queryKey: hubBindingQueryKeys.all,
-    queryFn: ({ signal }) => fetchHubBinding(signal),
+    queryKey: cloudBindingQueryKeys.all,
+    queryFn: ({ signal }) => fetchCloudBinding(signal),
     refetchOnWindowFocus: false,
   })
   const binding = bindingQuery.data
   const refetchBinding = bindingQuery.refetch
   const developerQuery = useQuery({
-    queryKey: hubDeveloperQueryKeys.developer(),
-    queryFn: ({ signal }) => fetchHubDeveloper(true, signal),
+    queryKey: cloudDeveloperQueryKeys.developer(),
+    queryFn: ({ signal }) => fetchCloudDeveloper(true, signal),
     enabled: binding?.status === 'bound',
     refetchOnWindowFocus: false,
   })
@@ -72,7 +72,7 @@ export function XlyraCloudSettingsPage() {
     if (!followBinding) return
     const timer = setInterval(() => {
       void refetchBinding()
-    }, hubBindingPollMs)
+    }, cloudBindingPollMs)
     return () => clearInterval(timer)
   }, [followBinding, refetchBinding])
 
@@ -84,9 +84,9 @@ export function XlyraCloudSettingsPage() {
   }, [binding?.status, t])
 
   const pairMutation = useMutation({
-    mutationFn: () => pairHubBinding(),
+    mutationFn: () => pairCloudBinding(),
     onSuccess: (next) => {
-      queryClient.setQueryData(hubBindingQueryKeys.all, next)
+      queryClient.setQueryData(cloudBindingQueryKeys.all, next)
     },
     onError: (error) => {
       toast.error(errorText(error))
@@ -94,9 +94,9 @@ export function XlyraCloudSettingsPage() {
   })
 
   const cancelMutation = useMutation({
-    mutationFn: cancelHubPairing,
+    mutationFn: cancelCloudPairing,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: hubBindingQueryKeys.all })
+      await queryClient.invalidateQueries({ queryKey: cloudBindingQueryKeys.all })
     },
     onError: (error) => {
       toast.error(errorText(error))
@@ -104,11 +104,11 @@ export function XlyraCloudSettingsPage() {
   })
 
   const disconnectMutation = useMutation({
-    mutationFn: disconnectHubBinding,
+    mutationFn: disconnectCloudBinding,
     onSuccess: async () => {
       setDisconnectOpen(false)
       toast.success(t('xlyraCloud.toast.disconnected'))
-      await queryClient.invalidateQueries({ queryKey: hubBindingQueryKeys.all })
+      await queryClient.invalidateQueries({ queryKey: cloudBindingQueryKeys.all })
     },
     onError: (error) => {
       toast.error(errorText(error))
@@ -116,7 +116,7 @@ export function XlyraCloudSettingsPage() {
   })
 
   const pending = pairMutation.isPending || cancelMutation.isPending
-  const manageURL = binding?.status === 'bound' ? hubConsoleURL(binding.hub_url) : null
+  const manageURL = binding?.status === 'bound' ? cloudConsoleURL(binding.cloud_url) : null
   const pairingKey = pairingSessionKey(binding)
   const pairingOpen = pairingKey !== null && dismissedPairingKey !== pairingKey
 
@@ -130,7 +130,7 @@ export function XlyraCloudSettingsPage() {
           <>
             {manageURL ? (
               <Button variant="secondary" size="sm" asChild>
-                <a href={manageURL} target="_blank" rel="noopener noreferrer" data-testid="hub-manage-link">
+                <a href={manageURL} target="_blank" rel="noopener noreferrer" data-testid="cloud-manage-link">
                   <ExternalLink className="h-3.5 w-3.5" />
                   {t('xlyraCloud.bound.manage')}
                 </a>
@@ -153,7 +153,7 @@ export function XlyraCloudSettingsPage() {
       />
 
       {bindingQuery.isPending ? (
-        <p data-testid="hub-binding-loading" aria-busy="true" className="text-body text-label-2">
+        <p data-testid="cloud-binding-loading" aria-busy="true" className="text-body text-label-2">
           {t('common:status.loading')}
         </p>
       ) : bindingQuery.isError || !binding ? (
@@ -226,10 +226,10 @@ function CloudBody({
   onShowPairing,
   onDisconnect,
 }: {
-  binding: HubBinding
+  binding: CloudBinding
   language: string
   pending: boolean
-  developer?: HubDeveloper
+  developer?: CloudDeveloper
   developerLoading: boolean
   onPair: () => void
   onShowPairing: () => void
@@ -335,7 +335,7 @@ function StatusAction({
   onPair,
   onShowPairing,
 }: {
-  binding: HubBinding
+  binding: CloudBinding
   pending: boolean
   onPair: () => void
   onShowPairing: () => void
@@ -373,7 +373,7 @@ function PairingGuide({
   onPair,
   onDrop,
 }: {
-  binding: HubBinding
+  binding: CloudBinding
   pending: boolean
   onPair: () => void
   onDrop: () => void
@@ -389,7 +389,7 @@ function PairingGuide({
     return () => clearInterval(timer)
   }, [expiresAt, userCode])
 
-  const openURL = userCode ? hubConsoleURL(binding.hub_url, userCode) : null
+  const openURL = userCode ? cloudConsoleURL(binding.cloud_url, userCode) : null
   const remaining = userCode && expiresAt ? remainingSeconds(expiresAt, now) : null
   const expired = remaining !== null && remaining <= 0
   const canCopyOpen = Boolean(userCode && openURL && !expired)
@@ -398,7 +398,7 @@ function PairingGuide({
     <>
       <DialogBody className="space-y-4">
         {userCode ? (
-          <InputOTP readOnly value={userCode} aria-label={t('xlyraCloud.pairing.heading')} testId="hub-pairing-code" />
+          <InputOTP readOnly value={userCode} aria-label={t('xlyraCloud.pairing.heading')} testId="cloud-pairing-code" />
         ) : (
           <p className="text-body text-label">{t('xlyraCloud.pairing.codeMissing')}</p>
         )}
@@ -415,7 +415,7 @@ function PairingGuide({
         )}
         confirm={canCopyOpen && openURL && userCode ? (
           <Button
-            data-testid="hub-copy-open"
+            data-testid="cloud-copy-open"
             disabled={pending}
             onClick={() => void copyAndOpen(userCode, openURL, t('xlyraCloud.pairing.copied'), t('xlyraCloud.pairing.copyFailed'))}
           >
@@ -438,19 +438,19 @@ async function copyAndOpen(code: string, url: string, copied: string, failed: st
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-function pairingSessionKey(binding: HubBinding | undefined) {
+function pairingSessionKey(binding: CloudBinding | undefined) {
   if (binding?.status !== 'pairing') return null
   return `${binding.pairing?.user_code ?? ''}|${binding.pairing?.expires_at ?? ''}`
 }
 
-function statusText(status: HubBindingStatus, t: (key: string) => string) {
+function statusText(status: CloudBindingStatus, t: (key: string) => string) {
   if (status === 'pairing') return t('xlyraCloud.pairing.title')
   if (status === 'bound') return t('xlyraCloud.bound.status')
   if (status === 'revoked') return t('xlyraCloud.revoked.title')
   return t('xlyraCloud.unbound.title')
 }
 
-function DeveloperIdentity({ developer, loading }: { developer?: HubDeveloper; loading: boolean }) {
+function DeveloperIdentity({ developer, loading }: { developer?: CloudDeveloper; loading: boolean }) {
   const { t } = useTranslation('settings')
   const unavailable = developer?.unavailable === true
   const status = developer?.status || 'none'
@@ -458,7 +458,7 @@ function DeveloperIdentity({ developer, loading }: { developer?: HubDeveloper; l
   const namespaces = developer?.namespaces ?? []
   const plugins = developer?.plugins ?? []
   return (
-    <div className="space-y-4 border-t border-separator pt-5" data-testid="hub-developer">
+    <div className="space-y-4 border-t border-separator pt-5" data-testid="cloud-developer">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h4 className="text-headline text-label">{t('xlyraCloud.developer.title')}</h4>
         <StatusBadge status={unavailable ? 'warning' : developerTone(status)}>
@@ -540,7 +540,7 @@ function labeled(t: (key: string, options?: { defaultValue?: string }) => string
   return t(`xlyraCloud.developer.${group}.${status}`, { defaultValue: status })
 }
 
-function statusTone(status: HubBindingStatus) {
+function statusTone(status: CloudBindingStatus) {
   if (status === 'pairing') return 'syncing'
   if (status === 'bound') return 'success'
   if (status === 'revoked') return 'warning'

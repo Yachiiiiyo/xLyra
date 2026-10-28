@@ -16,13 +16,13 @@ import {
 import { FormField } from '@/components/ui/form-field'
 import { TextArea } from '@/components/ui/textarea'
 import {
-  hubDeveloperQueryKeys,
-  latestHubSubmission,
-  listHubSubmissions,
+  cloudDeveloperQueryKeys,
+  latestCloudSubmission,
+  listCloudSubmissions,
   submissionPending,
   submissionReason,
-  type HubSubmission,
-} from '@/features/settings/api/hub-developer'
+  type CloudSubmission,
+} from '@/features/settings/api/cloud-developer'
 import { jsPluginQueryKeys, type JSPluginListItem } from '@/features/settings/api/js-plugins'
 import { installPluginMarketPlugin, syncPluginMarket } from '@/features/settings/api/plugin-market'
 import { publishedFromReview, samePublishedVersion, showMarketSubmit, submissionStatusLabel } from '@/features/settings/components/js-plugins/market-submit-model'
@@ -71,14 +71,14 @@ export function MarketSubmitActions({
 }) {
   const { t } = useTranslation('settings')
   const queryClient = useQueryClient()
-  const [fresh, setFresh] = useState<HubSubmission | undefined>()
+  const [fresh, setFresh] = useState<CloudSubmission | undefined>()
   const [refreshing, setRefreshing] = useState(false)
   const [syncError, setSyncError] = useState('')
   const canShow = showMarketSubmit(plugin) || (plugin.owned === true && plugin.submission != null && !samePublishedVersion(plugin))
   const visible = canShow && !samePublishedVersion(plugin, fresh ?? plugin.submission)
   const query = useQuery({
-    queryKey: hubDeveloperQueryKeys.submissions(plugin.id),
-    queryFn: async ({ signal }) => latestHubSubmission(await listHubSubmissions(plugin.id, signal)),
+    queryKey: cloudDeveloperQueryKeys.submissions(plugin.id),
+    queryFn: async ({ signal }) => latestCloudSubmission(await listCloudSubmissions(plugin.id, signal)),
     enabled: visible,
   })
   const submission = fresh ?? query.data ?? plugin.submission
@@ -89,7 +89,7 @@ export function MarketSubmitActions({
     setRefreshing(true)
     const previous = submission?.status
     try {
-      const next = latestHubSubmission(await listHubSubmissions(plugin.id))
+      const next = latestCloudSubmission(await listCloudSubmissions(plugin.id))
       setFresh(next)
       const version = next?.version?.trim() || plugin.local_version?.trim() || ''
       if (publishedFromReview(previous, next?.status) && samePublishedVersion(plugin, next) && version) {

@@ -974,7 +974,7 @@
       "loadFailed": "Failed to load the market",
       "updateTo": "Update to {{version}}",
       "autoRolledBack": "Rolled back automatically",
-      "signerRevoked": "Signer revoked by Hub",
+      "signerRevoked": "Signer revoked by xLyra Cloud",
       "pausedAuto": "Automatic updates paused",
       "policyLabel": "Update policy",
       "policy": {
@@ -1006,7 +1006,7 @@
     "submit": {
       "action": "Submit to market",
       "dialogTitle": "Submit to market",
-      "dialogDescription": "Send this local version to the plugin market. The Hub checks it first, then it waits for review.",
+      "dialogDescription": "Send this local version to the plugin market. xLyra Cloud checks it first, then it waits for review.",
       "localVersion": "Local version",
       "marketVersion": "Market version",
       "marketEmpty": "Not in the market yet",
@@ -1135,7 +1135,7 @@
       "keys": "Registered keys",
       "keysCount": "{{count}}",
       "keysEmpty": "No keys",
-      "plugins": "Plugins on Hub",
+      "plugins": "Plugins on xLyra Cloud",
       "pluginsEmpty": "No submitted or published plugins",
       "pluginVersion": "Latest published {{version}}",
       "pluginNoVersion": "No published version yet",

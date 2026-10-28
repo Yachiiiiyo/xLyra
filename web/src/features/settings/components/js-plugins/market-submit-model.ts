@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 import type { JSPluginListItem } from '@/features/settings/api/js-plugins'
-import { submissionPending } from '@/features/settings/api/hub-developer'
+import { submissionPending } from '@/features/settings/api/cloud-developer'
 import { APIError } from '@/lib/http'
 
 export function showMarketSubmit(plugin: JSPluginListItem) {
@@ -29,7 +29,7 @@ export function submissionStatusLabel(t: TFunction, status: string) {
 }
 
 export function submitErrorText(t: TFunction, error: unknown) {
-  if (error instanceof APIError && error.code === 'hub_unavailable') {
+  if (error instanceof APIError && error.code === 'cloud_unavailable') {
     return t('settings:jsPlugins.submit.unavailable')
   }
   if (error instanceof APIError && error.code) {

@@ -10,23 +10,23 @@ import { toast } from '@/lib/toast'
 import commonZh from '@/locales/zh/common.json'
 import zh from '@/locales/zh/settings.json'
 import { XlyraCloudSettingsPage } from '@/routes/system/xlyra-cloud-settings-page'
-import type { HubBinding } from '@/features/settings/api/hub-binding'
-import type { HubDeveloper } from '@/features/settings/api/hub-developer'
+import type { CloudBinding } from '@/features/settings/api/cloud-binding'
+import type { CloudDeveloper } from '@/features/settings/api/cloud-developer'
 
-const fetchHubBinding = vi.hoisted(() => vi.fn())
-const fetchHubDeveloper = vi.hoisted(() => vi.fn())
-const pairHubBinding = vi.hoisted(() => vi.fn())
-const cancelHubPairing = vi.hoisted(() => vi.fn())
-const disconnectHubBinding = vi.hoisted(() => vi.fn())
+const fetchCloudBinding = vi.hoisted(() => vi.fn())
+const fetchCloudDeveloper = vi.hoisted(() => vi.fn())
+const pairCloudBinding = vi.hoisted(() => vi.fn())
+const cancelCloudPairing = vi.hoisted(() => vi.fn())
+const disconnectCloudBinding = vi.hoisted(() => vi.fn())
 
-vi.mock('@/features/settings/api/hub-developer', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/features/settings/api/hub-developer')>()
-  return { ...actual, fetchHubDeveloper }
+vi.mock('@/features/settings/api/cloud-developer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/settings/api/cloud-developer')>()
+  return { ...actual, fetchCloudDeveloper }
 })
 
-vi.mock('@/features/settings/api/hub-binding', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/features/settings/api/hub-binding')>()
-  return { ...actual, fetchHubBinding, pairHubBinding, cancelHubPairing, disconnectHubBinding }
+vi.mock('@/features/settings/api/cloud-binding', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/settings/api/cloud-binding')>()
+  return { ...actual, fetchCloudBinding, pairCloudBinding, cancelCloudPairing, disconnectCloudBinding }
 })
 
 vi.mock('@/lib/toast', () => ({
@@ -75,26 +75,26 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
-  fetchHubDeveloper.mockResolvedValue({ status: 'none', namespaces: [], keys: [], plugins: [] })
+  fetchCloudDeveloper.mockResolvedValue({ status: 'none', namespaces: [], keys: [], plugins: [] })
 })
 
 afterEach(() => {
-  fetchHubBinding.mockReset()
-  fetchHubDeveloper.mockReset()
-  pairHubBinding.mockReset()
-  cancelHubPairing.mockReset()
-  disconnectHubBinding.mockReset()
+  fetchCloudBinding.mockReset()
+  fetchCloudDeveloper.mockReset()
+  pairCloudBinding.mockReset()
+  cancelCloudPairing.mockReset()
+  disconnectCloudBinding.mockReset()
   vi.mocked(toast.success).mockClear()
   vi.mocked(toast.error).mockClear()
   vi.useRealTimers()
 })
 
-function binding(overrides: Partial<HubBinding> = {}): HubBinding {
+function binding(overrides: Partial<CloudBinding> = {}): CloudBinding {
   return {
     status: 'unbound',
     instance_name: '',
     user_display_name: '',
-    hub_url: '',
+    cloud_url: '',
     bound_at: null,
     last_sync_at: null,
     last_error: '',
@@ -107,13 +107,13 @@ function binding(overrides: Partial<HubBinding> = {}): HubBinding {
 
 describe('xLyra Cloud settings page', () => {
   it('shows a loading skeleton without the danger section', async () => {
-    fetchHubBinding.mockReturnValue(new Promise(() => {}))
+    fetchCloudBinding.mockReturnValue(new Promise(() => {}))
     const mounted = await mountPage()
     try {
       expect(mounted.container.textContent).toContain('系统')
       expect(mounted.container.textContent).toContain('把这台 xLyra 连接到你的 xLyra 账号')
       expect(findButton(mounted.container, '刷新')).not.toBeNull()
-      expect(findTestId(mounted.container, 'hub-binding-loading')).not.toBeNull()
+      expect(findTestId(mounted.container, 'cloud-binding-loading')).not.toBeNull()
       expect(findButton(mounted.container, '连接账号')).toBeNull()
       expect(mounted.container.textContent).not.toContain('危险操作')
     } finally {
@@ -122,7 +122,7 @@ describe('xLyra Cloud settings page', () => {
   })
 
   it('renders unbound, revoked, and a read failure', async () => {
-    fetchHubBinding.mockResolvedValue(binding())
+    fetchCloudBinding.mockResolvedValue(binding())
     const unbound = await mountPage()
     try {
       expect(unbound.container.textContent).toContain('未连接')
@@ -131,13 +131,13 @@ describe('xLyra Cloud settings page', () => {
       expect(findButton(unbound.container, '连接账号')).not.toBeNull()
       expect(findButton(unbound.container, '刷新')).not.toBeNull()
       await click(findButton(unbound.container, '刷新'))
-      expect(fetchHubBinding).toHaveBeenCalledTimes(2)
+      expect(fetchCloudBinding).toHaveBeenCalledTimes(2)
       expect(unbound.container.textContent).not.toContain('危险操作')
     } finally {
       await unbound.unmount()
     }
 
-    fetchHubBinding.mockResolvedValue(binding({ status: 'revoked' }))
+    fetchCloudBinding.mockResolvedValue(binding({ status: 'revoked' }))
     const revoked = await mountPage()
     try {
       expect(revoked.container.textContent).toContain('连接已解除')
@@ -148,13 +148,13 @@ describe('xLyra Cloud settings page', () => {
       await revoked.unmount()
     }
 
-    fetchHubBinding.mockRejectedValue(new APIError('hub 暂不可用', 503, 'hub_binding_unavailable'))
+    fetchCloudBinding.mockRejectedValue(new APIError('Cloud 暂不可用', 503, 'cloud_binding_unavailable'))
     const failed = await mountPage()
     try {
       expect(failed.container.textContent).toContain('无法读取连接状态')
-      expect(failed.container.textContent).toContain('hub 暂不可用')
+      expect(failed.container.textContent).toContain('Cloud 暂不可用')
       expect(failed.container.textContent).not.toContain('危险操作')
-      fetchHubBinding.mockResolvedValue(binding())
+      fetchCloudBinding.mockResolvedValue(binding())
       await click(findButton(failed.container, '重试'))
       expect(failed.container.textContent).toContain('未连接')
     } finally {
@@ -165,39 +165,39 @@ describe('xLyra Cloud settings page', () => {
   it('starts pairing from connect and from reconnect', async () => {
     const pairing = binding({
       status: 'pairing',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     })
-    fetchHubBinding.mockResolvedValue(binding())
-    pairHubBinding.mockResolvedValue(pairing)
+    fetchCloudBinding.mockResolvedValue(binding())
+    pairCloudBinding.mockResolvedValue(pairing)
     const mounted = await mountPage()
     try {
       await click(findButton(mounted.container, '连接账号'))
-      expect(pairHubBinding).toHaveBeenCalledOnce()
+      expect(pairCloudBinding).toHaveBeenCalledOnce()
       expect(mounted.container.textContent).toContain('等待连接')
       expect(findTagText(mounted.container, 'H2', '配对')).not.toBeNull()
       expect(mounted.container.textContent).toContain('在已登录的 xLyra Cloud 控制台点「连接实例」')
-      expect(fieldValue(findTestId(mounted.container, 'hub-pairing-code'))).toBe('GYD4-LMGT')
+      expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('GYD4-LMGT')
       expect(findButton(mounted.container, '查看配对码')).not.toBeNull()
       expect(mounted.container.textContent).not.toContain('危险操作')
     } finally {
       await mounted.unmount()
     }
 
-    fetchHubBinding.mockResolvedValue(binding({ status: 'revoked' }))
-    pairHubBinding.mockClear()
+    fetchCloudBinding.mockResolvedValue(binding({ status: 'revoked' }))
+    pairCloudBinding.mockClear()
     const revoked = await mountPage()
     try {
       await click(findButton(revoked.container, '重新连接'))
-      expect(pairHubBinding).toHaveBeenCalledOnce()
+      expect(pairCloudBinding).toHaveBeenCalledOnce()
     } finally {
       await revoked.unmount()
     }
   })
 
   it('toasts the pair error', async () => {
-    fetchHubBinding.mockResolvedValue(binding())
-    pairHubBinding.mockRejectedValue(new APIError('已经连接', 409, 'hub_binding_exists'))
+    fetchCloudBinding.mockResolvedValue(binding())
+    pairCloudBinding.mockRejectedValue(new APIError('已经连接', 409, 'cloud_binding_exists'))
     const mounted = await mountPage()
     try {
       await click(findButton(mounted.container, '连接账号'))
@@ -210,9 +210,9 @@ describe('xLyra Cloud settings page', () => {
   it('counts down, then offers regenerate', async () => {
     vi.useFakeTimers()
     const expiresAt = new Date(Date.now() + 5000).toISOString()
-    fetchHubBinding.mockResolvedValue(binding({
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'pairing',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       pairing: { user_code: 'GYD4-LMGT', expires_at: expiresAt },
     }))
     const mounted = await mountPage()
@@ -229,15 +229,15 @@ describe('xLyra Cloud settings page', () => {
         await vi.advanceTimersByTimeAsync(4000)
       })
       expect(mounted.container.textContent).toContain('配对码已过期')
-      pairHubBinding.mockResolvedValue(binding({
+      pairCloudBinding.mockResolvedValue(binding({
         status: 'pairing',
-        hub_url: 'https://xlyra.yachiyo.im',
+        cloud_url: 'https://xlyra.yachiyo.im',
         pairing: { user_code: 'NEW1-CODE', expires_at: new Date(Date.now() + 60_000).toISOString() },
       }))
       expect(findButton(mounted.container, '重新生成')).not.toBeNull()
       await click(findButton(mounted.container, '重新生成'))
-      expect(pairHubBinding).toHaveBeenCalledOnce()
-      expect(fieldValue(findTestId(mounted.container, 'hub-pairing-code'))).toBe('NEW1-CODE')
+      expect(pairCloudBinding).toHaveBeenCalledOnce()
+      expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('NEW1-CODE')
     } finally {
       await mounted.unmount()
     }
@@ -247,29 +247,29 @@ describe('xLyra Cloud settings page', () => {
     vi.useFakeTimers()
     const pairing = binding({
       status: 'pairing',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     })
     const bound = binding({
       status: 'bound',
       instance_name: 'edge-1',
       user_display_name: 'Ada',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       bound_at: '2026-10-26T01:02:03Z',
     })
-    fetchHubBinding.mockResolvedValueOnce(pairing).mockResolvedValueOnce(bound)
+    fetchCloudBinding.mockResolvedValueOnce(pairing).mockResolvedValueOnce(bound)
     const mounted = await mountPage()
     try {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1)
       })
-      expect(fetchHubBinding).toHaveBeenCalledTimes(1)
+      expect(fetchCloudBinding).toHaveBeenCalledTimes(1)
       expect(mounted.container.textContent).toContain('等待连接')
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2000)
       })
       await flushUpdates()
-      expect(fetchHubBinding).toHaveBeenCalledTimes(2)
+      expect(fetchCloudBinding).toHaveBeenCalledTimes(2)
       expect(toast.success).toHaveBeenCalledWith('已连接到 xLyra Cloud')
       expect(mounted.container.textContent).toContain('已连接')
     } finally {
@@ -279,7 +279,7 @@ describe('xLyra Cloud settings page', () => {
 
   it('does not poll while the page is hidden', async () => {
     vi.useFakeTimers()
-    fetchHubBinding.mockResolvedValue(binding({
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'pairing',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     }))
@@ -288,20 +288,20 @@ describe('xLyra Cloud settings page', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1)
       })
-      expect(fetchHubBinding).toHaveBeenCalledTimes(1)
+      expect(fetchCloudBinding).toHaveBeenCalledTimes(1)
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5000)
       })
-      expect(fetchHubBinding).toHaveBeenCalledTimes(1)
+      expect(fetchCloudBinding).toHaveBeenCalledTimes(1)
     } finally {
       await mounted.unmount()
     }
   })
 
-  it('hides console links for unsafe hub urls and keeps them for https', async () => {
-    fetchHubBinding.mockResolvedValue(binding({
+  it('hides console links for unsafe cloud urls and keeps them for https', async () => {
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'pairing',
-      hub_url: 'javascript:alert(1)',
+      cloud_url: 'javascript:alert(1)',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     }))
     const scriptURL = await mountPage()
@@ -312,24 +312,24 @@ describe('xLyra Cloud settings page', () => {
       await scriptURL.unmount()
     }
 
-    fetchHubBinding.mockResolvedValue(binding({
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'bound',
-      hub_url: 'http://evil.example',
+      cloud_url: 'http://evil.example',
       user_display_name: 'Ada',
       instance_name: 'edge-1',
       bound_at: '2026-10-26T01:02:03Z',
     }))
     const evil = await mountPage()
     try {
-      expect(findTestId(evil.container, 'hub-manage-link')).toBeNull()
+      expect(findTestId(evil.container, 'cloud-manage-link')).toBeNull()
       expect(evil.container.textContent).not.toContain('在官网管理')
     } finally {
       await evil.unmount()
     }
 
-    fetchHubBinding.mockResolvedValue(binding({
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'pairing',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     }))
     const safe = await mountPage()
@@ -348,20 +348,20 @@ describe('xLyra Cloud settings page', () => {
   })
 
   it('dismisses the pairing guide without cancelling, then reopens it', async () => {
-    fetchHubBinding.mockResolvedValue(binding({
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'pairing',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     }))
     const mounted = await mountPage()
     try {
-      expect(fieldValue(findTestId(mounted.container, 'hub-pairing-code'))).toBe('GYD4-LMGT')
+      expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('GYD4-LMGT')
       await click(findTestId(mounted.container, 'mock-dialog-dismiss'))
-      expect(findTestId(mounted.container, 'hub-pairing-code')).toBeNull()
-      expect(cancelHubPairing).not.toHaveBeenCalled()
+      expect(findTestId(mounted.container, 'cloud-pairing-code')).toBeNull()
+      expect(cancelCloudPairing).not.toHaveBeenCalled()
       expect(mounted.container.textContent).toContain('等待连接')
       await click(findButton(mounted.container, '查看配对码'))
-      expect(fieldValue(findTestId(mounted.container, 'hub-pairing-code'))).toBe('GYD4-LMGT')
+      expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('GYD4-LMGT')
     } finally {
       await mounted.unmount()
     }
@@ -372,14 +372,14 @@ describe('xLyra Cloud settings page', () => {
     const open = vi.fn()
     vi.stubGlobal('navigator', { clipboard: { writeText }, userAgent: 'node' })
     vi.stubGlobal('open', open)
-    fetchHubBinding
+    fetchCloudBinding
       .mockResolvedValueOnce(binding({
         status: 'pairing',
-        hub_url: 'https://xlyra.yachiyo.im',
+        cloud_url: 'https://xlyra.yachiyo.im',
         pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
       }))
       .mockResolvedValue(binding())
-    cancelHubPairing.mockResolvedValue(undefined)
+    cancelCloudPairing.mockResolvedValue(undefined)
     const mounted = await mountPage()
     try {
       await click(findButton(mounted.container, '复制并打开 Cloud'))
@@ -388,7 +388,7 @@ describe('xLyra Cloud settings page', () => {
       expect(open).toHaveBeenCalledWith('https://xlyra.yachiyo.im/console/#connect=GYD4-LMGT', '_blank', 'noopener,noreferrer')
 
       await click(findButton(mounted.container, '取消配对'))
-      expect(cancelHubPairing).toHaveBeenCalledOnce()
+      expect(cancelCloudPairing).toHaveBeenCalledOnce()
       expect(mounted.container.textContent).toContain('未连接')
     } finally {
       await mounted.unmount()
@@ -396,37 +396,37 @@ describe('xLyra Cloud settings page', () => {
   })
 
   it('asks to regenerate when the pairing code is gone', async () => {
-    fetchHubBinding.mockResolvedValue(binding({ status: 'pairing', pairing: null, hub_url: 'https://xlyra.yachiyo.im' }))
-    pairHubBinding.mockResolvedValue(binding({
+    fetchCloudBinding.mockResolvedValue(binding({ status: 'pairing', pairing: null, cloud_url: 'https://xlyra.yachiyo.im' }))
+    pairCloudBinding.mockResolvedValue(binding({
       status: 'pairing',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       pairing: { user_code: 'GYD4-LMGT', expires_at: '2099-01-01T00:00:00Z' },
     }))
     const mounted = await mountPage()
     try {
       expect(mounted.container.textContent).toContain('配对码已不可见，请重新生成')
-      expect(findTestId(mounted.container, 'hub-pairing-code')).toBeNull()
+      expect(findTestId(mounted.container, 'cloud-pairing-code')).toBeNull()
       await click(findButton(mounted.container, '重新生成'))
-      expect(pairHubBinding).toHaveBeenCalledOnce()
-      expect(fieldValue(findTestId(mounted.container, 'hub-pairing-code'))).toBe('GYD4-LMGT')
+      expect(pairCloudBinding).toHaveBeenCalledOnce()
+      expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('GYD4-LMGT')
     } finally {
       await mounted.unmount()
     }
   })
 
   it('shows the bound developer namespaces, keys, and published plugins', async () => {
-    const profile: HubDeveloper = {
+    const profile: CloudDeveloper = {
       status: 'active',
       display_name: 'Ada',
       namespaces: [{ name: 'yachiyo', status: 'active' }],
       keys: [{ fingerprint: 'SHA256:abc', label: '笔记本', status: 'active' }],
       plugins: [{ id: 'yachiyo.site-balance-alert', latest_version: '1.0.2', latest_status: 'published' }],
     }
-    fetchHubDeveloper.mockResolvedValue(profile)
-    fetchHubBinding.mockResolvedValue(binding({
+    fetchCloudDeveloper.mockResolvedValue(profile)
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'bound',
       user_display_name: 'Ada',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
     }))
     const mounted = await mountPage()
     try {
@@ -442,12 +442,12 @@ describe('xLyra Cloud settings page', () => {
     }
   })
 
-  it('shows hub unavailable instead of not a developer when the developer profile cannot be read', async () => {
-    fetchHubDeveloper.mockResolvedValue({ status: 'none', unavailable: true, namespaces: [], keys: [], plugins: [] })
-    fetchHubBinding.mockResolvedValue(binding({
+  it('shows cloud unavailable instead of not a developer when the developer profile cannot be read', async () => {
+    fetchCloudDeveloper.mockResolvedValue({ status: 'none', unavailable: true, namespaces: [], keys: [], plugins: [] })
+    fetchCloudBinding.mockResolvedValue(binding({
       status: 'bound',
       user_display_name: 'Ada',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
     }))
     const mounted = await mountPage()
     try {
@@ -464,14 +464,14 @@ describe('xLyra Cloud settings page', () => {
       status: 'bound',
       instance_name: 'edge-1',
       user_display_name: 'Ada',
-      hub_url: 'https://xlyra.yachiyo.im',
+      cloud_url: 'https://xlyra.yachiyo.im',
       bound_at: '2026-10-26T01:02:03Z',
       last_sync_at: null,
       last_error: 'timeout',
       last_error_at: '2026-10-26T02:03:04Z',
     })
-    fetchHubBinding.mockResolvedValueOnce(bound).mockResolvedValue(binding())
-    disconnectHubBinding.mockResolvedValue(undefined)
+    fetchCloudBinding.mockResolvedValueOnce(bound).mockResolvedValue(binding())
+    disconnectCloudBinding.mockResolvedValue(undefined)
     const mounted = await mountPage()
     try {
       expect(mounted.container.textContent).toContain('还不是开发者')
@@ -483,7 +483,7 @@ describe('xLyra Cloud settings page', () => {
       expect(mounted.container.textContent).toContain('最近一次同步失败：timeout')
       expect(mounted.container.textContent).toContain('这不影响 xLyra 的正常使用，会自动重试')
       expect(mounted.container.textContent).toContain('危险操作')
-      const manage = findTestId(mounted.container, 'hub-manage-link')
+      const manage = findTestId(mounted.container, 'cloud-manage-link')
       expect(manage?.getAttribute('href')).toBe('https://xlyra.yachiyo.im/console/')
       expect(manage?.getAttribute('target')).toBe('_blank')
       expect(findTagText(mounted.container, 'H2', '断开与 xLyra Cloud 的连接？')).toBeNull()
@@ -494,7 +494,7 @@ describe('xLyra Cloud settings page', () => {
       expect(dialog?.textContent).toContain('断开与 xLyra Cloud 的连接？')
       expect(dialog?.textContent).toContain('需要重新输入配对码才能再次连接')
       await click(findButton(dialog, '断开'))
-      expect(disconnectHubBinding).toHaveBeenCalledOnce()
+      expect(disconnectCloudBinding).toHaveBeenCalledOnce()
       expect(toast.success).toHaveBeenCalledWith('已断开连接')
       expect(mounted.container.textContent).toContain('未连接')
       expect(mounted.container.textContent).not.toContain('危险操作')

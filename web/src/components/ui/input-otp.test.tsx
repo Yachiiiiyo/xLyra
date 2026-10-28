@@ -5,10 +5,10 @@ import { formatOTPValue, InputOTP, insertOTPChars, otpChars } from './input-otp'
 describe('InputOTP', () => {
   it('renders a 4+4 code with a separator', () => {
     const html = renderToStaticMarkup(
-      <InputOTP readOnly value="gyd4-lmgt" aria-label="配对码" testId="hub-pairing-code" />,
+      <InputOTP readOnly value="gyd4-lmgt" aria-label="配对码" testId="cloud-pairing-code" />,
     )
     expect(html).toContain('value="GYD4-LMGT"')
-    expect(html).toContain('data-testid="hub-pairing-code"')
+    expect(html).toContain('data-testid="cloud-pairing-code"')
     expect(html.match(/data-otp-slot="/g)).toHaveLength(8)
     expect(html).toContain('>-</span>')
     expect(html).toContain('readOnly')

@@ -974,7 +974,7 @@
       "loadFailed": "マーケットの読み込みに失敗しました",
       "updateTo": "{{version}} に更新できます",
       "autoRolledBack": "自動で戻しました",
-      "signerRevoked": "署名者は Hub により失効されています",
+      "signerRevoked": "署名者は Cloud により失効されています",
       "pausedAuto": "自動更新を一時停止中",
       "policyLabel": "更新ポリシー",
       "policy": {
@@ -1006,7 +1006,7 @@
     "submit": {
       "action": "マーケットに提出",
       "dialogTitle": "マーケットに提出",
-      "dialogDescription": "このローカル版をプラグインマーケットに提出します。Hub が自動検査したあと、審査に進みます。",
+      "dialogDescription": "このローカル版をプラグインマーケットに提出します。Cloud が自動検査したあと、審査に進みます。",
       "localVersion": "ローカル版",
       "marketVersion": "マーケット版",
       "marketEmpty": "マーケットにまだありません",
@@ -1135,7 +1135,7 @@
       "keys": "登録済みの公開鍵",
       "keysCount": "{{count}} 本",
       "keysEmpty": "公開鍵はありません",
-      "plugins": "Hub 上のプラグイン",
+      "plugins": "Cloud 上のプラグイン",
       "pluginsEmpty": "提出または公開されたプラグインはありません",
       "pluginVersion": "最新の公開版 {{version}}",
       "pluginNoVersion": "公開版はまだありません",

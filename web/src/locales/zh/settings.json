@@ -974,7 +974,7 @@
       "loadFailed": "加载市场失败",
       "updateTo": "可更新 {{version}}",
       "autoRolledBack": "自动回退",
-      "signerRevoked": "签名者已被 Hub 吊销",
+      "signerRevoked": "签名者已被 xLyra Cloud 吊销",
       "pausedAuto": "已暂停自动更新",
       "policyLabel": "更新策略",
       "policy": {
@@ -1006,7 +1006,7 @@
     "submit": {
       "action": "提交到市场",
       "dialogTitle": "提交到市场",
-      "dialogDescription": "把这个本地版本提交到插件市场。Hub 会先自动检查，通过后再进入审核。",
+      "dialogDescription": "把这个本地版本提交到插件市场。xLyra Cloud 会先自动检查，通过后再进入审核。",
       "localVersion": "本地版本",
       "marketVersion": "市场版本",
       "marketEmpty": "市场尚无此插件",
@@ -1135,7 +1135,7 @@
       "keys": "已登记公钥",
       "keysCount": "{{count}} 把",
       "keysEmpty": "还没有公钥",
-      "plugins": "Hub 上的插件",
+      "plugins": "xLyra Cloud 上的插件",
       "pluginsEmpty": "还没有提交或发布的插件",
       "pluginVersion": "最新已发布 {{version}}",
       "pluginNoVersion": "还没有已发布版本",
