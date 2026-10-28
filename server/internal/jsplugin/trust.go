@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -20,9 +21,16 @@ type TrustStatus string
 
 const (
 	TrustTrusted         TrustStatus = "trusted"
+	TrustMarketplace     TrustStatus = "marketplace"
 	TrustUntrustedSigner TrustStatus = "untrusted_signer"
 	TrustUnsigned        TrustStatus = "unsigned"
 )
+
+// MarketTrust reports whether a stored version still carries a marketplace attestation.
+// Implemented by the market service so this package does not import it.
+type MarketTrust interface {
+	VerifyVersionAttestation(ctx context.Context, row store.JSPluginVersion) bool
+}
 
 // ConfirmRequiredError is returned when enable needs confirm_untrusted.
 type ConfirmRequiredError struct {
@@ -31,6 +39,47 @@ type ConfirmRequiredError struct {
 
 func (e *ConfirmRequiredError) Error() string {
 	return "enable requires confirm_untrusted"
+}
+
+func (m *Manager) SetMarketTrust(trust MarketTrust) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.marketTrust = trust
+	m.mu.Unlock()
+}
+
+// AutoUpdateRollback re-enables the version an automatic upgrade replaced when
+// that new version trips the breaker inside the rollback window.
+type AutoUpdateRollback interface {
+	RollbackAutoUpdate(ctx context.Context, pluginID, version, reason string)
+}
+
+func (m *Manager) SetAutoUpdateRollback(rollback AutoUpdateRollback) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.autoRollback = rollback
+	m.mu.Unlock()
+}
+
+func (m *Manager) TrustStatusForVersion(ctx context.Context, row store.JSPluginVersion) (TrustStatus, error) {
+	if attestationPresent(row.Attestation) {
+		m.mu.Lock()
+		trust := m.marketTrust
+		m.mu.Unlock()
+		if trust != nil && trust.VerifyVersionAttestation(ctx, row) {
+			return TrustMarketplace, nil
+		}
+	}
+	return m.TrustStatus(ctx, row.Signer)
+}
+
+func attestationPresent(raw []byte) bool {
+	raw = bytes.TrimSpace(raw)
+	return len(raw) > 0 && !bytes.Equal(raw, []byte("null"))
 }
 
 func (m *Manager) TrustStatus(ctx context.Context, signerFingerprint string) (TrustStatus, error) {
