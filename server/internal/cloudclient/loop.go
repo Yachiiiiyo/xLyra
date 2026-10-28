@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 )
 
 var errRevoked = errors.New("instance revoked")
-var errLeaseLost = errors.New("hub send lease lost")
+var errLeaseLost = errors.New("xLyra Cloud send lease lost")
 
 // Run drives pairing polls and heartbeats until ctx is cancelled.
 // A panic is logged and the loop continues. Only the lease holder sends.
@@ -25,12 +25,12 @@ func (c *Client) Run(ctx context.Context) {
 			defer func() {
 				if rec := recover(); rec != nil {
 					if c.logger != nil {
-						c.logger.Error("hub binding loop panic", "error", panicError(rec))
+						c.logger.Error("xLyra Cloud binding loop panic", "error", panicError(rec))
 					}
 				}
 			}()
 			if err := c.runOnce(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, errLeaseLost) {
-				c.warn("hub binding loop", "error", err.Error())
+				c.warn("xLyra Cloud binding loop", "error", err.Error())
 			}
 		}()
 		if ctx.Err() != nil {
@@ -59,7 +59,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 func (c *Client) holdLease(ctx context.Context) bool {
 	ok, err := c.repo.RefreshSendLease(ctx, c.owner, c.leaseTTL)
 	if err != nil {
-		c.warn("hub binding lease refresh failed", "error", err.Error())
+		c.warn("xLyra Cloud binding lease refresh failed", "error", err.Error())
 		return false
 	}
 	return ok
@@ -82,7 +82,7 @@ func (c *Client) drive(ctx context.Context) error {
 		}
 		wait := c.leaseRefresh
 		justBound := false
-		if row.Status == store.HubStatusPairing {
+		if row.Status == store.CloudStatusPairing {
 			armed = false
 			if row.PairingExpiresAt != nil && !c.now().Before(row.PairingExpiresAt.UTC()) {
 				c.finishPairing(ctx, "expired", "", "", "")
@@ -92,13 +92,13 @@ func (c *Client) drive(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				justBound = row.Status == store.HubStatusBound
+				justBound = row.Status == store.CloudStatusBound
 			}
 		}
 		switch row.Status {
-		case store.HubStatusPairing:
+		case store.CloudStatusPairing:
 			wait = c.pollWait()
-		case store.HubStatusBound:
+		case store.CloudStatusBound:
 			if !armed {
 				armed = true
 				backoff = 0
@@ -166,7 +166,7 @@ func (c *Client) pollWait() time.Duration {
 	return 3 * time.Second
 }
 
-func (c *Client) poll(ctx context.Context, row store.HubBinding) {
+func (c *Client) poll(ctx context.Context, row store.CloudBinding) {
 	if row.PollTokenEnc == "" {
 		return
 	}
@@ -175,9 +175,9 @@ func (c *Client) poll(ctx context.Context, row store.HubBinding) {
 		c.noteError(ctx, "配对状态无法读取")
 		return
 	}
-	hub := row.HubURL
-	if hub == "" {
-		hub, err = c.hubURL(ctx)
+	cloud := row.CloudURL
+	if cloud == "" {
+		cloud, err = c.cloudURL(ctx)
 		if err != nil {
 			c.noteError(ctx, err.Error())
 			return
@@ -189,24 +189,24 @@ func (c *Client) poll(ctx context.Context, row store.HubBinding) {
 	}
 	callCtx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	status, raw, err := c.post(callCtx, hub, "/api/instance/pair/poll", body, nil)
+	status, raw, err := c.post(callCtx, cloud, "/api/instance/pair/poll", body, nil)
 	if err != nil {
 		c.noteError(ctx, err.Error())
-		c.warn("hub pairing poll failed")
+		c.warn("xLyra Cloud pairing poll failed")
 		return
 	}
 	if status < 200 || status >= 300 {
-		hubErr, ok := hubError(status, raw).(*HubError)
-		if ok && (hubErr.Code == "pairing_not_found" || status == 404) {
+		cloudErr, ok := cloudError(status, raw).(*CloudError)
+		if ok && (cloudErr.Code == "pairing_not_found" || status == 404) {
 			c.finishPairing(ctx, "expired", "", "", "")
 			return
 		}
 		message := "配对轮询失败"
-		if ok && hubErr.Code != "" {
-			message = "配对轮询失败: " + hubErr.Code
+		if ok && cloudErr.Code != "" {
+			message = "配对轮询失败: " + cloudErr.Code
 		}
 		c.noteError(ctx, message)
-		c.warn("hub pairing poll rejected", "code", codeOf(hubErr))
+		c.warn("xLyra Cloud pairing poll rejected", "code", codeOf(cloudErr))
 		return
 	}
 	var resp struct {
@@ -216,7 +216,7 @@ func (c *Client) poll(ctx context.Context, row store.HubBinding) {
 		UserDisplayName string `json:"userDisplayName"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		c.noteError(ctx, "Hub 返回的轮询响应无效")
+		c.noteError(ctx, "xLyra Cloud 返回的轮询响应无效")
 		return
 	}
 	c.finishPairing(ctx, resp.Status, resp.InstanceID, resp.InstanceName, resp.UserDisplayName)
@@ -227,39 +227,39 @@ func (c *Client) finishPairing(ctx context.Context, pollStatus, instanceID, inst
 	if !done {
 		return
 	}
-	if next == store.HubStatusBound {
+	if next == store.CloudStatusBound {
 		if instanceID == "" {
-			c.noteError(ctx, "Hub 未返回实例 id")
+			c.noteError(ctx, "xLyra Cloud 未返回实例 id")
 			return
 		}
 		if err := c.repo.MarkBound(ctx, instanceID, instanceName, userDisplayName, c.now()); err != nil {
-			c.warn("hub binding was not saved", "error", err.Error())
+			c.warn("xLyra Cloud binding was not saved", "error", err.Error())
 			return
 		}
 		c.mu.Lock()
 		c.pending = nil
 		c.mu.Unlock()
-		c.recordAudit(ctx, "hub_binding.bound", map[string]any{"instanceId": instanceID})
+		c.recordAudit(ctx, "cloud_binding.bound", map[string]any{"instanceId": instanceID})
 		return
 	}
 	c.mu.Lock()
 	c.pending = nil
 	c.mu.Unlock()
 	if err := c.repo.ClearPairing(ctx, lastError); err != nil {
-		c.warn("hub pairing was not cleared", "error", err.Error())
+		c.warn("xLyra Cloud pairing was not cleared", "error", err.Error())
 	}
 }
 
-func (c *Client) heartbeat(ctx context.Context, row store.HubBinding) error {
+func (c *Client) heartbeat(ctx context.Context, row store.CloudBinding) error {
 	priv, err := c.privateKey(row)
 	if err != nil {
 		c.noteError(ctx, "实例私钥无法读取")
-		c.warn("hub heartbeat skipped")
+		c.warn("xLyra Cloud heartbeat skipped")
 		return err
 	}
-	hub := row.HubURL
-	if hub == "" {
-		hub, err = c.hubURL(ctx)
+	cloud := row.CloudURL
+	if cloud == "" {
+		cloud, err = c.cloudURL(ctx)
 		if err != nil {
 			c.noteError(ctx, err.Error())
 			return err
@@ -276,38 +276,38 @@ func (c *Client) heartbeat(ctx context.Context, row store.HubBinding) error {
 	}
 	callCtx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	status, raw, err := c.post(callCtx, hub, "/api/instance/heartbeat", body, &signedRequest{
+	status, raw, err := c.post(callCtx, cloud, "/api/instance/heartbeat", body, &signedRequest{
 		instanceID: row.InstanceID,
 		privateKey: priv,
 	})
 	if err != nil {
 		c.noteError(ctx, err.Error())
-		c.warn("hub heartbeat failed")
+		c.warn("xLyra Cloud heartbeat failed")
 		return err
 	}
 	if status < 200 || status >= 300 {
-		hubErr, _ := hubError(status, raw).(*HubError)
-		if hubErr != nil && hubErr.Code == "instance_revoked" {
-			_ = c.repo.ClearBinding(ctx, store.HubStatusRevoked, revokedMessage)
+		cloudErr, _ := cloudError(status, raw).(*CloudError)
+		if cloudErr != nil && cloudErr.Code == "instance_revoked" {
+			_ = c.repo.ClearBinding(ctx, store.CloudStatusRevoked, revokedMessage)
 			c.clearDeveloperCache()
-			c.warn("hub binding revoked")
+			c.warn("xLyra Cloud binding revoked")
 			return errRevoked
 		}
-		if hubErr != nil && hubErr.Code == "clock_skew" {
+		if cloudErr != nil && cloudErr.Code == "clock_skew" {
 			message := clockSkewMessage
-			if hubErr.ServerTime != "" {
-				message = clockSkewMessage + "（服务器时间 " + hubErr.ServerTime + "）"
+			if cloudErr.ServerTime != "" {
+				message = clockSkewMessage + "（服务器时间 " + cloudErr.ServerTime + "）"
 			}
 			c.noteError(ctx, message)
-			c.warn("hub heartbeat clock skew")
+			c.warn("xLyra Cloud heartbeat clock skew")
 			return errors.New(message)
 		}
 		message := "心跳失败"
-		if hubErr != nil && hubErr.Code != "" {
-			message = "心跳失败: " + hubErr.Code
+		if cloudErr != nil && cloudErr.Code != "" {
+			message = "心跳失败: " + cloudErr.Code
 		}
 		c.noteError(ctx, message)
-		c.warn("hub heartbeat rejected", "code", codeOf(hubErr))
+		c.warn("xLyra Cloud heartbeat rejected", "code", codeOf(cloudErr))
 		return errors.New(message)
 	}
 	var resp struct {
@@ -316,13 +316,13 @@ func (c *Client) heartbeat(ctx context.Context, row store.HubBinding) error {
 	}
 	_ = json.Unmarshal(raw, &resp)
 	if err := c.repo.RecordSync(ctx, resp.InstanceName, resp.UserDisplayName, c.now()); err != nil {
-		c.warn("hub heartbeat sync was not saved", "error", err.Error())
+		c.warn("xLyra Cloud heartbeat sync was not saved", "error", err.Error())
 		return err
 	}
 	return nil
 }
 
-func codeOf(err *HubError) string {
+func codeOf(err *CloudError) string {
 	if err == nil {
 		return ""
 	}

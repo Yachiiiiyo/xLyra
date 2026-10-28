@@ -21,7 +21,7 @@ import (
 
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/crypto"
-	"xlyra/server/internal/hubclient"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/marketproto"
@@ -51,7 +51,7 @@ func TestInstalledPluginsExposeOwnershipAndAhead(t *testing.T) {
 		{ID: "acme.stranger", Versions: []marketproto.PluginVersion{{Version: "1.0.0"}}},
 		{ID: "other.demo", Versions: []marketproto.PluginVersion{{Version: "1.0.0"}}},
 	}}}})
-	if rec := env.authed(http.MethodGet, "/api/v1/hub-binding/developer", nil); rec.Code != http.StatusOK {
+	if rec := env.authed(http.MethodGet, "/api/v1/cloud-binding/developer", nil); rec.Code != http.StatusOK {
 		t.Fatalf("developer %d %s", rec.Code, rec.Body.String())
 	}
 	listed := env.authed(http.MethodGet, "/api/v1/js-plugins", nil)
@@ -66,14 +66,14 @@ func TestInstalledPluginsExposeOwnershipAndAhead(t *testing.T) {
 	assertPlugin(t, items, "acme.stranger", false, true, "1.0.0", "3.0.0")
 
 	env.setDeveloper(map[string]any{"status": "pending", "namespaces": []any{}, "keys": []any{}})
-	if rec := env.authed(http.MethodGet, "/api/v1/hub-binding/developer?refresh=1", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"pending"`) {
+	if rec := env.authed(http.MethodGet, "/api/v1/cloud-binding/developer?refresh=1", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"pending"`) {
 		t.Fatalf("refresh %d %s", rec.Code, rec.Body.String())
 	}
 	again := pluginItems(t, env.authed(http.MethodGet, "/api/v1/js-plugins", nil).Body.Bytes())
 	assertPlugin(t, again, "acme.ahead", false, true, "1.2.0", "1.3.0")
 }
 
-func TestHubSubmissionSuccessAuditAndErrors(t *testing.T) {
+func TestCloudSubmissionSuccessAuditAndErrors(t *testing.T) {
 	env := newDevEnv(t)
 	signer := env.installSigned(t, "acme.demo", "1.4.0", env.priv, store.JSPluginStatusEnabled)
 	env.installRaw(t, "acme.plain", "1.0.0", env.unsigned("acme.plain", "1.0.0"), "")
@@ -85,44 +85,44 @@ func TestHubSubmissionSuccessAuditAndErrors(t *testing.T) {
 	env.svc.SetCatalogFixture(&market.CatalogFixture{Snapshot: market.Snapshot{Index: &marketproto.Index{Plugins: []marketproto.Plugin{
 		{ID: "acme.demo", Versions: []marketproto.PluginVersion{{Version: "1.2.0"}}},
 	}}}})
-	if rec := env.authed(http.MethodGet, "/api/v1/hub-binding/developer", nil); rec.Code != http.StatusOK {
+	if rec := env.authed(http.MethodGet, "/api/v1/cloud-binding/developer", nil); rec.Code != http.StatusOK {
 		t.Fatalf("developer %d %s", rec.Code, rec.Body.String())
 	}
 
-	denied := env.authed(http.MethodPost, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.0.0","changelog":"nope"}`))
+	denied := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.0.0","changelog":"nope"}`))
 	if denied.Code != http.StatusNotFound || errorField(t, denied, "code") != "not_found" {
 		t.Fatalf("missing version %d %s", denied.Code, denied.Body.String())
 	}
-	shortLog := env.authed(http.MethodPost, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"  "}`))
+	shortLog := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"  "}`))
 	if shortLog.Code != http.StatusBadRequest || errorField(t, shortLog, "code") != "changelog_required" {
 		t.Fatalf("changelog %d %s", shortLog.Code, shortLog.Body.String())
 	}
-	unsigned := env.authed(http.MethodPost, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"acme.plain","version":"1.0.0","changelog":"notes"}`))
+	unsigned := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.plain","version":"1.0.0","changelog":"notes"}`))
 	if unsigned.Code != http.StatusBadRequest || errorField(t, unsigned, "code") != "package_unsigned" {
 		t.Fatalf("unsigned %d %s", unsigned.Code, unsigned.Body.String())
 	}
 	env.svc.SetCatalogFixture(&market.CatalogFixture{Snapshot: market.Snapshot{Index: &marketproto.Index{Plugins: []marketproto.Plugin{
 		{ID: "acme.demo", Versions: []marketproto.PluginVersion{{Version: "1.4.0"}}},
 	}}}})
-	behind := env.authed(http.MethodPost, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"notes"}`))
+	behind := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"notes"}`))
 	if behind.Code != http.StatusConflict || errorField(t, behind, "code") != "version_not_greater" {
 		t.Fatalf("not ahead %d %s", behind.Code, behind.Body.String())
 	}
-	if env.hub.submits() != 0 {
-		t.Fatalf("local rejection called hub %d times", env.hub.submits())
+	if env.cloud.submits() != 0 {
+		t.Fatalf("local rejection called cloud %d times", env.cloud.submits())
 	}
 	env.svc.SetCatalogFixture(&market.CatalogFixture{Snapshot: market.Snapshot{Index: &marketproto.Index{Plugins: []marketproto.Plugin{
 		{ID: "acme.demo", Versions: []marketproto.PluginVersion{{Version: "1.2.0"}}},
 	}}}})
 
-	env.hub.setCode("not_developer")
+	env.cloud.setCode("not_developer")
 	for _, code := range []string{
 		"not_developer", "no_active_key", "namespace_not_active", "signer_not_registered",
 		"version_not_greater", "too_many_pending", "daily_limit", "changelog_required",
 	} {
-		env.hub.setCode(code)
-		rec := env.authed(http.MethodPost, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"修好了额度显示"}`))
-		if rec.Code != http.StatusBadGateway || errorField(t, rec, "code") != code || errorField(t, rec, "hub_code") != code {
+		env.cloud.setCode(code)
+		rec := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"修好了额度显示"}`))
+		if rec.Code != http.StatusBadGateway || errorField(t, rec, "code") != code || errorField(t, rec, "cloud_code") != code {
 			t.Fatalf("%s -> %d %s", code, rec.Code, rec.Body.String())
 		}
 		if msg := errorField(t, rec, "message"); msg == "" || msg == code {
@@ -130,17 +130,17 @@ func TestHubSubmissionSuccessAuditAndErrors(t *testing.T) {
 		}
 	}
 
-	env.hub.setCode("")
-	ok := env.authed(http.MethodPost, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"修好了额度显示"}`))
+	env.cloud.setCode("")
+	ok := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"修好了额度显示"}`))
 	if ok.Code != http.StatusOK {
 		t.Fatalf("submit %d %s", ok.Code, ok.Body.String())
 	}
-	var created hubclient.Submission
+	var created cloudclient.Submission
 	if err := json.Unmarshal(ok.Body.Bytes(), &created); err != nil || created.ID != "sub-9" || created.Status != "checking" {
 		t.Fatalf("created %s err=%v", ok.Body.String(), err)
 	}
-	if env.hub.changelog() != "修好了额度显示" || !bytes.Equal(env.hub.savedPackage(), env.packages["acme.demo@1.4.0"]) {
-		t.Fatalf("hub saw changelog=%q pkgLen=%d", env.hub.changelog(), len(env.hub.savedPackage()))
+	if env.cloud.changelog() != "修好了额度显示" || !bytes.Equal(env.cloud.savedPackage(), env.packages["acme.demo@1.4.0"]) {
+		t.Fatalf("cloud saw changelog=%q pkgLen=%d", env.cloud.changelog(), len(env.cloud.savedPackage()))
 	}
 	logs, _, err := store.NewAdminAuditLogRepository(env.st.DB()).List(context.Background(), store.AdminAuditLogFilters{Page: 1, PageSize: 20})
 	if err != nil {
@@ -148,7 +148,7 @@ func TestHubSubmissionSuccessAuditAndErrors(t *testing.T) {
 	}
 	var saw bool
 	for _, item := range logs {
-		if item.Action != "hub_binding.submission" || !item.Success {
+		if item.Action != "cloud_binding.submission" || !item.Success {
 			continue
 		}
 		text := string(item.Metadata)
@@ -164,13 +164,13 @@ func TestHubSubmissionSuccessAuditAndErrors(t *testing.T) {
 	if !strings.Contains(string(raw), "sub-9") {
 		t.Fatalf("list submission = %s", raw)
 	}
-	queried := env.authed(http.MethodGet, "/api/v1/hub-binding/submissions?pluginId=acme.demo", nil)
+	queried := env.authed(http.MethodGet, "/api/v1/cloud-binding/submissions?pluginId=acme.demo", nil)
 	if queried.Code != http.StatusOK || !strings.Contains(queried.Body.String(), "in_review") {
 		t.Fatalf("query %d %s", queried.Code, queried.Body.String())
 	}
 }
 
-func TestHubTimeoutDoesNotStallPluginList(t *testing.T) {
+func TestCloudTimeoutDoesNotStallPluginList(t *testing.T) {
 	st := openAdminJSPluginStore(t)
 	ctx := context.Background()
 	authService := auth.NewService(st.DB(), adminTestMasterKey)
@@ -186,7 +186,7 @@ func TestHubTimeoutDoesNotStallPluginList(t *testing.T) {
 		close(stop)
 		srv.Close()
 	})
-	repo := store.NewHubBindingRepository(st.DB())
+	repo := store.NewCloudBindingRepository(st.DB())
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -204,20 +204,20 @@ func TestHubTimeoutDoesNotStallPluginList(t *testing.T) {
 	if err := repo.MarkBound(ctx, "inst-hang", "desk", "Ada", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	client := hubclient.New(repo, store.NewJSPluginRepository(st.DB()), adminTestMasterKey,
+	client := cloudclient.New(repo, store.NewJSPluginRepository(st.DB()), adminTestMasterKey,
 		func(context.Context) (string, error) { return srv.URL, nil },
-		hubclient.Options{AllowInsecureLocal: true, HTTPTimeout: 200 * time.Millisecond})
+		cloudclient.Options{AllowInsecureLocal: true, HTTPTimeout: 200 * time.Millisecond})
 	manager := jsplugin.NewManager(st, nil)
-	h := Handler{auth: authService}.WithTrafficFlowStore(st).WithJSPlugins(manager).WithHubClient(client)
+	h := Handler{auth: authService}.WithTrafficFlowStore(st).WithJSPlugins(manager).WithCloudClient(client)
 	router := devRouter(h, client, authService)
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		done <- hubAuthed(t, router, session.Token, "", http.MethodGet, "/api/v1/hub-binding/developer?refresh=1", nil)
+		done <- cloudAuthed(t, router, session.Token, "", http.MethodGet, "/api/v1/cloud-binding/developer?refresh=1", nil)
 	}()
 	time.Sleep(40 * time.Millisecond)
 	began := time.Now()
-	listed := hubAuthed(t, router, session.Token, "", http.MethodGet, "/api/v1/js-plugins", nil)
-	status := hubAuthed(t, router, session.Token, "", http.MethodGet, "/api/v1/hub-binding", nil)
+	listed := cloudAuthed(t, router, session.Token, "", http.MethodGet, "/api/v1/js-plugins", nil)
+	status := cloudAuthed(t, router, session.Token, "", http.MethodGet, "/api/v1/cloud-binding", nil)
 	if listed.Code != http.StatusOK || status.Code != http.StatusOK || time.Since(began) > 150*time.Millisecond {
 		t.Fatalf("list=%d status=%d in %s", listed.Code, status.Code, time.Since(began))
 	}
@@ -237,9 +237,9 @@ type devEnv struct {
 	auth     *auth.Service
 	token    string
 	csrf     string
-	client   *hubclient.Client
+	client   *cloudclient.Client
 	svc      *market.Service
-	hub      *scriptHub
+	cloud    *scriptCloud
 	priv     ed25519.PrivateKey
 	router   http.Handler
 	packages map[string][]byte
@@ -258,10 +258,10 @@ func newDevEnv(t *testing.T) *devEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := &scriptHub{pub: pub, instanceID: "inst-dev"}
-	srv := httptest.NewServer(hub)
+	cloud := &scriptCloud{pub: pub, instanceID: "inst-dev"}
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
-	repo := store.NewHubBindingRepository(st.DB())
+	repo := store.NewCloudBindingRepository(st.DB())
 	enc, err := crypto.EncryptSecret(adminTestMasterKey, base64.StdEncoding.EncodeToString(priv))
 	if err != nil {
 		t.Fatal(err)
@@ -274,40 +274,40 @@ func newDevEnv(t *testing.T) *devEnv {
 	if err := repo.MarkBound(ctx, "inst-dev", "desk", "Ada", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	client := hubclient.New(repo, store.NewJSPluginRepository(st.DB()), adminTestMasterKey,
+	client := cloudclient.New(repo, store.NewJSPluginRepository(st.DB()), adminTestMasterKey,
 		func(context.Context) (string, error) { return srv.URL, nil },
-		hubclient.Options{AllowInsecureLocal: true, HTTPTimeout: time.Second})
+		cloudclient.Options{AllowInsecureLocal: true, HTTPTimeout: time.Second})
 	svc, err := market.NewService(store.JSPluginRepository{}, nil, nil, []ed25519.PublicKey{}, []string{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager := jsplugin.NewManager(st, nil)
-	h := Handler{auth: authService}.WithTrafficFlowStore(st).WithJSPlugins(manager).WithPluginMarket(svc).WithHubClient(client)
+	h := Handler{auth: authService}.WithTrafficFlowStore(st).WithJSPlugins(manager).WithPluginMarket(svc).WithCloudClient(client)
 	return &devEnv{
 		t: t, st: st, auth: authService, token: session.Token, csrf: authService.CSRFTokenForSession(session.Token),
-		client: client, svc: svc, hub: hub, priv: priv, router: devRouter(h, client, authService),
+		client: client, svc: svc, cloud: cloud, priv: priv, router: devRouter(h, client, authService),
 		packages: map[string][]byte{},
 	}
 }
 
-func devRouter(h Handler, client *hubclient.Client, authService *auth.Service) http.Handler {
+func devRouter(h Handler, client *cloudclient.Client, authService *auth.Service) http.Handler {
 	router := chi.NewRouter()
 	router.Route("/api/v1", func(v1 chi.Router) {
 		v1.Use(authService.RequireAdminSession)
 		v1.Use(authService.RequireAdminCSRF)
 		v1.Get("/js-plugins", h.ListJSPlugins)
-		RegisterHubBinding(v1, h, client)
+		RegisterCloudBinding(v1, h, client)
 	})
 	return router
 }
 
 func (e *devEnv) authed(method, target string, body []byte) *httptest.ResponseRecorder {
 	e.t.Helper()
-	return hubAuthed(e.t, e.router, e.token, e.csrf, method, target, body)
+	return cloudAuthed(e.t, e.router, e.token, e.csrf, method, target, body)
 }
 
 func (e *devEnv) setDeveloper(payload map[string]any) {
-	e.hub.setDeveloper(payload)
+	e.cloud.setDeveloper(payload)
 }
 
 func (e *devEnv) installSigned(t *testing.T, id, version string, priv ed25519.PrivateKey, status string) string {
@@ -400,10 +400,10 @@ func pluginItems(t *testing.T, raw []byte) map[string]map[string]any {
 func TestMarketAheadWithoutIndexMatchesSubmit(t *testing.T) {
 	h := Handler{}
 	item := map[string]any{}
-	profile := hubclient.DeveloperProfile{
-		Status:     hubclient.DeveloperActive,
-		Namespaces: []hubclient.DeveloperNamespace{{Name: "acme", Status: hubclient.DeveloperActive}},
-		Keys:       []hubclient.DeveloperKey{{Fingerprint: "SHA256:k", Status: hubclient.DeveloperActive}},
+	profile := cloudclient.DeveloperProfile{
+		Status:     cloudclient.DeveloperActive,
+		Namespaces: []cloudclient.DeveloperNamespace{{Name: "acme", Status: cloudclient.DeveloperActive}},
+		Keys:       []cloudclient.DeveloperKey{{Fingerprint: "SHA256:k", Status: cloudclient.DeveloperActive}},
 	}
 	versions := []store.JSPluginVersion{{
 		PluginID: "acme.demo", Version: "1.0.0", Status: store.JSPluginStatusEnabled, Signer: "SHA256:k",
@@ -437,7 +437,7 @@ func errorField(t *testing.T, rec *httptest.ResponseRecorder, field string) stri
 	return value
 }
 
-type scriptHub struct {
+type scriptCloud struct {
 	mu         sync.Mutex
 	pub        ed25519.PublicKey
 	instanceID string
@@ -448,41 +448,41 @@ type scriptHub struct {
 	lastPkg    []byte
 }
 
-func (h *scriptHub) setDeveloper(payload map[string]any) {
+func (h *scriptCloud) setDeveloper(payload map[string]any) {
 	h.mu.Lock()
 	h.developer = payload
 	h.mu.Unlock()
 }
 
-func (h *scriptHub) setCode(code string) {
+func (h *scriptCloud) setCode(code string) {
 	h.mu.Lock()
 	h.code = code
 	h.mu.Unlock()
 }
 
-func (h *scriptHub) submits() int {
+func (h *scriptCloud) submits() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.submitHits
 }
 
-func (h *scriptHub) changelog() string {
+func (h *scriptCloud) changelog() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.lastChange
 }
 
-func (h *scriptHub) savedPackage() []byte {
+func (h *scriptCloud) savedPackage() []byte {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]byte(nil), h.lastPkg...)
 }
 
-func (h *scriptHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *scriptCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	unix, _ := strconv.ParseInt(r.Header.Get("X-XLyra-Timestamp"), 10, 64)
 	sig, _ := base64.StdEncoding.DecodeString(r.Header.Get("X-XLyra-Signature"))
-	message := hubclient.CanonicalMessage(r.Method, r.URL.Path, unix, body)
+	message := cloudclient.CanonicalMessage(r.Method, r.URL.Path, unix, body)
 	if r.Header.Get("X-XLyra-Instance") != h.instanceID || !ed25519.Verify(h.pub, []byte(message), sig) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return

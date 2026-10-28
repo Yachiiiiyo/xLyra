@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE hub_binding (
+CREATE TABLE cloud_binding (
   id SMALLINT PRIMARY KEY CHECK (id = 1),
   public_key TEXT NOT NULL,
   private_key_enc TEXT NOT NULL,
@@ -8,7 +8,7 @@ CREATE TABLE hub_binding (
   pairing_code_hint TEXT NOT NULL DEFAULT '',
   poll_token_enc TEXT NOT NULL DEFAULT '',
   pairing_expires_at TIMESTAMPTZ,
-  hub_url TEXT NOT NULL DEFAULT '',
+  cloud_url TEXT NOT NULL DEFAULT '',
   user_display_name TEXT NOT NULL DEFAULT '',
   instance_name TEXT NOT NULL DEFAULT '',
   bound_at TIMESTAMPTZ,
@@ -22,4 +22,4 @@ CREATE TABLE hub_binding (
 );
 
 -- +goose Down
-DROP TABLE IF EXISTS hub_binding;
+DROP TABLE IF EXISTS cloud_binding;

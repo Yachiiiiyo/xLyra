@@ -95,14 +95,14 @@ xlyra-plugin sign <package.xlp> --key key.pem [--out signed.xlp]
 ## publish
 
 ```bash
-export XLYRA_HUB_TOKEN='xlh_…'
-xlyra-plugin publish <package.xlp> --changelog "..." [--changelog-file FILE] [--hub URL] [--token T] [--no-wait]
+export XLYRA_CLOUD_TOKEN='xlh_…'
+xlyra-plugin publish <package.xlp> --changelog "..." [--changelog-file FILE] [--cloud URL] [--token T] [--no-wait]
 ```
 
-把已签名的 `.xlp` 提交到 Hub。默认 Hub 是 `https://xlyra.yachiyo.im`（与当前 `root.json` 的 `endpoints.hub` 相同）。`--changelog` 和 `--changelog-file` 二选一，必填。
+把已签名的 `.xlp` 提交到 xLyra Cloud。默认 xLyra Cloud 是 `https://xlyra.yachiyo.im`（与当前 `root.json` 的 `endpoints.hub` 相同）。`--changelog` 和 `--changelog-file` 二选一，必填。
 
 发布前会先做和 `verify` 一样的本地检查，并且要求包已经签名。通过后上传到 `POST /api/dev/token/submissions`，打印提交编号，然后每 3 秒查询状态，直到进入待审核、已批准、已发布、已退回、检查未通过或已撤回。默认最多等 10 分钟。`--no-wait` 提交后立刻返回。
 
-`--token` 会进入 shell 历史，请改用环境变量 `XLYRA_HUB_TOKEN`。命令行参数优先于环境变量。Hub 地址必须是 https；只有 `http://127.0.0.1` 和 `http://localhost` 可以用来连本地测试的 Hub。令牌不会出现在命令的输出里。
+`--token` 会进入 shell 历史，请改用环境变量 `XLYRA_CLOUD_TOKEN`。命令行参数优先于环境变量。xLyra Cloud 地址必须是 https；只有 `http://127.0.0.1` 和 `http://localhost` 可以用来连本地测试的 xLyra Cloud。令牌不会出现在命令的输出里。
 
 完整路径是 `keygen` 生成密钥、`pack --sign` 或 `sign` 签名，再到 `publish`。见[发布](./publishing.md)。

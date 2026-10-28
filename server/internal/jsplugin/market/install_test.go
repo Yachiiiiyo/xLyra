@@ -113,11 +113,11 @@ func TestMarketInstall(t *testing.T) {
 		marketRevocation("rev-old", "acme.deprecated", deprecatedPkg.Manifest.Version, deprecatedPkg.SHA256, "deprecated", issued),
 	}
 
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, entries))
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, entries))
 	for _, raw := range [][]byte{probe220, probe120, probe100, siteRaw, revokedRaw, deprecatedRaw, unsignedRaw, hostRaw, strangerRaw, failRaw, junk, manualRaw, clashMarket, lockedMarket, tamperRaw, laterRaw, staleRaw} {
-		hub.put("packages/"+marketproto.FileSHA256(raw)+".xlp", raw)
+		cloud.put("packages/"+marketproto.FileSHA256(raw)+".xlp", raw)
 	}
-	srv := httptest.NewServer(hub)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -240,10 +240,10 @@ func TestMarketInstall(t *testing.T) {
 		t.Fatal("historical version was dropped")
 	}
 
-	hub.put("packages/"+marketproto.FileSHA256(tamperRaw)+".xlp", []byte("tampered-bytes"))
+	cloud.put("packages/"+marketproto.FileSHA256(tamperRaw)+".xlp", []byte("tampered-bytes"))
 	mustInstallCode(t, installErr(svc, "acme.tamper", ""), InstallCodeDownloadFailed)
 	noVersion(t, repo, "acme.tamper", "1.0.0")
-	hub.put("packages/"+marketproto.FileSHA256(tamperRaw)+".xlp", tamperRaw)
+	cloud.put("packages/"+marketproto.FileSHA256(tamperRaw)+".xlp", tamperRaw)
 
 	manualRow, err := svc.Install(ctx, "", "acme.manual", "1.0.0")
 	if err != nil {
@@ -326,9 +326,9 @@ func TestInstallSucceedsWhenHistoricalVersionUsesOldFingerprint(t *testing.T) {
 	plugins := []marketproto.Plugin{
 		pluginDoc("acme.rotate", jsplugin.KindQuotaProbe, []string{newFP}, entry(newPkg, newRaw), entry(oldPkg, oldRaw)),
 	}
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
-	hub.put("packages/"+marketproto.FileSHA256(newRaw)+".xlp", newRaw)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
+	cloud.put("packages/"+marketproto.FileSHA256(newRaw)+".xlp", newRaw)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -388,11 +388,11 @@ func TestMarketInstallIconLegibility(t *testing.T) {
 		pluginDoc("acme.darkicon", jsplugin.KindQuotaProbe, []string{devFP}, entry(darkPkg, darkRaw)),
 		pluginDoc("acme.lighticon", jsplugin.KindQuotaProbe, []string{devFP}, entry(lightPkg, lightRaw)),
 	}
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
 	for _, raw := range [][]byte{darkRaw, lightRaw} {
-		hub.put("packages/"+marketproto.FileSHA256(raw)+".xlp", raw)
+		cloud.put("packages/"+marketproto.FileSHA256(raw)+".xlp", raw)
 	}
-	srv := httptest.NewServer(hub)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -465,8 +465,8 @@ func TestVerifyVersionAttestationTrustCache(t *testing.T) {
 	}, true)
 	att := attestPackage(t, online, pkg, []string{}, []string{}, issued)
 	docs := signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, nil, nil)
-	hub := newHub(docs)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(docs)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base})
@@ -592,7 +592,7 @@ func TestVerifyVersionAttestationTrustCache(t *testing.T) {
 	later := signCatalog(t, rootPriv, online, 3, 3, 3, issued, exp, nil, []marketproto.RevocationEntry{
 		marketRevocation("rev-sec", pkg.Manifest.ID, pkg.Manifest.Version, pkg.SHA256, "security", issued),
 	})
-	hub.use(later)
+	cloud.use(later)
 	if !svc.VerifyVersionAttestation(ctx, row) {
 		t.Fatal("cache cleared before a successful sync")
 	}

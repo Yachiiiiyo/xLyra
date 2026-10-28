@@ -15,19 +15,19 @@ import (
 	"xlyra/server/internal/config"
 )
 
-func openHubBindingStore(t *testing.T) *Store {
+func openCloudBindingStore(t *testing.T) *Store {
 	t.Helper()
 	cfg := config.Config{
 		AppEnv:           "test",
 		DBConnectTimeout: 2 * time.Second,
 		DBMaxConns:       4,
 		PostgresDSN:      strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
-		DBHost:           hubBindingEnv("DB_HOST", "127.0.0.1"),
+		DBHost:           cloudBindingEnv("DB_HOST", "127.0.0.1"),
 		DBPort:           5432,
-		DBName:           hubBindingEnv("DB_NAME", "xlyra"),
-		DBUser:           hubBindingEnv("DB_USER", "postgres"),
-		DBPassword:       hubBindingEnv("DB_PASSWORD", "postgres"),
-		DBSSLMode:        hubBindingEnv("DB_SSLMODE", "disable"),
+		DBName:           cloudBindingEnv("DB_NAME", "xlyra"),
+		DBUser:           cloudBindingEnv("DB_USER", "postgres"),
+		DBPassword:       cloudBindingEnv("DB_PASSWORD", "postgres"),
+		DBSSLMode:        cloudBindingEnv("DB_SSLMODE", "disable"),
 	}
 	if value := strings.TrimSpace(os.Getenv("DB_PORT")); value != "" {
 		port, err := strconv.Atoi(value)
@@ -42,7 +42,7 @@ func openHubBindingStore(t *testing.T) *Store {
 	if err != nil {
 		t.Skipf("dev PostgreSQL unavailable: %v", err)
 	}
-	schema := "xlyra_hub_binding_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	schema := "xlyra_cloud_binding_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if err := base.DB().Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error; err != nil {
 		base.Close()
 		t.Skipf("cannot create a test schema: %v", err)
@@ -77,7 +77,7 @@ func openHubBindingStore(t *testing.T) *Store {
 	return st
 }
 
-func hubBindingEnv(key, fallback string) string {
+func cloudBindingEnv(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
 	}

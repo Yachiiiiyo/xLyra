@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"context"
@@ -16,21 +16,21 @@ import (
 	"xlyra/server/internal/store"
 )
 
-const hubTestMasterKey = "hub-test-master"
+const cloudTestMasterKey = "cloud-test-master"
 
-func openHubStore(t *testing.T) *store.Store {
+func openCloudStore(t *testing.T) *store.Store {
 	t.Helper()
 	cfg := config.Config{
 		AppEnv:           "test",
 		DBConnectTimeout: 2 * time.Second,
 		DBMaxConns:       4,
 		PostgresDSN:      strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
-		DBHost:           hubEnv("DB_HOST", "127.0.0.1"),
+		DBHost:           cloudEnv("DB_HOST", "127.0.0.1"),
 		DBPort:           5432,
-		DBName:           hubEnv("DB_NAME", "xlyra"),
-		DBUser:           hubEnv("DB_USER", "postgres"),
-		DBPassword:       hubEnv("DB_PASSWORD", "postgres"),
-		DBSSLMode:        hubEnv("DB_SSLMODE", "disable"),
+		DBName:           cloudEnv("DB_NAME", "xlyra"),
+		DBUser:           cloudEnv("DB_USER", "postgres"),
+		DBPassword:       cloudEnv("DB_PASSWORD", "postgres"),
+		DBSSLMode:        cloudEnv("DB_SSLMODE", "disable"),
 	}
 	if value := strings.TrimSpace(os.Getenv("DB_PORT")); value != "" {
 		port, err := strconv.Atoi(value)
@@ -45,7 +45,7 @@ func openHubStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Skipf("dev PostgreSQL unavailable: %v", err)
 	}
-	schema := "xlyra_hub_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	schema := "xlyra_cloud_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if err := base.DB().Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error; err != nil {
 		base.Close()
 		t.Skipf("cannot create a test schema: %v", err)
@@ -80,7 +80,7 @@ func openHubStore(t *testing.T) *store.Store {
 	return st
 }
 
-func hubEnv(key, fallback string) string {
+func cloudEnv(key, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 		return value
 	}

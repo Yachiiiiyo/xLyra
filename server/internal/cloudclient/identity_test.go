@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"bytes"
@@ -77,7 +77,7 @@ func TestDeveloperProfileUnavailableJSON(t *testing.T) {
 }
 
 func TestDeveloperCacheAndNotDeveloper(t *testing.T) {
-	st := openHubStore(t)
+	st := openCloudStore(t)
 	var mu sync.Mutex
 	hits := 0
 	mode := "active"
@@ -139,7 +139,7 @@ func TestDeveloperCacheAndNotDeveloper(t *testing.T) {
 	if err != nil || again.Status != DeveloperNone || again.Unavailable {
 		t.Fatalf("not developer = %#v err=%v", again, err)
 	}
-	if err := store.NewHubBindingRepository(st.DB()).ClearBinding(ctx, store.HubStatusUnbound, ""); err != nil {
+	if err := store.NewCloudBindingRepository(st.DB()).ClearBinding(ctx, store.CloudStatusUnbound, ""); err != nil {
 		t.Fatal(err)
 	}
 	none, err := client.Developer(ctx, true)
@@ -154,13 +154,13 @@ func TestDeveloperCacheAndNotDeveloper(t *testing.T) {
 	}
 	mu.Lock()
 	if hits != after {
-		t.Fatalf("unbound called hub, hits %d -> %d", after, hits)
+		t.Fatalf("unbound called cloud, hits %d -> %d", after, hits)
 	}
 	mu.Unlock()
 }
 
 func TestDeveloperFailureIsNotCached(t *testing.T) {
-	st := openHubStore(t)
+	st := openCloudStore(t)
 	var mu sync.Mutex
 	hits := 0
 	fail := true
@@ -219,7 +219,7 @@ func TestDeveloperFailureIsNotCached(t *testing.T) {
 }
 
 func TestSubmitForwardsSignedPackage(t *testing.T) {
-	st := openHubStore(t)
+	st := openCloudStore(t)
 	pkg := []byte("signed-xlp-bytes")
 	var got multipartParts
 	var pub ed25519.PublicKey
@@ -253,7 +253,7 @@ func TestSubmitForwardsSignedPackage(t *testing.T) {
 }
 
 func TestDeveloperFailureDoesNotBlockStatus(t *testing.T) {
-	st := openHubStore(t)
+	st := openCloudStore(t)
 	stop := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		<-stop
@@ -262,13 +262,13 @@ func TestDeveloperFailureDoesNotBlockStatus(t *testing.T) {
 		close(stop)
 		srv.Close()
 	})
-	client := New(store.NewHubBindingRepository(st.DB()), store.NewJSPluginRepository(st.DB()), hubTestMasterKey,
+	client := New(store.NewCloudBindingRepository(st.DB()), store.NewJSPluginRepository(st.DB()), cloudTestMasterKey,
 		func(context.Context) (string, error) { return srv.URL, nil },
 		Options{AllowInsecureLocal: true, HTTPTimeout: 200 * time.Millisecond})
 	if client.http.Timeout != 200*time.Millisecond {
 		t.Fatal(client.http.Timeout)
 	}
-	defaults := New(store.NewHubBindingRepository(st.DB()), store.NewJSPluginRepository(st.DB()), hubTestMasterKey,
+	defaults := New(store.NewCloudBindingRepository(st.DB()), store.NewJSPluginRepository(st.DB()), cloudTestMasterKey,
 		func(context.Context) (string, error) { return srv.URL, nil }, Options{})
 	if defaults.http.Timeout != defaultHTTPTimeout {
 		t.Fatalf("default timeout = %s", defaults.http.Timeout)
@@ -278,11 +278,11 @@ func TestDeveloperFailureDoesNotBlockStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = pub
-	enc, err := crypto.EncryptSecret(hubTestMasterKey, base64.StdEncoding.EncodeToString(priv))
+	enc, err := crypto.EncryptSecret(cloudTestMasterKey, base64.StdEncoding.EncodeToString(priv))
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := store.NewHubBindingRepository(st.DB())
+	repo := store.NewCloudBindingRepository(st.DB())
 	if _, err := repo.EnsureIdentity(context.Background(), func() (string, string, error) {
 		return base64.StdEncoding.EncodeToString(pub), enc, nil
 	}); err != nil {
@@ -299,7 +299,7 @@ func TestDeveloperFailureDoesNotBlockStatus(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	began := time.Now()
 	view, err := client.Status(context.Background())
-	if err != nil || time.Since(began) > 100*time.Millisecond || view.Status != store.HubStatusBound {
+	if err != nil || time.Since(began) > 100*time.Millisecond || view.Status != store.CloudStatusBound {
 		t.Fatalf("status took %s err=%v view=%#v", time.Since(began), err, view)
 	}
 	select {
@@ -323,11 +323,11 @@ func boundClient(t *testing.T, st *store.Store, fn func(http.ResponseWriter, *ht
 	if err != nil {
 		t.Fatal(err)
 	}
-	enc, err := crypto.EncryptSecret(hubTestMasterKey, base64.StdEncoding.EncodeToString(priv))
+	enc, err := crypto.EncryptSecret(cloudTestMasterKey, base64.StdEncoding.EncodeToString(priv))
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := store.NewHubBindingRepository(st.DB())
+	repo := store.NewCloudBindingRepository(st.DB())
 	if _, err := repo.EnsureIdentity(context.Background(), func() (string, string, error) {
 		return base64.StdEncoding.EncodeToString(pub), enc, nil
 	}); err != nil {
@@ -338,7 +338,7 @@ func boundClient(t *testing.T, st *store.Store, fn func(http.ResponseWriter, *ht
 	}
 	srv := httptest.NewServer(http.HandlerFunc(fn))
 	t.Cleanup(srv.Close)
-	client := New(repo, store.NewJSPluginRepository(st.DB()), hubTestMasterKey,
+	client := New(repo, store.NewJSPluginRepository(st.DB()), cloudTestMasterKey,
 		func(context.Context) (string, error) { return srv.URL, nil },
 		Options{AllowInsecureLocal: true, HTTPTimeout: time.Second})
 	return pub, client

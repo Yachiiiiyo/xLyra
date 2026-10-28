@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"crypto/ed25519"
@@ -40,19 +40,19 @@ const httpMethodPost = "POST"
 
 func TestPollTransitionsAndBackoff(t *testing.T) {
 	next, last, done := applyPollStatus("pending")
-	if next != store.HubStatusPairing || last != "" || done {
+	if next != store.CloudStatusPairing || last != "" || done {
 		t.Fatalf("pending -> %s %q %v", next, last, done)
 	}
 	next, last, done = applyPollStatus("approved")
-	if next != store.HubStatusBound || !done {
+	if next != store.CloudStatusBound || !done {
 		t.Fatalf("approved -> %s %v", next, done)
 	}
 	next, last, done = applyPollStatus("denied")
-	if next != store.HubStatusUnbound || last != "配对被拒绝" || !done {
+	if next != store.CloudStatusUnbound || last != "配对被拒绝" || !done {
 		t.Fatalf("denied -> %s %q %v", next, last, done)
 	}
 	next, last, done = applyPollStatus("expired")
-	if next != store.HubStatusUnbound || last != "配对已过期" || !done {
+	if next != store.CloudStatusUnbound || last != "配对已过期" || !done {
 		t.Fatalf("expired -> %s %q %v", next, last, done)
 	}
 	if got := nextBackoff(0, 30*time.Second, time.Hour); got != 30*time.Second {

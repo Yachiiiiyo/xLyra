@@ -62,16 +62,16 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 		plugin("acme.plain", nil),
 	}
 	docs := adminSignCatalog(t, rootPriv, online, 1, 1, 1, issued, expires, plugins, nil)
-	hub := newAdminHub()
-	hub.put("root.json", docs[0])
-	hub.put("index.json", docs[1])
-	hub.put("revocations.json", docs[2])
-	hub.put("icons/"+goodSum+".png", goodPNG)
-	hub.put("icons/"+swapSum+".png", []byte("different"))
-	hub.put("icons/"+wideSum+".png", widePNG)
-	hub.put("icons/"+rawSum+".png", raw)
-	hub.put("icons/"+hugeSum+".png", huge)
-	srv := httptest.NewServer(hub)
+	cloud := newAdminCloud()
+	cloud.put("root.json", docs[0])
+	cloud.put("index.json", docs[1])
+	cloud.put("revocations.json", docs[2])
+	cloud.put("icons/"+goodSum+".png", goodPNG)
+	cloud.put("icons/"+swapSum+".png", []byte("different"))
+	cloud.put("icons/"+wideSum+".png", widePNG)
+	cloud.put("icons/"+rawSum+".png", raw)
+	cloud.put("icons/"+hugeSum+".png", huge)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := adminMarketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -126,15 +126,15 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 	missing := get(strings.Repeat("cd", 32), "")
 	assertAdminErrorCode(t, missing, http.StatusNotFound, "js_plugin_market_not_found")
 	goodName := "icons/" + goodSum + ".png"
-	if hub.hit(goodName) != 0 {
-		t.Fatal("rejected hashes touched the hub")
+	if cloud.hit(goodName) != 0 {
+		t.Fatal("rejected hashes touched the cloud")
 	}
 
-	hub.mu.Lock()
-	hub.blockName = goodName
-	hub.entered = make(chan struct{})
-	hub.release = make(chan struct{})
-	hub.mu.Unlock()
+	cloud.mu.Lock()
+	cloud.blockName = goodName
+	cloud.entered = make(chan struct{})
+	cloud.release = make(chan struct{})
+	cloud.mu.Unlock()
 	const n = 8
 	done := make(chan *httptest.ResponseRecorder, n)
 	for i := 0; i < n; i++ {
@@ -143,11 +143,11 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 		}()
 	}
 	select {
-	case <-hub.entered:
+	case <-cloud.entered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for the icon fetch")
 	}
-	close(hub.release)
+	close(cloud.release)
 	for i := 0; i < n; i++ {
 		rec := <-done
 		adminAssertStatus(t, rec, http.StatusOK)
@@ -157,56 +157,56 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 		}
 		assertNoAddress(rec)
 	}
-	if hub.hit(goodName) != 1 {
-		t.Fatalf("good hits = %d", hub.hit(goodName))
+	if cloud.hit(goodName) != 1 {
+		t.Fatalf("good hits = %d", cloud.hit(goodName))
 	}
 	cached := get(goodSum, "")
 	adminAssertStatus(t, cached, http.StatusOK)
-	if !bytes.Equal(cached.Body.Bytes(), goodPNG) || hub.hit(goodName) != 1 {
-		t.Fatalf("second request missed the cache, hits = %d", hub.hit(goodName))
+	if !bytes.Equal(cached.Body.Bytes(), goodPNG) || cloud.hit(goodName) != 1 {
+		t.Fatalf("second request missed the cache, hits = %d", cloud.hit(goodName))
 	}
 	notModified := get(goodSum, `"`+goodSum+`"`)
 	adminAssertStatus(t, notModified, http.StatusNotModified)
 	assertMarketIconHeaders(t, notModified, goodSum)
-	if notModified.Body.Len() != 0 || hub.hit(goodName) != 1 {
-		t.Fatalf("not modified body %d hits %d", notModified.Body.Len(), hub.hit(goodName))
+	if notModified.Body.Len() != 0 || cloud.hit(goodName) != 1 {
+		t.Fatalf("not modified body %d hits %d", notModified.Body.Len(), cloud.hit(goodName))
 	}
 	weak := get(goodSum, `W/"`+goodSum+`"`)
 	adminAssertStatus(t, weak, http.StatusNotModified)
-	if hub.hit(goodName) != 1 {
+	if cloud.hit(goodName) != 1 {
 		t.Fatal("weak etag fetched the icon")
 	}
 
 	swapName := "icons/" + swapSum + ".png"
-	before := hub.hit(swapName)
+	before := cloud.hit(swapName)
 	mismatch := get(swapSum, "")
 	assertAdminErrorCode(t, mismatch, http.StatusBadGateway, "js_plugin_market_icon_failed")
 	assertNoAddress(mismatch)
-	if hub.hit(swapName) != before+1 {
-		t.Fatalf("mismatch hits = %d", hub.hit(swapName))
+	if cloud.hit(swapName) != before+1 {
+		t.Fatalf("mismatch hits = %d", cloud.hit(swapName))
 	}
 	again := get(swapSum, "")
 	assertAdminErrorCode(t, again, http.StatusBadGateway, "js_plugin_market_icon_failed")
-	if hub.hit(swapName) != before+2 {
-		t.Fatalf("mismatch was cached, hits = %d", hub.hit(swapName))
+	if cloud.hit(swapName) != before+2 {
+		t.Fatalf("mismatch was cached, hits = %d", cloud.hit(swapName))
 	}
-	hub.put(swapName, swapPNG)
+	cloud.put(swapName, swapPNG)
 	fixed := get(swapSum, "")
 	adminAssertStatus(t, fixed, http.StatusOK)
-	if !bytes.Equal(fixed.Body.Bytes(), swapPNG) || hub.hit(swapName) != before+3 {
-		t.Fatalf("swap retry hits = %d", hub.hit(swapName))
+	if !bytes.Equal(fixed.Body.Bytes(), swapPNG) || cloud.hit(swapName) != before+3 {
+		t.Fatalf("swap retry hits = %d", cloud.hit(swapName))
 	}
 
 	for _, sum := range []string{rawSum, wideSum, hugeSum} {
 		name := "icons/" + sum + ".png"
-		start := hub.hit(name)
+		start := cloud.hit(name)
 		first := get(sum, "")
 		assertAdminErrorCode(t, first, http.StatusBadGateway, "js_plugin_market_icon_failed")
 		assertNoAddress(first)
 		second := get(sum, "")
 		assertAdminErrorCode(t, second, http.StatusBadGateway, "js_plugin_market_icon_failed")
-		if hub.hit(name) != start+2 {
-			t.Fatalf("%s hits = %d, start %d", name, hub.hit(name), start)
+		if cloud.hit(name) != start+2 {
+			t.Fatalf("%s hits = %d, start %d", name, cloud.hit(name), start)
 		}
 	}
 
@@ -215,11 +215,11 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	kept := hub.hit(goodName)
+	kept := cloud.hit(goodName)
 	closed := get(goodSum, "")
 	assertAdminErrorCode(t, closed, http.StatusNotFound, "js_plugin_market_not_found")
 	assertNoAddress(closed)
-	if hub.hit(goodName) != kept {
+	if cloud.hit(goodName) != kept {
 		t.Fatal("disabled market fetched an icon")
 	}
 }

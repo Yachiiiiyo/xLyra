@@ -75,8 +75,8 @@ func TestDevPostgresMigrationsInitializeNewSchema(t *testing.T) {
 	if !migrator.HasTable("js_plugin_auto_updates") {
 		t.Fatal("js_plugin_auto_updates table was not created")
 	}
-	if !migrator.HasTable("hub_binding") {
-		t.Fatal("hub_binding table was not created")
+	if !migrator.HasTable("cloud_binding") {
+		t.Fatal("cloud_binding table was not created")
 	}
 	if !migrator.HasColumn(&JSPluginMarketSubscription{}, "NotifiedVersion") {
 		t.Fatal("js_plugin_market_subscriptions.notified_version column was not created")

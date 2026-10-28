@@ -579,9 +579,9 @@ func envelopePayload(raw []byte) ([]byte, error) {
 	return payload, nil
 }
 
-// HubURL returns the hub endpoint from the cached, already-verified root.
+// CloudURL returns the cloud endpoint from the cached, already-verified root.
 // It does not fetch root.json.
-func (s *Service) HubURL(ctx context.Context) (string, error) {
+func (s *Service) CloudURL(ctx context.Context) (string, error) {
 	if s == nil {
 		return "", errors.New("未缓存已验签的市场 root")
 	}
@@ -589,10 +589,10 @@ func (s *Service) HubURL(ctx context.Context) (string, error) {
 	if err != nil || root == nil {
 		return "", errors.New("未缓存已验签的市场 root")
 	}
-	if root.Endpoints.Hub == nil || strings.TrimSpace(*root.Endpoints.Hub) == "" {
-		return "", errors.New("已验签的 root 未声明 Hub 地址")
+	if root.Endpoints.Cloud == nil || strings.TrimSpace(*root.Endpoints.Cloud) == "" {
+		return "", errors.New("已验签的 root 未声明 xLyra Cloud 地址")
 	}
-	return strings.TrimRight(strings.TrimSpace(*root.Endpoints.Hub), "/"), nil
+	return strings.TrimRight(strings.TrimSpace(*root.Endpoints.Cloud), "/"), nil
 }
 
 func documentGeneratedAt(raw []byte) (time.Time, error) {

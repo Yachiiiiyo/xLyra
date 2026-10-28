@@ -628,7 +628,7 @@ func validateEndpoints(ep Endpoints) error {
 			return errCode(CodeBadField, "registry")
 		}
 	}
-	if ep.Hub != nil && !strings.HasPrefix(*ep.Hub, "https://") {
+	if ep.Cloud != nil && !strings.HasPrefix(*ep.Cloud, "https://") {
 		return errCode(CodeBadField, "hub")
 	}
 	if ep.Push != nil && !strings.HasPrefix(*ep.Push, "https://") {

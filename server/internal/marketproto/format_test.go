@@ -101,7 +101,7 @@ func TestSizeLimit(t *testing.T) {
 
 func TestEndpointsAndLists(t *testing.T) {
 	hub := "https://hub.example"
-	if err := validateEndpoints(Endpoints{Registry: []string{"https://registry.example/v1/"}, Hub: &hub}); err != nil {
+	if err := validateEndpoints(Endpoints{Registry: []string{"https://registry.example/v1/"}, Cloud: &hub}); err != nil {
 		t.Fatal(err)
 	}
 	if Code(validateEndpoints(Endpoints{Registry: []string{"http://registry.example/v1/"}})) != CodeBadField {
@@ -111,7 +111,7 @@ func TestEndpointsAndLists(t *testing.T) {
 		t.Fatal("slash")
 	}
 	bad := "http://hub.example"
-	if Code(validateEndpoints(Endpoints{Registry: []string{"https://registry.example/v1/"}, Hub: &bad})) != CodeBadField {
+	if Code(validateEndpoints(Endpoints{Registry: []string{"https://registry.example/v1/"}, Cloud: &bad})) != CodeBadField {
 		t.Fatal("hub")
 	}
 	if err := requireSorted("hosts", []string{}); err != nil {

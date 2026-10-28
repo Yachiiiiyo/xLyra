@@ -31,7 +31,7 @@ import (
 	"xlyra/server/internal/health"
 	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/hubclient"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
@@ -95,7 +95,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	var usageService *usage.Service
 	var jsPluginManager *jsplugin.Manager
 	var pluginMarket *market.Service
-	var hubClient *hubclient.Client
+	var cloudClient *cloudclient.Client
 	if db != nil {
 		jsPluginManager = jsplugin.NewManager(db, jsplugin.DefaultCatalog())
 		marketService, err := market.NewService(store.NewJSPluginRepository(db.DB()), httpClients, confFile, nil, nil)
@@ -114,17 +114,17 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		}
 		reloadCancel()
 		jsPluginManager.StartSync(ctx, 5*time.Second)
-		hubClient = hubclient.New(
-			store.NewHubBindingRepository(db.DB()),
+		cloudClient = cloudclient.New(
+			store.NewCloudBindingRepository(db.DB()),
 			store.NewJSPluginRepository(db.DB()),
 			masterKey,
 			func(ctx context.Context) (string, error) {
 				if pluginMarket == nil {
 					return "", errors.New("未缓存已验签的市场 root")
 				}
-				return pluginMarket.HubURL(ctx)
+				return pluginMarket.CloudURL(ctx)
 			},
-			hubclient.Options{
+			cloudclient.Options{
 				Logger: logger,
 				Audit: func(ctx context.Context, action string, metadata map[string]any) {
 					if authService == nil {
@@ -132,7 +132,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 					}
 					authService.RecordAudit(ctx, auth.AuditInput{
 						Action:       action,
-						ResourceType: "hub_binding",
+						ResourceType: "cloud_binding",
 						Success:      true,
 						Metadata:     metadata,
 					})
@@ -148,10 +148,10 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			}
 			defer func() {
 				if rec := recover(); rec != nil {
-					logger.Error("hub binding task stopped", "error", rec)
+					logger.Error("xLyra Cloud binding task stopped", "error", rec)
 				}
 			}()
-			hubClient.Run(ctx)
+			cloudClient.Run(ctx)
 		}()
 		if tasks != nil {
 			if done := jsPluginManager.CatalogSyncDone(); done != nil {
@@ -284,8 +284,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	if pluginMarket != nil {
 		adminHandler = adminHandler.WithPluginMarket(pluginMarket)
 	}
-	if hubClient != nil {
-		adminHandler = adminHandler.WithHubClient(hubClient)
+	if cloudClient != nil {
+		adminHandler = adminHandler.WithCloudClient(cloudClient)
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
@@ -438,7 +438,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Get("/js-plugins/{id}/inputs/{name}/options", adminHandler.ListJSPluginAutomationOptions)
 				protected.Get("/js-plugins/{id}/action-log", adminHandler.ListJSPluginActionLog)
 				admin.RegisterPluginMarket(protected, adminHandler)
-				admin.RegisterHubBinding(protected, adminHandler, hubClient)
+				admin.RegisterCloudBinding(protected, adminHandler, cloudClient)
 				protected.Get("/downloads/{downloadID}", downloadService.Download)
 				protected.Get("/dashboard/usage", adminHandler.DashboardUsage)
 				protected.Get("/dashboard/cooldowns", adminHandler.DashboardCooldowns)

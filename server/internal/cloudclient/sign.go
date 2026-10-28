@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"crypto/ed25519"

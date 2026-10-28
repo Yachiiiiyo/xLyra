@@ -57,11 +57,11 @@ func TestAutoUpgradeRollbackAndBackfill(t *testing.T) {
 			versionEntry(manualPkg, manualRaw, attestPackage(t, online, manualPkg, none, none, issued), okCompat, none, none, issued),
 		),
 	}
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
-	hub.put("packages/"+marketproto.FileSHA256(oldRaw)+".xlp", oldRaw)
-	hub.put("packages/"+marketproto.FileSHA256(newRaw)+".xlp", newRaw)
-	hub.put("packages/"+marketproto.FileSHA256(manualRaw)+".xlp", manualRaw)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
+	cloud.put("packages/"+marketproto.FileSHA256(oldRaw)+".xlp", oldRaw)
+	cloud.put("packages/"+marketproto.FileSHA256(newRaw)+".xlp", newRaw)
+	cloud.put("packages/"+marketproto.FileSHA256(manualRaw)+".xlp", manualRaw)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -353,9 +353,9 @@ func TestRevokeRollbackDownloadsMissingVersion(t *testing.T) {
 	entries := []marketproto.RevocationEntry{
 		marketRollback("rev-pull", "acme.pull", newPkg.Manifest.Version, newPkg.SHA256, "1.0.0", issued),
 	}
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, entries))
-	hub.put("packages/"+marketproto.FileSHA256(oldRaw)+".xlp", oldRaw)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, entries))
+	cloud.put("packages/"+marketproto.FileSHA256(oldRaw)+".xlp", oldRaw)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6, SourceURL: srv.URL + "/"})
 	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, conf)
@@ -409,12 +409,12 @@ func TestAutoUpgradeLocalDigest(t *testing.T) {
 			versionEntry(plainNew, plainNewRaw, attestPackage(t, online, plainNew, none, none, issued), okCompat, none, none, issued),
 			versionEntry(plainOld, plainOldRaw, attestPackage(t, online, plainOld, none, none, issued), okCompat, none, none, issued)),
 	}
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
-	hub.put("packages/"+marketproto.FileSHA256(clashOldRaw)+".xlp", clashOldRaw)
-	hub.put("packages/"+marketproto.FileSHA256(clashNewRaw)+".xlp", clashNewRaw)
-	hub.put("packages/"+marketproto.FileSHA256(sameOldRaw)+".xlp", sameOldRaw)
-	hub.put("packages/"+marketproto.FileSHA256(plainOldRaw)+".xlp", plainOldRaw)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
+	cloud.put("packages/"+marketproto.FileSHA256(clashOldRaw)+".xlp", clashOldRaw)
+	cloud.put("packages/"+marketproto.FileSHA256(clashNewRaw)+".xlp", clashNewRaw)
+	cloud.put("packages/"+marketproto.FileSHA256(sameOldRaw)+".xlp", sameOldRaw)
+	cloud.put("packages/"+marketproto.FileSHA256(plainOldRaw)+".xlp", plainOldRaw)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -475,8 +475,8 @@ func TestAutoUpgradeLocalDigest(t *testing.T) {
 		t.Fatalf("same package = %s %v", sameRow.PackageSHA256, err)
 	}
 	sameFile := "packages/" + marketproto.FileSHA256(sameNewRaw) + ".xlp"
-	if hub.hit(sameFile) != 0 {
-		t.Fatalf("matching package downloaded %d times", hub.hit(sameFile))
+	if cloud.hit(sameFile) != 0 {
+		t.Fatalf("matching package downloaded %d times", cloud.hit(sameFile))
 	}
 
 	if enabledVersion(t, repo, "acme.plain") != "1.0.0" {
@@ -528,9 +528,9 @@ func TestRevokeRollbackLocalDigest(t *testing.T) {
 		marketRollback("rev-plain", "acme.plain", plainNew.Manifest.Version, plainNew.SHA256, "1.0.0", issued),
 	}
 	docs := signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, entries)
-	hub := newHub(docs)
-	hub.put("packages/"+marketproto.FileSHA256(clashOldRaw)+".xlp", clashOldRaw)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(docs)
+	cloud.put("packages/"+marketproto.FileSHA256(clashOldRaw)+".xlp", clashOldRaw)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6, SourceURL: srv.URL + "/"})
 	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, conf)
@@ -572,8 +572,8 @@ func TestRevokeRollbackLocalDigest(t *testing.T) {
 		t.Fatalf("matching rollback enabled %s", enabledVersion(t, repo, "acme.same"))
 	}
 	sameFile := "packages/" + marketproto.FileSHA256(sameOldRaw) + ".xlp"
-	if hub.hit(sameFile) != 0 {
-		t.Fatalf("matching rollback downloaded %d times", hub.hit(sameFile))
+	if cloud.hit(sameFile) != 0 {
+		t.Fatalf("matching rollback downloaded %d times", cloud.hit(sameFile))
 	}
 
 	if enabledVersion(t, repo, "acme.plain") != "" {

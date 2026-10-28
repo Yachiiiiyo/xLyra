@@ -37,7 +37,7 @@ import (
 	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/gateway"
 	"xlyra/server/internal/httpclient"
-	"xlyra/server/internal/hubclient"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/marketproto"
@@ -47,7 +47,7 @@ import (
 
 const flowMasterKey = "flow-master-key"
 
-// Hub 地址只在本测试里注入到 hubclient.New，并只允许 http 指向回环。
+// xLyra Cloud 地址只在本测试里注入到 cloudclient.New，并只允许 http 指向回环。
 // 生产路由仍从已验签 root 的 endpoints.hub 取地址，且不打开 AllowInsecureLocal。
 // 市场同步用测试根公钥（不改内置根公钥）和显式 source_url 指向假对象存储的 HTTP 镜像。
 // 已验签 root 的 registry/hub 仍必须是 https，这里没有放宽这条规则。
@@ -56,10 +56,10 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"} {
 		t.Setenv(key, "")
 	}
-	hub := startFlowHub(t)
+	cloud := startFlowCloud(t)
 	st := openFlowStore(t)
 	ctx := context.Background()
-	rootPub, err := base64.StdEncoding.DecodeString(hub.RootKey)
+	rootPub, err := base64.StdEncoding.DecodeString(cloud.RootKey)
 	if err != nil || len(rootPub) != ed25519.PublicKeySize {
 		t.Fatalf("root key: %v", err)
 	}
@@ -68,12 +68,12 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(config.PluginMarketConfig{
-		Enabled: true, SourceURL: hub.RegistryURL, AutoUpdate: true, IndexSyncHours: 6,
+		Enabled: true, SourceURL: cloud.RegistryURL, AutoUpdate: true, IndexSyncHours: 6,
 	})); err != nil {
 		t.Fatal(err)
 	}
 	repo := store.NewJSPluginRepository(st.DB())
-	marketSvc, err := market.NewService(repo, httpclient.NewManager(conf), conf, []ed25519.PublicKey{rootPub}, []string{hub.RegistryURL})
+	marketSvc, err := market.NewService(repo, httpclient.NewManager(conf), conf, []ed25519.PublicKey{rootPub}, []string{cloud.RegistryURL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,12 +82,12 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hubClient := hubclient.New(
-		store.NewHubBindingRepository(st.DB()),
+	cloudClient := cloudclient.New(
+		store.NewCloudBindingRepository(st.DB()),
 		repo,
 		flowMasterKey,
-		func(context.Context) (string, error) { return hub.HubURL, nil },
-		hubclient.Options{
+		func(context.Context) (string, error) { return cloud.CloudURL, nil },
+		cloudclient.Options{
 			AllowInsecureLocal: true, HTTPTimeout: 5 * time.Second,
 			PollInterval: 50 * time.Millisecond, LeaseRetry: 50 * time.Millisecond,
 			HeartbeatInterval: time.Hour, HasFirstHeartbeatDelay: true, FirstHeartbeatDelay: time.Hour,
@@ -96,20 +96,20 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	)
 	runCtx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
-	go hubClient.Run(runCtx)
+	go cloudClient.Run(runCtx)
 	manager := jsplugin.NewManager(st, nil)
-	h := Handler{auth: authSvc}.WithTrafficFlowStore(st).WithJSPlugins(manager).WithPluginMarket(marketSvc).WithHubClient(hubClient)
+	h := Handler{auth: authSvc}.WithTrafficFlowStore(st).WithJSPlugins(manager).WithPluginMarket(marketSvc).WithCloudClient(cloudClient)
 	gw := gateway.NewHandler(slog.New(slog.NewTextHandler(io.Discard, nil)), authSvc, routeengine.NewService(st), st, flowMasterKey)
 	router := chi.NewRouter()
 	router.Route("/api/v1", func(v1 chi.Router) {
 		v1.Use(authSvc.RequireAdminSession)
 		v1.Use(authSvc.RequireAdminCSRF)
 		v1.Get("/js-plugins", h.ListJSPlugins)
-		v1.Get("/hub-binding/developer", func(w http.ResponseWriter, r *http.Request) {
-			h.GetHubDeveloper(hubClient, w, r)
+		v1.Get("/cloud-binding/developer", func(w http.ResponseWriter, r *http.Request) {
+			h.GetCloudDeveloper(cloudClient, w, r)
 		})
-		v1.Post("/hub-binding/submissions", func(w http.ResponseWriter, r *http.Request) {
-			h.CreateHubSubmission(hubClient, w, r)
+		v1.Post("/cloud-binding/submissions", func(w http.ResponseWriter, r *http.Request) {
+			h.CreateCloudSubmission(cloudClient, w, r)
 		})
 		RegisterPluginMarket(v1, h)
 	})
@@ -120,14 +120,14 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	})
 	api := xlyraAPI{router: router, token: session.Token, csrf: authSvc.CSRFTokenForSession(session.Token)}
 
-	console := newHubConsole(t, hub)
+	console := newCloudConsole(t, cloud)
 	console.login(t)
 	packed := packSamples(t)
 	signer := packed.key.Public().(ed25519.PublicKey)
-	if _, err := hubClient.StartPairing(ctx, "flow-desk"); err != nil {
+	if _, err := cloudClient.StartPairing(ctx, "flow-desk"); err != nil {
 		t.Fatal(err)
 	}
-	status, err := hubClient.Status(ctx)
+	status, err := cloudClient.Status(ctx)
 	if err != nil || status.Pairing == nil || status.Pairing.UserCode == "" {
 		t.Fatalf("pairing status %+v %v", status, err)
 	}
@@ -139,7 +139,7 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 		t.Fatalf("lookup %s", lookup)
 	}
 	console.postJSON(t, "/api/instances/pairings/"+found.PairingID+"/approve", `{"name":"flow-desk"}`)
-	waitBound(t, hubClient)
+	waitBound(t, cloudClient)
 	t.Log("step1 bound")
 
 	console.postJSON(t, "/api/dev/apply", `{"displayName":"联调开发者","contact":"dev@example.test","agreementVersion":"v1"}`)
@@ -166,39 +166,39 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	if err := manager.Enable(ctx, "testns.sample", "0.1.0", jsplugin.EnableOptions{ConfirmUntrusted: true}); err != nil {
 		t.Fatal(err)
 	}
-	api.get(t, "/api/v1/hub-binding/developer?refresh=1")
+	api.get(t, "/api/v1/cloud-binding/developer?refresh=1")
 	item := pluginItem(t, api.get(t, "/api/v1/js-plugins"), "testns.sample")
 	if item["owned"] != true || item["market_ahead"] != true {
 		t.Fatalf("owned/ahead %#v", item)
 	}
-	dev := decodeJSON[map[string]any](t, mustBody(t, api.get(t, "/api/v1/hub-binding/developer")))
+	dev := decodeJSON[map[string]any](t, mustBody(t, api.get(t, "/api/v1/cloud-binding/developer")))
 	if dev["status"] != "active" {
 		t.Fatalf("developer %s", dev["status"])
 	}
 	t.Log("step3 owned ahead")
 
 	submitViaXLyra(t, api, "0.1.0", "首次上架")
-	hub.postControl(t, "/check")
+	cloud.postControl(t, "/check")
 	console.elevate(t)
 	console.postJSON(t, "/api/admin/versions/testns.sample/0.1.0/approve", `{}`)
-	hub.postControl(t, "/publish")
+	cloud.postControl(t, "/publish")
 
 	console.elevate(t)
 	console.putJSON(t, "/api/admin/settings/review", `{"autoApproveLight":true}`)
 	if err := manager.Enable(ctx, "testns.sample", "0.2.0", jsplugin.EnableOptions{ConfirmUntrusted: true}); err != nil {
 		t.Fatal(err)
 	}
-	api.get(t, "/api/v1/hub-binding/developer?refresh=1")
+	api.get(t, "/api/v1/cloud-binding/developer?refresh=1")
 	ahead := pluginItem(t, api.get(t, "/api/v1/js-plugins"), "testns.sample")
 	if ahead["owned"] != true || ahead["market_ahead"] != true {
 		t.Fatalf("0.2.0 ahead %#v", ahead)
 	}
 	submitViaXLyra(t, api, "0.2.0", "轻档自动批准")
-	hub.postControl(t, "/check")
+	cloud.postControl(t, "/check")
 	if err := console.waitVersion(t, "0.2.0", "approved", "published"); err != nil {
 		t.Fatal(err)
 	}
-	hub.postControl(t, "/publish")
+	cloud.postControl(t, "/publish")
 	syncMarket(t, api)
 	assertIndex(t, marketSvc, "0.2.0", "轻档自动批准", packed.digests["0.2.0"], challenge.Fingerprint)
 	if err := manager.Disable(ctx, "testns.sample"); err != nil {
@@ -207,7 +207,7 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	if err := manager.Enable(ctx, "testns.sample", "0.1.0", jsplugin.EnableOptions{ConfirmUntrusted: true}); err != nil {
 		t.Fatal(err)
 	}
-	api.get(t, "/api/v1/hub-binding/developer?refresh=1")
+	api.get(t, "/api/v1/cloud-binding/developer?refresh=1")
 	updated := pluginItem(t, api.get(t, "/api/v1/js-plugins"), "testns.sample")
 	if updated["update_available"] != true || updated["update_version"] != "0.2.0" {
 		t.Fatalf("update %#v", updated)
@@ -220,7 +220,7 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 
 	console.elevate(t)
 	console.postJSON(t, "/api/admin/versions/testns.sample/0.2.0/takedown", `{"reason":"联调下架"}`)
-	hub.postControl(t, "/publish")
+	cloud.postControl(t, "/publish")
 	syncMarket(t, api)
 	snap, err := marketSvc.Snapshot(ctx)
 	if err != nil {
@@ -231,40 +231,40 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	}
 	console.elevate(t)
 	console.postJSON(t, "/api/admin/developers/"+console.userID+"/keys/revoke", `{"fingerprint":`+strconv.Quote(challenge.Fingerprint)+`,"reason":"联调吊销"}`)
-	rawStatus, rawBody := signedSubmit(t, st, hub.HubURL, packed.samples["0.3.0"], "吊销后不应成功")
-	assertHubError(t, rawStatus, rawBody, "no_active_key", "signer_not_registered")
+	rawStatus, rawBody := signedSubmit(t, st, cloud.CloudURL, packed.samples["0.3.0"], "吊销后不应成功")
+	assertCloudError(t, rawStatus, rawBody, "no_active_key", "signer_not_registered")
 	console.elevate(t)
 	console.postJSON(t, "/api/admin/developers/"+console.userID+"/suspend", `{"reason":"联调撤销"}`)
-	refreshed := decodeJSON[map[string]any](t, mustBody(t, api.get(t, "/api/v1/hub-binding/developer?refresh=1")))
+	refreshed := decodeJSON[map[string]any](t, mustBody(t, api.get(t, "/api/v1/cloud-binding/developer?refresh=1")))
 	if refreshed["status"] != "suspended" {
 		t.Fatalf("suspended %v", refreshed["status"])
 	}
-	denied := api.post(t, "/api/v1/hub-binding/submissions", []byte(`{"pluginId":"testns.sample","version":"0.3.0","changelog":"撤销后"}`))
+	denied := api.post(t, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"testns.sample","version":"0.3.0","changelog":"撤销后"}`))
 	if denied.Code == http.StatusOK {
 		t.Fatalf("submit still open %s", denied.Body.String())
 	}
-	rawStatus, rawBody = signedSubmit(t, st, hub.HubURL, packed.samples["0.3.0"], "撤销后不应成功")
-	assertHubError(t, rawStatus, rawBody, "not_developer")
+	rawStatus, rawBody = signedSubmit(t, st, cloud.CloudURL, packed.samples["0.3.0"], "撤销后不应成功")
+	assertCloudError(t, rawStatus, rawBody, "not_developer")
 	t.Log("step5 revoked")
 
 	proxyBefore := timeGateway(t, router)
-	hub.stop(t)
+	cloud.stop(t)
 	began := time.Now()
 	listed := api.get(t, "/api/v1/js-plugins")
 	catalog := api.get(t, "/api/v1/plugin-market")
-	devDown := api.get(t, "/api/v1/hub-binding/developer?refresh=1")
+	devDown := api.get(t, "/api/v1/cloud-binding/developer?refresh=1")
 	proxyAfter := timeGateway(t, router)
 	if listed.Code != http.StatusOK || catalog.Code != http.StatusOK || devDown.Code != http.StatusOK {
-		t.Fatalf("hub down plugins=%d market=%d dev=%d", listed.Code, catalog.Code, devDown.Code)
+		t.Fatalf("cloud down plugins=%d market=%d dev=%d", listed.Code, catalog.Code, devDown.Code)
 	}
 	if time.Since(began) > 3*time.Second || proxyAfter > 2*time.Second || proxyBefore > 2*time.Second {
-		t.Fatalf("hub down stalled list=%s proxy %s -> %s", time.Since(began), proxyBefore, proxyAfter)
+		t.Fatalf("cloud down stalled list=%s proxy %s -> %s", time.Since(began), proxyBefore, proxyAfter)
 	}
-	t.Log("step6 hub down")
+	t.Log("step6 cloud down")
 }
 
-type flowHub struct {
-	HubURL      string `json:"hubUrl"`
+type flowCloud struct {
+	CloudURL    string `json:"hubUrl"`
 	Origin      string `json:"origin"`
 	ControlURL  string `json:"controlUrl"`
 	RegistryURL string `json:"registryUrl"`
@@ -276,11 +276,11 @@ type flowHub struct {
 	stopOnce    sync.Once
 }
 
-func startFlowHub(t *testing.T) *flowHub {
+func startFlowCloud(t *testing.T) *flowCloud {
 	t.Helper()
 	dir := t.TempDir()
 	ready := filepath.Join(dir, "ready.json")
-	serverDir := hubServerDir(t)
+	serverDir := cloudServerDir(t)
 	var log bytes.Buffer
 	cmd := exec.Command("go", "test", "-count=1", "-timeout", "9m", "-run", "^TestFlowlinkServe$", "./internal/publisher")
 	cmd.Dir = serverDir
@@ -290,32 +290,32 @@ func startFlowHub(t *testing.T) *flowHub {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	hub := &flowHub{cmd: cmd, stopPath: ready + ".stop", log: &log, done: make(chan struct{})}
+	cloud := &flowCloud{cmd: cmd, stopPath: ready + ".stop", log: &log, done: make(chan struct{})}
 	go func() {
 		_ = cmd.Wait()
-		close(hub.done)
+		close(cloud.done)
 	}()
 	t.Cleanup(func() {
-		hub.stop(t)
+		cloud.stop(t)
 	})
 	deadline := time.Now().Add(3 * time.Minute)
 	for time.Now().Before(deadline) {
 		body, err := os.ReadFile(ready)
-		if err == nil && json.Unmarshal(body, hub) == nil && hub.HubURL != "" {
-			return hub
+		if err == nil && json.Unmarshal(body, cloud) == nil && cloud.CloudURL != "" {
+			return cloud
 		}
 		select {
-		case <-hub.done:
+		case <-cloud.done:
 			deadline = time.Time{}
 		default:
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
-	t.Fatalf("Hub 联调进程没有就绪: %s", clip(log.String(), 800))
+	t.Fatalf("xLyra Cloud 联调进程没有就绪: %s", clip(log.String(), 800))
 	return nil
 }
 
-func (h *flowHub) stop(t *testing.T) {
+func (h *flowCloud) stop(t *testing.T) {
 	t.Helper()
 	if h == nil || h.cmd == nil || h.done == nil {
 		return
@@ -333,7 +333,7 @@ func (h *flowHub) stop(t *testing.T) {
 	})
 }
 
-func (h *flowHub) postControl(t *testing.T, path string) {
+func (h *flowCloud) postControl(t *testing.T, path string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -352,7 +352,7 @@ func (h *flowHub) postControl(t *testing.T, path string) {
 	}
 }
 
-type hubConsole struct {
+type cloudConsole struct {
 	t      *testing.T
 	base   string
 	origin string
@@ -363,10 +363,10 @@ type hubConsole struct {
 	userID string
 }
 
-func newHubConsole(t *testing.T, hub *flowHub) *hubConsole {
+func newCloudConsole(t *testing.T, cloud *flowCloud) *cloudConsole {
 	t.Helper()
-	return &hubConsole{
-		t: t, base: hub.HubURL, origin: hub.Origin,
+	return &cloudConsole{
+		t: t, base: cloud.CloudURL, origin: cloud.Origin,
 		http: &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
@@ -374,7 +374,7 @@ func newHubConsole(t *testing.T, hub *flowHub) *hubConsole {
 	}
 }
 
-func (c *hubConsole) login(t *testing.T) {
+func (c *cloudConsole) login(t *testing.T) {
 	t.Helper()
 	status, hdr, body := c.do(t, http.MethodGet, "/api/auth/github/start", "", false)
 	if status != http.StatusFound {
@@ -422,7 +422,7 @@ func (c *hubConsole) login(t *testing.T) {
 	c.reloadCSRF(t)
 }
 
-func (c *hubConsole) elevate(t *testing.T) {
+func (c *cloudConsole) elevate(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(40 * time.Second)
 	var last string
@@ -454,7 +454,7 @@ func (c *hubConsole) elevate(t *testing.T) {
 	t.Fatalf("elevate %s", last)
 }
 
-func (c *hubConsole) reloadCSRF(t *testing.T) {
+func (c *cloudConsole) reloadCSRF(t *testing.T) {
 	t.Helper()
 	state := decodeJSON[struct {
 		CSRFToken *string `json:"csrfToken"`
@@ -465,7 +465,7 @@ func (c *hubConsole) reloadCSRF(t *testing.T) {
 	c.csrf = *state.CSRFToken
 }
 
-func (c *hubConsole) get(t *testing.T, path string) string {
+func (c *cloudConsole) get(t *testing.T, path string) string {
 	t.Helper()
 	status, _, body := c.do(t, http.MethodGet, path, "", false)
 	if status != http.StatusOK {
@@ -474,7 +474,7 @@ func (c *hubConsole) get(t *testing.T, path string) string {
 	return body
 }
 
-func (c *hubConsole) postJSON(t *testing.T, path, body string) string {
+func (c *cloudConsole) postJSON(t *testing.T, path, body string) string {
 	t.Helper()
 	status, _, raw := c.do(t, http.MethodPost, path, body, true)
 	if status >= 300 {
@@ -483,7 +483,7 @@ func (c *hubConsole) postJSON(t *testing.T, path, body string) string {
 	return raw
 }
 
-func (c *hubConsole) putJSON(t *testing.T, path, body string) string {
+func (c *cloudConsole) putJSON(t *testing.T, path, body string) string {
 	t.Helper()
 	status, _, raw := c.do(t, http.MethodPut, path, body, true)
 	if status >= 300 {
@@ -492,7 +492,7 @@ func (c *hubConsole) putJSON(t *testing.T, path, body string) string {
 	return raw
 }
 
-func (c *hubConsole) do(t *testing.T, method, path, body string, csrf bool) (int, http.Header, string) {
+func (c *cloudConsole) do(t *testing.T, method, path, body string, csrf bool) (int, http.Header, string) {
 	t.Helper()
 	var reader io.Reader
 	if body != "" || method == http.MethodPost || method == http.MethodPut {
@@ -531,7 +531,7 @@ func (c *hubConsole) do(t *testing.T, method, path, body string, csrf bool) (int
 	return resp.StatusCode, resp.Header, string(raw)
 }
 
-func (c *hubConsole) waitVersion(t *testing.T, version string, want ...string) error {
+func (c *cloudConsole) waitVersion(t *testing.T, version string, want ...string) error {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	var last string
@@ -624,7 +624,7 @@ func install(t *testing.T, manager *jsplugin.Manager, raw []byte) {
 func submitViaXLyra(t *testing.T, api xlyraAPI, version, changelog string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"pluginId": "testns.sample", "version": version, "changelog": changelog})
-	rec := api.post(t, "/api/v1/hub-binding/submissions", body)
+	rec := api.post(t, "/api/v1/cloud-binding/submissions", body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("submit %s %d %s", version, rec.Code, rec.Body.String())
 	}
@@ -701,9 +701,9 @@ func indexHas(idx *marketproto.Index, id, version string) bool {
 	return false
 }
 
-func signedSubmit(t *testing.T, st *store.Store, hubURL string, pkg []byte, changelog string) (int, []byte) {
+func signedSubmit(t *testing.T, st *store.Store, cloudURL string, pkg []byte, changelog string) (int, []byte) {
 	t.Helper()
-	row, err := store.NewHubBindingRepository(st.DB()).Get(context.Background())
+	row, err := store.NewCloudBindingRepository(st.DB()).Get(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +720,7 @@ func signedSubmit(t *testing.T, st *store.Store, hubURL string, pkg []byte, chan
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	msg := "xlyra-instance-v1\nPOST\n/api/instance/submissions\n" + ts + "\n" + fmt.Sprintf("%x", sum[:])
 	sig := base64.StdEncoding.EncodeToString(ed25519.Sign(ed25519.PrivateKey(rawKey), []byte(msg)))
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(hubURL, "/")+"/api/instance/submissions", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cloudURL, "/")+"/api/instance/submissions", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +737,7 @@ func signedSubmit(t *testing.T, st *store.Store, hubURL string, pkg []byte, chan
 	return resp.StatusCode, respBody
 }
 
-func assertHubError(t *testing.T, status int, body []byte, codes ...string) {
+func assertCloudError(t *testing.T, status int, body []byte, codes ...string) {
 	t.Helper()
 	var doc struct {
 		Error struct {
@@ -821,14 +821,14 @@ func timeGateway(t *testing.T, router http.Handler) time.Duration {
 	return elapsed
 }
 
-func waitBound(t *testing.T, client *hubclient.Client) {
+func waitBound(t *testing.T, client *cloudclient.Client) {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
-	var last hubclient.Status
+	var last cloudclient.Status
 	var err error
 	for time.Now().Before(deadline) {
 		last, err = client.Status(context.Background())
-		if err == nil && last.Status == store.HubStatusBound {
+		if err == nil && last.Status == store.CloudStatusBound {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -898,7 +898,7 @@ func openFlowStore(t *testing.T) *store.Store {
 	if err != nil {
 		t.Fatalf("PostgreSQL: %v", err)
 	}
-	schema := "xlyra_hubflow_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	schema := "xlyra_cloudflow_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if err := base.DB().Exec(fmt.Sprintf("CREATE SCHEMA %q", schema)).Error; err != nil {
 		base.Close()
 		t.Fatal(err)
@@ -933,9 +933,9 @@ func openFlowStore(t *testing.T) *store.Store {
 	return st
 }
 
-func hubServerDir(t *testing.T) string {
+func cloudServerDir(t *testing.T) string {
 	t.Helper()
-	if env := strings.TrimSpace(os.Getenv("XLYRA_HUB_ROOT")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("XLYRA_CLOUD_ROOT")); env != "" {
 		return filepath.Join(env, "server")
 	}
 	wd, err := os.Getwd()

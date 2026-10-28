@@ -23,35 +23,35 @@ func TestParsePublishArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.token != "from-env" || opts.hub != defaultHubURL || opts.changelog != "修复" {
+	if opts.token != "from-env" || opts.cloud != defaultCloudURL || opts.changelog != "修复" {
 		t.Fatalf("%+v", opts)
 	}
-	opts, err = parsePublishArgs([]string{"--token", "from-flag", "--changelog", "修复", "--hub", "https://hub.example", "dist/a.xlp"}, "from-env")
-	if err != nil || opts.token != "from-flag" || opts.hub != "https://hub.example" {
+	opts, err = parsePublishArgs([]string{"--token", "from-flag", "--changelog", "修复", "--cloud", "https://cloud.example", "dist/a.xlp"}, "from-env")
+	if err != nil || opts.token != "from-flag" || opts.cloud != "https://cloud.example" {
 		t.Fatalf("%v %+v", err, opts)
 	}
-	if _, err := parsePublishArgs([]string{"--changelog", "修复", "--hub", "http://example.com", "a.xlp"}, "t"); err == nil || !strings.Contains(err.Error(), "https") {
+	if _, err := parsePublishArgs([]string{"--changelog", "修复", "--cloud", "http://example.com", "a.xlp"}, "t"); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("非 https: %v", err)
 	}
-	if _, err := parsePublishArgs([]string{"--changelog", "修复", "--hub", "http://10.1.2.3:8080", "a.xlp"}, "t"); err == nil || !strings.Contains(err.Error(), "https") {
+	if _, err := parsePublishArgs([]string{"--changelog", "修复", "--cloud", "http://10.1.2.3:8080", "a.xlp"}, "t"); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("内网 http: %v", err)
 	}
-	opts, err = parsePublishArgs([]string{"--changelog", "修复", "--hub", "http://127.0.0.1:8090", "a.xlp"}, "t")
-	if err != nil || opts.hub != "http://127.0.0.1:8090" {
+	opts, err = parsePublishArgs([]string{"--changelog", "修复", "--cloud", "http://127.0.0.1:8090", "a.xlp"}, "t")
+	if err != nil || opts.cloud != "http://127.0.0.1:8090" {
 		t.Fatalf("本机 http: %v %+v", err, opts)
 	}
-	opts, err = parsePublishArgs([]string{"--changelog", "修复", "--hub", "http://localhost:8090/", "a.xlp"}, "t")
-	if err != nil || opts.hub != "http://localhost:8090" {
+	opts, err = parsePublishArgs([]string{"--changelog", "修复", "--cloud", "http://localhost:8090/", "a.xlp"}, "t")
+	if err != nil || opts.cloud != "http://localhost:8090" {
 		t.Fatalf("localhost: %v %+v", err, opts)
 	}
-	if _, err := parsePublishArgs([]string{"--changelog", "修复", "a.xlp"}, ""); err == nil || !strings.Contains(err.Error(), "XLYRA_HUB_TOKEN") {
+	if _, err := parsePublishArgs([]string{"--changelog", "修复", "a.xlp"}, ""); err == nil || !strings.Contains(err.Error(), "XLYRA_CLOUD_TOKEN") {
 		t.Fatal(err)
 	}
 	if _, err := parsePublishArgs([]string{"--token", "t", "a.xlp"}, ""); err == nil || !strings.Contains(err.Error(), "更新日志") {
 		t.Fatal(err)
 	}
 	usageText := captureStderr(t, usage)
-	if !strings.Contains(usageText, "publish") || !strings.Contains(usageText, "XLYRA_HUB_TOKEN") || !strings.Contains(usageText, "shell 历史") {
+	if !strings.Contains(usageText, "publish") || !strings.Contains(usageText, "XLYRA_CLOUD_TOKEN") || !strings.Contains(usageText, "shell 历史") {
 		t.Fatalf("帮助缺少 publish:\n%s", usageText)
 	}
 }
@@ -112,7 +112,7 @@ func TestPublishUploadsAndPolls(t *testing.T) {
 	token := "xlh_" + strings.Repeat("cd", 32)
 	var out bytes.Buffer
 	err := publishPackage(publishOptions{
-		packagePath: path, changelog: "修复额度解析", hub: srv.URL, token: token,
+		packagePath: path, changelog: "修复额度解析", cloud: srv.URL, token: token,
 		timeout: time.Minute, pollInterval: 5 * time.Millisecond, client: srv.Client(), out: &out,
 	})
 	if err != nil {
@@ -173,7 +173,7 @@ func TestPublishNoWaitAndErrors(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := publishPackage(publishOptions{
-		packagePath: path, changelog: "说明", hub: srv.URL, token: token, noWait: true,
+		packagePath: path, changelog: "说明", cloud: srv.URL, token: token, noWait: true,
 		client: srv.Client(), out: &out,
 	}); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestPublishNoWaitAndErrors(t *testing.T) {
 
 	out.Reset()
 	err := publishPackage(publishOptions{
-		packagePath: path, changelog: "说明", hub: srv.URL + "/fail", token: token,
+		packagePath: path, changelog: "说明", cloud: srv.URL + "/fail", token: token,
 		client: srv.Client(), out: &out,
 	})
 	if err == nil || !strings.Contains(err.Error(), "不是有效开发者") || strings.Contains(err.Error(), token) || strings.Contains(out.String(), token) {
@@ -199,7 +199,7 @@ func TestPublishNoWaitAndErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	note.Close()
-	opts, err := parsePublishArgs([]string{"--changelog-file", note.Name(), "--hub", srv.URL, path}, token)
+	opts, err := parsePublishArgs([]string{"--changelog-file", note.Name(), "--cloud", srv.URL, path}, token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestPublishRejectsUnsignedAndTimeout(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = publishPackage(publishOptions{packagePath: path, changelog: "说明", hub: "https://xlyra.yachiyo.im", token: "secret-token"})
+	err = publishPackage(publishOptions{packagePath: path, changelog: "说明", cloud: "https://xlyra.yachiyo.im", token: "secret-token"})
 	if err == nil || !strings.Contains(err.Error(), "未签名") || strings.Contains(err.Error(), "secret-token") {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestPublishRejectsUnsignedAndTimeout(t *testing.T) {
 	}))
 	defer srv.Close()
 	err = publishPackage(publishOptions{
-		packagePath: signedPath, changelog: "说明", hub: srv.URL, token: "xlh_timeouttoken",
+		packagePath: signedPath, changelog: "说明", cloud: srv.URL, token: "xlh_timeouttoken",
 		timeout: 40 * time.Millisecond, pollInterval: 5 * time.Millisecond, client: srv.Client(),
 	})
 	if err == nil || !strings.Contains(err.Error(), "等待超时") || strings.Contains(err.Error(), "xlh_timeouttoken") {

@@ -70,8 +70,8 @@ func TestSyncOnceFreshThenNotModified(t *testing.T) {
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
 	docs := signDocs(t, rootPriv, online, 1, 2, 3, gen, exp)
-	hub := newHub(docs)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(docs)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -112,9 +112,9 @@ func TestSyncOnceFreshThenNotModified(t *testing.T) {
 	if snap.Root.Seq != 1 || snap.Index.Seq != 2 || snap.Revocations.Seq != 3 {
 		t.Fatalf("snapshot seqs root=%d index=%d revocations=%d", snap.Root.Seq, snap.Index.Seq, snap.Revocations.Seq)
 	}
-	assertAnonymous(t, hub.headers, svc.owner)
+	assertAnonymous(t, cloud.headers, svc.owner)
 
-	before := hub.hit("index.json")
+	before := cloud.hit("index.json")
 	status, err = svc.SyncOnce(ctx, false)
 	if err != nil || status.Error != "" {
 		t.Fatalf("second sync = %+v, %v", status, err)
@@ -122,8 +122,8 @@ func TestSyncOnceFreshThenNotModified(t *testing.T) {
 	if !status.Root.NotModified || !status.Revocations.NotModified || status.Index.NotModified {
 		t.Fatalf("second status modified flags = %+v", status)
 	}
-	if hub.hit("index.json") != before {
-		t.Fatalf("index fetched again: %d -> %d", before, hub.hit("index.json"))
+	if cloud.hit("index.json") != before {
+		t.Fatalf("index fetched again: %d -> %d", before, cloud.hit("index.json"))
 	}
 	second, err := repo.GetMarketState(ctx)
 	if err != nil {
@@ -132,7 +132,7 @@ func TestSyncOnceFreshThenNotModified(t *testing.T) {
 	if !sameCachedDocs(first, second) || second.LastError != "" {
 		t.Fatalf("cache changed:\nfirst=%+v\nsecond=%+v", first, second)
 	}
-	for _, hdr := range hub.headers[len(hub.headers)-hub.hit("root.json"):] {
+	for _, hdr := range cloud.headers[len(cloud.headers)-cloud.hit("root.json"):] {
 		if hdr.Get("If-None-Match") == "" {
 			t.Fatal("second sync missing If-None-Match")
 		}
@@ -143,8 +143,8 @@ func TestSyncOnceSkipsFreshIndexUnlessForced(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
-	hub := newHub(signDocs(t, rootPriv, online, 1, 4, 1, gen, exp))
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signDocs(t, rootPriv, online, 1, 4, 1, gen, exp))
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -153,22 +153,22 @@ func TestSyncOnceSkipsFreshIndexUnlessForced(t *testing.T) {
 	if _, err := svc.SyncOnce(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	indexHits := hub.hit("index.json")
-	rootHits := hub.hit("root.json")
+	indexHits := cloud.hit("index.json")
+	rootHits := cloud.hit("root.json")
 	if _, err := svc.SyncOnce(ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	if hub.hit("index.json") != indexHits {
-		t.Fatalf("index hits = %d, want %d", hub.hit("index.json"), indexHits)
+	if cloud.hit("index.json") != indexHits {
+		t.Fatalf("index hits = %d, want %d", cloud.hit("index.json"), indexHits)
 	}
-	if hub.hit("root.json") <= rootHits {
+	if cloud.hit("root.json") <= rootHits {
 		t.Fatal("root was not fetched on the second sync")
 	}
 	if _, err := svc.SyncOnce(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if hub.hit("index.json") != indexHits+1 {
-		t.Fatalf("forced index hits = %d, want %d", hub.hit("index.json"), indexHits+1)
+	if cloud.hit("index.json") != indexHits+1 {
+		t.Fatalf("forced index hits = %d, want %d", cloud.hit("index.json"), indexHits+1)
 	}
 }
 
@@ -176,8 +176,8 @@ func TestSyncOnceKeepsCacheOnSeqRollback(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
-	hub := newHub(signDocs(t, rootPriv, online, 2, 5, 2, gen, exp))
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signDocs(t, rootPriv, online, 2, 5, 2, gen, exp))
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -190,7 +190,7 @@ func TestSyncOnceKeepsCacheOnSeqRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub.use(signDocs(t, rootPriv, online, 2, 4, 2, gen, exp))
+	cloud.use(signDocs(t, rootPriv, online, 2, 4, 2, gen, exp))
 	status, err := svc.SyncOnce(ctx, true)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +211,7 @@ func TestSyncOnceFallsBackToNextBase(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
-	good := newHub(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
+	good := newCloud(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
 	goodSrv := httptest.NewServer(good)
 	t.Cleanup(goodSrv.Close)
 	badHits := 0
@@ -239,7 +239,7 @@ func TestSyncOnceSourceURLDoesNotFallBack(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
-	good := newHub(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
+	good := newCloud(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
 	goodSrv := httptest.NewServer(good)
 	t.Cleanup(goodSrv.Close)
 	badHits := 0
@@ -271,14 +271,14 @@ func TestSyncOnceSingleFlightLease(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
-	hub := newHub(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
-	hub.holdFirst = true
-	hub.entered = make(chan struct{})
-	hub.release = make(chan struct{})
+	cloud := newCloud(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
+	cloud.holdFirst = true
+	cloud.entered = make(chan struct{})
+	cloud.release = make(chan struct{})
 	var releaseOnce sync.Once
-	release := func() { releaseOnce.Do(func() { close(hub.release) }) }
+	release := func() { releaseOnce.Do(func() { close(cloud.release) }) }
 	t.Cleanup(release)
-	srv := httptest.NewServer(hub)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	keys := []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}
@@ -311,14 +311,14 @@ func TestSyncOnceSingleFlightLease(t *testing.T) {
 		select {
 		case first = <-results:
 			gotResult = true
-		case <-hub.entered:
+		case <-cloud.entered:
 			gotRequest = true
 		case <-timeout:
-			t.Fatalf("timeout result=%v request=%v hits=%d", gotResult, gotRequest, hub.totalHits())
+			t.Fatalf("timeout result=%v request=%v hits=%d", gotResult, gotRequest, cloud.totalHits())
 		}
 	}
-	if hub.totalHits() != 1 {
-		t.Fatalf("in-flight requests = %d, want 1", hub.totalHits())
+	if cloud.totalHits() != 1 {
+		t.Fatalf("in-flight requests = %d, want 1", cloud.totalHits())
 	}
 	if first.err != nil || first.status.Error != errBusy {
 		t.Fatalf("first result = %+v, %v", first.status, first.err)
@@ -328,8 +328,8 @@ func TestSyncOnceSingleFlightLease(t *testing.T) {
 	if second.err != nil || second.status.Error != "" || second.status.SourceURL != base {
 		t.Fatalf("winner = %+v, %v", second.status, second.err)
 	}
-	if hub.totalHits() != 3 {
-		t.Fatalf("total requests = %d, want 3", hub.totalHits())
+	if cloud.totalHits() != 3 {
+		t.Fatalf("total requests = %d, want 3", cloud.totalHits())
 	}
 }
 
@@ -337,14 +337,14 @@ func TestSyncOnceDisabledSkipsNetwork(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
-	hub := newHub(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: srv.URL + "/", AutoUpdate: true})
 	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, conf)
 	status, err := svc.SyncOnce(context.Background(), true)
-	if err != nil || status.Error != "" || hub.totalHits() != 0 {
-		t.Fatalf("status=%+v err=%v hits=%d", status, err, hub.totalHits())
+	if err != nil || status.Error != "" || cloud.totalHits() != 0 {
+		t.Fatalf("status=%+v err=%v hits=%d", status, err, cloud.totalHits())
 	}
 	state, err := repo.GetMarketState(context.Background())
 	if err != nil {
@@ -450,7 +450,7 @@ func TestSyncOnceRejectsUnboundRootAndTriesNextBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreign := []string{"https://foreign.example/v1/"}
-	first := newHub(signDocsRegistries(t, rootPriv, online, 5, 1, 1, gen, exp, foreign))
+	first := newCloud(signDocsRegistries(t, rootPriv, online, 5, 1, 1, gen, exp, foreign))
 	firstSrv := httptest.NewServer(first)
 	t.Cleanup(firstSrv.Close)
 	secondHits := 0
@@ -484,8 +484,8 @@ func TestSyncOnceManualSourceSkipsEndpointBinding(t *testing.T) {
 	rootPriv, online := testKeys()
 	gen, exp := freshWindow()
 	docs := signDocsRegistries(t, rootPriv, online, 1, 2, 3, gen, exp, []string{"https://foreign.example/v1/"})
-	hub := newHub(docs)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(docs)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -577,15 +577,15 @@ func TestSnapshotExpiredStillReturnsDocuments(t *testing.T) {
 	}
 }
 
-type hubFile struct {
+type cloudFile struct {
 	body   []byte
 	etag   string
 	status int
 }
 
-type hub struct {
+type cloud struct {
 	mu          sync.Mutex
-	files       map[string]*hubFile
+	files       map[string]*cloudFile
 	hits        map[string]int
 	total       int
 	headers     []http.Header
@@ -599,38 +599,38 @@ type hub struct {
 	pathOnce    sync.Once
 }
 
-func newHub(docs signedDocs) *hub {
-	h := &hub{files: map[string]*hubFile{}, hits: map[string]int{}}
+func newCloud(docs signedDocs) *cloud {
+	h := &cloud{files: map[string]*cloudFile{}, hits: map[string]int{}}
 	h.use(docs)
 	return h
 }
 
-func (h *hub) use(docs signedDocs) {
+func (h *cloud) use(docs signedDocs) {
 	h.put("root.json", docs.root)
 	h.put("index.json", docs.index)
 	h.put("revocations.json", docs.revocations)
 }
 
-func (h *hub) put(name string, body []byte) {
+func (h *cloud) put(name string, body []byte) {
 	sum := sha256.Sum256(body)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.files[name] = &hubFile{body: body, etag: fmt.Sprintf(`"%x"`, sum[:8])}
+	h.files[name] = &cloudFile{body: body, etag: fmt.Sprintf(`"%x"`, sum[:8])}
 }
 
-func (h *hub) hit(name string) int {
+func (h *cloud) hit(name string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.hits[name]
 }
 
-func (h *hub) totalHits() int {
+func (h *cloud) totalHits() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.total
 }
 
-func (h *hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *cloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/")
 	h.mu.Lock()
 	h.total++

@@ -10,16 +10,16 @@ import (
 	"gorm.io/gorm"
 
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/hubclient"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/marketproto"
 	"xlyra/server/internal/store"
 )
 
-func (h Handler) GetHubDeveloper(client *hubclient.Client, w http.ResponseWriter, r *http.Request) {
+func (h Handler) GetCloudDeveloper(client *cloudclient.Client, w http.ResponseWriter, r *http.Request) {
 	if client == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "hub_binding_unavailable", "hub binding is not available")
+		h.writeError(w, r, http.StatusServiceUnavailable, "cloud_binding_unavailable", "xLyra Cloud binding is not available")
 		return
 	}
 	refresh := r.URL.Query().Get("refresh") == "1" || r.URL.Query().Get("refresh") == "true"
@@ -31,9 +31,9 @@ func (h Handler) GetHubDeveloper(client *hubclient.Client, w http.ResponseWriter
 	httpx.JSON(w, http.StatusOK, profile)
 }
 
-func (h Handler) ListHubSubmissions(client *hubclient.Client, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ListCloudSubmissions(client *cloudclient.Client, w http.ResponseWriter, r *http.Request) {
 	if client == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "hub_binding_unavailable", "hub binding is not available")
+		h.writeError(w, r, http.StatusServiceUnavailable, "cloud_binding_unavailable", "xLyra Cloud binding is not available")
 		return
 	}
 	pluginID := strings.TrimSpace(r.URL.Query().Get("pluginId"))
@@ -46,15 +46,15 @@ func (h Handler) ListHubSubmissions(client *hubclient.Client, w http.ResponseWri
 	}
 	items, err := client.ListSubmissions(r.Context(), pluginID)
 	if err != nil {
-		h.writeHubSubmissionError(w, r, err)
+		h.writeCloudSubmissionError(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
-func (h Handler) CreateHubSubmission(client *hubclient.Client, w http.ResponseWriter, r *http.Request) {
+func (h Handler) CreateCloudSubmission(client *cloudclient.Client, w http.ResponseWriter, r *http.Request) {
 	if client == nil {
-		h.writeError(w, r, http.StatusServiceUnavailable, "hub_binding_unavailable", "hub binding is not available")
+		h.writeError(w, r, http.StatusServiceUnavailable, "cloud_binding_unavailable", "xLyra Cloud binding is not available")
 		return
 	}
 	if h.trafficDB == nil {
@@ -81,7 +81,7 @@ func (h Handler) CreateHubSubmission(client *hubclient.Client, w http.ResponseWr
 		return
 	}
 	if n := utf8.RuneCountInString(changelog); n < 1 || n > 2000 {
-		h.writeError(w, r, http.StatusBadRequest, "changelog_required", hubSubmissionMessage("changelog_required"))
+		h.writeError(w, r, http.StatusBadRequest, "changelog_required", cloudSubmissionMessage("changelog_required"))
 		return
 	}
 	repo := store.NewJSPluginRepository(h.trafficDB.DB())
@@ -104,7 +104,7 @@ func (h Handler) CreateHubSubmission(client *hubclient.Client, w http.ResponseWr
 		if err != nil {
 			code, message = "js_plugin_package_invalid", "插件包无法读取"
 		}
-		h.recordAudit(r, currentAdminActor(r), "hub_binding.submission", "js_plugin", pluginID, false, code, map[string]any{
+		h.recordAudit(r, currentAdminActor(r), "cloud_binding.submission", "js_plugin", pluginID, false, code, map[string]any{
 			"plugin_id": pluginID, "version": version,
 		})
 		h.writeError(w, r, http.StatusBadRequest, code, message)
@@ -116,40 +116,40 @@ func (h Handler) CreateHubSubmission(client *hubclient.Client, w http.ResponseWr
 		return
 	}
 	if profile.Unavailable {
-		h.writeHubSubmissionError(w, r, errors.New("连接 Hub 失败"))
+		h.writeCloudSubmissionError(w, r, errors.New("连接 xLyra Cloud 失败"))
 		return
 	}
-	if profile.Status != hubclient.DeveloperActive {
-		h.recordAudit(r, currentAdminActor(r), "hub_binding.submission", "js_plugin", pluginID, false, "not_developer", map[string]any{
+	if profile.Status != cloudclient.DeveloperActive {
+		h.recordAudit(r, currentAdminActor(r), "cloud_binding.submission", "js_plugin", pluginID, false, "not_developer", map[string]any{
 			"plugin_id": pluginID, "version": version,
 		})
-		h.writeError(w, r, http.StatusConflict, "not_developer", hubSubmissionMessage("not_developer"))
+		h.writeError(w, r, http.StatusConflict, "not_developer", cloudSubmissionMessage("not_developer"))
 		return
 	}
-	if !hubclient.OwnsPlugin(pluginID, pkg.Signer, profile) {
-		h.recordAudit(r, currentAdminActor(r), "hub_binding.submission", "js_plugin", pluginID, false, "plugin_not_owned", map[string]any{
+	if !cloudclient.OwnsPlugin(pluginID, pkg.Signer, profile) {
+		h.recordAudit(r, currentAdminActor(r), "cloud_binding.submission", "js_plugin", pluginID, false, "plugin_not_owned", map[string]any{
 			"plugin_id": pluginID, "version": version,
 		})
 		h.writeError(w, r, http.StatusConflict, "plugin_not_owned", "这个插件不属于当前开发者")
 		return
 	}
 	if !versionAheadOfMarket(r.Context(), h, pluginID, version) {
-		h.recordAudit(r, currentAdminActor(r), "hub_binding.submission", "js_plugin", pluginID, false, "version_not_greater", map[string]any{
+		h.recordAudit(r, currentAdminActor(r), "cloud_binding.submission", "js_plugin", pluginID, false, "version_not_greater", map[string]any{
 			"plugin_id": pluginID, "version": version,
 		})
-		h.writeError(w, r, http.StatusConflict, "version_not_greater", hubSubmissionMessage("version_not_greater"))
+		h.writeError(w, r, http.StatusConflict, "version_not_greater", cloudSubmissionMessage("version_not_greater"))
 		return
 	}
 	item, err := client.SubmitPackage(r.Context(), pluginID, version, row.Package, changelog)
 	if err != nil {
-		code := hubSubmissionCode(err)
-		h.recordAudit(r, currentAdminActor(r), "hub_binding.submission", "js_plugin", pluginID, false, code, map[string]any{
+		code := cloudSubmissionCode(err)
+		h.recordAudit(r, currentAdminActor(r), "cloud_binding.submission", "js_plugin", pluginID, false, code, map[string]any{
 			"plugin_id": pluginID, "version": version,
 		})
-		h.writeHubSubmissionError(w, r, err)
+		h.writeCloudSubmissionError(w, r, err)
 		return
 	}
-	h.recordAudit(r, currentAdminActor(r), "hub_binding.submission", "js_plugin", pluginID, true, "", map[string]any{
+	h.recordAudit(r, currentAdminActor(r), "cloud_binding.submission", "js_plugin", pluginID, true, "", map[string]any{
 		"plugin_id": pluginID, "version": version, "submission_id": item.ID,
 	})
 	httpx.JSON(w, http.StatusOK, item)
@@ -171,14 +171,14 @@ func (h Handler) marketIndex(ctx context.Context) (*marketproto.Index, bool) {
 	return h.pluginMarket.CachedIndex(ctx)
 }
 
-func (h Handler) cachedDeveloper(ctx context.Context) hubclient.DeveloperProfile {
-	if h.hubClient == nil {
-		return hubclient.DeveloperProfile{Status: hubclient.DeveloperNone}
+func (h Handler) cachedDeveloper(ctx context.Context) cloudclient.DeveloperProfile {
+	if h.cloudClient == nil {
+		return cloudclient.DeveloperProfile{Status: cloudclient.DeveloperNone}
 	}
-	return h.hubClient.CachedDeveloper(ctx)
+	return h.cloudClient.CachedDeveloper(ctx)
 }
 
-func (h Handler) applyDeveloperFields(item map[string]any, pluginID string, versions []store.JSPluginVersion, profile hubclient.DeveloperProfile, index *marketproto.Index, indexReady bool) {
+func (h Handler) applyDeveloperFields(item map[string]any, pluginID string, versions []store.JSPluginVersion, profile cloudclient.DeveloperProfile, index *marketproto.Index, indexReady bool) {
 	item["owned"] = false
 	item["market_ahead"] = false
 	item["market_version"] = ""
@@ -187,19 +187,19 @@ func (h Handler) applyDeveloperFields(item map[string]any, pluginID string, vers
 	if ok {
 		item["local_version"] = row.Version
 	}
-	if h.hubClient != nil {
-		if sub, cached := h.hubClient.CachedSubmission(pluginID); cached {
+	if h.cloudClient != nil {
+		if sub, cached := h.cloudClient.CachedSubmission(pluginID); cached {
 			item["submission"] = sub
 		}
 	}
-	if ok && profile.Status == hubclient.DeveloperActive {
-		item["owned"] = hubclient.OwnsPlugin(pluginID, row.Signer, profile)
+	if ok && profile.Status == cloudclient.DeveloperActive {
+		item["owned"] = cloudclient.OwnsPlugin(pluginID, row.Signer, profile)
 	}
 	if !ok {
 		return
 	}
 	// 还没有验签过的索引时，和市场里没有这个插件一样：本地版本可以提交。
-	// 提交接口在索引未就绪时也放行，Hub 仍会拒绝并不更大的版本。
+	// 提交接口在索引未就绪时也放行，Cloud 仍会拒绝并不更大的版本。
 	if !indexReady {
 		item["market_ahead"] = true
 		return
@@ -209,43 +209,43 @@ func (h Handler) applyDeveloperFields(item map[string]any, pluginID string, vers
 	item["market_version"] = marketVersion
 }
 
-func (h Handler) writeHubSubmissionError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, hubclient.ErrNotBound) {
-		h.writeError(w, r, http.StatusConflict, "not_developer", hubSubmissionMessage("not_developer"))
+func (h Handler) writeCloudSubmissionError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, cloudclient.ErrNotBound) {
+		h.writeError(w, r, http.StatusConflict, "not_developer", cloudSubmissionMessage("not_developer"))
 		return
 	}
-	var hubErr *hubclient.HubError
-	if errors.As(err, &hubErr) {
-		code := hubErr.Code
+	var cloudErr *cloudclient.CloudError
+	if errors.As(err, &cloudErr) {
+		code := cloudErr.Code
 		if code == "" {
-			code = "hub_error"
+			code = "cloud_error"
 		}
-		message := hubSubmissionMessage(code)
+		message := cloudSubmissionMessage(code)
 		if message == "" {
-			message = hubErr.Message
+			message = cloudErr.Message
 		}
 		if message == "" {
-			message = "Hub 请求失败"
+			message = "xLyra Cloud 请求失败"
 		}
 		fields := map[string]any{}
-		if hubErr.Code != "" {
-			fields["hub_code"] = hubErr.Code
+		if cloudErr.Code != "" {
+			fields["cloud_code"] = cloudErr.Code
 		}
 		h.writeErrorFields(w, r, http.StatusBadGateway, code, message, fields)
 		return
 	}
-	h.writeError(w, r, http.StatusBadGateway, "hub_unavailable", "连接 Hub 失败")
+	h.writeError(w, r, http.StatusBadGateway, "cloud_unavailable", "连接 xLyra Cloud 失败")
 }
 
-func hubSubmissionCode(err error) string {
-	var hubErr *hubclient.HubError
-	if errors.As(err, &hubErr) && hubErr.Code != "" {
-		return hubErr.Code
+func cloudSubmissionCode(err error) string {
+	var cloudErr *cloudclient.CloudError
+	if errors.As(err, &cloudErr) && cloudErr.Code != "" {
+		return cloudErr.Code
 	}
-	return "hub_unavailable"
+	return "cloud_unavailable"
 }
 
-func hubSubmissionMessage(code string) string {
+func cloudSubmissionMessage(code string) string {
 	switch code {
 	case "not_developer":
 		return "当前账号不是已激活的开发者"

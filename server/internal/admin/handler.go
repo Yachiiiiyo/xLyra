@@ -22,7 +22,7 @@ import (
 	"xlyra/server/internal/downloads"
 	"xlyra/server/internal/gateway"
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/hubclient"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
@@ -55,7 +55,7 @@ type Handler struct {
 	trafficDB    *store.Store
 	jsPlugins    *jsplugin.Manager
 	pluginMarket *market.Service
-	hubClient    *hubclient.Client
+	cloudClient  *cloudclient.Client
 }
 
 func (h Handler) WithTrafficFlowStore(db *store.Store) Handler {
@@ -73,8 +73,8 @@ func (h Handler) WithPluginMarket(svc *market.Service) Handler {
 	return h
 }
 
-func (h Handler) WithHubClient(client *hubclient.Client) Handler {
-	h.hubClient = client
+func (h Handler) WithCloudClient(client *cloudclient.Client) Handler {
+	h.cloudClient = client
 	return h
 }
 

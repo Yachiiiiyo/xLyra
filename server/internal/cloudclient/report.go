@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"time"
@@ -138,13 +138,13 @@ func BuildReport(version string, platform Platform, plugins []PluginItem, sentAt
 func applyPollStatus(status string) (next, lastError string, done bool) {
 	switch status {
 	case "approved":
-		return store.HubStatusBound, "", true
+		return store.CloudStatusBound, "", true
 	case "denied":
-		return store.HubStatusUnbound, "配对被拒绝", true
+		return store.CloudStatusUnbound, "配对被拒绝", true
 	case "expired":
-		return store.HubStatusUnbound, "配对已过期", true
+		return store.CloudStatusUnbound, "配对已过期", true
 	default:
-		return store.HubStatusPairing, "", false
+		return store.CloudStatusPairing, "", false
 	}
 }
 

@@ -15,13 +15,13 @@ import (
 	"time"
 )
 
-const defaultHubURL = "https://xlyra.yachiyo.im"
+const defaultCloudURL = "https://xlyra.yachiyo.im"
 
 type publishOptions struct {
 	packagePath   string
 	changelog     string
 	changelogFile string
-	hub           string
+	cloud         string
 	token         string
 	noWait        bool
 	timeout       time.Duration
@@ -31,7 +31,7 @@ type publishOptions struct {
 }
 
 func runPublish(args []string) {
-	opts, err := parsePublishArgs(args, os.Getenv("XLYRA_HUB_TOKEN"))
+	opts, err := parsePublishArgs(args, os.Getenv("XLYRA_CLOUD_TOKEN"))
 	if err != nil {
 		fatal(err)
 	}
@@ -46,8 +46,8 @@ func parsePublishArgs(args []string, envToken string) (publishOptions, error) {
 	fs.SetOutput(io.Discard)
 	changelog := fs.String("changelog", "", "更新日志")
 	changelogFile := fs.String("changelog-file", "", "从文件读取更新日志")
-	hub := fs.String("hub", defaultHubURL, "Hub 地址，必须是 https")
-	token := fs.String("token", "", "Hub 令牌。会进入 shell 历史，请改用环境变量 XLYRA_HUB_TOKEN")
+	cloud := fs.String("cloud", defaultCloudURL, "xLyra Cloud 地址，必须是 https")
+	token := fs.String("token", "", "xLyra Cloud 令牌。会进入 shell 历史，请改用环境变量 XLYRA_CLOUD_TOKEN")
 	noWait := fs.Bool("no-wait", false, "提交后不等待审核结果")
 	if err := fs.Parse(args); err != nil {
 		return publishOptions{}, fmt.Errorf("参数无效")
@@ -66,9 +66,9 @@ func parsePublishArgs(args []string, envToken string) (publishOptions, error) {
 		got = strings.TrimSpace(envToken)
 	}
 	if got == "" {
-		return publishOptions{}, fmt.Errorf("需要 Hub 令牌，请设置环境变量 XLYRA_HUB_TOKEN")
+		return publishOptions{}, fmt.Errorf("需要 xLyra Cloud 令牌，请设置环境变量 XLYRA_CLOUD_TOKEN")
 	}
-	base, err := normalizeHub(*hub)
+	base, err := normalizeCloud(*cloud)
 	if err != nil {
 		return publishOptions{}, err
 	}
@@ -76,7 +76,7 @@ func parsePublishArgs(args []string, envToken string) (publishOptions, error) {
 		packagePath:   fs.Arg(0),
 		changelog:     *changelog,
 		changelogFile: *changelogFile,
-		hub:           base,
+		cloud:         base,
 		token:         got,
 		noWait:        *noWait,
 		timeout:       10 * time.Minute,
@@ -84,23 +84,23 @@ func parsePublishArgs(args []string, envToken string) (publishOptions, error) {
 	}, nil
 }
 
-func normalizeHub(raw string) (string, error) {
+func normalizeCloud(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" || u.Scheme == "" || u.User != nil {
-		return "", fmt.Errorf("Hub 地址无效")
+		return "", fmt.Errorf("xLyra Cloud 地址无效")
 	}
 	if u.Path != "" && u.Path != "/" {
-		return "", fmt.Errorf("Hub 地址无效")
+		return "", fmt.Errorf("xLyra Cloud 地址无效")
 	}
 	host := u.Hostname()
 	switch u.Scheme {
 	case "https":
 	case "http":
 		if host != "127.0.0.1" && host != "localhost" {
-			return "", fmt.Errorf("Hub 地址必须是 https")
+			return "", fmt.Errorf("xLyra Cloud 地址必须是 https")
 		}
 	default:
-		return "", fmt.Errorf("Hub 地址必须是 https")
+		return "", fmt.Errorf("xLyra Cloud 地址必须是 https")
 	}
 	u.RawQuery = ""
 	u.Fragment = ""
@@ -140,7 +140,7 @@ func publishPackage(opts publishOptions) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
-	id, status, err := postSubmission(ctx, client, opts.hub, opts.token, raw, text)
+	id, status, err := postSubmission(ctx, client, opts.cloud, opts.token, raw, text)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func publishPackage(opts publishOptions) error {
 	}
 	last := status
 	for {
-		view, err := getSubmission(ctx, client, opts.hub, opts.token, id)
+		view, err := getSubmission(ctx, client, opts.cloud, opts.token, id)
 		if err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("等待超时，当前状态：%s", statusLabel(last))
@@ -199,14 +199,14 @@ func loadChangelog(opts publishOptions) (string, error) {
 	return text, nil
 }
 
-type hubSubmission struct {
+type cloudSubmission struct {
 	ID           string `json:"id"`
 	Status       string `json:"status"`
 	CheckSummary string `json:"checkSummary"`
 	ReviewNote   string `json:"reviewNote"`
 }
 
-func postSubmission(ctx context.Context, client *http.Client, hub, token string, pkg []byte, changelog string) (string, string, error) {
+func postSubmission(ctx context.Context, client *http.Client, cloud, token string, pkg []byte, changelog string) (string, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	part, err := w.CreateFormFile("package", "plugin.xlp")
@@ -222,7 +222,7 @@ func postSubmission(ctx context.Context, client *http.Client, hub, token string,
 	if err := w.Close(); err != nil {
 		return "", "", fmt.Errorf("无法准备上传")
 	}
-	view, err := hubDo(ctx, client, http.MethodPost, hub+"/api/dev/token/submissions", token, buf.Bytes(), w.FormDataContentType())
+	view, err := cloudDo(ctx, client, http.MethodPost, cloud+"/api/dev/token/submissions", token, buf.Bytes(), w.FormDataContentType())
 	if err != nil {
 		return "", "", err
 	}
@@ -232,11 +232,11 @@ func postSubmission(ctx context.Context, client *http.Client, hub, token string,
 	return view.ID, view.Status, nil
 }
 
-func getSubmission(ctx context.Context, client *http.Client, hub, token, id string) (hubSubmission, error) {
-	return hubDo(ctx, client, http.MethodGet, hub+"/api/dev/token/submissions/"+url.PathEscape(id), token, nil, "")
+func getSubmission(ctx context.Context, client *http.Client, cloud, token, id string) (cloudSubmission, error) {
+	return cloudDo(ctx, client, http.MethodGet, cloud+"/api/dev/token/submissions/"+url.PathEscape(id), token, nil, "")
 }
 
-func hubDo(ctx context.Context, client *http.Client, method, endpoint, token string, body []byte, contentType string) (hubSubmission, error) {
+func cloudDo(ctx context.Context, client *http.Client, method, endpoint, token string, body []byte, contentType string) (cloudSubmission, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var reader io.Reader
@@ -245,7 +245,7 @@ func hubDo(ctx context.Context, client *http.Client, method, endpoint, token str
 	}
 	req, err := http.NewRequestWithContext(reqCtx, method, endpoint, reader)
 	if err != nil {
-		return hubSubmission{}, fmt.Errorf("Hub 地址无效")
+		return cloudSubmission{}, fmt.Errorf("xLyra Cloud 地址无效")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if contentType != "" {
@@ -253,24 +253,24 @@ func hubDo(ctx context.Context, client *http.Client, method, endpoint, token str
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return hubSubmission{}, fmt.Errorf("连接 Hub 失败")
+		return cloudSubmission{}, fmt.Errorf("连接 xLyra Cloud 失败")
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return hubSubmission{}, fmt.Errorf("读取 Hub 响应失败")
+		return cloudSubmission{}, fmt.Errorf("读取 xLyra Cloud 响应失败")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return hubSubmission{}, fmt.Errorf("%s", hubFailure(raw, token))
+		return cloudSubmission{}, fmt.Errorf("%s", cloudFailure(raw, token))
 	}
-	var view hubSubmission
+	var view cloudSubmission
 	if json.Unmarshal(raw, &view) != nil {
-		return hubSubmission{}, fmt.Errorf("Hub 响应无效")
+		return cloudSubmission{}, fmt.Errorf("xLyra Cloud 响应无效")
 	}
 	return view, nil
 }
 
-func hubFailure(raw []byte, token string) string {
+func cloudFailure(raw []byte, token string) string {
 	var body struct {
 		Error struct {
 			Code    string `json:"code"`
@@ -278,7 +278,7 @@ func hubFailure(raw []byte, token string) string {
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(raw, &body)
-	if text, ok := hubErrorText[body.Error.Code]; ok {
+	if text, ok := cloudErrorText[body.Error.Code]; ok {
 		return text
 	}
 	message := scrub(body.Error.Message, token)
@@ -298,7 +298,7 @@ func scrub(text, token string) string {
 	return strings.ReplaceAll(text, "xlh_", "")
 }
 
-var hubErrorText = map[string]string{
+var cloudErrorText = map[string]string{
 	"token_invalid":         "令牌无效",
 	"token_expired":         "令牌已过期",
 	"token_revoked":         "令牌已撤销",

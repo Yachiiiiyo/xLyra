@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"context"
@@ -23,8 +23,8 @@ const (
 	developerWarnGap  = time.Minute
 )
 
-// DeveloperProfile is the instance's view of the bound Hub account.
-// Unavailable is set when the Hub could not be asked; Status is then none.
+// DeveloperProfile is the instance's view of the bound Cloud account.
+// Unavailable is set when the Cloud could not be asked; Status is then none.
 type DeveloperProfile struct {
 	Status      string               `json:"status"`
 	DisplayName string               `json:"display_name"`
@@ -58,7 +58,7 @@ type developerCache struct {
 	have       bool
 }
 
-type hubDeveloperBody struct {
+type cloudDeveloperBody struct {
 	Status      string `json:"status"`
 	DisplayName string `json:"displayName"`
 	Namespaces  []struct {
@@ -86,8 +86,8 @@ func emptyDeveloper() DeveloperProfile {
 	}
 }
 
-// Developer returns the cached Hub developer profile. refresh skips the cache.
-// Unbound, Hub down, and not-a-developer all come back as status none and a nil error.
+// Developer returns the cached Cloud developer profile. refresh skips the cache.
+// Unbound, Cloud down, and not-a-developer all come back as status none and a nil error.
 // A non-nil error is only a local database failure.
 func (c *Client) Developer(ctx context.Context, refresh bool) (DeveloperProfile, error) {
 	if c == nil {
@@ -97,7 +97,7 @@ func (c *Client) Developer(ctx context.Context, refresh bool) (DeveloperProfile,
 	if err != nil {
 		return DeveloperProfile{}, err
 	}
-	if row.Status != store.HubStatusBound || row.InstanceID == "" {
+	if row.Status != store.CloudStatusBound || row.InstanceID == "" {
 		return emptyDeveloper(), nil
 	}
 	if !refresh {
@@ -113,13 +113,13 @@ func (c *Client) Developer(ctx context.Context, refresh bool) (DeveloperProfile,
 }
 
 // CachedDeveloper is the in-memory profile, if it is still inside the 5 minute window.
-// It never calls the Hub.
+// It never calls the Cloud.
 func (c *Client) CachedDeveloper(ctx context.Context) DeveloperProfile {
 	if c == nil {
 		return emptyDeveloper()
 	}
 	row, err := c.repo.Get(ctx)
-	if err != nil || row.Status != store.HubStatusBound || row.InstanceID == "" {
+	if err != nil || row.Status != store.CloudStatusBound || row.InstanceID == "" {
 		return emptyDeveloper()
 	}
 	profile, ok := c.loadDeveloper(row.InstanceID)
@@ -154,7 +154,7 @@ func (c *Client) clearDeveloperCache() {
 	c.mu.Unlock()
 }
 
-func (c *Client) fetchDeveloper(ctx context.Context, row store.HubBinding) (DeveloperProfile, bool) {
+func (c *Client) fetchDeveloper(ctx context.Context, row store.CloudBinding) (DeveloperProfile, bool) {
 	none := emptyDeveloper()
 	priv, err := c.privateKey(row)
 	if err != nil {
@@ -162,9 +162,9 @@ func (c *Client) fetchDeveloper(ctx context.Context, row store.HubBinding) (Deve
 		c.noteDeveloperFailure(ctx, "实例私钥无法读取")
 		return none, false
 	}
-	hub := row.HubURL
-	if hub == "" {
-		hub, err = c.hubURL(ctx)
+	cloud := row.CloudURL
+	if cloud == "" {
+		cloud, err = c.cloudURL(ctx)
 		if err != nil {
 			none.Unavailable = true
 			c.noteDeveloperFailure(ctx, err.Error())
@@ -177,7 +177,7 @@ func (c *Client) fetchDeveloper(ctx context.Context, row store.HubBinding) (Deve
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	status, raw, err := c.exchange(callCtx, http.MethodGet, hub, "/api/instance/developer", "", nil, "", &signedRequest{
+	status, raw, err := c.exchange(callCtx, http.MethodGet, cloud, "/api/instance/developer", "", nil, "", &signedRequest{
 		instanceID: row.InstanceID,
 		privateKey: priv,
 	})
@@ -187,37 +187,37 @@ func (c *Client) fetchDeveloper(ctx context.Context, row store.HubBinding) (Deve
 		return none, false
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		hubErr, _ := hubError(status, raw).(*HubError)
-		if hubErr != nil && hubErr.Code == "instance_revoked" {
-			_ = c.repo.ClearBinding(ctx, store.HubStatusRevoked, revokedMessage)
+		cloudErr, _ := cloudError(status, raw).(*CloudError)
+		if cloudErr != nil && cloudErr.Code == "instance_revoked" {
+			_ = c.repo.ClearBinding(ctx, store.CloudStatusRevoked, revokedMessage)
 			c.clearDeveloperCache()
-			c.warnDeveloper("hub binding revoked")
+			c.warnDeveloper("xLyra Cloud binding revoked")
 			return none, false
 		}
-		if hubErr != nil && hubErr.Code == "not_developer" {
+		if cloudErr != nil && cloudErr.Code == "not_developer" {
 			return none, true
 		}
 	}
 	if status < 200 || status >= 300 {
-		hubErr, _ := hubError(status, raw).(*HubError)
+		cloudErr, _ := cloudError(status, raw).(*CloudError)
 		message := "读取开发者身份失败"
-		if hubErr != nil && hubErr.Code != "" {
-			message = message + ": " + hubErr.Code
+		if cloudErr != nil && cloudErr.Code != "" {
+			message = message + ": " + cloudErr.Code
 		}
 		none.Unavailable = true
 		c.noteDeveloperFailure(ctx, message)
 		return none, false
 	}
-	var body hubDeveloperBody
+	var body cloudDeveloperBody
 	if err := json.Unmarshal(raw, &body); err != nil {
 		none.Unavailable = true
-		c.noteDeveloperFailure(ctx, "Hub 返回的开发者身份无效")
+		c.noteDeveloperFailure(ctx, "xLyra Cloud 返回的开发者身份无效")
 		return none, false
 	}
-	return profileFromHub(body), true
+	return profileFromCloud(body), true
 }
 
-func profileFromHub(body hubDeveloperBody) DeveloperProfile {
+func profileFromCloud(body cloudDeveloperBody) DeveloperProfile {
 	profile := emptyDeveloper()
 	status := strings.TrimSpace(body.Status)
 	switch status {
@@ -278,7 +278,7 @@ func (c *Client) warnDeveloper(message string) {
 	}
 	c.developerWarnAt = c.now()
 	c.mu.Unlock()
-	c.warn("hub developer identity unavailable", "error", message)
+	c.warn("xLyra Cloud developer identity unavailable", "error", message)
 }
 
 // OwnsPlugin reports whether pluginID belongs to an active developer:
@@ -311,7 +311,7 @@ func OwnsPlugin(pluginID, signer string, profile DeveloperProfile) bool {
 	return false
 }
 
-// Submission is one Hub submission, in the admin API's snake_case shape.
+// Submission is one Cloud submission, in the admin API's snake_case shape.
 type Submission struct {
 	ID           string `json:"id"`
 	PluginID     string `json:"plugin_id"`
@@ -322,7 +322,7 @@ type Submission struct {
 	SubmittedAt  string `json:"submitted_at,omitempty"`
 }
 
-type hubSubmissionBody struct {
+type cloudSubmissionBody struct {
 	ID           string `json:"id"`
 	PluginID     string `json:"pluginId"`
 	Version      string `json:"version"`
@@ -386,14 +386,14 @@ func latestSubmission(items []Submission) (Submission, bool) {
 	return best, true
 }
 
-func (c *Client) signedExchange(ctx context.Context, row store.HubBinding, method, path, rawQuery, contentType string, body []byte) (int, []byte, error) {
+func (c *Client) signedExchange(ctx context.Context, row store.CloudBinding, method, path, rawQuery, contentType string, body []byte) (int, []byte, error) {
 	priv, err := c.privateKey(row)
 	if err != nil {
 		return 0, nil, errors.New("实例私钥无法读取")
 	}
-	hub := row.HubURL
-	if hub == "" {
-		hub, err = c.hubURL(ctx)
+	cloud := row.CloudURL
+	if cloud == "" {
+		cloud, err = c.cloudURL(ctx)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -404,22 +404,22 @@ func (c *Client) signedExchange(ctx context.Context, row store.HubBinding, metho
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return c.exchange(callCtx, method, hub, path, rawQuery, body, contentType, &signedRequest{
+	return c.exchange(callCtx, method, cloud, path, rawQuery, body, contentType, &signedRequest{
 		instanceID: row.InstanceID,
 		privateKey: priv,
 	})
 }
 
-// ErrNotBound is returned when a signed Hub call is made without a binding.
+// ErrNotBound is returned when a signed Cloud call is made without a binding.
 var ErrNotBound = errors.New("实例未连接")
 
-func (c *Client) boundRow(ctx context.Context) (store.HubBinding, error) {
+func (c *Client) boundRow(ctx context.Context) (store.CloudBinding, error) {
 	row, err := c.repo.Get(ctx)
 	if err != nil {
-		return store.HubBinding{}, err
+		return store.CloudBinding{}, err
 	}
-	if row.Status != store.HubStatusBound || row.InstanceID == "" {
-		return store.HubBinding{}, ErrNotBound
+	if row.Status != store.CloudStatusBound || row.InstanceID == "" {
+		return store.CloudBinding{}, ErrNotBound
 	}
 	return row, nil
 }
@@ -439,7 +439,7 @@ func (c *Client) ListSubmissions(ctx context.Context, pluginID string) ([]Submis
 		return nil, err
 	}
 	if status < 200 || status >= 300 {
-		return nil, hubError(status, raw)
+		return nil, cloudError(status, raw)
 	}
 	items, err := parseSubmissions(raw)
 	if err != nil {
@@ -460,17 +460,17 @@ func parseSubmissions(raw []byte) ([]Submission, error) {
 		return []Submission{}, nil
 	}
 	if strings.HasPrefix(trimmed, "[") {
-		var list []hubSubmissionBody
+		var list []cloudSubmissionBody
 		if err := json.Unmarshal(raw, &list); err != nil {
-			return nil, errors.New("Hub 返回的提交列表无效")
+			return nil, errors.New("xLyra Cloud 返回的提交列表无效")
 		}
 		return convertSubmissions(list), nil
 	}
 	var wrapped struct {
-		Items []hubSubmissionBody `json:"items"`
+		Items []cloudSubmissionBody `json:"items"`
 	}
 	if err := json.Unmarshal(raw, &wrapped); err != nil {
-		return nil, errors.New("Hub 返回的提交列表无效")
+		return nil, errors.New("xLyra Cloud 返回的提交列表无效")
 	}
 	if wrapped.Items == nil {
 		return []Submission{}, nil
@@ -478,7 +478,7 @@ func parseSubmissions(raw []byte) ([]Submission, error) {
 	return convertSubmissions(wrapped.Items), nil
 }
 
-func convertSubmissions(list []hubSubmissionBody) []Submission {
+func convertSubmissions(list []cloudSubmissionBody) []Submission {
 	out := make([]Submission, 0, len(list))
 	for _, item := range list {
 		out = append(out, Submission{

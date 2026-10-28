@@ -83,14 +83,14 @@ func TestInstallPluginMarketHTTP(t *testing.T) {
 	}
 	revs := []marketproto.RevocationEntry{adminRevocation("rev-sec", "acme.revoked", "1.0.0", revokedPkg.SHA256, "security", issued)}
 	docs := adminSignCatalog(t, rootPriv, online, 1, 1, 1, issued, expires, plugins, revs)
-	hub := newAdminHub()
-	hub.put("root.json", docs[0])
-	hub.put("index.json", docs[1])
-	hub.put("revocations.json", docs[2])
+	cloud := newAdminCloud()
+	cloud.put("root.json", docs[0])
+	cloud.put("index.json", docs[1])
+	cloud.put("revocations.json", docs[2])
 	for _, raw := range [][]byte{okNew, okOld, staleRaw, revokedRaw, hostRaw, unsignedRaw, failRaw, junk, lockedRaw, clashRaw, tamperRaw, siteRaw} {
-		hub.put("packages/"+marketproto.FileSHA256(raw)+".xlp", raw)
+		cloud.put("packages/"+marketproto.FileSHA256(raw)+".xlp", raw)
 	}
-	srv := httptest.NewServer(hub)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := adminMarketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -134,7 +134,7 @@ func TestInstallPluginMarketHTTP(t *testing.T) {
 	assertInstallError(t, post("acme.fail", ""), http.StatusUnprocessableEntity, "js_plugin_market_selftest_failed", "")
 	assertInstallError(t, post("acme.clash", ""), http.StatusConflict, "js_plugin_version_conflict", "")
 
-	hub.put("packages/"+marketproto.FileSHA256(tamperRaw)+".xlp", []byte("tampered"))
+	cloud.put("packages/"+marketproto.FileSHA256(tamperRaw)+".xlp", []byte("tampered"))
 	assertInstallError(t, post("acme.tamper", ""), http.StatusBadGateway, "js_plugin_market_download_failed", "")
 
 	rec := post("acme.ok", "")
@@ -205,7 +205,7 @@ func clearAdminProxyEnv(t *testing.T) {
 	}
 }
 
-type adminHub struct {
+type adminCloud struct {
 	mu        sync.Mutex
 	files     map[string][]byte
 	hits      map[string]int
@@ -215,23 +215,23 @@ type adminHub struct {
 	blockOnce sync.Once
 }
 
-func newAdminHub() *adminHub {
-	return &adminHub{files: map[string][]byte{}, hits: map[string]int{}}
+func newAdminCloud() *adminCloud {
+	return &adminCloud{files: map[string][]byte{}, hits: map[string]int{}}
 }
 
-func (h *adminHub) put(name string, body []byte) {
+func (h *adminCloud) put(name string, body []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.files[name] = append([]byte(nil), body...)
 }
 
-func (h *adminHub) hit(name string) int {
+func (h *adminCloud) hit(name string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.hits[name]
 }
 
-func (h *adminHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *adminCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/")
 	h.mu.Lock()
 	h.hits[name]++

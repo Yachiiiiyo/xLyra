@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"bytes"
@@ -31,14 +31,14 @@ func (c *Client) SubmitPackage(ctx context.Context, pluginID, version string, pk
 		return Submission{}, err
 	}
 	if status < 200 || status >= 300 {
-		return Submission{}, hubError(status, raw)
+		return Submission{}, cloudError(status, raw)
 	}
 	var resp struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil || strings.TrimSpace(resp.ID) == "" {
-		return Submission{}, errors.New("Hub 返回的提交响应无效")
+		return Submission{}, errors.New("xLyra Cloud 返回的提交响应无效")
 	}
 	item := Submission{
 		ID:       strings.TrimSpace(resp.ID),

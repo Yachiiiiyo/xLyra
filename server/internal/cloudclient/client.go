@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"bytes"
@@ -38,15 +38,15 @@ const (
 
 var ErrAlreadyBound = errors.New("实例已连接")
 
-// HubError is a structured error returned by the Hub.
-type HubError struct {
+// CloudError is a structured error returned by the Cloud.
+type CloudError struct {
 	Status     int
 	Code       string
 	Message    string
 	ServerTime string
 }
 
-func (e *HubError) Error() string {
+func (e *CloudError) Error() string {
 	if e == nil {
 		return ""
 	}
@@ -56,7 +56,7 @@ func (e *HubError) Error() string {
 	if e.Code != "" {
 		return e.Code
 	}
-	return "Hub 请求失败"
+	return "xLyra Cloud 请求失败"
 }
 
 type Options struct {
@@ -85,7 +85,7 @@ type Status struct {
 	Status          string       `json:"status"`
 	InstanceName    string       `json:"instance_name"`
 	UserDisplayName string       `json:"user_display_name"`
-	HubURL          string       `json:"hub_url"`
+	CloudURL        string       `json:"cloud_url"`
 	BoundAt         *string      `json:"bound_at"`
 	LastSyncAt      *string      `json:"last_sync_at"`
 	LastError       string       `json:"last_error"`
@@ -101,10 +101,10 @@ type pendingPair struct {
 }
 
 type Client struct {
-	repo       store.HubBindingRepository
+	repo       store.CloudBindingRepository
 	plugins    store.JSPluginRepository
 	masterKey  string
-	hubURL     func(context.Context) (string, error)
+	cloudURL   func(context.Context) (string, error)
 	http       *http.Client
 	allowLocal bool
 	owner      string
@@ -129,7 +129,7 @@ type Client struct {
 	developerWarnAt time.Time
 }
 
-func New(repo store.HubBindingRepository, plugins store.JSPluginRepository, masterKey string, hubURL func(context.Context) (string, error), opts Options) *Client {
+func New(repo store.CloudBindingRepository, plugins store.JSPluginRepository, masterKey string, cloudURL func(context.Context) (string, error), opts Options) *Client {
 	if opts.HeartbeatInterval <= 0 {
 		opts.HeartbeatInterval = 15 * time.Minute
 	}
@@ -151,8 +151,8 @@ func New(repo store.HubBindingRepository, plugins store.JSPluginRepository, mast
 	if opts.HTTPTimeout <= 0 {
 		opts.HTTPTimeout = defaultHTTPTimeout
 	}
-	if hubURL == nil {
-		hubURL = func(context.Context) (string, error) {
+	if cloudURL == nil {
+		cloudURL = func(context.Context) (string, error) {
 			return "", errors.New("未缓存已验签的市场 root")
 		}
 	}
@@ -164,7 +164,7 @@ func New(repo store.HubBindingRepository, plugins store.JSPluginRepository, mast
 		repo:           repo,
 		plugins:        plugins,
 		masterKey:      masterKey,
-		hubURL:         hubURL,
+		cloudURL:       cloudURL,
 		http:           newHTTPClient(opts.HTTPTimeout, opts.AllowInsecureLocal),
 		allowLocal:     opts.AllowInsecureLocal,
 		owner:          newOwner(),
@@ -236,12 +236,12 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	}
 	view := statusFromRow(row)
 	code := strings.TrimSpace(row.PairingCodeHint)
-	if row.Status == store.HubStatusPairing && code != "" && row.PairingExpiresAt != nil && c.now().Before(*row.PairingExpiresAt) {
+	if row.Status == store.CloudStatusPairing && code != "" && row.PairingExpiresAt != nil && c.now().Before(*row.PairingExpiresAt) {
 		exp := row.PairingExpiresAt.UTC().Format(time.RFC3339)
 		view.Pairing = &PairingInfo{UserCode: code, ExpiresAt: exp}
 	}
-	if _, hubErr := c.hubURL(ctx); hubErr != nil && view.LastError == "" {
-		view.LastError = hubErr.Error()
+	if _, cloudErr := c.cloudURL(ctx); cloudErr != nil && view.LastError == "" {
+		view.LastError = cloudErr.Error()
 	}
 	return view, nil
 }
@@ -262,16 +262,16 @@ func currentPlatform() Platform {
 	return Platform{OS: runtime.GOOS, Arch: runtime.GOARCH, Runtime: runtime.Version()}
 }
 
-// StartPairing calls the Hub once. It is the only synchronous Hub call on a request path.
+// StartPairing calls the Cloud once. It is the only synchronous Cloud call on a request path.
 func (c *Client) StartPairing(ctx context.Context, name string) (Status, error) {
 	row, err := c.repo.Get(ctx)
 	if err != nil {
 		return Status{}, err
 	}
-	if row.Status == store.HubStatusBound {
+	if row.Status == store.CloudStatusBound {
 		return Status{}, ErrAlreadyBound
 	}
-	hub, err := c.hubURL(ctx)
+	cloud, err := c.cloudURL(ctx)
 	if err != nil {
 		return Status{}, err
 	}
@@ -292,12 +292,12 @@ func (c *Client) StartPairing(ctx context.Context, name string) (Status, error) 
 	}
 	callCtx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	status, raw, err := c.post(callCtx, hub, "/api/instance/pair/start", body, nil)
+	status, raw, err := c.post(callCtx, cloud, "/api/instance/pair/start", body, nil)
 	if err != nil {
 		return Status{}, err
 	}
 	if status < 200 || status >= 300 {
-		return Status{}, hubError(status, raw)
+		return Status{}, cloudError(status, raw)
 	}
 	var resp struct {
 		UserCode        string `json:"userCode"`
@@ -306,17 +306,17 @@ func (c *Client) StartPairing(ctx context.Context, name string) (Status, error) 
 		IntervalSeconds int    `json:"intervalSeconds"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil || resp.UserCode == "" || resp.PollToken == "" {
-		return Status{}, errors.New("Hub 返回的配对响应无效")
+		return Status{}, errors.New("xLyra Cloud 返回的配对响应无效")
 	}
 	expires, err := time.Parse(time.RFC3339, resp.ExpiresAt)
 	if err != nil {
-		return Status{}, errors.New("Hub 返回的配对过期时间无效")
+		return Status{}, errors.New("xLyra Cloud 返回的配对过期时间无效")
 	}
 	enc, err := crypto.EncryptSecret(c.masterKey, resp.PollToken)
 	if err != nil {
 		return Status{}, err
 	}
-	if err := c.repo.SavePairing(ctx, hub, enc, name, resp.UserCode, expires); err != nil {
+	if err := c.repo.SavePairing(ctx, cloud, enc, name, resp.UserCode, expires); err != nil {
 		return Status{}, err
 	}
 	interval := time.Duration(resp.IntervalSeconds) * time.Second
@@ -336,13 +336,13 @@ func (c *Client) CancelPairing(ctx context.Context) error {
 	return c.repo.ClearPairing(ctx, "")
 }
 
-// Unbind asks the Hub to drop the instance, then clears the local link either way.
+// Unbind asks the Cloud to drop the instance, then clears the local link either way.
 func (c *Client) Unbind(ctx context.Context) error {
 	row, err := c.repo.Get(ctx)
 	if err != nil {
 		return err
 	}
-	if row.Status == store.HubStatusBound && row.InstanceID != "" {
+	if row.Status == store.CloudStatusBound && row.InstanceID != "" {
 		c.bestEffortUnbind(ctx, row)
 	}
 	c.mu.Lock()
@@ -350,24 +350,24 @@ func (c *Client) Unbind(ctx context.Context) error {
 	c.developer = developerCache{}
 	c.submissions = nil
 	c.mu.Unlock()
-	return c.repo.ClearBinding(ctx, store.HubStatusUnbound, "")
+	return c.repo.ClearBinding(ctx, store.CloudStatusUnbound, "")
 }
 
-func (c *Client) bestEffortUnbind(ctx context.Context, row store.HubBinding) {
+func (c *Client) bestEffortUnbind(ctx context.Context, row store.CloudBinding) {
 	priv, err := c.privateKey(row)
 	if err != nil {
 		return
 	}
-	hub := row.HubURL
-	if hub == "" {
-		hub, err = c.hubURL(ctx)
+	cloud := row.CloudURL
+	if cloud == "" {
+		cloud, err = c.cloudURL(ctx)
 		if err != nil {
 			return
 		}
 	}
 	callCtx, cancel := context.WithTimeout(ctx, defaultHTTPTimeout)
 	defer cancel()
-	_, _, _ = c.post(callCtx, hub, "/api/instance/unbind", nil, &signedRequest{
+	_, _, _ = c.post(callCtx, cloud, "/api/instance/unbind", nil, &signedRequest{
 		instanceID: row.InstanceID,
 		privateKey: priv,
 	})
@@ -385,7 +385,7 @@ func (c *Client) generateIdentity() (string, string, error) {
 	return base64.StdEncoding.EncodeToString(pub), enc, nil
 }
 
-func (c *Client) privateKey(row store.HubBinding) (ed25519.PrivateKey, error) {
+func (c *Client) privateKey(row store.CloudBinding) (ed25519.PrivateKey, error) {
 	plain, err := crypto.DecryptSecret(c.masterKey, row.PrivateKeyEnc)
 	if err != nil {
 		return nil, err
@@ -405,16 +405,16 @@ type signedRequest struct {
 	privateKey ed25519.PrivateKey
 }
 
-func (c *Client) post(ctx context.Context, hub, path string, body []byte, signed *signedRequest) (int, []byte, error) {
+func (c *Client) post(ctx context.Context, cloud, path string, body []byte, signed *signedRequest) (int, []byte, error) {
 	contentType := ""
 	if body != nil {
 		contentType = "application/json"
 	}
-	return c.exchange(ctx, http.MethodPost, hub, path, "", body, contentType, signed)
+	return c.exchange(ctx, http.MethodPost, cloud, path, "", body, contentType, signed)
 }
 
-func (c *Client) exchange(ctx context.Context, method, hub, path, rawQuery string, body []byte, contentType string, signed *signedRequest) (int, []byte, error) {
-	endpoint, err := c.endpoint(hub, path)
+func (c *Client) exchange(ctx context.Context, method, cloud, path, rawQuery string, body []byte, contentType string, signed *signedRequest) (int, []byte, error) {
+	endpoint, err := c.endpoint(cloud, path)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -438,29 +438,29 @@ func (c *Client) exchange(ctx context.Context, method, hub, path, rawQuery strin
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return 0, nil, errors.New("连接 Hub 超时")
+			return 0, nil, errors.New("连接 xLyra Cloud 超时")
 		}
-		return 0, nil, errors.New("连接 Hub 失败")
+		return 0, nil, errors.New("连接 xLyra Cloud 失败")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return 0, nil, errors.New("Hub 重定向被拒绝")
+		return 0, nil, errors.New("xLyra Cloud 重定向被拒绝")
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	if err != nil {
-		return resp.StatusCode, nil, errors.New("读取 Hub 响应失败")
+		return resp.StatusCode, nil, errors.New("读取 xLyra Cloud 响应失败")
 	}
 	return resp.StatusCode, raw, nil
 }
 
-func (c *Client) endpoint(hub, path string) (string, error) {
-	if err := c.validateHub(hub); err != nil {
+func (c *Client) endpoint(cloud, path string) (string, error) {
+	if err := c.validateCloud(cloud); err != nil {
 		return "", err
 	}
-	u, err := url.Parse(hub)
+	u, err := url.Parse(cloud)
 	if err != nil {
-		return "", errors.New("Hub 地址无效")
+		return "", errors.New("xLyra Cloud 地址无效")
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -468,10 +468,10 @@ func (c *Client) endpoint(hub, path string) (string, error) {
 	return u.Scheme + "://" + u.Host + path, nil
 }
 
-func (c *Client) validateHub(hub string) error {
-	u, err := url.Parse(strings.TrimSpace(hub))
+func (c *Client) validateCloud(cloud string) error {
+	u, err := url.Parse(strings.TrimSpace(cloud))
 	if err != nil || u.Host == "" || u.User != nil {
-		return errors.New("Hub 地址无效")
+		return errors.New("xLyra Cloud 地址无效")
 	}
 	host := u.Hostname()
 	if u.Scheme == "https" {
@@ -480,10 +480,10 @@ func (c *Client) validateHub(hub string) error {
 	if c.allowLocal && u.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1") {
 		return nil
 	}
-	return errors.New("Hub 地址必须是 https")
+	return errors.New("xLyra Cloud 地址必须是 https")
 }
 
-func hubError(status int, raw []byte) error {
+func cloudError(status int, raw []byte) error {
 	var body struct {
 		ServerTime string `json:"serverTime"`
 		Error      struct {
@@ -499,25 +499,25 @@ func hubError(status int, raw []byte) error {
 	}
 	message := body.Error.Message
 	if message == "" {
-		message = "Hub 请求失败"
+		message = "xLyra Cloud 请求失败"
 	}
 	serverTime := body.Error.ServerTime
 	if serverTime == "" {
 		serverTime = body.ServerTime
 	}
-	return &HubError{Status: status, Code: code, Message: message, ServerTime: serverTime}
+	return &CloudError{Status: status, Code: code, Message: message, ServerTime: serverTime}
 }
 
-func statusFromRow(row store.HubBinding) Status {
+func statusFromRow(row store.CloudBinding) Status {
 	status := row.Status
 	if status == "" {
-		status = store.HubStatusUnbound
+		status = store.CloudStatusUnbound
 	}
 	return Status{
 		Status:          status,
 		InstanceName:    row.InstanceName,
 		UserDisplayName: row.UserDisplayName,
-		HubURL:          row.HubURL,
+		CloudURL:        row.CloudURL,
 		BoundAt:         formatTime(row.BoundAt),
 		LastSyncAt:      formatTime(row.LastSyncAt),
 		LastError:       row.LastError,
@@ -567,7 +567,7 @@ func (c *Client) noteError(ctx context.Context, message string) {
 		return
 	}
 	if err := c.repo.RecordError(ctx, message, c.now()); err != nil && ctx.Err() == nil {
-		c.warn("hub binding error was not saved", "error", err.Error())
+		c.warn("xLyra Cloud binding error was not saved", "error", err.Error())
 	}
 }
 

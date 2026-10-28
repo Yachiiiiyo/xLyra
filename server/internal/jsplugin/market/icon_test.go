@@ -73,13 +73,13 @@ func TestMarketIcon(t *testing.T) {
 		plugin("acme.huge", &marketproto.Icon{Path: "icons/" + hugeSum + ".png", SHA256: hugeSum}),
 		plugin("acme.plain", nil),
 	}
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
-	hub.put("icons/"+goodSum+".png", goodPNG)
-	hub.put("icons/"+swapSum+".png", []byte("different"))
-	hub.put("icons/"+wideSum+".png", widePNG)
-	hub.put("icons/"+rawSum+".png", raw)
-	hub.put("icons/"+hugeSum+".png", huge)
-	srv := httptest.NewServer(hub)
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, nil))
+	cloud.put("icons/"+goodSum+".png", goodPNG)
+	cloud.put("icons/"+swapSum+".png", []byte("different"))
+	cloud.put("icons/"+wideSum+".png", widePNG)
+	cloud.put("icons/"+rawSum+".png", raw)
+	cloud.put("icons/"+hugeSum+".png", huge)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -121,16 +121,16 @@ func TestMarketIcon(t *testing.T) {
 	wantMiss("nope", true)
 	wantMiss(strings.ToUpper(goodSum), true)
 	wantMiss(strings.Repeat("cd", 32), true)
-	if hub.hit("icons/"+goodSum+".png") != 0 {
-		t.Fatal("rejected hashes touched the hub")
+	if cloud.hit("icons/"+goodSum+".png") != 0 {
+		t.Fatal("rejected hashes touched the cloud")
 	}
 
 	goodName := "icons/" + goodSum + ".png"
-	hub.mu.Lock()
-	hub.blockPath = goodName
-	hub.pathEntered = make(chan struct{})
-	hub.pathRelease = make(chan struct{})
-	hub.mu.Unlock()
+	cloud.mu.Lock()
+	cloud.blockPath = goodName
+	cloud.pathEntered = make(chan struct{})
+	cloud.pathRelease = make(chan struct{})
+	cloud.mu.Unlock()
 	const n = 8
 	type iconResult struct {
 		body []byte
@@ -144,11 +144,11 @@ func TestMarketIcon(t *testing.T) {
 		}()
 	}
 	select {
-	case <-hub.pathEntered:
+	case <-cloud.pathEntered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for the icon fetch")
 	}
-	close(hub.pathRelease)
+	close(cloud.pathRelease)
 	for i := 0; i < n; i++ {
 		got := <-results
 		if got.err != nil {
@@ -158,46 +158,46 @@ func TestMarketIcon(t *testing.T) {
 			t.Fatalf("concurrent icon len = %d", len(got.body))
 		}
 		if strings.Contains(string(got.body), host) {
-			t.Fatal("icon bytes contain the hub address")
+			t.Fatal("icon bytes contain the cloud address")
 		}
 	}
-	if hub.hit(goodName) != 1 {
-		t.Fatalf("good hits = %d", hub.hit(goodName))
+	if cloud.hit(goodName) != 1 {
+		t.Fatalf("good hits = %d", cloud.hit(goodName))
 	}
 	again, err := svc.Icon(context.Background(), goodSum)
 	if err != nil || !bytes.Equal(again, goodPNG) {
 		t.Fatal(err)
 	}
-	if hub.hit(goodName) != 1 {
-		t.Fatalf("cache miss on the second read, hits = %d", hub.hit(goodName))
+	if cloud.hit(goodName) != 1 {
+		t.Fatalf("cache miss on the second read, hits = %d", cloud.hit(goodName))
 	}
 
 	swapName := "icons/" + swapSum + ".png"
-	before := hub.hit(swapName)
+	before := cloud.hit(swapName)
 	wantMiss(swapSum, false)
-	if hub.hit(swapName) != before+1 {
-		t.Fatalf("mismatch hits = %d, before %d", hub.hit(swapName), before)
+	if cloud.hit(swapName) != before+1 {
+		t.Fatalf("mismatch hits = %d, before %d", cloud.hit(swapName), before)
 	}
 	wantMiss(swapSum, false)
-	if hub.hit(swapName) != before+2 {
-		t.Fatalf("mismatch was cached, hits = %d", hub.hit(swapName))
+	if cloud.hit(swapName) != before+2 {
+		t.Fatalf("mismatch was cached, hits = %d", cloud.hit(swapName))
 	}
-	hub.put(swapName, swapPNG)
+	cloud.put(swapName, swapPNG)
 	swapped, err := svc.Icon(context.Background(), swapSum)
 	if err != nil || !bytes.Equal(swapped, swapPNG) {
 		t.Fatalf("swap retry = %v len %d", err, len(swapped))
 	}
-	if hub.hit(swapName) != before+3 {
-		t.Fatalf("swap fetch hits = %d", hub.hit(swapName))
+	if cloud.hit(swapName) != before+3 {
+		t.Fatalf("swap fetch hits = %d", cloud.hit(swapName))
 	}
 
 	for _, sum := range []string{rawSum, wideSum, hugeSum} {
 		name := "icons/" + sum + ".png"
-		start := hub.hit(name)
+		start := cloud.hit(name)
 		wantMiss(sum, false)
 		wantMiss(sum, false)
-		if hub.hit(name) != start+2 {
-			t.Fatalf("%s hits = %d, start %d", name, hub.hit(name), start)
+		if cloud.hit(name) != start+2 {
+			t.Fatalf("%s hits = %d, start %d", name, cloud.hit(name), start)
 		}
 	}
 
@@ -206,9 +206,9 @@ func TestMarketIcon(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	kept := hub.hit(goodName)
+	kept := cloud.hit(goodName)
 	wantMiss(goodSum, true)
-	if hub.hit(goodName) != kept {
+	if cloud.hit(goodName) != kept {
 		t.Fatal("disabled market fetched an icon")
 	}
 }
@@ -232,11 +232,11 @@ func TestMarketIconRejectsMalformedIndexIcon(t *testing.T) {
 		plugin("acme.upper", marketproto.Icon{Path: "icons/" + upperSum + ".png", SHA256: upperSum}),
 	}
 
-	hub := newHub(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, []marketproto.Plugin{}, nil))
+	cloud := newCloud(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, []marketproto.Plugin{}, nil))
 	for _, item := range cases {
-		hub.put(item.Icon.Path, []byte("x"))
+		cloud.put(item.Icon.Path, []byte("x"))
 	}
-	srv := httptest.NewServer(hub)
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
@@ -244,7 +244,7 @@ func TestMarketIconRejectsMalformedIndexIcon(t *testing.T) {
 	ctx := context.Background()
 
 	for _, item := range cases {
-		hub.use(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, []marketproto.Plugin{item}, nil))
+		cloud.use(signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, []marketproto.Plugin{item}, nil))
 		status, err := svc.SyncOnce(ctx, true)
 		if err != nil {
 			t.Fatal(err)
@@ -259,8 +259,8 @@ func TestMarketIconRejectsMalformedIndexIcon(t *testing.T) {
 		if snap.Index != nil {
 			t.Fatalf("cached index contains %d plugins", len(snap.Index.Plugins))
 		}
-		if hub.hit(item.Icon.Path) != 0 {
-			t.Fatalf("%s hits = %d", item.Icon.Path, hub.hit(item.Icon.Path))
+		if cloud.hit(item.Icon.Path) != 0 {
+			t.Fatalf("%s hits = %d", item.Icon.Path, cloud.hit(item.Icon.Path))
 		}
 	}
 }

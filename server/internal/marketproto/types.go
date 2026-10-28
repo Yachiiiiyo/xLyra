@@ -32,7 +32,8 @@ type RetiredKey struct {
 // Hub and Push are omitted from the signature payload when null.
 type Endpoints struct {
 	Registry []string `json:"registry"`
-	Hub      *string  `json:"hub"`
+	// 线上协议字段名仍为 hub,不可改
+	Cloud    *string  `json:"hub"`
 	Push     *string  `json:"push"`
 }
 

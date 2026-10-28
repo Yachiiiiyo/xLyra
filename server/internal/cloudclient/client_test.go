@@ -1,4 +1,4 @@
-package hubclient
+package cloudclient
 
 import (
 	"bytes"
@@ -19,19 +19,19 @@ import (
 	"xlyra/server/internal/store"
 )
 
-func TestHubAddressGuards(t *testing.T) {
+func TestCloudAddressGuards(t *testing.T) {
 	client := &Client{allowLocal: true, http: newHTTPClient(time.Second, true), now: time.Now}
-	if err := client.validateHub("http://example.com/hub"); err == nil {
-		t.Fatal("accepted public http hub")
+	if err := client.validateCloud("http://example.com/cloud"); err == nil {
+		t.Fatal("accepted public http cloud")
 	}
-	if err := client.validateHub("https://hub.example"); err != nil {
+	if err := client.validateCloud("https://cloud.example"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.validateHub("http://127.0.0.1:9"); err != nil {
+	if err := client.validateCloud("http://127.0.0.1:9"); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.validateHub("https://user:pass@hub.example"); err == nil {
-		t.Fatal("accepted hub userinfo")
+	if err := client.validateCloud("https://user:pass@cloud.example"); err == nil {
+		t.Fatal("accepted cloud userinfo")
 	}
 
 	evilHits := 0
@@ -48,14 +48,14 @@ func TestHubAddressGuards(t *testing.T) {
 	}
 }
 
-func TestHubClientRejectsInternalTargets(t *testing.T) {
+func TestCloudClientRejectsInternalTargets(t *testing.T) {
 	client := newHTTPClient(time.Second, false)
 	if client.CheckRedirect == nil || client.CheckRedirect(nil, nil) != http.ErrUseLastResponse {
 		t.Fatal("redirects are followed")
 	}
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok || transport.DialContext == nil || transport.Proxy != nil {
-		t.Fatal("hub transport is not guarded")
+		t.Fatal("cloud transport is not guarded")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -76,24 +76,24 @@ func TestHubClientRejectsInternalTargets(t *testing.T) {
 }
 
 func TestUnboundInstanceSendsNothing(t *testing.T) {
-	st := openHubStore(t)
-	hub := newFakeHub("approve")
-	srv := httptest.NewServer(hub)
+	st := openCloudStore(t)
+	cloud := newFakeCloud("approve")
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	client := newTestClient(t, st, srv.URL, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go client.Run(ctx)
 	time.Sleep(180 * time.Millisecond)
-	if hub.total() != 0 {
-		t.Fatalf("unbound hub hits = %d", hub.total())
+	if cloud.total() != 0 {
+		t.Fatalf("unbound cloud hits = %d", cloud.total())
 	}
 }
 
 func TestPairApproveHeartbeatAndSecrets(t *testing.T) {
-	st := openHubStore(t)
-	hub := newFakeHub("approve")
-	srv := httptest.NewServer(hub)
+	st := openCloudStore(t)
+	cloud := newFakeCloud("approve")
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	var auditMu sync.Mutex
 	var audits []string
@@ -107,51 +107,51 @@ func TestPairApproveHeartbeatAndSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Status != store.HubStatusPairing || view.Pairing == nil || view.Pairing.UserCode != hub.userCode {
+	if view.Status != store.CloudStatusPairing || view.Pairing == nil || view.Pairing.UserCode != cloud.userCode {
 		t.Fatalf("view = %#v", view)
 	}
-	assertPairingSecrets(t, st, hub)
+	assertPairingSecrets(t, st, cloud)
 	raw, _ := json.Marshal(view)
-	if strings.Contains(string(raw), hub.token) || strings.Contains(string(raw), "BEGIN") {
+	if strings.Contains(string(raw), cloud.token) || strings.Contains(string(raw), "BEGIN") {
 		t.Fatalf("status leaked poll token: %s", raw)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go client.Run(ctx)
-	repo := store.NewHubBindingRepository(st.DB())
+	repo := store.NewCloudBindingRepository(st.DB())
 	waitUntil(t, 5*time.Second, func() bool {
 		row, err := repo.Get(context.Background())
-		return err == nil && row.Status == store.HubStatusBound && row.InstanceName == "renamed" && row.UserDisplayName == "Ada" && row.LastSyncAt != nil
+		return err == nil && row.Status == store.CloudStatusBound && row.InstanceName == "renamed" && row.UserDisplayName == "Ada" && row.LastSyncAt != nil
 	})
 	row, err := repo.Get(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.InstanceID != hub.instanceID || row.PollTokenEnc != "" || row.PairingCodeHint != "" {
+	if row.InstanceID != cloud.instanceID || row.PollTokenEnc != "" || row.PairingCodeHint != "" {
 		t.Fatalf("bound row = %#v", row)
 	}
 	auditMu.Lock()
 	seenAudits := append([]string(nil), audits...)
 	auditMu.Unlock()
-	if !strings.Contains(strings.Join(seenAudits, "\n"), "hub_binding.bound") {
+	if !strings.Contains(strings.Join(seenAudits, "\n"), "cloud_binding.bound") {
 		t.Fatalf("audits = %v", seenAudits)
 	}
 	for _, item := range seenAudits {
-		if strings.Contains(item, hub.userCode) || strings.Contains(item, hub.token) {
+		if strings.Contains(item, cloud.userCode) || strings.Contains(item, cloud.token) {
 			t.Fatalf("audit leaked secret: %s", item)
 		}
 	}
-	assertHeartbeatWhitelist(t, hub.lastBody())
-	if hub.count("/api/instance/heartbeat") < 1 || hub.count("/api/instance/pair/poll") < 2 {
-		t.Fatalf("hits = %#v", hub.snapshot())
+	assertHeartbeatWhitelist(t, cloud.lastBody())
+	if cloud.count("/api/instance/heartbeat") < 1 || cloud.count("/api/instance/pair/poll") < 2 {
+		t.Fatalf("hits = %#v", cloud.snapshot())
 	}
 }
 
 func TestPairingCodeSurvivesRestart(t *testing.T) {
-	st := openHubStore(t)
-	hub := newFakeHub("approve")
-	srv := httptest.NewServer(hub)
+	st := openCloudStore(t)
+	cloud := newFakeCloud("approve")
+	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	client := newTestClient(t, st, srv.URL, nil)
 	if _, err := client.StartPairing(context.Background(), "desk"); err != nil {
@@ -162,17 +162,17 @@ func TestPairingCodeSurvivesRestart(t *testing.T) {
 	client.mu.Unlock()
 	other := newTestClient(t, st, srv.URL, nil)
 	view, err := other.Status(context.Background())
-	if err != nil || view.Pairing == nil || view.Pairing.UserCode != hub.userCode {
+	if err != nil || view.Pairing == nil || view.Pairing.UserCode != cloud.userCode {
 		t.Fatalf("restarted status = %#v err=%v", view, err)
 	}
 	if err := other.CancelPairing(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	cleared, err := other.Status(context.Background())
-	if err != nil || cleared.Pairing != nil || cleared.Status != store.HubStatusUnbound {
+	if err != nil || cleared.Pairing != nil || cleared.Status != store.CloudStatusUnbound {
 		t.Fatalf("cancelled = %#v err=%v", cleared, err)
 	}
-	row, err := store.NewHubBindingRepository(st.DB()).Get(context.Background())
+	row, err := store.NewCloudBindingRepository(st.DB()).Get(context.Background())
 	if err != nil || row.PairingCodeHint != "" {
 		t.Fatalf("hint after cancel = %q err=%v", row.PairingCodeHint, err)
 	}
@@ -180,19 +180,19 @@ func TestPairingCodeSurvivesRestart(t *testing.T) {
 	if _, err := client.StartPairing(context.Background(), "desk"); err != nil {
 		t.Fatal(err)
 	}
-	repo := store.NewHubBindingRepository(st.DB())
-	if err := repo.MarkBound(context.Background(), hub.instanceID, "desk", "Ada", time.Now().UTC()); err != nil {
+	repo := store.NewCloudBindingRepository(st.DB())
+	if err := repo.MarkBound(context.Background(), cloud.instanceID, "desk", "Ada", time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	bound, err := other.Status(context.Background())
-	if err != nil || bound.Pairing != nil || bound.Status != store.HubStatusBound {
+	if err != nil || bound.Pairing != nil || bound.Status != store.CloudStatusBound {
 		t.Fatalf("bound = %#v err=%v", bound, err)
 	}
 	if err := other.Unbind(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	after, err := repo.Get(context.Background())
-	if err != nil || after.PairingCodeHint != "" || after.Status != store.HubStatusUnbound {
+	if err != nil || after.PairingCodeHint != "" || after.Status != store.CloudStatusUnbound {
 		t.Fatalf("unbound = %#v err=%v", after, err)
 	}
 }
@@ -200,9 +200,9 @@ func TestPairingCodeSurvivesRestart(t *testing.T) {
 func TestPairDeniedAndExpired(t *testing.T) {
 	for _, mode := range []string{"deny", "expire"} {
 		t.Run(mode, func(t *testing.T) {
-			st := openHubStore(t)
-			hub := newFakeHub(mode)
-			srv := httptest.NewServer(hub)
+			st := openCloudStore(t)
+			cloud := newFakeCloud(mode)
+			srv := httptest.NewServer(cloud)
 			t.Cleanup(srv.Close)
 			client := newTestClient(t, st, srv.URL, nil)
 			if _, err := client.StartPairing(context.Background(), ""); err != nil {
@@ -211,17 +211,17 @@ func TestPairDeniedAndExpired(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
 			go client.Run(ctx)
-			repo := store.NewHubBindingRepository(st.DB())
+			repo := store.NewCloudBindingRepository(st.DB())
 			want := "配对被拒绝"
 			if mode == "expire" {
 				want = "配对已过期"
 			}
 			waitUntil(t, 5*time.Second, func() bool {
 				row, err := repo.Get(context.Background())
-				return err == nil && row.Status == store.HubStatusUnbound && row.LastError == want
+				return err == nil && row.Status == store.CloudStatusUnbound && row.LastError == want
 			})
-			if hub.count("/api/instance/heartbeat") != 0 {
-				t.Fatalf("heartbeat hits = %d", hub.count("/api/instance/heartbeat"))
+			if cloud.count("/api/instance/heartbeat") != 0 {
+				t.Fatalf("heartbeat hits = %d", cloud.count("/api/instance/heartbeat"))
 			}
 		})
 	}
@@ -229,9 +229,9 @@ func TestPairDeniedAndExpired(t *testing.T) {
 
 func TestRevokedStopsAndClockSkewBacksOff(t *testing.T) {
 	t.Run("revoked", func(t *testing.T) {
-		st := openHubStore(t)
-		hub := newFakeHub("revoke")
-		srv := httptest.NewServer(hub)
+		st := openCloudStore(t)
+		cloud := newFakeCloud("revoke")
+		srv := httptest.NewServer(cloud)
 		t.Cleanup(srv.Close)
 		client := newTestClient(t, st, srv.URL, nil)
 		if _, err := client.StartPairing(context.Background(), "desk"); err != nil {
@@ -240,14 +240,14 @@ func TestRevokedStopsAndClockSkewBacksOff(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		go client.Run(ctx)
-		repo := store.NewHubBindingRepository(st.DB())
+		repo := store.NewCloudBindingRepository(st.DB())
 		waitUntil(t, 5*time.Second, func() bool {
 			row, err := repo.Get(context.Background())
-			return err == nil && row.Status == store.HubStatusRevoked && row.LastError == "已在账号侧解除连接" && row.PublicKey != "" && row.InstanceID == ""
+			return err == nil && row.Status == store.CloudStatusRevoked && row.LastError == "已在账号侧解除连接" && row.PublicKey != "" && row.InstanceID == ""
 		})
-		stable := hub.count("/api/instance/heartbeat")
+		stable := cloud.count("/api/instance/heartbeat")
 		time.Sleep(250 * time.Millisecond)
-		if got := hub.count("/api/instance/heartbeat"); got != stable {
+		if got := cloud.count("/api/instance/heartbeat"); got != stable {
 			t.Fatalf("heartbeats after revoke = %d, was %d", got, stable)
 		}
 		row, _ := repo.Get(context.Background())
@@ -257,9 +257,9 @@ func TestRevokedStopsAndClockSkewBacksOff(t *testing.T) {
 	})
 
 	t.Run("clock skew", func(t *testing.T) {
-		st := openHubStore(t)
-		hub := newFakeHub("skew")
-		srv := httptest.NewServer(hub)
+		st := openCloudStore(t)
+		cloud := newFakeCloud("skew")
+		srv := httptest.NewServer(cloud)
 		t.Cleanup(srv.Close)
 		client := newTestClient(t, st, srv.URL, nil)
 		if _, err := client.StartPairing(context.Background(), "desk"); err != nil {
@@ -269,25 +269,25 @@ func TestRevokedStopsAndClockSkewBacksOff(t *testing.T) {
 		t.Cleanup(cancel)
 		started := time.Now()
 		go client.Run(ctx)
-		repo := store.NewHubBindingRepository(st.DB())
+		repo := store.NewCloudBindingRepository(st.DB())
 		waitUntil(t, 5*time.Second, func() bool {
 			row, err := repo.Get(context.Background())
-			return err == nil && row.Status == store.HubStatusBound && strings.Contains(row.LastError, "2026-01-02T03:04:05Z")
+			return err == nil && row.Status == store.CloudStatusBound && strings.Contains(row.LastError, "2026-01-02T03:04:05Z")
 		})
 		time.Sleep(500 * time.Millisecond)
-		hits := hub.count("/api/instance/heartbeat")
+		hits := cloud.count("/api/instance/heartbeat")
 		if hits < 2 || hits > 8 {
 			t.Fatalf("heartbeat hits in %s = %d, want a backed-off handful", time.Since(started), hits)
 		}
 		row, _ := repo.Get(context.Background())
-		if row.Status != store.HubStatusBound {
+		if row.Status != store.CloudStatusBound {
 			t.Fatalf("status = %s", row.Status)
 		}
 	})
 }
 
-func TestStatusDoesNotWaitForAHungHub(t *testing.T) {
-	st := openHubStore(t)
+func TestStatusDoesNotWaitForAHungCloud(t *testing.T) {
+	st := openCloudStore(t)
 	stop := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		<-stop
@@ -319,13 +319,13 @@ func TestStatusDoesNotWaitForAHungHub(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, st *store.Store, hubURL string, audit func(context.Context, string, map[string]any)) *Client {
+func newTestClient(t *testing.T, st *store.Store, cloudURL string, audit func(context.Context, string, map[string]any)) *Client {
 	t.Helper()
 	return New(
-		store.NewHubBindingRepository(st.DB()),
+		store.NewCloudBindingRepository(st.DB()),
 		store.NewJSPluginRepository(st.DB()),
-		hubTestMasterKey,
-		func(context.Context) (string, error) { return hubURL, nil },
+		cloudTestMasterKey,
+		func(context.Context) (string, error) { return cloudURL, nil },
 		Options{
 			AllowInsecureLocal:     true,
 			HeartbeatInterval:      30 * time.Millisecond,
@@ -342,17 +342,17 @@ func newTestClient(t *testing.T, st *store.Store, hubURL string, audit func(cont
 	)
 }
 
-func assertPairingSecrets(t *testing.T, st *store.Store, hub *fakeHub) {
+func assertPairingSecrets(t *testing.T, st *store.Store, cloud *fakeCloud) {
 	t.Helper()
-	row, err := store.NewHubBindingRepository(st.DB()).Get(context.Background())
+	row, err := store.NewCloudBindingRepository(st.DB()).Get(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := crypto.DecryptSecret(hubTestMasterKey, row.PollTokenEnc)
-	if err != nil || token != hub.token || row.PollTokenEnc == hub.token {
+	token, err := crypto.DecryptSecret(cloudTestMasterKey, row.PollTokenEnc)
+	if err != nil || token != cloud.token || row.PollTokenEnc == cloud.token {
 		t.Fatalf("poll token storage token=%q err=%v enc=%q", token, err, row.PollTokenEnc)
 	}
-	privText, err := crypto.DecryptSecret(hubTestMasterKey, row.PrivateKeyEnc)
+	privText, err := crypto.DecryptSecret(cloudTestMasterKey, row.PrivateKeyEnc)
 	if err != nil || privText == row.PrivateKeyEnc {
 		t.Fatalf("private key storage err=%v", err)
 	}
@@ -368,14 +368,14 @@ func assertPairingSecrets(t *testing.T, st *store.Store, hub *fakeHub) {
 	if !bytes.Equal(derived, pubRaw) {
 		t.Fatal("stored public key does not match the private key")
 	}
-	if row.PairingCodeHint != hub.userCode {
+	if row.PairingCodeHint != cloud.userCode {
 		t.Fatalf("pairing code hint = %q", row.PairingCodeHint)
 	}
-	blob := strings.Join([]string{row.PublicKey, row.PrivateKeyEnc, row.PollTokenEnc, row.InstanceID, row.LastError, row.InstanceName, row.UserDisplayName, row.HubURL}, "\n")
-	if strings.Contains(blob, hub.userCode) || strings.Contains(blob, strings.ReplaceAll(hub.userCode, "-", "")) || strings.Contains(blob, hub.token) || strings.Contains(blob, privText) {
+	blob := strings.Join([]string{row.PublicKey, row.PrivateKeyEnc, row.PollTokenEnc, row.InstanceID, row.LastError, row.InstanceName, row.UserDisplayName, row.CloudURL}, "\n")
+	if strings.Contains(blob, cloud.userCode) || strings.Contains(blob, strings.ReplaceAll(cloud.userCode, "-", "")) || strings.Contains(blob, cloud.token) || strings.Contains(blob, privText) {
 		t.Fatal("database row contains userCode outside the pairing hint, pollToken, or the private key")
 	}
-	if strings.Contains(row.PairingCodeHint, hub.token) || strings.Contains(row.PairingCodeHint, privText) {
+	if strings.Contains(row.PairingCodeHint, cloud.token) || strings.Contains(row.PairingCodeHint, privText) {
 		t.Fatal("pairing hint contains pollToken or the private key")
 	}
 }
@@ -405,7 +405,7 @@ func waitUntil(t *testing.T, limit time.Duration, ok func() bool) {
 	t.Fatal("condition was not met")
 }
 
-type fakeHub struct {
+type fakeCloud struct {
 	mu         sync.Mutex
 	mode       string
 	hits       map[string]int
@@ -418,8 +418,8 @@ type fakeHub struct {
 	heartBody  []byte
 }
 
-func newFakeHub(mode string) *fakeHub {
-	return &fakeHub{
+func newFakeCloud(mode string) *fakeCloud {
+	return &fakeCloud{
 		mode:       mode,
 		hits:       map[string]int{},
 		userCode:   "K7QM-2XFD",
@@ -428,7 +428,7 @@ func newFakeHub(mode string) *fakeHub {
 	}
 }
 
-func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -441,7 +441,7 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &req)
 		raw, err := base64.StdEncoding.DecodeString(req.PublicKey)
 		if err != nil || len(raw) != ed25519.PublicKeySize {
-			writeHubError(w, http.StatusBadRequest, "invalid_request", "bad public key", "")
+			writeCloudError(w, http.StatusBadRequest, "invalid_request", "bad public key", "")
 			return
 		}
 		h.pub = ed25519.PublicKey(raw)
@@ -475,11 +475,11 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.hearts++
 		h.heartBody = append([]byte(nil), body...)
 		if h.mode == "skew" {
-			writeHubError(w, http.StatusUnauthorized, "clock_skew", "clock skew", "2026-01-02T03:04:05Z")
+			writeCloudError(w, http.StatusUnauthorized, "clock_skew", "clock skew", "2026-01-02T03:04:05Z")
 			return
 		}
 		if h.mode == "revoke" && h.hearts > 1 {
-			writeHubError(w, http.StatusUnauthorized, "instance_revoked", "revoked", "")
+			writeCloudError(w, http.StatusUnauthorized, "instance_revoked", "revoked", "")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -492,40 +492,40 @@ func (h *fakeHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		writeHubError(w, http.StatusNotFound, "not_found", "not found", "")
+		writeCloudError(w, http.StatusNotFound, "not_found", "not found", "")
 	}
 }
 
-func (h *fakeHub) verify(w http.ResponseWriter, r *http.Request, body []byte) bool {
+func (h *fakeCloud) verify(w http.ResponseWriter, r *http.Request, body []byte) bool {
 	if r.Header.Get("X-XLyra-Instance") != h.instanceID {
-		writeHubError(w, http.StatusUnauthorized, "bad_signature", "bad instance", "")
+		writeCloudError(w, http.StatusUnauthorized, "bad_signature", "bad instance", "")
 		return false
 	}
 	unix, err := strconv.ParseInt(r.Header.Get("X-XLyra-Timestamp"), 10, 64)
 	if err != nil {
-		writeHubError(w, http.StatusUnauthorized, "bad_signature", "bad timestamp", "")
+		writeCloudError(w, http.StatusUnauthorized, "bad_signature", "bad timestamp", "")
 		return false
 	}
 	if delta := time.Now().Unix() - unix; delta > 300 || delta < -300 {
-		writeHubError(w, http.StatusUnauthorized, "clock_skew", "clock skew", time.Now().UTC().Format(time.RFC3339))
+		writeCloudError(w, http.StatusUnauthorized, "clock_skew", "clock skew", time.Now().UTC().Format(time.RFC3339))
 		return false
 	}
 	sig, err := base64.StdEncoding.DecodeString(r.Header.Get("X-XLyra-Signature"))
 	message := CanonicalMessage(r.Method, r.URL.Path, unix, body)
 	if err != nil || !ed25519.Verify(h.pub, []byte(message), sig) {
-		writeHubError(w, http.StatusUnauthorized, "bad_signature", "bad signature", "")
+		writeCloudError(w, http.StatusUnauthorized, "bad_signature", "bad signature", "")
 		return false
 	}
 	return true
 }
 
-func (h *fakeHub) count(path string) int {
+func (h *fakeCloud) count(path string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.hits[path]
 }
 
-func (h *fakeHub) total() int {
+func (h *fakeCloud) total() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	n := 0
@@ -535,7 +535,7 @@ func (h *fakeHub) total() int {
 	return n
 }
 
-func (h *fakeHub) snapshot() map[string]int {
+func (h *fakeCloud) snapshot() map[string]int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := make(map[string]int, len(h.hits))
@@ -545,7 +545,7 @@ func (h *fakeHub) snapshot() map[string]int {
 	return out
 }
 
-func (h *fakeHub) lastBody() []byte {
+func (h *fakeCloud) lastBody() []byte {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]byte(nil), h.heartBody...)
@@ -557,7 +557,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func writeHubError(w http.ResponseWriter, status int, code, message, serverTime string) {
+func writeCloudError(w http.ResponseWriter, status int, code, message, serverTime string) {
 	body := map[string]any{"code": code, "message": message}
 	if serverTime != "" {
 		body["serverTime"] = serverTime
