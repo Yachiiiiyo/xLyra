@@ -41,6 +41,8 @@ func main() {
 		runKeygen(os.Args[2:])
 	case "sign":
 		runSign(os.Args[2:])
+	case "publish":
+		runPublish(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -59,6 +61,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin --version\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin keygen [--out key.pem]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin sign <package.xlp> --key key.pem [--out signed.xlp]\n")
+	fmt.Fprintf(os.Stderr, "  xlyra-plugin publish <package.xlp> --changelog TEXT [--changelog-file FILE] [--hub URL] [--token T] [--no-wait]\n")
+	fmt.Fprintf(os.Stderr, "\n--token 会进入 shell 历史，请优先使用环境变量 XLYRA_HUB_TOKEN。\n")
 	fmt.Fprintf(os.Stderr, "\nrun --hook drives a site_provider probe, listModels, or check hook. classify and rewritePayload are covered by test, not run.\n")
 }
 

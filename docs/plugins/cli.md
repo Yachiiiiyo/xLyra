@@ -40,7 +40,7 @@ dist/plugin.js
 dist/fixtures/*.json
 ```
 
-构建后还会像服务端那样加载一遍，所以清单错误、`meta` 不匹配等问题在这里就能发现。外部依赖和动态 `import()` 会被拒绝，见[限制](./limits-and-security.md)。`build` 不会删除 `dist/` 里已有的 `.xlp`。
+构建后还会像服务端那样加载一遍，所以清单错误、`meta` 不匹配等问题在这里就能发现。清单里的顶层 `icon` 和 `siteProvider.display.icon` 会从工程目录复制进输出；顶层 `icon` 会做[图标检查](./manifest.md#图标)，不合格就失败，错误信息会写明实测值和改法。外部依赖和动态 `import()` 会被拒绝，见[限制](./limits-and-security.md)。`build` 不会删除 `dist/` 里已有的 `.xlp`。
 
 ## test
 
@@ -73,7 +73,7 @@ xlyra-plugin run --key-env VAR [--base-url URL] [--site-type T] [--credential-ty
 xlyra-plugin pack [--sign key.pem] [--out file.xlp] [dir]
 ```
 
-构建并生成 `.xlp`，默认写到 `dist/<id>-<version>.xlp`。写文件前会做和 `verify` 相同的检查，不合格就不生成。`--sign` 用私钥签名。
+构建并生成 `.xlp`，默认写到 `dist/<id>-<version>.xlp`。写文件前会做和 `verify` 相同的检查，包括图标，不合格就不生成，并带上图标检查的完整错误。`--sign` 用私钥签名。
 
 ## verify
 
@@ -81,7 +81,7 @@ xlyra-plugin pack [--sign key.pem] [--out file.xlp] [dir]
 xlyra-plugin verify <package.xlp>
 ```
 
-对已有的包做服务端上传时的全部检查：结构、清单、sha256、签名、加载、运行全部样本。通过时打印 id、版本、kind、样本数、签名者指纹和包摘要。
+对已有的包做服务端上传时的全部检查：结构、清单、sha256、签名、加载、运行全部样本，以及顶层 `icon` 的图标检查。通过时打印 id、版本、kind、样本数、签名者指纹和包摘要。声明了顶层 `icon` 时再打印一行，例如 `icon assets/icon.png 256x256 不透明 100% 亮度 0.62`。
 
 ## keygen / sign
 
@@ -91,3 +91,18 @@ xlyra-plugin sign <package.xlp> --key key.pem [--out signed.xlp]
 ```
 
 `keygen` 生成 ed25519 私钥（PEM，权限 `0600`），并输出 `public_key`（base64）和 `fingerprint`。**私钥请自己妥善保管，不要提交到仓库。** `sign` 给已有的包附上签名；`pack --sign` 是同样的事。
+
+## publish
+
+```bash
+export XLYRA_HUB_TOKEN='xlh_…'
+xlyra-plugin publish <package.xlp> --changelog "..." [--changelog-file FILE] [--hub URL] [--token T] [--no-wait]
+```
+
+把已签名的 `.xlp` 提交到 Hub。默认 Hub 是 `https://xlyra.yachiyo.im`（与当前 `root.json` 的 `endpoints.hub` 相同）。`--changelog` 和 `--changelog-file` 二选一，必填。
+
+发布前会先做和 `verify` 一样的本地检查，并且要求包已经签名。通过后上传到 `POST /api/dev/token/submissions`，打印提交编号，然后每 3 秒查询状态，直到进入待审核、已批准、已发布、已退回、检查未通过或已撤回。默认最多等 10 分钟。`--no-wait` 提交后立刻返回。
+
+`--token` 会进入 shell 历史，请改用环境变量 `XLYRA_HUB_TOKEN`。命令行参数优先于环境变量。Hub 地址必须是 https；只有 `http://127.0.0.1` 和 `http://localhost` 可以用来连本地测试的 Hub。令牌不会出现在命令的输出里。
+
+完整路径是 `keygen` 生成密钥、`pack --sign` 或 `sign` 签名，再到 `publish`。见[发布](./publishing.md)。
