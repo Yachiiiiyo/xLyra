@@ -269,6 +269,31 @@ func TestBridgeStreamWriterErrorFinishesDownstream(t *testing.T) {
 	}
 }
 
+func TestBridgeStreamWriterFillsFailedEnvelope(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writer := newBridgeStreamWriter(recorder, "gpt-5.5")
+	writer.StartEnvelope()
+	writer.beginRound()
+	payload := "data:{\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"upstream_stream_read_error\",\"message\":\"interrupted\"},\"status\":\"failed\"}}\r\n\r\n"
+	if _, err := writer.Write([]byte(payload)); err != nil {
+		t.Fatalf("write failed event: %v", err)
+	}
+	events := parseBridgeSSE(t, recorder.Body.String())
+	var failed map[string]any
+	for _, event := range events {
+		if event.Name == "response.failed" {
+			failed = event.Payload
+		}
+	}
+	if failed == nil {
+		t.Fatal("expected forwarded response.failed")
+	}
+	response, _ := failed["response"].(map[string]any)
+	if response["created_at"] == nil || anyString(response["id"]) == "" || response["model"] != "gpt-5.5" {
+		t.Fatalf("envelope = %#v", response)
+	}
+}
+
 func TestBridgeStreamWriterChunkedWrites(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writer := newBridgeStreamWriter(recorder, "gpt-5.5")

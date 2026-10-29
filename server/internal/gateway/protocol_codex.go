@@ -136,7 +136,7 @@ func (a codexProtocolAdapter) ProxyStream(ctx context.Context, w http.ResponseWr
 		return proxyCodexResponsesImageStream(ctx, w, resp, startedAt, prefix)
 	}
 	if a.responses.downstreamProtocol == canonicalProtocolOpenAIResponses {
-		return proxyResponsesStreamPassthrough(ctx, w, resp, startedAt)
+		return proxyResponsesStreamPassthrough(withSSESanitizeMeta(ctx, candidate), w, resp, startedAt)
 	}
 	return a.responses.ProxyStream(ctx, w, resp, startedAt, candidate)
 }

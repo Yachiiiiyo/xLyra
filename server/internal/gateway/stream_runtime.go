@@ -25,6 +25,7 @@ type streamCaptureState struct {
 	preOutputEventsBuffered  int
 	preOutputFailureDeferred bool
 	webSearchRequests        int
+	sseRepairs               []string
 }
 
 func proxyUpstreamStream(
@@ -33,7 +34,7 @@ func proxyUpstreamStream(
 	resp *http.Response,
 	startedAt time.Time,
 ) (streamCaptureState, bool, error) {
-	return proxyUpstreamStreamWithInspector(ctx, w, resp, startedAt, inspectOpenAIChatStreamLine)
+	return proxyUpstreamStreamSanitized(ctx, w, resp, startedAt, inspectOpenAIChatStreamLine, sanitizeChatEventBlock)
 }
 
 func proxyUpstreamStreamWithInspector(
@@ -42,6 +43,17 @@ func proxyUpstreamStreamWithInspector(
 	resp *http.Response,
 	startedAt time.Time,
 	inspectLine func([]byte, *streamCaptureState),
+) (streamCaptureState, bool, error) {
+	return proxyUpstreamStreamSanitized(ctx, w, resp, startedAt, inspectLine, nil)
+}
+
+func proxyUpstreamStreamSanitized(
+	ctx context.Context,
+	w http.ResponseWriter,
+	resp *http.Response,
+	startedAt time.Time,
+	inspectLine func([]byte, *streamCaptureState),
+	sanitize func([]byte) ([]byte, []string),
 ) (streamCaptureState, bool, error) {
 	capture := streamCaptureState{}
 	if resp == nil || resp.Body == nil {
@@ -52,6 +64,10 @@ func proxyUpstreamStreamWithInspector(
 	flusher, _ := w.(http.Flusher)
 	reader := bufio.NewReader(resp.Body)
 	headersWritten := false
+	var client *protocolSSEExit
+	if sanitize != nil {
+		client = newProtocolSSEExit(ctx, w, flusher, &capture, sanitize)
+	}
 
 	writeHeaders := func() {
 		if headersWritten {
@@ -60,6 +76,18 @@ func proxyUpstreamStreamWithInspector(
 		copyStreamingHeaders(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		headersWritten = true
+	}
+	writeChunk := func(p []byte) error {
+		if client != nil {
+			return client.Write(p)
+		}
+		if _, writeErr := w.Write(p); writeErr != nil {
+			return writeErr
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
 	}
 
 	for {
@@ -78,12 +106,9 @@ func proxyUpstreamStreamWithInspector(
 				capture.firstByteLatency = time.Since(startedAt).Milliseconds()
 				writeHeaders()
 			}
-			if _, writeErr := w.Write(line); writeErr != nil {
+			if writeErr := writeChunk(line); writeErr != nil {
 				capture.endReason = "downstream_stream_write_failed"
 				return capture, headersWritten, writeErr
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 			if inspectLine != nil {
 				inspectLine(line, &capture)
@@ -92,6 +117,12 @@ func proxyUpstreamStreamWithInspector(
 
 		if err == nil {
 			continue
+		}
+		if client != nil {
+			if finishErr := client.Finish(); finishErr != nil {
+				capture.endReason = "downstream_stream_write_failed"
+				return capture, headersWritten, finishErr
+			}
 		}
 		if err == io.EOF {
 			if capture.streamCompleted || capture.sawDone {

@@ -262,7 +262,7 @@ func (a openAIResponsesProtocolAdapter) TransformBufferedResponse(statusCode int
 
 func (a openAIResponsesProtocolAdapter) ProxyStream(ctx context.Context, w http.ResponseWriter, resp *http.Response, startedAt time.Time, candidate routeengine.Candidate) (streamCaptureState, bool, error) {
 	if a.downstreamProtocol == canonicalProtocolOpenAIResponses {
-		return proxyResponsesStreamPassthrough(ctx, w, resp, startedAt)
+		return proxyResponsesStreamPassthrough(withSSESanitizeMeta(ctx, candidate), w, resp, startedAt)
 	}
 	target := a.downstreamProtocol
 	if target == "" {

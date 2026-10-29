@@ -1221,6 +1221,7 @@ func streamMetadataEnvelope(capture streamCaptureState) map[string]any {
 		"stream_incomplete":   streamEndedIncomplete(capture.streamCompleted, capture.endReason),
 		"stream_end_reason":   emptyToNil(capture.endReason),
 		"stream_error_detail": emptyToNil(capture.errorDetail),
+		"stream_sanitized":    emptySliceToNil(capture.sseRepairs),
 		"first_byte_latency":  zeroInt64ToNil(capture.firstByteLatency),
 		"received_done_event": capture.sawDone,
 		"annotations":         emptySliceToNil(capture.annotations),
