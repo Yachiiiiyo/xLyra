@@ -29,6 +29,11 @@ export function MobileDockMenu({ open, items, anchorRef, onOpenChange }: MobileD
   const location = useLocation()
   const menuRef = useRef<HTMLDivElement>(null)
 
+  // 容器一直铺到视口底部，用 paddingBottom 把菜单项抬到「更多」按钮上方；
+  // 内容超出时可以滚动，滚到底的那一项压在胶囊导航上，不会被容器下边缘裁掉
+  const safeBottom = 'var(--mobile-dock-safe-bottom, env(safe-area-inset-bottom, 0px))'
+  const anchorGap = '21px + 62px + 12px'
+
   useEffect(() => {
     if (!open) return
 
@@ -74,8 +79,16 @@ export function MobileDockMenu({ open, items, anchorRef, onOpenChange }: MobileD
       <div
         ref={menuRef}
         role="menu"
-        className="mobile-dock-anchor pointer-events-none fixed right-4 z-50 flex max-h-[min(72dvh,640px)] flex-col items-end gap-2 overflow-visible"
-        style={{ bottom: 'calc(var(--mobile-dock-safe-bottom, env(safe-area-inset-bottom, 0px)) + 21px + 62px + 12px)' }}
+        className={cn(
+          'mobile-dock-anchor pointer-events-none fixed right-4 z-50 flex flex-col items-end gap-2',
+          'overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+          'pl-14 pt-2',
+        )}
+        style={{
+          bottom: safeBottom,
+          paddingBottom: `calc(${anchorGap})`,
+          maxHeight: `calc(var(--app-viewport-height, 100dvh) - ${safeBottom} - env(safe-area-inset-top, 0px) - 72px)`,
+        }}
       >
         {items.map((item, index) => {
           const Icon = item.icon
@@ -88,7 +101,7 @@ export function MobileDockMenu({ open, items, anchorRef, onOpenChange }: MobileD
           return (
             <LiquidGlass
               key={item.to}
-              className="pointer-events-auto max-w-[78vw] origin-bottom-right rounded-full"
+              className="pointer-events-auto max-w-[78vw] shrink-0 origin-bottom-right rounded-full"
               style={{
                 transform: `translateX(-${offset}px) rotate(${rotate}deg)`,
                 animation: `mobile-dock-menu-item-in 220ms ${index * 18}ms cubic-bezier(0.22,1,0.36,1) both`,

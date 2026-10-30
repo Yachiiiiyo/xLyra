@@ -62,11 +62,18 @@
     },
     "coverage": {
       "title": "チャネル一覧",
-      "hint": "1行が1本の上流チャネルです（サイト → モデル。複数 Key のサイトは Key ごとに分割）。カード上のチャネル数と同じ単位です。",
+      "hint": "1行が1本の上流チャネルです（サイト → モデル、複数 Key のサイトは Key ごとに分割）。",
       "loadFailed": "チャネルの読み込みに失敗しました",
       "noConfig": "チャネルがありません",
-      "group": "グループ {{name}}",
       "switchLabel": "{{site}} {{apiKey}} {{model}} を切り替え"
+    },
+    "meta": {
+      "health": "ヘルス",
+      "price": "価格",
+      "protocols": "プロトコル",
+      "group": "グループ",
+      "keys": "Key 数",
+      "priority": "優先度"
     },
     "traces": {
       "title": "最近のトレース",
@@ -123,8 +130,14 @@
     "healthRequests": "リクエスト: {{count}}",
     "healthSuccessRate": "成功: {{rate}}",
     "healthLatency": "レイテンシ: {{latency}}",
+    "healthIdle": "リクエストなし",
+    "healthSummary": "リクエスト {{count}} · 成功率 {{rate}} · レイテンシ {{latency}}",
     "pricingPerRequest": "リクエスト単価 {{price}}",
     "pricingTokens": "入力 {{input}} / 出力 {{output}}",
-    "perRequestUnit": "{{price}}/回"
+    "perRequestUnit": "{{price}}/回",
+    "priceTokens": "入力 {{input}} · 出力 {{output}}",
+    "pricePerRequest": "{{price}}/回",
+    "priceOriginalTokens": "元価格 入力 {{input}} · 出力 {{output}}",
+    "priceOriginalPerRequest": "元価格 {{price}}/回"
   }
 }

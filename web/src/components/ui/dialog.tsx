@@ -1,7 +1,7 @@
 import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { DRAW_HEADER_CLASS, DrawContent, type DrawBackProps } from '@/components/ui/draw'
-import { OverlayModeContext, useOverlayMode } from '@/components/ui/overlay-mode'
+import { OverlayModeContext, useDrawFooterRegistration, useOverlayMode } from '@/components/ui/overlay-mode'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +37,7 @@ const dialogSizeClassName = {
 type DialogSize = keyof typeof dialogSizeClassName
 
 type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & DrawBackProps & {
+  swipeDismiss?: boolean
   overlayClassName?: string
   container?: HTMLElement | null
   size?: DialogSize
@@ -55,7 +56,7 @@ type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, overlayClassName, container, size = 'default', surface = 'glass', presentation, onBack, backLabel, ...props }, ref) => {
+>(({ className, children, overlayClassName, container, size = 'default', surface = 'glass', presentation, onBack, backLabel, swipeDismiss, ...props }, ref) => {
   const isMobile = useMobileLayout()
   // 自绘外观的弹窗布局由调用方控制，始终居中
   const resolvedPresentation = presentation ?? (surface === 'none' ? 'center' : 'auto')
@@ -64,7 +65,7 @@ const DialogContent = React.forwardRef<
     // 移动端配置弹窗 → 底部 Draw；宽度、尺寸类只对居中弹窗有意义，这里去掉，保留 z-index 等其他类
     const drawClassName = className?.split(/\s+/).filter((token) => token && !/^(w-|max-w-|min-w-|overflow-)/.test(token)).join(' ')
     return (
-      <DrawContent ref={ref} className={drawClassName} overlayClassName={overlayClassName} onBack={onBack} backLabel={backLabel} {...props}>
+      <DrawContent ref={ref} className={drawClassName} overlayClassName={overlayClassName} onBack={onBack} backLabel={backLabel} swipeDismiss={swipeDismiss} {...props}>
         {children}
       </DrawContent>
     )
@@ -102,7 +103,7 @@ function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 }
 
 function DialogBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('min-h-0 flex-1 overflow-y-auto px-6 py-5', className)} {...props} />
+  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5', className)} {...props} />
 }
 
 type DialogFooterProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -118,6 +119,7 @@ type DialogFooterProps = React.HTMLAttributes<HTMLDivElement> & {
  */
 function DialogFooter({ className, cancel, confirm, children, ...props }: DialogFooterProps) {
   const draw = useOverlayMode() === 'draw'
+  useDrawFooterRegistration(draw && Boolean(cancel || confirm))
   return (
     <div
       className={cn(

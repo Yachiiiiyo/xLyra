@@ -731,6 +731,7 @@ export function SiteCreateSheet({
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        swipeDismiss={false}
         // 选了服务商之后的表单页：返回并入左上角按钮（抽屉里不再另放标题返回图标）
         onBack={selectedProvider && mode === 'create' ? handleBackToProviders : undefined}
         backLabel={t('form.backToProviders')}

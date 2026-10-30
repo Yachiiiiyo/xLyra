@@ -179,7 +179,7 @@ export function MarketSubmitDialog({
   const list = (items: string[]) => (items.length > 0 ? items.join(', ') : t('settings:jsPlugins.submit.empty'))
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose() }}>
-      <DialogContent size="sm">
+      <DialogContent size="sm" swipeDismiss={false}>
         <DialogHeader>
           <DialogTitle>{t('settings:jsPlugins.submit.dialogTitle')}</DialogTitle>
           <DialogDescription>{t('settings:jsPlugins.submit.dialogDescription')}</DialogDescription>

@@ -112,6 +112,85 @@ export function formatModelHealth(candidate?: RouteCandidateItem, t?: TFunction)
   return [requestsLabel, successRateLabel, latencyLabel].join(' · ')
 }
 
+export type RouteHealthDetail = {
+  text: string
+  muted?: boolean
+}
+
+export function formatModelHealthDetail(candidate?: RouteCandidateItem, t?: TFunction): RouteHealthDetail {
+  const requestCount = candidate?.health.model_request_count ?? 0
+  if (!candidate || requestCount <= 0) {
+    return { text: t ? t('format.healthIdle') : '未请求', muted: true }
+  }
+
+  return {
+    text: t
+      ? t('format.healthSummary', {
+          count: requestCount,
+          rate: formatPercent(candidate.health.model_success_rate),
+          latency: formatLatency(candidate.health.model_avg_latency_ms),
+        })
+      : `请求 ${requestCount} · 成功率 ${formatPercent(candidate.health.model_success_rate)} · 延迟 ${formatLatency(candidate.health.model_avg_latency_ms)}`,
+  }
+}
+
+export type RoutePricingDetail = {
+  effective: string
+  original?: string
+}
+
+type RoutePricingLike = {
+  base_input_value?: number | null
+  base_output_value?: number | null
+  base_per_request_value?: number | null
+  input_value?: number | null
+  output_value?: number | null
+  per_request_value?: number | null
+  currency?: string | null
+}
+
+export function formatRoutePricingDetail(pricing?: RoutePricingLike, t?: TFunction): RoutePricingDetail | undefined {
+  if (!pricing) return undefined
+
+  const effective = formatRoutePriceValues(pricing.input_value, pricing.output_value, pricing.per_request_value, pricing.currency, t)
+  const hasBase = (
+    typeof pricing.base_input_value === 'number'
+    || typeof pricing.base_output_value === 'number'
+    || typeof pricing.base_per_request_value === 'number'
+  )
+  const hasDifferentBase = hasBase && (
+    pricing.base_input_value !== pricing.input_value
+    || pricing.base_output_value !== pricing.output_value
+    || pricing.base_per_request_value !== pricing.per_request_value
+  )
+  if (!hasDifferentBase) return { effective }
+
+  const original = formatRoutePriceValues(pricing.base_input_value, pricing.base_output_value, pricing.base_per_request_value, pricing.currency, t, true)
+  return { effective, original }
+}
+
+function formatRoutePriceValues(
+  input?: number | null,
+  output?: number | null,
+  perRequest?: number | null,
+  currency?: string | null,
+  t?: TFunction,
+  original = false,
+) {
+  if (typeof perRequest === 'number') {
+    const price = `${pricePrefix(currency)}${formatDecimal(perRequest)}`
+    if (original) return t ? t('format.priceOriginalPerRequest', { price }) : `原价 ${price}/次`
+    return t ? t('format.pricePerRequest', { price }) : `${price}/次`
+  }
+
+  const inputPrice = formatPrice(input, currency)
+  const outputPrice = formatPrice(output, currency)
+  if (original) {
+    return t ? t('format.priceOriginalTokens', { input: inputPrice, output: outputPrice }) : `原价 输入 ${inputPrice} · 输出 ${outputPrice}`
+  }
+  return t ? t('format.priceTokens', { input: inputPrice, output: outputPrice }) : `输入 ${inputPrice} · 输出 ${outputPrice}`
+}
+
 export function formatLatency(value?: number | null) {
   if (typeof value !== 'number') return '-'
   return `${Math.round(value)} ms`
@@ -122,10 +201,13 @@ export function formatPercent(value?: number | null, digits = 4) {
   return `${formatDecimal(value * 100, digits, true)}%`
 }
 
+function pricePrefix(currency?: string | null) {
+  return currency && currency.toUpperCase() !== 'USD' ? `${currency} ` : '$'
+}
+
 function formatPrice(value?: number | null, currency?: string | null) {
   if (typeof value !== 'number') return '-'
-  const prefix = currency && currency.toUpperCase() !== 'USD' ? `${currency} ` : '$'
-  return `${prefix}${formatDecimal(value)}/1M`
+  return `${pricePrefix(currency)}${formatDecimal(value)}/1M`
 }
 
 export function formatRoutePricing(pricing?: { base_input_value?: number | null; base_output_value?: number | null; base_per_request_value?: number | null; input_value?: number | null; output_value?: number | null; per_request_value?: number | null; currency?: string | null }, t?: TFunction) {
@@ -162,8 +244,7 @@ function formatEffectiveRoutePricing(pricing?: { input_value?: number | null; ou
 
 function formatPerRequestRoutePrice(value?: number | null, currency?: string | null, t?: TFunction) {
   if (typeof value !== 'number') return '-'
-  const prefix = currency && currency.toUpperCase() !== 'USD' ? `${currency} ` : '$'
-  const price = `${prefix}${formatDecimal(value)}`
+  const price = `${pricePrefix(currency)}${formatDecimal(value)}`
   return t ? t('format.perRequestUnit', { price }) : `${price}/req`
 }
 

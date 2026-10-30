@@ -212,7 +212,7 @@ export function SiteGroupsSettingsPage() {
       ) : null}
 
       <Sheet open={formOpen} onOpenChange={(open) => { if (!open && !saveMutation.isPending) closeForm() }}>
-        <SheetContent onOpenAutoFocus={(event) => event.preventDefault()}>
+        <SheetContent swipeDismiss={false} onOpenAutoFocus={(event) => event.preventDefault()}>
           <SheetHeader>
             <SheetTitle>{editingGroup ? t('siteGroups.form.editTitle') : t('siteGroups.form.createTitle')}</SheetTitle>
           </SheetHeader>

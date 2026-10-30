@@ -1478,7 +1478,7 @@ function NestedDraw({
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent>
+      <SheetContent swipeDismiss={false}>
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
         </SheetHeader>

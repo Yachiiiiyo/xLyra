@@ -220,7 +220,7 @@ export function OAuthImportSheet({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={handleClose}>
-        <SheetContent onOpenAutoFocus={(event) => event.preventDefault()}>
+        <SheetContent swipeDismiss={false} onOpenAutoFocus={(event) => event.preventDefault()}>
           <SheetHeader>
             <SheetTitle>{t('import.title')}</SheetTitle>
           </SheetHeader>

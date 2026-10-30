@@ -160,7 +160,7 @@ export function OAuthCreateDraw({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent onOpenAutoFocus={(event) => event.preventDefault()}>
+        <SheetContent swipeDismiss={false} onOpenAutoFocus={(event) => event.preventDefault()}>
           <SheetHeader>
             <SheetTitle>{dialogTitle}</SheetTitle>
           </SheetHeader>

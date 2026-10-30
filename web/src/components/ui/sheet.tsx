@@ -1,8 +1,8 @@
 import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { DRAW_HEADER_CLASS, DrawContent, DrawFooter, type DrawBackProps } from '@/components/ui/draw'
-import { OverlayModeContext, useOverlayMode } from '@/components/ui/overlay-mode'
+import { DRAW_HEADER_CLASS, DrawContent, type DrawBackProps } from '@/components/ui/draw'
+import { OverlayModeContext, useDrawFooterRegistration, useOverlayMode } from '@/components/ui/overlay-mode'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
@@ -53,21 +53,17 @@ const sheetVariants = cva(
 
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & VariantProps<typeof sheetVariants> & DrawBackProps
->(({ side, className, children, onBack, backLabel, ...props }, ref) => {
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & VariantProps<typeof sheetVariants> & DrawBackProps & { swipeDismiss?: boolean }
+>(({ side, className, children, onBack, backLabel, swipeDismiss, ...props }, ref) => {
   const isMobile = useMobileLayout()
 
   // 右侧面板在移动端（< 1024）变成底部 Draw：有 grabber 与左上角关闭按钮；
-  // 没有页脚的只读面板自动补一个全宽「关闭」。左侧导航抽屉保持原样。
+  // 关闭靠左上角按钮，不再补底部关闭。左侧导航抽屉保持原样。
   if (isMobile && side !== 'left') {
-    const hasFooter = React.Children.toArray(children).some(
-      (child) => React.isValidElement(child) && child.type === SheetFooter,
-    )
     const drawClassName = className?.split(/\s+/).filter((token) => token && !/^(w-|max-w-|min-w-|overflow-)/.test(token)).join(' ')
     return (
-      <DrawContent ref={ref} className={drawClassName} onBack={onBack} backLabel={backLabel} {...props}>
+      <DrawContent ref={ref} className={drawClassName} onBack={onBack} backLabel={backLabel} swipeDismiss={swipeDismiss} {...props}>
         {children}
-        {hasFooter ? null : <DrawFooter />}
       </DrawContent>
     )
   }
@@ -90,7 +86,7 @@ function SheetHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 }
 
 function SheetBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('min-h-0 flex-1 overflow-y-auto px-6 py-5', className)} {...props} />
+  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5', className)} {...props} />
 }
 
 type SheetFooterProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -106,6 +102,7 @@ type SheetFooterProps = React.HTMLAttributes<HTMLDivElement> & {
  */
 function SheetFooter({ className, confirm, cancel, children, ...props }: SheetFooterProps) {
   const draw = useOverlayMode() === 'draw'
+  useDrawFooterRegistration(draw && Boolean(cancel || confirm))
   return (
     <div
       className={cn(

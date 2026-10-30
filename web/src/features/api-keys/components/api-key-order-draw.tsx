@@ -36,7 +36,7 @@ export function APIKeyOrderDraw({ initialData, onClose }: {
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open && !pending) onClose() }}>
-      <SheetContent>
+      <SheetContent swipeDismiss={false}>
         <SheetHeader>
           <SheetTitle>{t('order.title')}</SheetTitle>
           <SheetDescription>{t('order.description')}</SheetDescription>

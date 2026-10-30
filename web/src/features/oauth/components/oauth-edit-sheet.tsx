@@ -91,7 +91,7 @@ export function OAuthEditSheet({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent onOpenAutoFocus={(event) => event.preventDefault()}>
+        <SheetContent swipeDismiss={false} onOpenAutoFocus={(event) => event.preventDefault()}>
           <SheetHeader>
             <SheetTitle>{title}</SheetTitle>
           </SheetHeader>

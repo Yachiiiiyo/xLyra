@@ -194,7 +194,7 @@ export function SiteModelTestSheet({
           className="pl-10"
         />
       </div>
-      <div className={site?.supports_multiple_api_keys ? 'grid grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3' : 'grid grid-cols-2 gap-2 sm:gap-3'}>
+      <div className={site?.supports_multiple_api_keys ? 'grid grid-cols-3 gap-2 sm:gap-3' : 'grid grid-cols-2 gap-2 sm:gap-3'}>
         <Select
           value={protocol}
           onValueChange={(value) => {
@@ -253,10 +253,7 @@ export function SiteModelTestSheet({
   )
   const modelsTable = (
     <table className="w-full table-fixed border-collapse text-left">
-      <thead className={isMobile
-        ? 'bg-fill-3'
-        : 'sticky top-0 z-10 bg-fill-3 shadow-[0_1px_0_var(--separator)]'}
-      >
+      <thead className="sticky top-0 z-10 bg-fill-3 shadow-[0_1px_0_var(--separator)]">
         <tr className="text-footnote font-semibold text-label-2">
           <th className="w-[42%] px-3 py-2.5 font-medium md:px-4 md:py-3">{t('test.headers.model')}</th>
           <th className="w-[26%] px-2 py-2.5 font-medium md:px-4 md:py-3">{t('test.headers.status')}</th>
@@ -349,6 +346,68 @@ export function SiteModelTestSheet({
     </table>
   )
 
+  // 移动端：两列——左列图标 + 模型名 + 小字状态（测试后为结果 + 延迟），右列测试按钮
+  const modelsList = (
+    <div>
+      {filteredModels.length ? filteredModels.map((model) => {
+        const record = results[model.id]
+        const result = record?.status === 'success' ? record.result : null
+        const pending = pendingModelIds.includes(model.id)
+        const failureResponse = result && !result.ok
+          ? formatTestFailureResponse(result.result.failure_response, result.result.error_message)
+          : ''
+        const icon = siteModelIconInfo(model, canonicalMap, site)
+        const badge = record ? (
+          record.status === 'success' ? (
+            <StatusBadge status={record.result.ok ? 'healthy' : 'error'} className="whitespace-nowrap px-2 py-0.5 text-footnote">
+              {record.result.ok ? t('test.status.success') : t('test.status.failed')}
+            </StatusBadge>
+          ) : (
+            <StatusBadge status="error" className="whitespace-nowrap px-2 py-0.5 text-footnote">{t('test.status.failed')}</StatusBadge>
+          )
+        ) : (
+          <StatusBadge status="idle" className="whitespace-nowrap px-2 py-0.5 text-footnote">{t('test.status.untested')}</StatusBadge>
+        )
+        const failureMessage = record?.status === 'error' ? record.message : failureResponse
+        return (
+          <div key={model.id} className="flex items-center gap-2 border-t border-separator px-3 py-2.5 first:border-t-0">
+            <BrandMark
+              iconPath={icon.iconPath}
+              label={icon.label}
+              fallback={icon.fallback}
+              fallbackText={icon.fallbackText}
+              size="sm"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-body font-medium text-label" title={model.upstream_model_name}>
+                {model.upstream_model_name}
+              </div>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-footnote text-label-2">
+                {failureMessage ? <ErrorDetails message={failureMessage}>{badge}</ErrorDetails> : badge}
+                {result?.result.latency_ms != null ? (
+                  <span className="shrink-0 tabular-nums">{result.result.latency_ms} ms</span>
+                ) : null}
+              </div>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 shrink-0 border-0 bg-transparent p-0 shadow-none hover:bg-transparent hover:text-tint hover:shadow-none"
+              onClick={() => testMutation.mutate(model)}
+              disabled={pending}
+              aria-label={t('test.test')}
+              title={t('test.test')}
+            >
+              {pending ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+        )
+      }) : (
+        <div className="px-4 py-10 text-center text-body text-label-2">{t('components:modelsDraw.noModels')}</div>
+      )}
+    </div>
+  )
+
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -361,7 +420,7 @@ export function SiteModelTestSheet({
               <>
                 {toolbar}
                 <div className="overflow-hidden rounded-inner border border-separator">
-                  {modelsTable}
+                  {modelsList}
                 </div>
               </>
             ) : emptyState}

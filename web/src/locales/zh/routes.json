@@ -62,11 +62,18 @@
     },
     "coverage": {
       "title": "通道列表",
-      "hint": "每一行是一条上游通道（站点 → 模型，多 Key 站还会按 Key 拆开），对应上方的「通道」计数。",
+      "hint": "每行是一条上游通道（站点 → 模型，多 Key 站按 Key 拆分）。",
       "loadFailed": "通道列表读取失败",
       "noConfig": "暂无通道",
-      "group": "分组 {{name}}",
       "switchLabel": "切换 {{site}} {{apiKey}} {{model}}"
+    },
+    "meta": {
+      "health": "健康",
+      "price": "价格",
+      "protocols": "协议",
+      "group": "分组",
+      "keys": "Key 数",
+      "priority": "优先级"
     },
     "traces": {
       "title": "最近请求",
@@ -123,8 +130,14 @@
     "healthRequests": "模型请求 {{count}}",
     "healthSuccessRate": "成功率 {{rate}}",
     "healthLatency": "延迟 {{latency}}",
+    "healthIdle": "未请求",
+    "healthSummary": "请求 {{count}} · 成功率 {{rate}} · 延迟 {{latency}}",
     "pricingPerRequest": "按次 {{price}}",
     "pricingTokens": "输入 {{input}} / 输出 {{output}}",
-    "perRequestUnit": "{{price}}/次"
+    "perRequestUnit": "{{price}}/次",
+    "priceTokens": "输入 {{input}} · 输出 {{output}}",
+    "pricePerRequest": "{{price}}/次",
+    "priceOriginalTokens": "原价 输入 {{input}} · 输出 {{output}}",
+    "priceOriginalPerRequest": "原价 {{price}}/次"
   }
 }

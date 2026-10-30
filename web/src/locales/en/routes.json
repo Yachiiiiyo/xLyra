@@ -62,11 +62,18 @@
     },
     "coverage": {
       "title": "Channels",
-      "hint": "Each row is one upstream channel (site → model, split by API key when a site has multiple keys). This is the same unit as the channel count on the card.",
+      "hint": "Each row is one upstream channel (site → model, split by key for multi-key sites).",
       "loadFailed": "Failed to load channels",
       "noConfig": "No channels",
-      "group": "Group {{name}}",
       "switchLabel": "Toggle {{site}} {{apiKey}} {{model}}"
+    },
+    "meta": {
+      "health": "Health",
+      "price": "Price",
+      "protocols": "Protocols",
+      "group": "Group",
+      "keys": "Keys",
+      "priority": "Priority"
     },
     "traces": {
       "title": "Recent traces",
@@ -123,8 +130,14 @@
     "healthRequests": "Requests: {{count}}",
     "healthSuccessRate": "Success: {{rate}}",
     "healthLatency": "Latency: {{latency}}",
+    "healthIdle": "No requests",
+    "healthSummary": "Requests {{count}} · Success {{rate}} · Latency {{latency}}",
     "pricingPerRequest": "Per-request {{price}}",
     "pricingTokens": "Input {{input}} / Output {{output}}",
-    "perRequestUnit": "{{price}}/req"
+    "perRequestUnit": "{{price}}/req",
+    "priceTokens": "Input {{input}} · Output {{output}}",
+    "pricePerRequest": "{{price}}/req",
+    "priceOriginalTokens": "Was input {{input}} · output {{output}}",
+    "priceOriginalPerRequest": "Was {{price}}/req"
   }
 }
