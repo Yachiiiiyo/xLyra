@@ -18,8 +18,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"xlyra/server/internal/auth"
-	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/cloudclient"
+	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/store"
 )
 
@@ -329,7 +329,7 @@ func TestCloudBindingCloudErrorsAreNotPassedThrough(t *testing.T) {
 		)
 		router := cloudBindingRouter(Handler{auth: authService}, client, authService)
 		rec := cloudAuthed(t, router, session.Token, authService.CSRFTokenForSession(session.Token), http.MethodPost, "/api/v1/cloud-binding/pair", []byte(`{}`))
-		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "cloud_error") {
+		if rec.Code != http.StatusFailedDependency || !strings.Contains(rec.Body.String(), "cloud_error") {
 			t.Fatalf("Cloud %d -> xLyra %d %s", status, rec.Code, rec.Body.String())
 		}
 	}

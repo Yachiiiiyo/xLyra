@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"xlyra/server/internal/httpx"
 	"xlyra/server/internal/cloudclient"
+	"xlyra/server/internal/httpx"
 )
 
 func RegisterCloudBinding(r chi.Router, h Handler, client *cloudclient.Client) {
@@ -131,10 +131,10 @@ func (h Handler) writeCloudClientError(w http.ResponseWriter, r *http.Request, e
 		if message == "" {
 			message = "xLyra Cloud 请求失败"
 		}
-		h.writeError(w, r, http.StatusBadGateway, "cloud_error", message)
+		h.writeError(w, r, http.StatusFailedDependency, "cloud_error", message)
 		return
 	}
-	h.writeError(w, r, http.StatusBadGateway, "cloud_unavailable", err.Error())
+	h.writeError(w, r, http.StatusFailedDependency, "cloud_unavailable", err.Error())
 }
 
 func readCloudPairName(r *http.Request) (string, error) {

@@ -18,9 +18,6 @@ func TestPluginMarketSyncCronIsHourly(t *testing.T) {
 	if pluginMarketSyncCron != "@every 1h" {
 		t.Fatalf("plugin market cron = %s", pluginMarketSyncCron)
 	}
-	if pluginMarketStartupWait != time.Minute {
-		t.Fatalf("plugin market startup wait = %s", pluginMarketStartupWait)
-	}
 }
 
 func TestPluginMarketSyncSkipsWhenAlreadyRunning(t *testing.T) {

@@ -26,7 +26,6 @@ const (
 	codexVersionRefreshCron   = "@every 6h"
 	claudeVersionRefreshCron  = "@every 6h"
 	pluginMarketSyncCron      = "@every 1h"
-	pluginMarketStartupWait   = time.Minute
 	automaticBackupJobTimeout = 10 * time.Minute
 )
 
@@ -74,8 +73,7 @@ type Scheduler struct {
 	claudeVersioning atomic.Bool
 	marketSync       atomic.Bool
 
-	pluginMarket  *market.Service
-	marketStartup *time.Timer
+	pluginMarket *market.Service
 
 	modelsCacheInvalidator func()
 }
@@ -178,10 +176,7 @@ func (s *Scheduler) RegisterDefaultJobs() {
 		} else {
 			s.logger.Info("plugin market sync scheduler registered", "interval", pluginMarketSyncCron)
 		}
-		if s.marketStartup != nil {
-			s.marketStartup.Stop()
-		}
-		s.marketStartup = time.AfterFunc(pluginMarketStartupWait, s.runPluginMarketSync)
+		go s.runPluginMarketSync()
 	}
 
 	s.RegisterConfiguredJobs()
@@ -252,9 +247,6 @@ func (s *Scheduler) Start() {
 }
 
 func (s *Scheduler) Stop() {
-	if s.marketStartup != nil {
-		s.marketStartup.Stop()
-	}
 	ctx := s.cron.Stop()
 	<-ctx.Done()
 }

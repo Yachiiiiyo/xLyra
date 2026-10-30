@@ -9,8 +9,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"xlyra/server/internal/httpx"
 	"xlyra/server/internal/cloudclient"
+	"xlyra/server/internal/httpx"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/marketproto"
@@ -231,10 +231,10 @@ func (h Handler) writeCloudSubmissionError(w http.ResponseWriter, r *http.Reques
 		if cloudErr.Code != "" {
 			fields["cloud_code"] = cloudErr.Code
 		}
-		h.writeErrorFields(w, r, http.StatusBadGateway, code, message, fields)
+		h.writeErrorFields(w, r, http.StatusFailedDependency, code, message, fields)
 		return
 	}
-	h.writeError(w, r, http.StatusBadGateway, "cloud_unavailable", "连接 xLyra Cloud 失败")
+	h.writeError(w, r, http.StatusFailedDependency, "cloud_unavailable", "连接 xLyra Cloud 失败")
 }
 
 func cloudSubmissionCode(err error) string {

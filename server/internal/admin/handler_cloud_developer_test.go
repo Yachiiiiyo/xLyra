@@ -20,8 +20,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"xlyra/server/internal/auth"
-	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/cloudclient"
+	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/marketproto"
@@ -122,7 +122,7 @@ func TestCloudSubmissionSuccessAuditAndErrors(t *testing.T) {
 	} {
 		env.cloud.setCode(code)
 		rec := env.authed(http.MethodPost, "/api/v1/cloud-binding/submissions", []byte(`{"pluginId":"acme.demo","version":"1.4.0","changelog":"修好了额度显示"}`))
-		if rec.Code != http.StatusBadGateway || errorField(t, rec, "code") != code || errorField(t, rec, "cloud_code") != code {
+		if rec.Code != http.StatusFailedDependency || errorField(t, rec, "code") != code || errorField(t, rec, "cloud_code") != code {
 			t.Fatalf("%s -> %d %s", code, rec.Code, rec.Body.String())
 		}
 		if msg := errorField(t, rec, "message"); msg == "" || msg == code {
