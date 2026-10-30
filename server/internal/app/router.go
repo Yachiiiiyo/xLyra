@@ -574,8 +574,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Put("/settings/general", settingsHandler.UpdateGeneral)
 				protected.Get("/settings/portal", settingsHandler.GetPortal)
 				protected.Put("/settings/portal", settingsHandler.UpdatePortal)
-				protected.Get("/settings/plugin-market", settingsHandler.GetPluginMarket)
-				protected.Put("/settings/plugin-market", settingsHandler.UpdatePluginMarket)
 				protected.Get("/settings/rate-limits", settingsHandler.GetRateLimits)
 				protected.Put("/settings/rate-limits", settingsHandler.UpdateRateLimits)
 				protected.Post("/settings/backup/export", settingsHandler.ExportBackup)

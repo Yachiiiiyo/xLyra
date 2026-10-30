@@ -775,6 +775,8 @@
     "trustedKeyAddSuccess": "Trusted key imported",
     "trustedKeyAddFailed": "Failed to import key",
     "trustedKeyDeleteSuccess": "Trusted key removed",
+    "trustedKeyDeleteTitle": "Remove trusted key",
+    "trustedKeyDeleteBody": "After removal, plugin packages signed by \"{{name}}\" will no longer be trusted directly and will require confirmation when enabled.",
     "trustedKeyDeleteFailed": "Failed to remove key",
     "try": "Try",
     "trySuccess": "Try run finished",
@@ -877,7 +879,6 @@
       "grantedHosts": "Granted host permissions"
     },
     "columns": {
-      "name": "Name",
       "id": "Plugin ID",
       "version": "Version",
       "kind": "Kind",
@@ -895,8 +896,6 @@
       "market": "Market"
     },
     "market": {
-      "settingsTitle": "Market settings",
-      "settingsHint": "These settings only affect the plugin market. Installed plugins stay as they are.",
       "lastSync": "Last sync",
       "neverSynced": "Not synced yet",
       "syncNow": "Sync now",
@@ -927,7 +926,6 @@
       "installEnable": "Install and enable",
       "update": "Update",
       "updateEnable": "Update and enable",
-      "installedVersion": "Installed {{version}}",
       "installPaused": "The market has not synced for a long time. Installing from the market is paused.",
       "versionRevoked": "This version has been revoked",
       "installedStay": "Installed. Enable it from Installed.",
@@ -961,15 +959,6 @@
         "security": "Security",
         "deprecated": "Deprecated"
       },
-      "enabled": "Enable market",
-      "sourceUrl": "Market source URL",
-      "sourceUrlHint": "Leave empty to follow the official source",
-      "proxy": "Proxy",
-      "proxyDirect": "Direct",
-      "autoUpdate": "Allow automatic updates",
-      "syncHours": "Index sync interval",
-      "syncHoursHint": "1 to 24 hours",
-      "saved": "Market settings saved",
       "saveFailed": "Failed to save market settings",
       "loadFailed": "Failed to load the market",
       "updateTo": "Update to {{version}}",
@@ -1049,14 +1038,9 @@
   },
   "xlyraCloud": {
     "eyebrow": "System",
-    "description": "Connect this xLyra to your xLyra account for instance management and later official services.",
+    "description": "Connect this instance to your xLyra Cloud account to use official services such as developer plugins",
     "refresh": "Refresh",
-    "statusLabel": "Connection",
-    "account": {
-      "title": "Account"
-    },
     "info": {
-      "title": "Connection details",
       "connectedAt": "Connected at",
       "lastSync": "Last heartbeat"
     },
@@ -1086,7 +1070,7 @@
     "bound": {
       "title": "xLyra Cloud",
       "status": "Connected",
-      "description": "Connected to {{name}}'s xLyra account",
+      "connectedTo": "Connected to {{name}}'s xLyra Cloud account",
       "instanceName": "Instance name: {{name}}",
       "boundAt": "Connected at {{time}}",
       "lastSync": "Last heartbeat {{time}}",
@@ -1130,15 +1114,22 @@
       "pending": "The application is waiting for approval. You can register keys and submit plugins after it is approved.",
       "rejected": "The application was rejected. You can apply again on xLyra Cloud.",
       "suspended": "The developer identity is suspended. Published plugins stay available. Submitting resumes after it is restored.",
-      "namespaces": "Namespaces",
       "namespacesEmpty": "No namespaces",
-      "keys": "Registered keys",
-      "keysCount": "{{count}}",
       "keysEmpty": "No keys",
-      "plugins": "Plugins on xLyra Cloud",
       "pluginsEmpty": "No submitted or published plugins",
-      "pluginVersion": "Latest published {{version}}",
+      "pluginsDialogTitle": "Published plugins",
+      "keysDialogTitle": "Public keys",
+      "pluginSearch": "Search plugin ID",
+      "pluginSearchEmpty": "No matching plugins",
+      "viewAll": "View all ({{count}})",
       "pluginNoVersion": "No published version yet",
+      "namespacesTitle": "Namespaces · {{count}}",
+      "keysTitle": "Keys · {{count}}",
+      "pluginsTitle": "Plugins · {{count}}",
+      "tab": {
+        "namespaces": "Namespaces",
+        "keys": "Keys"
+      },
       "namespaceStatus": {
         "pending": "Pending",
         "active": "Approved",

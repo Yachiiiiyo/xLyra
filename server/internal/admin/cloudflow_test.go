@@ -63,20 +63,12 @@ func TestDeveloperFlowCrossRepo(t *testing.T) {
 	if err != nil || len(rootPub) != ed25519.PublicKeySize {
 		t.Fatalf("root key: %v", err)
 	}
-	conf, err := config.LoadConfigFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(config.PluginMarketConfig{
-		Enabled: true, SourceURL: cloud.RegistryURL, AutoUpdate: true, IndexSyncHours: 6,
-	})); err != nil {
-		t.Fatal(err)
-	}
 	repo := store.NewJSPluginRepository(st.DB())
-	marketSvc, err := market.NewService(repo, httpclient.NewManager(conf), conf, []ed25519.PublicKey{rootPub}, []string{cloud.RegistryURL})
+	marketSvc, err := market.NewService(repo, httpclient.NewManager(nil), nil, []ed25519.PublicKey{rootPub}, []string{cloud.RegistryURL})
 	if err != nil {
 		t.Fatal(err)
 	}
+	marketSvc.SetConfig(config.PluginMarketConfig{Enabled: true, SourceURL: cloud.RegistryURL, AutoUpdate: true, IndexSyncHours: 6})
 	authSvc := auth.NewService(st.DB(), flowMasterKey)
 	session, err := authSvc.BootstrapAdmin(ctx, "owner", "StrongPass123!", "", "", "", "")
 	if err != nil {

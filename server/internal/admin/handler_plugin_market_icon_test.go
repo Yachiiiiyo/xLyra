@@ -74,12 +74,12 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := adminMarketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	clearAdminProxyEnv(t)
-	svc, err := market.NewService(repo, httpclient.NewManager(conf), conf, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base})
+	svc, err := market.NewService(repo, httpclient.NewManager(nil), nil, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base})
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetConfig(config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	if status, err := svc.SyncOnce(context.Background(), true); err != nil || status.Error != "" {
 		t.Fatalf("sync = %+v %v", status, err)
 	}
@@ -210,11 +210,7 @@ func TestPluginMarketIconHTTP(t *testing.T) {
 		}
 	}
 
-	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(config.PluginMarketConfig{
-		Enabled: false, IndexSyncHours: 6, SourceURL: base,
-	})); err != nil {
-		t.Fatal(err)
-	}
+	svc.SetConfig(config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: base})
 	kept := cloud.hit(goodName)
 	closed := get(goodSum, "")
 	assertAdminErrorCode(t, closed, http.StatusNotFound, "js_plugin_market_not_found")

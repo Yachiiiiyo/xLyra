@@ -775,6 +775,8 @@
     "trustedKeyAddSuccess": "已导入公钥",
     "trustedKeyAddFailed": "导入公钥失败",
     "trustedKeyDeleteSuccess": "已移除公钥",
+    "trustedKeyDeleteTitle": "移除受信公钥",
+    "trustedKeyDeleteBody": "移除后，由「{{name}}」签名的插件包将不再被直接信任，启用时需要二次确认。",
     "trustedKeyDeleteFailed": "移除公钥失败",
     "try": "试跑",
     "trySuccess": "试跑完成",
@@ -877,7 +879,6 @@
       "grantedHosts": "已授予的主机权限"
     },
     "columns": {
-      "name": "名称",
       "id": "插件 ID",
       "version": "版本",
       "kind": "类型",
@@ -895,8 +896,6 @@
       "market": "市场"
     },
     "market": {
-      "settingsTitle": "市场设置",
-      "settingsHint": "这些设置只影响插件市场，不改变已经安装的插件。",
       "lastSync": "上次同步",
       "neverSynced": "尚未同步",
       "syncNow": "立即同步",
@@ -927,7 +926,6 @@
       "installEnable": "安装并启用",
       "update": "更新",
       "updateEnable": "更新并启用",
-      "installedVersion": "已安装 {{version}}",
       "installPaused": "已很久未同步，暂停从市场安装",
       "versionRevoked": "该版本已被吊销",
       "installedStay": "已安装，可在「已安装」中启用",
@@ -961,15 +959,6 @@
         "security": "安全",
         "deprecated": "弃用"
       },
-      "enabled": "启用市场",
-      "sourceUrl": "市场源地址",
-      "sourceUrlHint": "留空跟随官方",
-      "proxy": "代理",
-      "proxyDirect": "直连",
-      "autoUpdate": "允许自动更新",
-      "syncHours": "索引同步间隔",
-      "syncHoursHint": "1 到 24 小时",
-      "saved": "市场设置已保存",
       "saveFailed": "保存市场设置失败",
       "loadFailed": "加载市场失败",
       "updateTo": "可更新 {{version}}",
@@ -1049,14 +1038,9 @@
   },
   "xlyraCloud": {
     "eyebrow": "系统",
-    "description": "把这台 xLyra 连接到你的 xLyra 账号，用于实例管理和之后的官方服务",
+    "description": "把这台实例连接到你的 xLyra Cloud 账号，使用开发者插件等官方服务",
     "refresh": "刷新",
-    "statusLabel": "连接状态",
-    "account": {
-      "title": "账号"
-    },
     "info": {
-      "title": "连接信息",
       "connectedAt": "连接于",
       "lastSync": "最近心跳"
     },
@@ -1086,7 +1070,7 @@
     "bound": {
       "title": "xLyra Cloud",
       "status": "已连接",
-      "description": "已连接到 {{name}} 的 xLyra 账号",
+      "connectedTo": "已连接到 {{name}} 的 xLyra Cloud 账号",
       "instanceName": "实例名称：{{name}}",
       "boundAt": "连接于 {{time}}",
       "lastSync": "最近心跳 {{time}}",
@@ -1130,15 +1114,22 @@
       "pending": "申请正在等管理员批准。批准后才能登记公钥和提交插件。",
       "rejected": "申请被拒绝。可以在 xLyra Cloud 重新申请。",
       "suspended": "开发者身份已撤销。已发布的插件不受影响，恢复后才能继续提交。",
-      "namespaces": "命名空间",
       "namespacesEmpty": "还没有命名空间",
-      "keys": "已登记公钥",
-      "keysCount": "{{count}} 把",
       "keysEmpty": "还没有公钥",
-      "plugins": "xLyra Cloud 上的插件",
       "pluginsEmpty": "还没有提交或发布的插件",
-      "pluginVersion": "最新已发布 {{version}}",
+      "pluginsDialogTitle": "已发布插件",
+      "keysDialogTitle": "公钥",
+      "pluginSearch": "搜索插件 ID",
+      "pluginSearchEmpty": "没有匹配的插件",
+      "viewAll": "查看全部（{{count}}）",
       "pluginNoVersion": "还没有已发布版本",
+      "namespacesTitle": "命名空间 · {{count}}",
+      "keysTitle": "公钥 · {{count}}",
+      "pluginsTitle": "已发布插件 · {{count}}",
+      "tab": {
+        "namespaces": "命名空间",
+        "keys": "公钥"
+      },
       "namespaceStatus": {
         "pending": "审核中",
         "active": "已批准",

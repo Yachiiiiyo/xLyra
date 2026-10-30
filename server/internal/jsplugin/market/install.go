@@ -78,7 +78,7 @@ func (s *Service) Install(ctx context.Context, adminID, pluginID, version string
 	if s == nil {
 		return store.JSPluginVersion{}, &InstallError{Code: InstallCodeUnavailable}
 	}
-	cfg := config.ReadPluginMarketConfig(s.conf)
+	cfg := s.cfg
 	if !cfg.Enabled {
 		return store.JSPluginVersion{}, &InstallError{Code: InstallCodeUnavailable, Err: errors.New("plugin market is disabled")}
 	}

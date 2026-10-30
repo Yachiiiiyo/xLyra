@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"xlyra/server/internal/config"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/marketproto"
 )
@@ -94,7 +93,7 @@ func (s *Service) Icon(ctx context.Context, sum string) ([]byte, error) {
 	if !sha256Hex(sum) || s == nil || s.icons == nil {
 		return nil, ErrIconNotFound
 	}
-	if !config.ReadPluginMarketConfig(s.conf).Enabled {
+	if !s.cfg.Enabled {
 		return nil, ErrIconNotFound
 	}
 	snap, err := s.Snapshot(ctx)
@@ -126,7 +125,7 @@ func (s *Service) Icon(ctx context.Context, sum string) ([]byte, error) {
 }
 
 func (s *Service) fetchMarketIcon(ctx context.Context, root *marketproto.Root, sum string) ([]byte, error) {
-	cfg := config.ReadPluginMarketConfig(s.conf)
+	cfg := s.cfg
 	state, err := s.repo.GetMarketState(ctx)
 	if err != nil {
 		return nil, err

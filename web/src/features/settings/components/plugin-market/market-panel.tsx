@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format, formatDistanceToNow, parseISO } from 'date-fns'
 import { enUS, ja, zhCN } from 'date-fns/locale'
@@ -10,7 +10,7 @@ import { MobileFilterBar } from '@/components/common/mobile-filter-bar'
 import { StatusBadge } from '@/components/common/status-badge'
 import { TableToolbar } from '@/components/common/table-toolbar'
 import { Button } from '@/components/ui/button'
-import { CardMetric, CardMetrics, ItemCard } from '@/components/ui/card'
+import { CardFooter, CardMetric, CardMetrics, ItemCard } from '@/components/ui/card'
 import { useOverlayMode } from '@/components/ui/overlay-mode'
 import { SplitButton, type SplitButtonItem } from '@/components/ui/split-button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -113,20 +113,23 @@ export function PluginMarketPanel() {
 
   const openPlugin = plugins.find((plugin) => plugin.id === openId)
   const detail = detailQuery.data ?? (openPlugin ? { ...openPlugin, versions: [] } : null)
+  const statusBar = snapshot ? (
+    <MarketStatusBar
+      snapshot={snapshot}
+      language={i18n.language}
+      syncing={sync.isPending}
+      onSync={() => sync.mutate()}
+    />
+  ) : undefined
 
   return (
     <div className="space-y-4">
-      {snapshot ? (
-        <MarketStatusBar
-          snapshot={snapshot}
-          language={i18n.language}
-          syncing={sync.isPending}
-          onSync={() => sync.mutate()}
-        />
-      ) : null}
       {listQuery.isError ? <p className="text-body text-danger">{t('jsPlugins.market.loadFailed')}</p> : null}
       {snapshot && !snapshot.root_keys_configured ? (
-        <p className="rounded-card border border-separator bg-fill-4 px-4 py-3 text-body text-label">{t('jsPlugins.market.closed')}</p>
+        <>
+          {statusBar}
+          <p className="rounded-card border border-separator bg-fill-4 px-4 py-3 text-body text-label">{t('jsPlugins.market.closed')}</p>
+        </>
       ) : null}
       {snapshot?.revocations_expired ? (
         <p className="rounded-card border border-danger/40 bg-danger/10 px-4 py-3 text-body text-danger">
@@ -144,6 +147,7 @@ export function PluginMarketPanel() {
             onQuery={setQuery}
             onKind={setKind}
             onShowIncompatible={setShowIncompatible}
+            status={statusBar}
           />
           {listQuery.isLoading ? (
             <p className="text-body text-label-2">{t('jsPlugins.loading')}</p>
@@ -190,6 +194,7 @@ function MarketFilters({
   kind,
   kinds,
   showIncompatible,
+  status,
   onQuery,
   onKind,
   onShowIncompatible,
@@ -199,6 +204,7 @@ function MarketFilters({
   kind: string
   kinds: string[]
   showIncompatible: boolean
+  status?: ReactNode
   onQuery: (value: string) => void
   onKind: (value: string) => void
   onShowIncompatible: (value: boolean) => void
@@ -231,12 +237,34 @@ function MarketFilters({
 
   if (mobile) {
     return (
-      <MobileFilterBar
-        search={{
-          value: query,
-          onChange: (event) => onQuery(event.target.value),
-          placeholder: t('jsPlugins.market.search'),
-        }}
+      <div className="space-y-3">
+        <MobileFilterBar
+          search={{
+            value: query,
+            onChange: (event) => onQuery(event.target.value),
+            placeholder: t('jsPlugins.market.search'),
+          }}
+          filters={(
+            <>
+              {kindFilter}
+              {incompatibleFilter}
+            </>
+          )}
+        />
+        {status}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <TableToolbar
+        className="min-w-0 flex-1"
+        searchValue={query}
+        onSearchChange={(event) => onQuery(event.target.value)}
+        searchPlaceholder={t('jsPlugins.market.search')}
+        searchClassName="flex-none md:w-52"
+        filtersClassName="flex min-w-0 flex-1 flex-wrap items-center gap-3 md:flex md:auto-cols-auto"
         filters={(
           <>
             {kindFilter}
@@ -244,23 +272,8 @@ function MarketFilters({
           </>
         )}
       />
-    )
-  }
-
-  return (
-    <TableToolbar
-      searchValue={query}
-      onSearchChange={(event) => onQuery(event.target.value)}
-      searchPlaceholder={t('jsPlugins.market.search')}
-      searchClassName="flex-none md:w-52"
-      filtersClassName="flex min-w-0 flex-1 flex-wrap items-center gap-3 md:flex md:auto-cols-auto"
-      filters={(
-        <>
-          {kindFilter}
-          {incompatibleFilter}
-        </>
-      )}
-    />
+      {status ? <div className="ml-auto shrink-0">{status}</div> : null}
+    </div>
   )
 }
 
@@ -286,17 +299,19 @@ export function MarketStatusBar({
     ? formatDistanceToNow(new Date(snapshot.index_synced_at), { addSuffix: true, locale: distanceLocale(language) })
     : t('jsPlugins.market.neverSynced')
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-fill-4 px-4 py-3">
-      <div className="min-w-0 space-y-1 text-footnote text-label-2">
-        <div>
+    <div className="flex min-w-0 flex-col gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-footnote text-label-2">
           {t('jsPlugins.market.lastSync')}：{synced}
-        </div>
-        {snapshot.last_error ? <div className="text-danger">{sanitizeErrorText(snapshot.last_error)}</div> : null}
+        </span>
+        <Button type="button" size="sm" variant="secondary" disabled={syncing} onClick={onSync}>
+          <RefreshCw className={cn('mr-2 h-4 w-4', syncing && 'animate-spin')} />
+          {syncing ? t('jsPlugins.market.syncing') : t('jsPlugins.market.syncNow')}
+        </Button>
       </div>
-      <Button type="button" size="sm" variant="secondary" disabled={syncing} onClick={onSync}>
-        <RefreshCw className={cn('mr-2 h-4 w-4', syncing && 'animate-spin')} />
-        {syncing ? t('jsPlugins.market.syncing') : t('jsPlugins.market.syncNow')}
-      </Button>
+      {snapshot.last_error ? (
+        <p className="break-all text-footnote text-danger">{sanitizeErrorText(snapshot.last_error)}</p>
+      ) : null}
     </div>
   )
 }
@@ -316,7 +331,7 @@ export function MarketPluginList({
     <MarketPluginCard key={plugin.id} plugin={plugin} snapshot={snapshot} mobile={mobile} onOpen={onOpen} />
   ))
   if (mobile) return <MobileCardList>{cards}</MobileCardList>
-  return <div className="grid grid-cols-2 gap-3">{cards}</div>
+  return <div className="grid grid-cols-2 gap-3 2xl:grid-cols-3">{cards}</div>
 }
 
 function MarketPluginCard({
@@ -354,12 +369,12 @@ function MarketPluginCard({
         <CardMetric label={t('jsPlugins.columns.kind')} value={jsPluginKindLabel(t, plugin.kind)} />
         <CardMetric label={t('jsPlugins.market.latest')} value={plugin.latest_compatible_version || '—'} />
       </CardMetrics>
-      <div className={cn('mt-auto gap-2', mobile ? 'grid grid-cols-2' : 'flex items-center justify-end')}>
+      <CardFooter className={mobile ? 'grid grid-cols-2 gap-2' : 'gap-2'}>
         <Button type="button" size="sm" variant="secondary" className={wide} onClick={() => onOpen(plugin.id)}>
           {t('jsPlugins.market.viewDetail')}
         </Button>
         <MarketInstallButtons install={install} menuSide="bottom" showInstalled className={wide} />
-      </div>
+      </CardFooter>
     </ItemCard>
   )
 }
@@ -416,7 +431,7 @@ export function MarketPluginDetail({
       <div className="space-y-3">
         <h4 className="text-headline text-label">{t('jsPlugins.market.versions')}</h4>
         {(plugin.versions ?? []).map((version) => (
-          <MarketVersionRow key={version.version} version={version} language={i18n.language} />
+          <MarketVersionRow key={version.version} version={version} installedVersion={plugin.local_version} language={i18n.language} />
         ))}
       </div>
     </div>
@@ -500,10 +515,9 @@ export function MarketInstallActions({
 
   return (
     <div className={cn('flex w-full gap-2', draw ? 'flex-col' : 'flex-wrap items-center justify-end')}>
-      {model.installedText || model.reason ? (
+      {model.reason ? (
         <div className={cn('min-w-0 space-y-1', !draw && 'mr-auto')}>
-          {model.installedText ? <p className="text-body text-label">{model.installedText}</p> : null}
-          {model.reason ? <p className="text-body text-label-3">{model.reason}</p> : null}
+          <p className="text-body text-label-3">{model.reason}</p>
         </div>
       ) : null}
       <div className={cn('flex min-w-0 gap-2', draw ? 'w-full' : 'shrink-0 items-center')}>
@@ -549,12 +563,15 @@ function NoticeList({ title, items, empty }: { title: string; items: string[]; e
   )
 }
 
-function MarketVersionRow({ version, language }: { version: PluginMarketVersion; language: string }) {
+function MarketVersionRow({ version, installedVersion, language }: { version: PluginMarketVersion; installedVersion?: string; language: string }) {
   const { t } = useTranslation('settings')
   return (
     <article className="border-t border-separator py-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="font-mono text-headline text-label">{version.version}</span>
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-headline text-label">{version.version}</span>
+          {version.version === installedVersion ? <StatusBadge status="success">{t('jsPlugins.market.badgeInstalled')}</StatusBadge> : null}
+        </span>
         <span className="text-footnote text-label-2">{formatPublished(version.published_at, language)}</span>
       </div>
       <p className="mt-1 text-footnote text-label-2">

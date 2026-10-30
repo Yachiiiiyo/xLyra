@@ -124,8 +124,7 @@ func TestMarketInstall(t *testing.T) {
 		http.Error(w, "no", http.StatusBadGateway)
 	}))
 	t.Cleanup(badSrv.Close)
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	mgr.SetMarketTrust(svc)
 	ctx := context.Background()
 	if status, err := svc.SyncOnce(ctx, true); err != nil || status.Error != "" {
@@ -272,12 +271,12 @@ func TestMarketInstall(t *testing.T) {
 		t.Fatal("conflict inserted a row")
 	}
 
-	setMarketConf(t, conf, config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
+	svc.SetConfig(config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	mustInstallCode(t, installErr(svc, "acme.later", ""), InstallCodeUnavailable)
-	setMarketConf(t, conf, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: badSrv.URL + "/", AutoUpdate: true})
+	svc.SetConfig(config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: badSrv.URL + "/", AutoUpdate: true})
 	mustInstallCode(t, installErr(svc, "acme.later", ""), InstallCodeDownloadFailed)
 	noVersion(t, repo, "acme.later", "1.0.0")
-	setMarketConf(t, conf, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: "", AutoUpdate: true})
+	svc.SetConfig(config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: "", AutoUpdate: true})
 	state, err := repo.GetMarketState(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -331,8 +330,7 @@ func TestInstallSucceedsWhenHistoricalVersionUsesOldFingerprint(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	ctx := context.Background()
 	if status, err := svc.SyncOnce(ctx, true); err != nil || status.Error != "" {
 		t.Fatalf("sync = %+v, %v", status, err)
@@ -395,8 +393,7 @@ func TestMarketInstallIconLegibility(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	ctx := context.Background()
 	if status, err := svc.SyncOnce(ctx, true); err != nil || status.Error != "" {
 		t.Fatalf("sync = %+v, %v", status, err)
@@ -469,8 +466,7 @@ func TestVerifyVersionAttestationTrustCache(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base})
 	ctx := context.Background()
 	if _, err := svc.SyncOnce(ctx, true); err != nil {
 		t.Fatal(err)
@@ -606,8 +602,7 @@ func TestVerifyVersionAttestationTrustCache(t *testing.T) {
 
 func TestStoreInstalledDuplicateKeySameHash(t *testing.T) {
 	repo := store.NewJSPluginRepository(openMarketStore(t).DB())
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true})
-	svc := newTestService(t, repo, nil, nil, conf)
+	svc := newTestService(t, repo, nil, nil, config.PluginMarketConfig{Enabled: true})
 	devKey := fixedKey(0x46)
 	online := fixedKey(0x33)
 	issued, _ := freshWindow()
@@ -699,13 +694,6 @@ func attestationPresent(raw []byte) bool {
 
 func bytesTrim(raw []byte) []byte {
 	return []byte(strings.TrimSpace(string(raw)))
-}
-
-func setMarketConf(t *testing.T, conf *config.ConfigFile, cfg config.PluginMarketConfig) {
-	t.Helper()
-	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(cfg)); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func compatCurrent() marketproto.Compat {

@@ -48,9 +48,38 @@ vi.mock('@/components/ui/dialog', async () => {
     DialogHeader: pass('div'),
     DialogTitle: pass('h2'),
     DialogDescription: pass('p'),
-    DialogFooter: ({ cancel, confirm }: { cancel?: ReactNode; confirm?: ReactNode }) =>
-      createElement('div', null, cancel, confirm),
+    DialogFooter: ({ cancel, confirm, children }: { cancel?: ReactNode; confirm?: ReactNode; children?: ReactNode }) =>
+      createElement('div', null, children, cancel, confirm),
     DialogBody: pass('div'),
+  }
+})
+
+vi.mock('@/components/ui/tabs', async () => {
+  const { createContext, createElement, useContext, useState } = await import('react')
+  const TabsContext = createContext<{ value: string; select: (value: string) => void }>({ value: '', select: () => {} })
+  return {
+    Tabs: ({ value, defaultValue, onValueChange, children, ...props }: {
+      value?: string
+      defaultValue?: string
+      onValueChange?: (value: string) => void
+      children?: ReactNode
+    } & Record<string, unknown>) => {
+      const [state, setState] = useState(defaultValue ?? '')
+      const current = value ?? state
+      return createElement(TabsContext.Provider, {
+        value: { value: current, select: (next: string) => { setState(next); onValueChange?.(next) } },
+      }, createElement('div', props, children))
+    },
+    TabsList: ({ children, ...props }: { children?: ReactNode } & Record<string, unknown>) =>
+      createElement('div', props, children),
+    TabsTrigger: ({ value, children, ...props }: { value: string; children?: ReactNode } & Record<string, unknown>) => {
+      const tabs = useContext(TabsContext)
+      return createElement('button', { ...props, type: 'button', onClick: () => tabs.select(value) }, children)
+    },
+    TabsContent: ({ value, children, ...props }: { value: string; children?: ReactNode } & Record<string, unknown>) => {
+      const tabs = useContext(TabsContext)
+      return tabs.value === value ? createElement('div', props, children) : null
+    },
   }
 })
 
@@ -106,16 +135,15 @@ function binding(overrides: Partial<CloudBinding> = {}): CloudBinding {
 }
 
 describe('xLyra Cloud settings page', () => {
-  it('shows a loading skeleton without the danger section', async () => {
+  it('shows a loading skeleton without the connect action', async () => {
     fetchCloudBinding.mockReturnValue(new Promise(() => {}))
     const mounted = await mountPage()
     try {
       expect(mounted.container.textContent).toContain('系统')
-      expect(mounted.container.textContent).toContain('把这台 xLyra 连接到你的 xLyra 账号')
+      expect(mounted.container.textContent).toContain('把这台实例连接到你的 xLyra Cloud 账号')
       expect(findButton(mounted.container, '刷新')).not.toBeNull()
       expect(findTestId(mounted.container, 'cloud-binding-loading')).not.toBeNull()
       expect(findButton(mounted.container, '连接账号')).toBeNull()
-      expect(mounted.container.textContent).not.toContain('危险操作')
     } finally {
       await mounted.unmount()
     }
@@ -132,7 +160,6 @@ describe('xLyra Cloud settings page', () => {
       expect(findButton(unbound.container, '刷新')).not.toBeNull()
       await click(findButton(unbound.container, '刷新'))
       expect(fetchCloudBinding).toHaveBeenCalledTimes(2)
-      expect(unbound.container.textContent).not.toContain('危险操作')
     } finally {
       await unbound.unmount()
     }
@@ -143,7 +170,6 @@ describe('xLyra Cloud settings page', () => {
       expect(revoked.container.textContent).toContain('连接已解除')
       expect(revoked.container.textContent).toContain('这个实例已在账号侧被解除连接。')
       expect(findButton(revoked.container, '重新连接')).not.toBeNull()
-      expect(revoked.container.textContent).not.toContain('危险操作')
     } finally {
       await revoked.unmount()
     }
@@ -153,7 +179,6 @@ describe('xLyra Cloud settings page', () => {
     try {
       expect(failed.container.textContent).toContain('无法读取连接状态')
       expect(failed.container.textContent).toContain('Cloud 暂不可用')
-      expect(failed.container.textContent).not.toContain('危险操作')
       fetchCloudBinding.mockResolvedValue(binding())
       await click(findButton(failed.container, '重试'))
       expect(failed.container.textContent).toContain('未连接')
@@ -179,7 +204,6 @@ describe('xLyra Cloud settings page', () => {
       expect(mounted.container.textContent).toContain('在已登录的 xLyra Cloud 控制台点「连接实例」')
       expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('GYD4-LMGT')
       expect(findButton(mounted.container, '查看配对码')).not.toBeNull()
-      expect(mounted.container.textContent).not.toContain('危险操作')
     } finally {
       await mounted.unmount()
     }
@@ -431,12 +455,21 @@ describe('xLyra Cloud settings page', () => {
     const mounted = await mountPage()
     try {
       expect(mounted.container.textContent).toContain('开发者身份')
-      expect(mounted.container.textContent).toContain('yachiyo')
-      expect(mounted.container.textContent).toContain('SHA256:abc')
-      expect(mounted.container.textContent).toContain('1 把')
+      expect(mounted.container.textContent).toContain('已发布插件 · 1')
       expect(mounted.container.textContent).toContain('yachiyo.site-balance-alert')
-      expect(mounted.container.textContent).toContain('最新已发布 1.0.2')
+      expect(mounted.container.textContent).toContain('1.0.2')
       expect(mounted.container.textContent).toContain('已发布')
+      expect(findButton(mounted.container, '查看全部（1）')).toBeNull()
+
+      expect(mounted.container.textContent).toContain('命名空间 · 1')
+      expect(mounted.container.textContent).toContain('yachiyo')
+      expect(mounted.container.textContent).toContain('已批准')
+
+      await click(findButton(mounted.container, '公钥'))
+      expect(mounted.container.textContent).toContain('公钥 · 1')
+      expect(mounted.container.textContent).toContain('SHA256:abc')
+      expect(mounted.container.textContent).toContain('笔记本')
+      expect(mounted.container.textContent).toContain('启用')
     } finally {
       await mounted.unmount()
     }
@@ -475,7 +508,7 @@ describe('xLyra Cloud settings page', () => {
     const mounted = await mountPage()
     try {
       expect(mounted.container.textContent).toContain('还不是开发者')
-    expect(mounted.container.textContent).toContain('已连接到 Ada 的 xLyra 账号')
+      expect(mounted.container.textContent).toContain('已连接到 Ada 的 xLyra Cloud 账号')
       expect(mounted.container.textContent).toContain('实例名称：edge-1')
       expect(mounted.container.textContent).toContain('连接于')
       expect(mounted.container.textContent).toContain('最近心跳')
@@ -483,6 +516,7 @@ describe('xLyra Cloud settings page', () => {
       expect(mounted.container.textContent).toContain('最近一次同步失败：timeout')
       expect(mounted.container.textContent).toContain('这不影响 xLyra 的正常使用，会自动重试')
       expect(mounted.container.textContent).toContain('危险操作')
+      expect(findButton(mounted.container, '断开连接')).not.toBeNull()
       const manage = findTestId(mounted.container, 'cloud-manage-link')
       expect(manage?.getAttribute('href')).toBe('https://xlyra.yachiyo.im/console/')
       expect(manage?.getAttribute('target')).toBe('_blank')
@@ -498,6 +532,64 @@ describe('xLyra Cloud settings page', () => {
       expect(toast.success).toHaveBeenCalledWith('已断开连接')
       expect(mounted.container.textContent).toContain('未连接')
       expect(mounted.container.textContent).not.toContain('危险操作')
+      expect(findButton(mounted.container, '断开连接')).toBeNull()
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('previews six rows per developer list and shows the rest in searchable dialogs', async () => {
+    const plugins = Array.from({ length: 8 }, (_, index) => ({
+      id: `yachiyo.plugin-${index}`,
+      latest_version: `1.0.${index}`,
+      latest_status: 'published',
+    }))
+    const keys = Array.from({ length: 8 }, (_, index) => ({
+      fingerprint: `SHA256:key-${index}`,
+      label: `笔记本-${index}`,
+      status: 'active',
+    }))
+    const namespaces = Array.from({ length: 2 }, (_, index) => ({ name: `yachiyo-ns-${index}`, status: 'active' }))
+    fetchCloudDeveloper.mockResolvedValue({ status: 'active', namespaces, keys, plugins })
+    fetchCloudBinding.mockResolvedValue(binding({
+      status: 'bound',
+      user_display_name: 'Ada',
+      cloud_url: 'https://xlyra.yachiyo.im',
+    }))
+    const mounted = await mountPage()
+    try {
+      // 右卡：已发布插件默认 6 行
+      expect(mounted.container.textContent).toContain('已发布插件 · 8')
+      expect(mounted.container.textContent).toContain('yachiyo.plugin-5')
+      expect(mounted.container.textContent).not.toContain('yachiyo.plugin-6')
+
+      // 左卡：命名空间全部展示，不截断
+      expect(mounted.container.textContent).toContain('命名空间 · 2')
+      expect(mounted.container.textContent).toContain('yachiyo-ns-1')
+      expect(findButton(mounted.container, '查看全部（2）')).toBeNull()
+
+      // 插件弹窗（带搜索）
+      await click(findButton(mounted.container, '查看全部（8）'))
+      const pluginsDialog = dialogScope(mounted.container, '已发布插件')
+      expect(countText(pluginsDialog, 'yachiyo.plugin-')).toBe(8)
+
+      const search = findInputByPlaceholder(mounted.container, '搜索插件 ID')
+      expect(search).not.toBeNull()
+      await typeInto(search!, 'plugin-7')
+      expect(countText(dialogScope(mounted.container, '已发布插件'), 'yachiyo.plugin-')).toBe(1)
+      expect(dialogScope(mounted.container, '已发布插件').textContent).toContain('yachiyo.plugin-7')
+
+      await typeInto(search!, 'nope')
+      expect(dialogScope(mounted.container, '已发布插件').textContent).toContain('没有匹配的插件')
+      await click(findTestId(mounted.container, 'mock-dialog-dismiss'))
+
+      // 左卡切到公钥：默认 6 行 + 查看全部 → 公钥弹窗
+      await click(findButton(mounted.container, '公钥'))
+      expect(mounted.container.textContent).toContain('公钥 · 8')
+      expect(mounted.container.textContent).toContain('SHA256:key-5')
+      expect(mounted.container.textContent).not.toContain('SHA256:key-6')
+      await click(findButton(mounted.container, '查看全部（8）'))
+      expect(countText(dialogScope(mounted.container, '公钥'), 'SHA256:key-')).toBe(8)
     } finally {
       await mounted.unmount()
     }
@@ -537,7 +629,8 @@ async function flushUpdates() {
 
 async function click(node: MiniNode | null) {
   await act(async () => {
-    node?.dispatchEvent(clickEvent(node!))
+    node?.dispatchEvent(clickEvent(node!, 'mousedown'))
+    node?.dispatchEvent(clickEvent(node!, 'click'))
   })
   await flushUpdates()
 }
@@ -619,6 +712,7 @@ interface MiniEvent {
   cancelable: boolean
   defaultPrevented: boolean
   button: number
+  ctrlKey: boolean
   eventPhase: number
   timeStamp: number
   preventDefault: () => void
@@ -696,6 +790,10 @@ class MiniNode {
   }
 
   focus() {}
+
+  attachEvent() {}
+
+  detachEvent() {}
 
   appendChild<T extends MiniNode>(child: T) {
     return this.insertBefore(child, null)
@@ -797,15 +895,16 @@ class MiniDocument {
   }
 }
 
-function clickEvent(target: MiniNode): MiniEvent {
+function clickEvent(target: MiniNode, type: string): MiniEvent {
   return {
-    type: 'click',
+    type,
     target,
     currentTarget: target,
     bubbles: true,
     cancelable: true,
     defaultPrevented: false,
     button: 0,
+    ctrlKey: false,
     eventPhase: 2,
     timeStamp: 0,
     stopped: false,
@@ -847,4 +946,53 @@ function findTestId(node: MiniNode, testId: string): MiniNode | null {
     if (found) return found
   }
   return null
+}
+
+function findInputByPlaceholder(node: MiniNode, placeholder: string): MiniNode | null {
+  if (node.tagName === 'INPUT' && node.getAttribute('placeholder') === placeholder) return node
+  for (const child of node.childNodes) {
+    const found = findInputByPlaceholder(child, placeholder)
+    if (found) return found
+  }
+  return null
+}
+
+function countText(node: MiniNode, text: string) {
+  return node.textContent.split(text).length - 1
+}
+
+function dialogScope(node: MiniNode, title: string): MiniNode {
+  const heading = findTagText(node, 'H2', title)
+  const dialog = heading?.parentNode?.parentNode ?? null
+  if (!dialog) throw new Error(`dialog not found: ${title}`)
+  return dialog
+}
+
+function inputEvent(node: MiniNode, type: string): MiniEvent {
+  return {
+    type,
+    target: node,
+    currentTarget: node,
+    bubbles: true,
+    cancelable: true,
+    defaultPrevented: false,
+    button: 0,
+    ctrlKey: false,
+    eventPhase: 2,
+    timeStamp: 0,
+    stopped: false,
+    preventDefault() { this.defaultPrevented = true },
+    stopPropagation() { this.stopped = true },
+  }
+}
+
+async function typeInto(node: MiniNode, value: string) {
+  await act(async () => {
+    node.dispatchEvent(inputEvent(node, 'focusin'))
+  })
+  ;(node as MiniNode & { value?: string }).value = value
+  await act(async () => {
+    node.dispatchEvent(inputEvent(node, 'keydown'))
+  })
+  await flushUpdates()
 }

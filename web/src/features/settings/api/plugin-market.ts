@@ -1,14 +1,6 @@
 import type { JSPluginVersion } from '@/features/settings/api/js-plugins'
 import { apiFetch } from '@/lib/http'
 
-export type PluginMarketSettings = {
-  enabled: boolean
-  source_url: string
-  proxy_id: string
-  auto_update: boolean
-  index_sync_hours: number
-}
-
 export type PluginMarketDeveloper = {
   namespace: string
   display_name: string
@@ -89,17 +81,8 @@ export type PluginMarketSyncStatus = {
 
 export const pluginMarketQueryKeys = {
   all: ['settings', 'plugin-market'] as const,
-  settings: () => [...pluginMarketQueryKeys.all, 'settings'] as const,
   list: () => [...pluginMarketQueryKeys.all, 'list'] as const,
   detail: (id: string) => [...pluginMarketQueryKeys.all, 'detail', id] as const,
-}
-
-export async function fetchPluginMarketSettings(signal?: AbortSignal) {
-  return apiFetch<PluginMarketSettings>('/api/v1/settings/plugin-market', { signal })
-}
-
-export async function updatePluginMarketSettings(body: PluginMarketSettings) {
-  return apiFetch<PluginMarketSettings>('/api/v1/settings/plugin-market', { method: 'PUT', body })
 }
 
 export async function fetchPluginMarket(signal?: AbortSignal) {

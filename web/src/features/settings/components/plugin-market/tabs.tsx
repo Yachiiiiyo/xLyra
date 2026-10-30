@@ -1,25 +1,29 @@
+import type { ReactNode } from 'react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { PluginsTab } from './tab-state'
 
 export function PluginTabBar({
-  marketEnabled,
   tab,
   installedLabel,
   marketLabel,
   onTab,
+  actions,
 }: {
-  marketEnabled: boolean
   tab: PluginsTab
   installedLabel: string
   marketLabel: string
   onTab: (next: string) => void
+  actions?: ReactNode
 }) {
   return (
-    <Tabs value={tab} onValueChange={onTab} variant="underline">
-      <TabsList>
-        <TabsTrigger value="installed">{installedLabel}</TabsTrigger>
-        {marketEnabled ? <TabsTrigger value="market">{marketLabel}</TabsTrigger> : null}
-      </TabsList>
-    </Tabs>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <Tabs value={tab} onValueChange={onTab} variant="segmented-accent">
+        <TabsList className="w-fit min-w-64 max-w-full">
+          <TabsTrigger value="installed" className="px-4">{installedLabel}</TabsTrigger>
+          <TabsTrigger value="market" className="px-4">{marketLabel}</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {actions}
+    </div>
   )
 }

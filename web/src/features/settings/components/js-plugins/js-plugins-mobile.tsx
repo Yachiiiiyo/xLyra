@@ -1,6 +1,4 @@
 import type { ReactNode } from 'react'
-import { CardFooter, CardHeading, CardMetric, CardMetrics, ItemCard } from '@/components/ui/card'
-import { PluginAvatar } from '@/features/settings/components/js-plugins/plugin-avatar'
 import { cn } from '@/lib/utils'
 
 // Phone layouts for the developer page. The tables there have five or more
@@ -23,36 +21,6 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <div className="text-[11px] text-label-2">{label}</div>
       <div className="mt-0.5 min-w-0 break-words text-body text-label">{children}</div>
     </div>
-  )
-}
-
-type MobileUploadedCardProps = {
-  name: string
-  id: string
-  iconUrl?: string
-  kind: string
-  /** Badge or dash for the enabled version. */
-  enabledVersion: ReactNode
-  metrics: ReactNode
-  labels: { kind: string; enabledVersion: string; metrics: string }
-  actions: ReactNode
-}
-
-export function MobileUploadedCard({ name, id, iconUrl, kind, enabledVersion, metrics, labels, actions }: MobileUploadedCardProps) {
-  return (
-    <ItemCard>
-      <CardHeading
-        leading={<PluginAvatar iconUrl={iconUrl} name={name} size="md" />}
-        title={name}
-        meta={<span className="font-mono">{id}</span>}
-      />
-      <CardMetrics>
-        <CardMetric label={labels.kind} value={kind} />
-        <CardMetric label={labels.enabledVersion} value={enabledVersion} />
-        <CardMetric className="col-span-2" label={labels.metrics} value={metrics} />
-      </CardMetrics>
-      <CardFooter>{actions}</CardFooter>
-    </ItemCard>
   )
 }
 

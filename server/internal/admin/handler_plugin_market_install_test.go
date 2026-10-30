@@ -93,12 +93,12 @@ func TestInstallPluginMarketHTTP(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := adminMarketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	clearAdminProxyEnv(t)
-	svc, err := market.NewService(repo, httpclient.NewManager(conf), conf, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base})
+	svc, err := market.NewService(repo, httpclient.NewManager(nil), nil, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base})
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetConfig(config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	mgr.SetMarketTrust(svc)
 	ctx := context.Background()
 	if status, err := svc.SyncOnce(ctx, true); err != nil || status.Error != "" {
@@ -184,18 +184,6 @@ func assertInstallError(t *testing.T, rec *httptest.ResponseRecorder, status int
 	if body.Error.Code != code || (reason != "" && body.Error.Reason != reason) {
 		t.Fatalf("error = %+v, want %s %s", body.Error, code, reason)
 	}
-}
-
-func adminMarketConf(t *testing.T, cfg config.PluginMarketConfig) *config.ConfigFile {
-	t.Helper()
-	conf, err := config.LoadConfigFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(cfg)); err != nil {
-		t.Fatal(err)
-	}
-	return conf
 }
 
 func clearAdminProxyEnv(t *testing.T) {

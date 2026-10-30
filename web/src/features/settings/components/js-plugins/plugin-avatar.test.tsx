@@ -6,9 +6,7 @@ import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { jsPluginQueryKeys, type JSPluginListItem } from '@/features/settings/api/js-plugins'
-import { pluginMarketQueryKeys } from '@/features/settings/api/plugin-market'
 import { JSPluginsSettingsWorkspace } from '@/features/settings/components/js-plugins/js-plugins-settings-workspace'
-import { MobileUploadedCard } from '@/features/settings/components/js-plugins/js-plugins-mobile'
 import zh from '@/locales/zh/settings.json'
 import { PluginAvatar } from './plugin-avatar'
 
@@ -134,13 +132,6 @@ function renderInstalled() {
   })
   client.setQueryData(jsPluginQueryKeys.uploaded(), uploaded)
   client.setQueryData(jsPluginQueryKeys.trustedKeys(), [])
-  client.setQueryData(pluginMarketQueryKeys.settings(), {
-    enabled: false,
-    source_url: '',
-    proxy_id: '',
-    auto_update: false,
-    index_sync_hours: 24,
-  })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
@@ -156,6 +147,7 @@ describe('installed plugin list', () => {
   it('shows an image for a plugin with an icon and a letter without one', () => {
     layout.mobile = false
     const markup = renderInstalled()
+    expect(markup).toContain('grid-cols-2')
     expect(markup.match(/<img /g)).toHaveLength(1)
     expect(markup).toContain(`src="${iconUrl}"`)
     expect(markup).toContain('>石</span>')
@@ -166,24 +158,12 @@ describe('installed plugin list', () => {
   it('shows the same avatars on the phone cards', () => {
     layout.mobile = true
     const markup = renderInstalled()
+    expect(markup).toContain('space-y-3')
+    expect(markup).not.toContain('grid-cols-2')
     expect(markup.match(/<img /g)).toHaveLength(1)
     expect(markup).toContain(`src="${iconUrl}"`)
     expect(markup).toContain('h-10 w-10')
     expect(markup).toContain('>石</span>')
-    const card = render(
-      <MobileUploadedCard
-        name="石英"
-        id="acme.plain"
-        iconUrl=""
-        kind="额度"
-        enabledVersion="—"
-        metrics="—"
-        labels={{ kind: '类型', enabledVersion: '启用版本', metrics: '近 24 小时' }}
-        actions={null}
-      />,
-    )
-    expect(card).not.toContain('<img')
-    expect(card).toContain('>石</span>')
   })
 })
 

@@ -32,8 +32,6 @@ export type InstallControlModel = {
   menuItem: InstallMenuItem | null
   disabled: boolean
   blocked: boolean
-  /** 「已安装 x.y.z」，仅已装上最新兼容版本时有值 */
-  installedText: string | null
   /** 不可用原因；卡片上放到按钮 title */
   reason: string | null
 }
@@ -75,10 +73,6 @@ export function installControlModel(
   const block = installBlock(plugin, snapshot)
   const kind = installKind(plugin)
   const reason = block ? installBlockText(t, block) : null
-  const versionText = plugin.local_version || plugin.latest_compatible_version || ''
-  const installedText = kind === 'current'
-    ? t('jsPlugins.market.installedVersion', { version: versionText })
-    : null
   const blocked = block != null
 
   if (kind === 'current' && plugin.local_status === 'installed') {
@@ -88,7 +82,6 @@ export function installControlModel(
       menuItem: null,
       disabled: blocked,
       blocked,
-      installedText,
       reason,
     }
   }
@@ -100,7 +93,6 @@ export function installControlModel(
       menuItem: null,
       disabled: true,
       blocked,
-      installedText,
       reason,
     }
   }
@@ -115,7 +107,6 @@ export function installControlModel(
     },
     disabled: blocked,
     blocked,
-    installedText,
     reason,
   }
 }
@@ -123,7 +114,7 @@ export function installControlModel(
 export function useMarketInstall(plugin: PluginMarketPlugin, snapshot?: PluginMarketSnapshot) {
   const { t } = useTranslation('settings')
   const queryClient = useQueryClient()
-  const { selectInstalledEnable } = usePluginsTab(true)
+  const { selectInstalledEnable } = usePluginsTab()
   const lock = useRef(false)
   const [pending, setPending] = useState<'stay' | 'enable' | null>(null)
   const model = installControlModel(plugin, snapshot, (key, options) => t(key, options))

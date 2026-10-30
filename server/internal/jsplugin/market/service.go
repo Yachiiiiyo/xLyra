@@ -38,7 +38,7 @@ const (
 type Service struct {
 	repo                store.JSPluginRepository
 	clients             *httpclient.Manager
-	conf                *config.ConfigFile
+	cfg                 config.PluginMarketConfig
 	rootKeys            []ed25519.PublicKey
 	registries          []string
 	owner               string
@@ -74,6 +74,13 @@ func (s *Service) SetAuditor(auditor auditRecorder) {
 	s.auditor = auditor
 }
 
+func (s *Service) SetConfig(cfg config.PluginMarketConfig) {
+	if s == nil {
+		return
+	}
+	s.cfg = cfg
+}
+
 type cachedTrust struct {
 	at          time.Time
 	root        *marketproto.Root
@@ -97,7 +104,7 @@ func NewService(repo store.JSPluginRepository, clients *httpclient.Manager, conf
 	return &Service{
 		repo:       repo,
 		clients:    clients,
-		conf:       conf,
+		cfg:        config.DefaultPluginMarketConfig(),
 		rootKeys:   rootKeys,
 		registries: registries,
 		owner:      newOwner(),
@@ -177,7 +184,7 @@ func (s *Service) SyncOnce(ctx context.Context, force bool) (Status, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cfg := config.ReadPluginMarketConfig(s.conf)
+	cfg := s.cfg
 	if !cfg.Enabled {
 		return Status{}, nil
 	}
@@ -397,7 +404,7 @@ func (s *Service) CacheStatus(ctx context.Context) (CacheStatus, error) {
 			RevocationsExpired: s.fixture.Snapshot.RevocationsExpired,
 		}, nil
 	}
-	cfg := config.ReadPluginMarketConfig(s.conf)
+	cfg := s.cfg
 	state, err := s.repo.GetMarketState(ctx)
 	if err != nil {
 		return CacheStatus{}, err

@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 
 	"xlyra/server/internal/auth"
-	"xlyra/server/internal/config"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/marketproto"
 	"xlyra/server/internal/store"
@@ -197,7 +196,7 @@ func (s *Service) updateContext(ctx context.Context) (map[string]store.JSPluginM
 		}
 		set[row.ToVersion] = struct{}{}
 	}
-	return subs, rolled, config.ReadPluginMarketConfig(s.conf).AutoUpdate, nil
+	return subs, rolled, s.cfg.AutoUpdate, nil
 }
 
 func (s *Service) applyPending(ctx context.Context, state store.JSPluginMarketState) error {
@@ -208,7 +207,7 @@ func (s *Service) applyPending(ctx context.Context, state store.JSPluginMarketSt
 	if err != nil {
 		return err
 	}
-	cfg := config.ReadPluginMarketConfig(s.conf)
+	cfg := s.cfg
 	if snap.Revocations != nil && !snap.RevocationsExpired {
 		if snap.Index != nil && snap.Root != nil {
 			if err := s.backfillAttestations(ctx, snap); err != nil {

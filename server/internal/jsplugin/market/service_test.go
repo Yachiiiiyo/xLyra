@@ -74,8 +74,7 @@ func TestSyncOnceFreshThenNotModified(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{"https://unused.example/v1/"}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{"https://unused.example/v1/"}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 
 	ctx := context.Background()
 	empty, err := svc.Snapshot(ctx)
@@ -147,8 +146,7 @@ func TestSyncOnceSkipsFreshIndexUnlessForced(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	ctx := context.Background()
 	if _, err := svc.SyncOnce(ctx, false); err != nil {
 		t.Fatal(err)
@@ -180,8 +178,7 @@ func TestSyncOnceKeepsCacheOnSeqRollback(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	ctx := context.Background()
 	if _, err := svc.SyncOnce(ctx, true); err != nil {
 		t.Fatal(err)
@@ -220,7 +217,7 @@ func TestSyncOnceFallsBackToNextBase(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(badSrv.Close)
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{badSrv.URL + "/", goodSrv.URL + "/"}, nil)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{badSrv.URL + "/", goodSrv.URL + "/"}, config.DefaultPluginMarketConfig())
 	svc.skipEndpointBinding = true
 	status, err := svc.SyncOnce(context.Background(), false)
 	if err != nil || status.Error != "" {
@@ -249,8 +246,7 @@ func TestSyncOnceSourceURLDoesNotFallBack(t *testing.T) {
 	}))
 	t.Cleanup(badSrv.Close)
 	base := badSrv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{goodSrv.URL + "/"}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{goodSrv.URL + "/"}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	status, err := svc.SyncOnce(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
@@ -282,9 +278,9 @@ func TestSyncOnceSingleFlightLease(t *testing.T) {
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
 	keys := []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	a := newTestService(t, repo, keys, nil, conf)
-	b := newTestService(t, repo, keys, nil, conf)
+	cfg := config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true}
+	a := newTestService(t, repo, keys, nil, cfg)
+	b := newTestService(t, repo, keys, nil, cfg)
 	if a.owner == b.owner {
 		t.Fatal("owners collided")
 	}
@@ -340,8 +336,7 @@ func TestSyncOnceDisabledSkipsNetwork(t *testing.T) {
 	cloud := newCloud(signDocs(t, rootPriv, online, 1, 1, 1, gen, exp))
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: srv.URL + "/", AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: srv.URL + "/", AutoUpdate: true})
 	status, err := svc.SyncOnce(context.Background(), true)
 	if err != nil || status.Error != "" || cloud.totalHits() != 0 {
 		t.Fatalf("status=%+v err=%v hits=%d", status, err, cloud.totalHits())
@@ -382,7 +377,7 @@ func TestSyncOnceWithoutRootKeys(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	svc := newTestService(t, repo, []ed25519.PublicKey{}, []string{srv.URL + "/"}, nil)
+	svc := newTestService(t, repo, []ed25519.PublicKey{}, []string{srv.URL + "/"}, config.DefaultPluginMarketConfig())
 	status, err := svc.SyncOnce(context.Background(), true)
 	if err == nil || !strings.Contains(err.Error(), errNoRootKeys) || status.Error != errNoRootKeys || hits != 0 {
 		t.Fatalf("status=%+v err=%v hits=%d", status, err, hits)
@@ -459,7 +454,7 @@ func TestSyncOnceRejectsUnboundRootAndTriesNextBase(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(secondSrv.Close)
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{firstSrv.URL + "/", secondSrv.URL + "/"}, nil)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{firstSrv.URL + "/", secondSrv.URL + "/"}, config.DefaultPluginMarketConfig())
 	status, err := svc.SyncOnce(ctx, true)
 	if err != nil {
 		t.Fatal(err)
@@ -488,8 +483,7 @@ func TestSyncOnceManualSourceSkipsEndpointBinding(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{"https://unused.example/v1/"}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{"https://unused.example/v1/"}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	status, err := svc.SyncOnce(context.Background(), true)
 	if err != nil || status.Error != "" || status.SourceURL != base || status.Root.Seq != 1 {
 		t.Fatalf("status = %+v, %v", status, err)
@@ -561,7 +555,7 @@ func TestSnapshotExpiredStillReturnsDocuments(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, nil)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.DefaultPluginMarketConfig())
 	snap, err := svc.Snapshot(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -743,26 +737,15 @@ func signEnv(t *testing.T, payloadType string, payload any, priv ed25519.Private
 	return env
 }
 
-func newTestService(t *testing.T, repo store.JSPluginRepository, keys []ed25519.PublicKey, registries []string, conf *config.ConfigFile) *Service {
+func newTestService(t *testing.T, repo store.JSPluginRepository, keys []ed25519.PublicKey, registries []string, cfg config.PluginMarketConfig) *Service {
 	t.Helper()
 	clearProxyEnv(t)
-	svc, err := NewService(repo, httpclient.NewManager(conf), conf, keys, registries)
+	svc, err := NewService(repo, httpclient.NewManager(nil), nil, keys, registries)
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetConfig(cfg)
 	return svc
-}
-
-func marketConf(t *testing.T, cfg config.PluginMarketConfig) *config.ConfigFile {
-	t.Helper()
-	conf, err := config.LoadConfigFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(cfg)); err != nil {
-		t.Fatal(err)
-	}
-	return conf
 }
 
 func clearProxyEnv(t *testing.T) {

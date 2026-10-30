@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"xlyra/server/internal/config"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/marketproto"
 	"xlyra/server/internal/store"
@@ -199,7 +198,7 @@ func (s *Service) loadCatalog(ctx context.Context) (Snapshot, SnapshotView, []st
 	if err != nil {
 		return Snapshot{}, SnapshotView{}, nil, "", err
 	}
-	cfg := config.ReadPluginMarketConfig(s.conf)
+	cfg := s.cfg
 	meta := SnapshotView{
 		IndexExpired:       snap.IndexExpired,
 		RevocationsExpired: snap.RevocationsExpired,

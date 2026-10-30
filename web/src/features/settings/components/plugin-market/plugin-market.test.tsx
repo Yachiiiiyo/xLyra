@@ -196,10 +196,10 @@ describe('filterMarketPlugins', () => {
 })
 
 describe('plugin market tabs', () => {
-  it('keeps the market tab from the query only while the market is enabled', () => {
-    expect(resolvePluginsTab('market', true)).toBe('market')
-    expect(resolvePluginsTab('market', false)).toBe('installed')
-    expect(resolvePluginsTab(null, true)).toBe('installed')
+  it('resolves the market tab from the query', () => {
+    expect(resolvePluginsTab('market')).toBe('market')
+    expect(resolvePluginsTab('installed')).toBe('installed')
+    expect(resolvePluginsTab(null)).toBe('installed')
   })
 
   it('drops the market tab and keeps other params when opening enable', () => {
@@ -209,35 +209,35 @@ describe('plugin market tabs', () => {
     expect(next.get('enable')).toBe('acme.two@2.0.0')
   })
 
-  it('does not render the market tab when the market is off', () => {
+  it('renders both tabs', () => {
     const markup = renderToStaticMarkup(
-      <PluginTabBar marketEnabled={false} tab="installed" installedLabel="已安装" marketLabel="市场" onTab={() => {}} />,
+      <PluginTabBar tab="installed" installedLabel="已安装" marketLabel="市场" onTab={() => {}} />,
     )
     expect(markup).toContain('已安装')
-    expect(markup).not.toContain('市场')
+    expect(markup).toContain('市场')
   })
 
   it('selects the market tab from ?tab=market', () => {
-    function Probe({ enabled }: { enabled: boolean }) {
-      const { tab } = usePluginsTab(enabled)
+    function Probe() {
+      const { tab } = usePluginsTab()
       return (
-        <PluginTabBar marketEnabled={enabled} tab={tab} installedLabel="已安装" marketLabel="市场" onTab={() => {}} />
+        <PluginTabBar tab={tab} installedLabel="已安装" marketLabel="市场" onTab={() => {}} />
       )
     }
     const open = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/system/plugins?tab=market']}>
-        <Probe enabled />
+        <Probe />
       </MemoryRouter>,
     )
     expect(open).toContain('市场')
     expect(open).toMatch(/aria-selected="true"[^>]*>市场/)
-    const closed = renderToStaticMarkup(
-      <MemoryRouter initialEntries={['/system/plugins?tab=market']}>
-        <Probe enabled={false} />
+    const installed = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/system/plugins']}>
+        <Probe />
       </MemoryRouter>,
     )
-    expect(closed).not.toContain('市场')
-    expect(closed).toMatch(/aria-selected="true"[^>]*>已安装/)
+    expect(installed).toContain('市场')
+    expect(installed).toMatch(/aria-selected="true"[^>]*>已安装/)
   })
 })
 
@@ -422,6 +422,16 @@ describe('MarketPluginList', () => {
 })
 
 describe('MarketPluginDetail icon', () => {
+  it('marks the installed version with a badge in the version list', () => {
+    const markup = renderDetail({
+      ...plugins[1],
+      local_status: 'installed',
+      local_version: '2.0.0',
+      versions: [marketVersion('2.0.0'), marketVersion('1.0.0')],
+    })
+    expect(markup.match(/已安装/g)).toHaveLength(1)
+    expect(markup.indexOf('2.0.0')).toBeLessThan(markup.indexOf('已安装'))
+  })
   it('leaves the icon out of the detail body', () => {
     const iconUrl = '/api/v1/plugin-market/icons/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     const markup = renderDetail({ ...plugins[0], icon_url: iconUrl, versions: [marketVersion('1.2.0')] })
@@ -452,7 +462,6 @@ describe('installControlModel', () => {
     expect(model.disabled).toBe(false)
     expect(model.blocked).toBe(false)
     expect(model.reason).toBeNull()
-    expect(model.installedText).toBeNull()
   })
 
   it('offers update, and update-and-enable, when an update is available', () => {
@@ -461,7 +470,6 @@ describe('installControlModel', () => {
     expect(model.primaryLabel).toBe('更新')
     expect(model.menuItem).toEqual({ key: 'update-enable', label: '更新并启用' })
     expect(model.disabled).toBe(false)
-    expect(model.installedText).toBeNull()
   })
 
   it('offers enable when the latest build is installed but not enabled', () => {
@@ -475,7 +483,6 @@ describe('installControlModel', () => {
     expect(model.primaryLabel).toBe('启用')
     expect(model.menuItem).toBeNull()
     expect(model.disabled).toBe(false)
-    expect(model.installedText).toBe('已安装 2.0.0')
   })
 
   it('has no action when the latest build is already enabled', () => {
@@ -490,7 +497,6 @@ describe('installControlModel', () => {
     expect(model.primaryLabel).toBe('已安装')
     expect(model.menuItem).toBeNull()
     expect(model.disabled).toBe(true)
-    expect(model.installedText).toBe('已安装 2.0.0')
     expect(model.reason).toBeNull()
   })
 
@@ -545,20 +551,19 @@ describe('market install buttons', () => {
     expect(markup).not.toContain('>安装<')
   })
 
-  it('shows the installed version and an enable button when the latest build is not enabled', () => {
+  it('shows an enable button when the latest build is installed but not enabled', () => {
     const markup = renderActions({
       ...plugins[1],
       local_status: 'installed',
       local_version: '2.0.0',
       versions: [marketVersion('2.0.0')],
     }, freshSnapshot)
-    expect(markup).toContain('已安装 2.0.0')
     expect(markup).toContain('>启用<')
     expect(markup).not.toContain('>安装<')
     expect(markup).not.toContain('disabled=""')
   })
 
-  it('shows only the installed version when that version is already enabled', () => {
+  it('shows no install actions when that version is already enabled', () => {
     const markup = renderActions({
       ...plugins[1],
       local_status: 'enabled',
@@ -566,7 +571,6 @@ describe('market install buttons', () => {
       update_available: false,
       versions: [marketVersion('2.0.0')],
     }, freshSnapshot)
-    expect(markup).toContain('已安装 2.0.0')
     expect(markup).not.toContain('>启用<')
     expect(markup).not.toContain('>安装<')
     expect(markup).not.toContain('>更新<')

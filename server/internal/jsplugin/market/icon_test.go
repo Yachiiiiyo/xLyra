@@ -82,8 +82,7 @@ func TestMarketIcon(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	if status, err := svc.SyncOnce(context.Background(), true); err != nil || status.Error != "" {
 		t.Fatalf("sync = %+v %v", status, err)
 	}
@@ -201,11 +200,7 @@ func TestMarketIcon(t *testing.T) {
 		}
 	}
 
-	if err := conf.Set(config.PluginMarketConfigPath, config.PluginMarketConfigToMap(config.PluginMarketConfig{
-		Enabled: false, IndexSyncHours: 6, SourceURL: base,
-	})); err != nil {
-		t.Fatal(err)
-	}
+	svc.SetConfig(config.PluginMarketConfig{Enabled: false, IndexSyncHours: 6, SourceURL: base})
 	kept := cloud.hit(goodName)
 	wantMiss(goodSum, true)
 	if cloud.hit(goodName) != kept {
@@ -239,8 +234,7 @@ func TestMarketIconRejectsMalformedIndexIcon(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	ctx := context.Background()
 
 	for _, item := range cases {

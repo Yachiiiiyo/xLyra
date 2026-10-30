@@ -64,8 +64,7 @@ func TestAutoUpgradeRollbackAndBackfill(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	aud := &memAudit{}
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
@@ -210,8 +209,7 @@ func TestRevocationEffects(t *testing.T) {
 		marketRollback("rev-host", "acme.hostroll", hostNew.Manifest.Version, hostNew.SHA256, "1.0.0", issued),
 		marketRollback("rev-stranger", "acme.strangeroll", badPkg.Manifest.Version, badPkg.SHA256, "1.0.0", issued),
 	}
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
 	aud := &memAudit{}
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
@@ -300,8 +298,7 @@ func TestExpiredRevocationsPauseAutoUpdate(t *testing.T) {
 		versionEntry(newPkg, newRaw, attestPackage(t, online, newPkg, none, none, issued), okCompat, none, none, issued),
 		versionEntry(oldPkg, oldRaw, attestPackage(t, online, oldPkg, none, none, issued), okCompat, none, none, issued),
 	)}
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
 	saveSignedState(t, repo, signCatalog(t, rootPriv, online, 1, 1, 1, issued, expires, plugins, nil))
@@ -357,8 +354,7 @@ func TestRevokeRollbackDownloadsMissingVersion(t *testing.T) {
 	cloud.put("packages/"+marketproto.FileSHA256(oldRaw)+".xlp", oldRaw)
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6, SourceURL: srv.URL + "/"})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6, SourceURL: srv.URL + "/"})
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
 	saveSignedState(t, repo, signCatalog(t, rootPriv, online, 1, 1, 1, issued, exp, plugins, entries))
@@ -417,8 +413,7 @@ func TestAutoUpgradeLocalDigest(t *testing.T) {
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
 	base := srv.URL + "/"
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{base}, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6, SourceURL: base, AutoUpdate: true})
 	aud := &memAudit{}
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
@@ -532,8 +527,7 @@ func TestRevokeRollbackLocalDigest(t *testing.T) {
 	cloud.put("packages/"+marketproto.FileSHA256(clashOldRaw)+".xlp", clashOldRaw)
 	srv := httptest.NewServer(cloud)
 	t.Cleanup(srv.Close)
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6, SourceURL: srv.URL + "/"})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, []string{srv.URL + "/"}, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6, SourceURL: srv.URL + "/"})
 	aud := &memAudit{}
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
@@ -607,8 +601,7 @@ func TestAutoRollbackDoesNotConfirmUntrusted(t *testing.T) {
 		pluginDoc("acme.manual", jsplugin.KindQuotaProbe, []string{devFP}, versionEntry(manualNew, manualNewRaw, attestPackage(t, online, manualNew, none, none, issued), okCompat, none, none, issued)),
 		pluginDoc("acme.trust", jsplugin.KindQuotaProbe, []string{devFP}, versionEntry(trustNew, trustNewRaw, attestPackage(t, online, trustNew, none, none, issued), okCompat, none, none, issued)),
 	}
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
 	aud := &memAudit{}
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
@@ -689,8 +682,7 @@ func TestRollbackSkipsRevokedFromVersion(t *testing.T) {
 	entries := []marketproto.RevocationEntry{
 		marketRevocation("rev-old", "acme.revold", oldPkg.Manifest.Version, oldPkg.SHA256, "security", issued),
 	}
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, AutoUpdate: true, IndexSyncHours: 6})
 	aud := &memAudit{}
 	mgr.SetMarketTrust(svc)
 	svc.SetRuntime(mgr)
@@ -728,8 +720,7 @@ func TestRevokeRollbackRejectsKindAndSiteType(t *testing.T) {
 	devKey := fixedKey(0x45)
 	devFP := jsplugin.PublicKeyFingerprint(devKey.Public().(ed25519.PublicKey))
 	issued, _ := freshWindow()
-	conf := marketConf(t, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6})
-	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, conf)
+	svc := newTestService(t, repo, []ed25519.PublicKey{rootPriv.Public().(ed25519.PublicKey)}, nil, config.PluginMarketConfig{Enabled: true, IndexSyncHours: 6})
 	spy := &runtimeSpy{}
 	svc.SetRuntime(spy)
 	ctx := context.Background()
