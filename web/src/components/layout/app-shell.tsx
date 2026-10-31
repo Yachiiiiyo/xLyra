@@ -101,7 +101,7 @@ function AppFooter() {
     <footer className="px-4 pb-6 pt-2 md:px-8 lg:px-10">
       <div className="flex flex-col gap-3 text-xs text-label-3 sm:flex-row sm:items-center sm:justify-between">
         <a
-          href="https://github.com/Yachiyo-5i/xLyra"
+          href="https://github.com/Yachiiiiyo/xLyra"
           target="_blank"
           rel="noreferrer"
           className="inline-flex w-fit items-center gap-2 rounded-md transition-colors hover:text-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-tint/55"

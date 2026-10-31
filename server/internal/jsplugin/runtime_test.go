@@ -315,7 +315,7 @@ func TestMoejsImportOnlyInEngine(t *testing.T) {
 		if strings.Contains(text, "github.com/Calcium-Ion/moejs") {
 			t.Errorf("%s imports Calcium-Ion/moejs", path)
 		}
-		if strings.Contains(text, "github.com/Yachiyo-5i/moejs") && filepath.Base(path) != "engine.go" {
+		if strings.Contains(text, "github.com/Yachiiiiyo/moejs") && filepath.Base(path) != "engine.go" {
 			t.Errorf("%s imports moejs; only engine.go may do that", path)
 		}
 		return nil
@@ -330,10 +330,10 @@ func TestMoejsImportOnlyInEngine(t *testing.T) {
 	if strings.Contains(string(mod), "Calcium-Ion/moejs") {
 		t.Fatal("go.mod tracks Calcium-Ion/moejs")
 	}
-	if !strings.Contains(string(mod), "github.com/Yachiyo-5i/moejs") {
+	if !strings.Contains(string(mod), "github.com/Yachiiiiyo/moejs") {
 		t.Fatal("go.mod does not require the fork")
 	}
-	if strings.Contains(string(mod), "replace github.com/Yachiyo-5i/moejs") {
+	if strings.Contains(string(mod), "replace github.com/Yachiiiiyo/moejs") {
 		t.Fatal("go.mod replaces the fork; require a published tag instead")
 	}
 }
