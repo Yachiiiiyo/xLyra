@@ -82,7 +82,8 @@ export function MobileDockMenu({ open, items, anchorRef, onOpenChange }: MobileD
         className={cn(
           'mobile-dock-anchor pointer-events-none fixed right-4 z-50 flex flex-col items-end gap-2',
           'overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-          'pl-14 pt-2',
+          // 顶部留足空间：最上面一项旋转 7°（原点在右下），左上角会抬高约 宽度×sin7°，留少了会被容器上边裁掉
+          'pl-14 pt-10',
         )}
         style={{
           bottom: safeBottom,
