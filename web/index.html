@@ -6,7 +6,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=0.8, minimum-scale=0.8, viewport-fit=cover, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <script>
       ;(function () {
         var varName = '--app-viewport-height'
@@ -40,8 +40,62 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#0a0b0d" />
     <title>xLyra</title>
+    <style>
+      /* 启动遮罩：JS 加载前就要能显示，背景色与 index.css 的 --surface-base / --bg-base 保持一致 */
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: var(--app-viewport-height, 100dvh);
+        min-height: var(--app-viewport-height, 100dvh);
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        background-color: #11131a;
+        transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+      }
+
+      #boot-splash > canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #boot-splash > img {
+        width: 128px;
+        height: 128px;
+        animation: boot-splash-breathe 2.4s ease-in-out infinite;
+      }
+
+      @keyframes boot-splash-breathe {
+        0%,
+        100% {
+          opacity: 0.35;
+          transform: scale(0.94);
+          filter: brightness(0.7);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.06);
+          filter: brightness(1.15);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash > img {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot-splash" aria-hidden="true">
+      <canvas></canvas>
+      <img src="/logo-mark.webp" alt="" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
