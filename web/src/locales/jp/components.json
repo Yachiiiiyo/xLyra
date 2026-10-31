@@ -9,7 +9,8 @@
     "unavailableTitle": "認証入口を利用できません",
     "unavailableDesc": "初期化状態を取得できません。後でもう一度お試しください。",
     "serviceErrorTitle": "バックエンドサービスを利用できません",
-    "serviceErrorDesc": "バックエンドサービスで一時的な問題が発生しています。後ほどページを再読み込みしてください。"
+    "serviceErrorDesc": "バックエンドサービスで一時的な問題が発生しています。後ほどページを再読み込みしてください。",
+    "refresh": "ページを再読み込み"
   },
   "modelsDraw": {
     "searchPlaceholder": "モデルを検索",

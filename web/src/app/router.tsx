@@ -108,7 +108,6 @@ export const appRouter = createBrowserRouter([
           { path: 'plugins', element: lazyElement(<PluginsSettingsPage />) },
         ],
       },
-      { path: '*', element: lazyElement(<NotFoundPage />) },
     ],
   },
   {
@@ -134,5 +133,10 @@ export const appRouter = createBrowserRouter([
   {
     path: '/portal',
     element: lazyElement(<PortalPage />),
+  },
+  // 404 兜底：顶层路由，不套 ProtectedLayout / AppShell，全屏独立展示
+  {
+    path: '*',
+    element: lazyElement(<NotFoundPage />),
   },
 ])

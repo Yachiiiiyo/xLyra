@@ -90,7 +90,8 @@
   },
   "notFound": {
     "title": "Oops! Page Not Found!",
-    "description": "It seems like the page you're looking for does not exist or might have been removed."
+    "description": "It seems like the page you're looking for does not exist or might have been removed.",
+    "backHome": "Back to home"
   },
   "list": {
     "count": "{{count}} items",

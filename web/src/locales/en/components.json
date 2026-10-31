@@ -9,7 +9,8 @@
     "unavailableTitle": "Auth entry unavailable",
     "unavailableDesc": "Cannot retrieve initialization status. Please try again later.",
     "serviceErrorTitle": "Backend service unavailable",
-    "serviceErrorDesc": "The backend service is temporarily unavailable. Please refresh the page later."
+    "serviceErrorDesc": "The backend service is temporarily unavailable. Please refresh the page later.",
+    "refresh": "Refresh page"
   },
   "modelsDraw": {
     "searchPlaceholder": "Search models",

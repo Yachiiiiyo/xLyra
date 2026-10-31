@@ -2,7 +2,6 @@ import { useEffect, type PropsWithChildren } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AuthStatusScreen } from '@/components/auth/auth-status-screen'
-import { inferStatusCode } from '@/components/auth/auth-utils'
 import { readBootstrapInitialized } from '@/lib/bootstrap-state'
 import { buildRedirectSearch, resolveAuthRedirectTarget } from '@/lib/navigation'
 import { useAuthStore } from '@/stores/auth-store'
@@ -22,18 +21,13 @@ function useInitializeAuth() {
 
 export function ProtectedRoute({ children }: PropsWithChildren) {
   const location = useLocation()
-  const { t } = useTranslation('components')
   useInitializeAuth()
   const status = useAuthStore((state) => state.status)
-  const errorMessage = useAuthStore((state) => state.errorMessage)
-  const errorStatus = useAuthStore((state) => state.errorStatus)
 
   const pending = status === 'idle' || status === 'checking'
   const initializedHint = readBootstrapInitialized()
 
-  if (status === 'error') {
-    return <ProtectedAuthStatus description={errorMessage ?? t('authGuard.errorDesc')} statusCode={errorStatus} />
-  }
+  // 鉴权失败（status === 'error'）由 RootLayout 整页接管，这里不再处理
 
   if (status === 'registration-required' || (pending && initializedHint === false)) {
     return <Navigate to={`/register?${buildRedirectSearch(location)}`} replace />
@@ -48,36 +42,6 @@ export function ProtectedRoute({ children }: PropsWithChildren) {
   }
 
   return <>{children}</>
-}
-
-type ProtectedAuthStatusProps = {
-  description: string
-  statusCode?: number | null
-}
-
-function ProtectedAuthStatus({
-  description,
-  statusCode,
-}: ProtectedAuthStatusProps) {
-  const { t } = useTranslation('components')
-  const displayStatusCode = statusCode ?? inferStatusCode(description) ?? 502
-
-  return (
-    <div className="flex min-h-full items-center justify-center px-4 py-10 text-center">
-      <div>
-        <p className="font-mono text-[clamp(3.75rem,6vw,5.5rem)] font-semibold leading-none tabular-nums text-label-3">
-          {displayStatusCode}
-        </p>
-        <h1 className="mt-5 text-title-2 text-label">
-          {t('authGuard.serviceErrorTitle')}
-        </h1>
-        <p className="mx-auto mt-3 max-w-md text-body text-label-2">
-          {t('authGuard.serviceErrorDesc')}
-        </p>
-        <p className="mt-3 text-footnote font-medium text-label-3">HTTP {displayStatusCode}</p>
-      </div>
-    </div>
-  )
 }
 
 type PublicOnlyRouteProps = PropsWithChildren<{
