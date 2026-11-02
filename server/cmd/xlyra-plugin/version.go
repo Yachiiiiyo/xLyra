@@ -22,7 +22,7 @@ func moejsVersion() string {
 		return "unknown"
 	}
 	for _, dep := range info.Deps {
-		if dep.Path == "github.com/Yachiyo-5i/moejs" {
+		if dep.Path == "github.com/Yachiiiiyo/moejs" {
 			return dep.Version
 		}
 	}

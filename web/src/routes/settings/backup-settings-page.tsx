@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import cronstrue from 'cronstrue/i18n'
 import {
-  AlertTriangle,
   CalendarClock,
   CheckCircle2,
   Cloud,
@@ -19,6 +18,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import { Notice } from '@/components/common/notice'
 import { PageHeader } from '@/components/common/page-header'
 import { StatusBadge } from '@/components/common/status-badge'
 import { Button } from '@/components/ui/button'
@@ -770,19 +770,6 @@ function SectionTitle({ icon, title }: { icon: ReactNode; title: string }) {
     <div className="flex items-center gap-2 text-headline text-label">
       {icon}
       <span>{title}</span>
-    </div>
-  )
-}
-
-function Notice({ items, tone = 'default' }: { items: string[]; tone?: 'default' | 'danger' }) {
-  return (
-    <div className="rounded-inner bg-fill-4 px-4 py-3">
-      <div className="flex gap-3">
-        <AlertTriangle className={tone === 'danger' ? 'mt-0.5 h-4 w-4 shrink-0 text-danger' : 'mt-0.5 h-4 w-4 shrink-0 text-tint'} />
-        <ul className="space-y-1 text-footnote leading-5 text-label-2">
-          {items.map((item) => <li key={item}>{item}</li>)}
-        </ul>
-      </div>
     </div>
   )
 }

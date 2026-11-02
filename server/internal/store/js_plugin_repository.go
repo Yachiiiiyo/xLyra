@@ -14,6 +14,9 @@ import (
 
 const (
 	JSPluginSourceUploaded = "uploaded"
+	JSPluginSourceMarket   = "market"
+	JSPluginOriginManual   = "manual"
+	JSPluginOriginMarket   = "market"
 	JSPluginStatusUploaded = "uploaded"
 	JSPluginStatusVerified = "verified"
 	JSPluginStatusEnabled  = "enabled"
@@ -51,6 +54,8 @@ type JSPluginVersion struct {
 	Status             string
 	SelfTest           JSON `gorm:"column:selftest;type:jsonb"`
 	UploadedBy         uuid.NullUUID
+	Origin             string
+	Attestation        JSON `gorm:"type:jsonb"`
 	CreatedAt          time.Time
 }
 
@@ -104,10 +109,32 @@ func (r JSPluginRepository) UpsertPlugin(ctx context.Context, id, source string)
 }
 
 func (r JSPluginRepository) CreateVersion(ctx context.Context, version JSPluginVersion) error {
+	if version.Origin == "" {
+		version.Origin = JSPluginOriginManual
+	}
 	if len(version.GrantedPermissions) == 0 {
 		version.GrantedPermissions = JSON("[]")
 	}
 	return r.db.WithContext(ctx).Create(&version).Error
+}
+
+// UpdateVersionAttestation records a marketplace attestation on an existing version row.
+func (r JSPluginRepository) UpdateVersionAttestation(ctx context.Context, pluginID, version, origin string, attestation JSON) error {
+	if origin == "" {
+		origin = JSPluginOriginMarket
+	}
+	res := r.db.WithContext(ctx).Exec(`
+		UPDATE js_plugin_versions
+		SET origin = ?, attestation = ?::jsonb
+		WHERE plugin_id = ? AND version = ?
+	`, origin, string(attestation), pluginID, version)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // CreatePluginVersion upserts the parent plugin and inserts the version atomically.
@@ -130,6 +157,34 @@ func (r JSPluginRepository) GetVersion(ctx context.Context, pluginID, ver string
 func (r JSPluginRepository) ListVersions(ctx context.Context, pluginID string) ([]JSPluginVersion, error) {
 	var items []JSPluginVersion
 	err := r.db.WithContext(ctx).Where("plugin_id = ?", pluginID).Order("created_at DESC").Find(&items).Error
+	return items, err
+}
+
+func (r JSPluginRepository) versionHeaders(ctx context.Context) *gorm.DB {
+	return r.db.WithContext(ctx).
+		Select("plugin_id", "version", "status", "package_sha256", "created_at", "manifest", "signer", "origin", "attestation")
+}
+
+// ListVersionHeadersForPlugin reads one plugin's versions without the package bytes.
+func (r JSPluginRepository) ListVersionHeadersForPlugin(ctx context.Context, pluginID string) ([]JSPluginVersion, error) {
+	var items []JSPluginVersion
+	err := r.versionHeaders(ctx).Where("plugin_id = ?", pluginID).Find(&items).Error
+	return items, err
+}
+
+// ListAllVersionHeaders reads every installed version without the package bytes.
+func (r JSPluginRepository) ListAllVersionHeaders(ctx context.Context) ([]JSPluginVersion, error) {
+	var items []JSPluginVersion
+	err := r.versionHeaders(ctx).Find(&items).Error
+	return items, err
+}
+
+// ListVersionHeaders returns every installed version without the package bytes.
+func (r JSPluginRepository) ListVersionHeaders(ctx context.Context) ([]JSPluginVersion, error) {
+	var items []JSPluginVersion
+	err := r.db.WithContext(ctx).
+		Select("plugin_id", "version", "status", "package_sha256", "signer", "origin", "attestation", "manifest").
+		Find(&items).Error
 	return items, err
 }
 

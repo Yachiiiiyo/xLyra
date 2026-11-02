@@ -724,7 +724,6 @@ export function ModelCatalogSurface({
                 <div className="text-label-2 px-3 py-8 text-center text-body">{t('catalog.noStandardModels')}</div>
               )}
             </DrawBody>
-            <DrawFooter />
           </DrawContent>
         </Draw>
 

@@ -7,9 +7,30 @@ import (
 
 	"xlyra/server/internal/catalog"
 	"xlyra/server/internal/config"
+	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/site"
 	"xlyra/server/internal/usage"
 )
+
+func TestPluginMarketSyncCronIsHourly(t *testing.T) {
+	t.Parallel()
+
+	if pluginMarketSyncCron != "@every 1h" {
+		t.Fatalf("plugin market cron = %s", pluginMarketSyncCron)
+	}
+}
+
+func TestPluginMarketSyncSkipsWhenAlreadyRunning(t *testing.T) {
+	t.Parallel()
+
+	scheduler := New(slog.Default(), Options{}, nil, nil, nil)
+	scheduler.pluginMarket = &market.Service{}
+	scheduler.marketSync.Store(true)
+	scheduler.runPluginMarketSync()
+	if !scheduler.marketSync.Load() {
+		t.Fatal("guard should stay set when the run is skipped")
+	}
+}
 
 func TestUsageSummaryCronRunsAtOneMinuteAfterMidnight(t *testing.T) {
 	t.Parallel()

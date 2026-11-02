@@ -161,7 +161,7 @@ func (a openAIChatProtocolAdapter) ProxyStream(ctx context.Context, w http.Respo
 	case canonicalProtocolGoogleGemini:
 		return proxyCanonicalStream(ctx, w, resp, startedAt, canonicalProtocolOpenAIChat, canonicalProtocolGoogleGemini, canonicalStreamOptions{IncludeUsage: true, RequireUsage: true, Candidate: candidate})
 	}
-	return proxyUpstreamStream(ctx, w, resp, startedAt)
+	return proxyUpstreamStreamSanitized(withSSESanitizeMeta(ctx, candidate), w, resp, startedAt, inspectOpenAIChatStreamLine, sanitizeChatEventBlock)
 }
 
 type openAIChatUpstreamResolver struct{}

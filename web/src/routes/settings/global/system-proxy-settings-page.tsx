@@ -210,7 +210,7 @@ export function SystemProxySettingsPage() {
       ) : null}
 
       <Sheet open={formOpen} onOpenChange={(open) => { if (!open && !saveMutation.isPending) closeForm() }}>
-        <SheetContent onOpenAutoFocus={(event) => event.preventDefault()}>
+        <SheetContent swipeDismiss={false} onOpenAutoFocus={(event) => event.preventDefault()}>
           <SheetHeader>
             <SheetTitle>{editingProxy ? t('systemProxy.form.editTitle') : t('systemProxy.form.createTitle')}</SheetTitle>
           </SheetHeader>

@@ -3,7 +3,6 @@ module xlyra/server
 go 1.26.10
 
 require (
-	github.com/Yachiyo-5i/moejs v0.1.0-yachiyo.2
 	github.com/caarlos0/env/v11 v11.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.3.0
@@ -29,6 +28,7 @@ require (
 require github.com/andybalholm/brotli v1.2.0 // indirect
 
 require (
+	github.com/Yachiiiiyo/moejs v0.1.0-yachiyo.3
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect

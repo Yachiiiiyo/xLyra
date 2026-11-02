@@ -28,8 +28,8 @@ type EnableOptions struct {
 }
 
 // ErrSiteProviderUntrusted is returned when a site_provider package is unsigned
-// or signed by a key that is not in the trusted key store. ConfirmUntrusted
-// does not bypass it.
+// or signed by a key that is not trusted and has no marketplace attestation.
+// ConfirmUntrusted does not bypass it.
 var ErrSiteProviderUntrusted = errors.New("site_provider plugins must be signed by a trusted key")
 
 // SiteProviderUntrustedError is ErrSiteProviderUntrusted plus the trust state
@@ -109,6 +109,8 @@ type Manager struct {
 	seenGeneration  int64
 	syncStopped     chan struct{}
 	wakeup          chan struct{}
+	marketTrust     MarketTrust
+	autoRollback    AutoUpdateRollback
 }
 
 func NewManager(db *store.Store, catalog *Catalog) *Manager {
@@ -217,6 +219,10 @@ func (m *Manager) Upload(ctx context.Context, adminID string, raw []byte) (store
 	if err != nil {
 		return store.JSPluginVersion{}, &InvalidPackageError{Err: err}
 	}
+	// 发布环节才检查图标可读性（上传、市场安装、CLI）；重新加载已存的包不检查。
+	if _, err := CheckIconLegibility(raw, pkg.Manifest); err != nil {
+		return store.JSPluginVersion{}, &InvalidPackageError{Err: err}
+	}
 	plugin, err := CompilePackage(pkg)
 	if err != nil {
 		return store.JSPluginVersion{}, &InvalidPackageError{Err: err}
@@ -272,7 +278,7 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 	if err != nil {
 		return err
 	}
-	trust, err := m.TrustStatus(ctx, row.Signer)
+	trust, err := m.TrustStatusForVersion(ctx, row)
 	if err != nil {
 		return err
 	}
@@ -280,11 +286,12 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 	if err != nil {
 		return err
 	}
+	marketplace := trust == TrustTrusted || trust == TrustMarketplace
 	if pkg.Manifest.Kind == KindSiteProvider {
-		if trust != TrustTrusted {
+		if !marketplace {
 			return &SiteProviderUntrustedError{Trust: trust}
 		}
-	} else if trust != TrustTrusted && !opts.ConfirmUntrusted {
+	} else if !marketplace && !opts.ConfirmUntrusted {
 		return &ConfirmRequiredError{Trust: trust}
 	}
 	if spec, ok := lookupKind(pkg.Manifest.Kind); ok && !spec.Connected {
@@ -597,6 +604,12 @@ func (m *Manager) onBreakerTrip(pluginID, version, reason string) {
 		slog.Warn("js plugin breaker disable failed", "plugin_id", pluginID, "version", version, "error", err)
 		_ = m.Reload(ctx)
 		return
+	}
+	m.mu.Lock()
+	rollback := m.autoRollback
+	m.mu.Unlock()
+	if rollback != nil {
+		rollback.RollbackAutoUpdate(ctx, pluginID, version, reason)
 	}
 	if err := m.publishCatalog(ctx); err != nil {
 		slog.Warn("js plugin catalog publish failed", "plugin_id", pluginID, "version", version, "error", err)

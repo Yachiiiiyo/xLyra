@@ -47,6 +47,7 @@
     "models": "Models",
     "apiKeys": "API Keys",
     "operations": "Operations",
+    "system": "System",
     "routes": "Routes",
     "requests": "Requests",
     "trafficFlow": "Traffic Flow",
@@ -58,8 +59,9 @@
     "globalSettings": "Global Settings",
     "notificationConfig": "Notification Config",
     "modelsPrice": "Models Price",
-    "developer": "Developer",
+    "developer": "Plugins",
     "backup": "Configuration Backup",
+    "xlyraCloud": "xLyra Cloud",
     "profile": "Profile"
   },
   "app": {
@@ -88,7 +90,8 @@
   },
   "notFound": {
     "title": "Oops! Page Not Found!",
-    "description": "It seems like the page you're looking for does not exist or might have been removed."
+    "description": "It seems like the page you're looking for does not exist or might have been removed.",
+    "backHome": "Back to home"
   },
   "list": {
     "count": "{{count}} items",

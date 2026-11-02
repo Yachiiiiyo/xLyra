@@ -27,6 +27,7 @@ type Manifest struct {
 	Kind         string              `json:"kind"`
 	Description  string              `json:"description"`
 	License      string              `json:"license"`
+	Icon         string              `json:"icon,omitempty"`
 	QuotaProbe   QuotaProbeSection   `json:"quotaProbe"`
 	Site         SiteSection         `json:"site"`
 	Protocol     ProtocolSection     `json:"protocol"`
@@ -264,7 +265,7 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 	if manifest.HostAPI < 1 {
 		return fmt.Errorf("hostApi must be at least 1")
 	}
-	if err := versionAllowed(manifest.XLyra, version.Current().Version); err != nil {
+	if err := VersionAllowed(manifest.XLyra, version.Current().Version); err != nil {
 		return err
 	}
 	sum, ok := manifest.SHA256["plugin.js"]
@@ -361,7 +362,9 @@ func hashSource(source string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func versionAllowed(constraint, current string) error {
+// VersionAllowed reports whether current satisfies an xLyra constraint such as ">=1.15.0".
+// An empty current, or current "dev", always passes. An empty constraint always passes.
+func VersionAllowed(constraint, current string) error {
 	current = strings.TrimSpace(current)
 	if current == "" || current == "dev" {
 		return nil

@@ -933,6 +933,23 @@ select {
   animation: dialog-sheet-out 240ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
+/* 进出场关键帧占住 transform，手势位移独立走 translate，二者可叠加。 */
+@media (max-width: 1023px) {
+  .draw-content {
+    translate: 0 var(--draw-drag-y, 0px);
+  }
+
+  .draw-content.draw-gesture-snapping {
+    transition: height 280ms var(--ease-sheet), translate 280ms var(--ease-sheet);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draw-content.draw-gesture-snapping {
+    transition: none;
+  }
+}
+
 @media (min-width: 1024px) {
   .draw-content[data-side="right"][data-state="open"] {
     animation: sheet-in-right 400ms var(--ease-sheet) both;

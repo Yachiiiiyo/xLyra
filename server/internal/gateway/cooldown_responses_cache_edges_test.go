@@ -107,7 +107,7 @@ func TestResponsesStreamPassthroughEmptyAndIncompleteEvents(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	body := gatewaySSEEvent("", `{"type":"response.incomplete"}`)
+	body := gatewaySSEEvent("", `{"type":"response.incomplete","sequence_number":1}`)
 	capture, started, err := proxyResponsesStreamPassthrough(
 		context.Background(),
 		rec,

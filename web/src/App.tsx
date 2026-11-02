@@ -16,9 +16,6 @@ export default function App() {
 }
 
 function AppFallback() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas text-body text-label-2">
-      Loading...
-    </div>
-  )
+  // 启动阶段由全局遮罩覆盖，这里不再闪现 Loading 文案
+  return null
 }

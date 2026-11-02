@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Yachiyo-5i/moejs"
+	"github.com/Yachiiiiyo/moejs"
 )
 
 // program is one compiled plugin module. It is safe to load from many runtimes.

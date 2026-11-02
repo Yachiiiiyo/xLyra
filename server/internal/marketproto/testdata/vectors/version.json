@@ -1,0 +1,112 @@
+[
+  {
+    "name": "version/ok",
+    "inputs": {
+      "version": {
+        "a": "1.2.3"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "version/zero",
+    "inputs": {
+      "version": {
+        "a": "0.0.0"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "version/prerelease",
+    "inputs": {
+      "version": {
+        "a": "1.0.0-rc.1"
+      }
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_version",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "version/build_meta",
+    "inputs": {
+      "version": {
+        "a": "1.0.0+build.5"
+      }
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_version",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "version/leading_zero",
+    "inputs": {
+      "version": {
+        "a": "1.02.3"
+      }
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_version",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "version/compare_less",
+    "inputs": {
+      "version": {
+        "a": "1.0.0",
+        "b": "1.0.1"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": -1
+    }
+  },
+  {
+    "name": "version/compare_greater",
+    "inputs": {
+      "version": {
+        "a": "2.0.0",
+        "b": "1.9.9"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": 1
+    }
+  },
+  {
+    "name": "version/compare_equal",
+    "inputs": {
+      "version": {
+        "a": "1.4.2",
+        "b": "1.4.2"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": 0
+    }
+  }
+]

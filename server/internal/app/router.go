@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -30,7 +31,9 @@ import (
 	"xlyra/server/internal/health"
 	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/httpx"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
+	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
 	oauthsvc "xlyra/server/internal/oauth"
 	"xlyra/server/internal/observability"
@@ -61,10 +64,11 @@ func NewRouter(cfg config.Config, logger *slog.Logger, db *store.Store, confFile
 }
 
 func NewRouterWithGateway(cfg config.Config, logger *slog.Logger, db *store.Store, confFile *config.ConfigFile, masterKey string) (http.Handler, *gateway.Handler) {
-	return NewRouterWithGatewayWithOAuth(context.Background(), nil, cfg, logger, db, confFile, masterKey, nil, nil)
+	handler, gatewayHandler, _ := NewRouterWithGatewayWithOAuth(context.Background(), nil, cfg, logger, db, confFile, masterKey, nil, nil)
+	return handler, gatewayHandler
 }
 
-func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, cfg config.Config, logger *slog.Logger, db *store.Store, confFile *config.ConfigFile, masterKey string, sharedOAuth *oauthsvc.Service, sharedSite *site.Service) (http.Handler, *gateway.Handler) {
+func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, cfg config.Config, logger *slog.Logger, db *store.Store, confFile *config.ConfigFile, masterKey string, sharedOAuth *oauthsvc.Service, sharedSite *site.Service) (http.Handler, *gateway.Handler, *market.Service) {
 	appTimeZone := config.ResolveTimeZone()
 	var authService *auth.Service
 	if db != nil {
@@ -90,14 +94,65 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	var routerService *routeengine.Service
 	var usageService *usage.Service
 	var jsPluginManager *jsplugin.Manager
+	var pluginMarket *market.Service
+	var cloudClient *cloudclient.Client
 	if db != nil {
 		jsPluginManager = jsplugin.NewManager(db, jsplugin.DefaultCatalog())
+		marketService, err := market.NewService(store.NewJSPluginRepository(db.DB()), httpClients, confFile, nil, nil)
+		if err != nil {
+			logger.Warn("plugin market service disabled", "error", err)
+		} else {
+			pluginMarket = marketService
+			jsPluginManager.SetMarketTrust(pluginMarket)
+			jsPluginManager.SetAutoUpdateRollback(pluginMarket)
+			pluginMarket.SetRuntime(jsPluginManager)
+			pluginMarket.SetAuditor(authService)
+		}
 		reloadCtx, reloadCancel := context.WithTimeout(ctx, 30*time.Second)
 		if err := jsPluginManager.Reload(reloadCtx); err != nil {
 			logger.Warn("js plugin catalog reload failed", "error", err)
 		}
 		reloadCancel()
 		jsPluginManager.StartSync(ctx, 5*time.Second)
+		cloudClient = cloudclient.New(
+			store.NewCloudBindingRepository(db.DB()),
+			store.NewJSPluginRepository(db.DB()),
+			masterKey,
+			func(ctx context.Context) (string, error) {
+				if pluginMarket == nil {
+					return "", errors.New("未缓存已验签的市场 root")
+				}
+				return pluginMarket.CloudURL(ctx)
+			},
+			cloudclient.Options{
+				Logger: logger,
+				Audit: func(ctx context.Context, action string, metadata map[string]any) {
+					if authService == nil {
+						return
+					}
+					authService.RecordAudit(ctx, auth.AuditInput{
+						Action:       action,
+						ResourceType: "cloud_binding",
+						Success:      true,
+						Metadata:     metadata,
+					})
+				},
+			},
+		)
+		if tasks != nil {
+			tasks.Add(1)
+		}
+		go func() {
+			if tasks != nil {
+				defer tasks.Done()
+			}
+			defer func() {
+				if rec := recover(); rec != nil {
+					logger.Error("xLyra Cloud binding task stopped", "error", rec)
+				}
+			}()
+			cloudClient.Run(ctx)
+		}()
 		if tasks != nil {
 			if done := jsPluginManager.CatalogSyncDone(); done != nil {
 				tasks.Add(1)
@@ -225,6 +280,12 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	adminHandler := admin.NewHandler(logger.With("thread", "admin"), authService, siteService, catalogService, routerService, usageService, dashboardService, systemStatsService, &gatewayHandler, newAPIService, oauthService, appTimeZone).WithDownloadService(downloadService).WithTrafficFlowStore(db).WithAnalyticsService(analyticsService)
 	if jsPluginManager != nil {
 		adminHandler = adminHandler.WithJSPlugins(jsPluginManager)
+	}
+	if pluginMarket != nil {
+		adminHandler = adminHandler.WithPluginMarket(pluginMarket)
+	}
+	if cloudClient != nil {
+		adminHandler = adminHandler.WithCloudClient(cloudClient)
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
@@ -360,6 +421,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Get("/js-plugins", adminHandler.ListJSPlugins)
 				protected.Post("/js-plugins", adminHandler.UploadJSPlugin)
 				protected.Get("/js-plugins/{id}", adminHandler.GetJSPlugin)
+				protected.Put("/js-plugins/{id}/subscription", adminHandler.UpdateJSPluginSubscription)
 				protected.Post("/js-plugins/{id}/versions/{version}/enable", adminHandler.EnableJSPluginVersion)
 				protected.Post("/js-plugins/{id}/disable", adminHandler.DisableJSPlugin)
 				protected.Delete("/js-plugins/{id}", adminHandler.DeleteJSPlugin)
@@ -375,6 +437,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Delete("/js-plugins/{id}/automations/{binding_id}", adminHandler.DeleteJSPluginAutomation)
 				protected.Get("/js-plugins/{id}/inputs/{name}/options", adminHandler.ListJSPluginAutomationOptions)
 				protected.Get("/js-plugins/{id}/action-log", adminHandler.ListJSPluginActionLog)
+				admin.RegisterPluginMarket(protected, adminHandler)
+				admin.RegisterCloudBinding(protected, adminHandler, cloudClient)
 				protected.Get("/downloads/{downloadID}", downloadService.Download)
 				protected.Get("/dashboard/usage", adminHandler.DashboardUsage)
 				protected.Get("/dashboard/cooldowns", adminHandler.DashboardCooldowns)
@@ -595,7 +659,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		playground.Get("/models", playgroundGatewayHandler.Models)
 	})
 
-	return r, &gatewayHandler
+	return r, &gatewayHandler, pluginMarket
 }
 
 func requireAdmin(authService *auth.Service) func(http.Handler) http.Handler {

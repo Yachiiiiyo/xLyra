@@ -574,8 +574,8 @@ func TestProxyResponsesStreamPassthroughDoesNotDeferOverloadAfterOutput(t *testi
 func TestProxyResponsesStreamPassthroughCommitsLifecycleEventsBeforeDone(t *testing.T) {
 	t.Parallel()
 
-	body := gatewaySSEEvent("response.created", `{"type":"response.created","response":{"id":"resp_empty"}}`) +
-		gatewaySSEEvent("response.in_progress", `{"type":"response.in_progress","response":{"id":"resp_empty"}}`) +
+	body := gatewaySSEEvent("response.created", `{"type":"response.created","sequence_number":1,"response":{"id":"resp_empty","object":"response","created_at":1710000000,"status":"in_progress","model":"m","output":[]}}`) +
+		gatewaySSEEvent("response.in_progress", `{"type":"response.in_progress","sequence_number":2,"response":{"id":"resp_empty","object":"response","created_at":1710000000,"status":"in_progress","model":"m","output":[]}}`) +
 		"data: [DONE]\n\n"
 	rec, capture, started, err := proxyResponsesStreamPassthroughTest(t, body)
 	if err != nil {

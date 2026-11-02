@@ -296,7 +296,7 @@ func siteProviderIconURL(plugin *jsplugin.Plugin) string {
 	if plugin == nil {
 		return ""
 	}
-	if strings.TrimSpace(plugin.Manifest.SiteProvider.Display.Icon) == "" {
+	if strings.TrimSpace(plugin.Manifest.SiteProvider.Display.Icon) == "" && strings.TrimSpace(plugin.Manifest.Icon) == "" {
 		return ""
 	}
 	sum := plugin.PackageSHA256()

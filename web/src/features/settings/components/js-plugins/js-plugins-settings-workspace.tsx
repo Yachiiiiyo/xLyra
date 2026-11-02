@@ -1,15 +1,14 @@
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ColumnDef } from '@tanstack/react-table'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { FlaskConical, KeyRound, LoaderCircle, Power, PowerOff, RotateCcw, SlidersHorizontal, Trash2, Upload } from 'lucide-react'
-import { DataTable } from '@/components/common/data-table'
-import { Card, CardAction } from '@/components/ui/card'
+import { FlaskConical, KeyRound, LoaderCircle, Power, PowerOff, RotateCcw, Trash2, Upload } from 'lucide-react'
+import { Card, CardFooter, CardMetric, CardMetrics, ItemCard } from '@/components/ui/card'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { EmptyState } from '@/components/common/empty-state'
 import { PageHeader } from '@/components/common/page-header'
 import { JSPluginVersionMenu, type VersionMenuItem } from '@/features/settings/components/js-plugins/js-plugin-version-menu'
+import { PluginAvatar } from '@/features/settings/components/js-plugins/plugin-avatar'
 import { PluginMetrics24h } from '@/features/settings/components/js-plugins/plugin-metrics-24h'
 import { JSPluginAutomationSection } from '@/features/settings/components/js-plugins/js-plugin-automation'
 import {
@@ -27,14 +26,24 @@ import { JSPluginSiteProviderSection } from '@/features/settings/components/js-p
 import { jsPluginErrorNotice, readJSPluginErrorFields } from '@/features/settings/components/js-plugins/js-plugin-errors'
 import { permissionLabelKey } from '@/features/settings/components/js-plugins/permissions'
 import { JSPluginSiteBindingSection } from '@/features/settings/components/js-plugins/js-plugin-site-binding'
+import { jsPluginKindLabel } from '@/features/settings/components/js-plugins/kind-label'
 import { useSiteBinding } from '@/features/settings/components/js-plugins/use-site-binding'
+import { PluginMarketPanel } from '@/features/settings/components/plugin-market/market-panel'
+import { parseEnableParam } from '@/features/settings/components/plugin-market/enable-param'
+import { usePluginsTab } from '@/features/settings/components/plugin-market/tab-state'
+import { PluginTabBar } from '@/features/settings/components/plugin-market/tabs'
+import { installPluginMarketPlugin, pluginMarketQueryKeys } from '@/features/settings/api/plugin-market'
+import { marketInstallErrorText } from '@/features/settings/components/plugin-market/install-error'
+import { PluginPolicySelect } from '@/features/settings/components/plugin-market/policy-select'
+import { isUpdatePolicy, updateReasonText } from '@/features/settings/components/plugin-market/update-reason'
+import { fetchCloudDeveloper, cloudDeveloperQueryKeys, submitCloudPlugin } from '@/features/settings/api/cloud-developer'
+import { MarketSubmitActions, MarketSubmitDialog } from '@/features/settings/components/js-plugins/market-submit'
+import { submissionStatusLabel, submitErrorText } from '@/features/settings/components/js-plugins/market-submit-model'
 import {
   MobileCardList,
   MobileRowList,
-  MobileUploadedCard,
   MobileVersionCard,
 } from '@/features/settings/components/js-plugins/js-plugins-mobile'
-import { defaultTableColumnWidths } from '@/lib/table-column-widths'
 import { FormField } from '@/components/ui/form-field'
 import { StatusBadge } from '@/components/common/status-badge'
 import { Button } from '@/components/ui/button'
@@ -57,6 +66,7 @@ import {
   deleteJSPluginVersion,
   disableJSPlugin,
   automationManifest,
+  siteProviderOf,
   enableJSPluginVersion,
   getJSPlugin,
   JS_PLUGIN_MAX_PACKAGE_BYTES,
@@ -64,6 +74,7 @@ import {
   listJSPluginTrustedKeys,
   listUploadedJSPlugins,
   tryJSPlugin,
+  updateJSPluginSubscription,
   uploadJSPlugin,
   type JSPluginListItem,
   type JSPluginTrustedKey,
@@ -87,23 +98,8 @@ function versionStatusBadge(status: string) {
   }
 }
 
-const KIND_LABEL_KEYS: Record<string, string> = {
-  quota_probe: 'quotaProbe',
-  protocol: 'protocol',
-  model_list: 'modelList',
-  credential_check: 'credentialCheck',
-  site_detect: 'siteDetect',
-  error_classifier: 'errorClassifier',
-  model_metadata: 'modelMetadata',
-  pricing_parse: 'pricingParse',
-  automation: 'automation',
-  site_provider: 'siteProvider',
-}
-
 function kindLabel(t: TFunction, kind: string) {
-  const key = KIND_LABEL_KEYS[kind]
-  if (key) return t(`settings:jsPlugins.kind.${key}`)
-  return kind || '—'
+  return jsPluginKindLabel(t, kind)
 }
 
 function toastPluginFailure(t: TFunction, error: unknown, fallbackKey: string) {
@@ -139,12 +135,6 @@ function shortSha256(sha?: string) {
   return `${sha.slice(0, 8)}…${sha.slice(-6)}`
 }
 
-const UPLOADED_COLUMN_SIZING = {
-  storageKey: 'xlyra:js-plugins:uploaded-table-column-widths:v1',
-  defaultWidths: defaultTableColumnWidths([18, 22, 12, 12, 16, 20]),
-  minimumWidths: [8, 10, 6, 6, 8, 12],
-}
-
 export function JSPluginsSettingsWorkspace() {
   const { t } = useTranslation(['settings', 'common'])
   const queryClient = useQueryClient()
@@ -153,6 +143,9 @@ export function JSPluginsSettingsWorkspace() {
   const [deleteTarget, setDeleteTarget] = useState<{ pluginId: string; version: string } | null>(null)
   const [uninstallTarget, setUninstallTarget] = useState<{ pluginId: string; name: string; versions: number } | null>(null)
   const enableFlowRef = useRef<EnableFlowState | null>(null)
+  const requestEnableRef = useRef<(row: JSPluginVersion) => void>(() => {})
+  const handledEnable = useRef<string | null>(null)
+  const enableRequest = useRef(0)
   const [enableFlow, setEnableFlow] = useState<EnableFlowState | null>(null)
   const [enableConfirmed, setEnableConfirmed] = useState(false)
   const rememberEnableFlow = (state: EnableFlowState | null) => {
@@ -161,24 +154,41 @@ export function JSPluginsSettingsWorkspace() {
     setEnableConfirmed(false)
   }
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [submitPlugin, setSubmitPlugin] = useState<JSPluginListItem | null>(null)
+  const [submitError, setSubmitError] = useState('')
   const [uploadDragging, setUploadDragging] = useState(false)
   const [trustedKeysOpen, setTrustedKeysOpen] = useState(false)
   const [trustedKeyAddOpen, setTrustedKeyAddOpen] = useState(false)
+  const [trustedKeyDeleteTarget, setTrustedKeyDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [trustedKeyName, setTrustedKeyName] = useState('')
   const [trustedKeyPublic, setTrustedKeyPublic] = useState('')
   // Last trial run of each version, shown in its row until the dialog closes.
   const [trials, setTrials] = useState<Record<string, TrialState>>({})
   const [protocolSlug, setProtocolSlug] = useState('')
   const isMobile = useMobileLayout()
+  const { tab, selectTab, params, setParams } = usePluginsTab()
 
+  const developerQuery = useQuery({
+    queryKey: cloudDeveloperQueryKeys.developer(),
+    queryFn: ({ signal }) => fetchCloudDeveloper(false, signal),
+  })
   const uploadedQuery = useQuery({
     queryKey: jsPluginQueryKeys.uploaded(),
     queryFn: ({ signal }) => listUploadedJSPlugins(signal),
   })
+  useEffect(() => {
+    if (developerQuery.data?.status !== 'active') return
+    void queryClient.invalidateQueries({ queryKey: jsPluginQueryKeys.uploaded() })
+  }, [developerQuery.data?.status, developerQuery.dataUpdatedAt, queryClient])
   const detailQuery = useQuery({
     queryKey: managePlugin ? jsPluginQueryKeys.detail(managePlugin.id) : ['settings', 'js-plugins', 'detail', 'none'],
     queryFn: ({ signal }) => getJSPlugin(managePlugin!.id, signal),
     enabled: managePlugin != null,
+  })
+  const submitDetailQuery = useQuery({
+    queryKey: submitPlugin ? [...jsPluginQueryKeys.detail(submitPlugin.id), 'submit'] : ['settings', 'js-plugins', 'detail', 'submit-none'],
+    queryFn: ({ signal }) => getJSPlugin(submitPlugin!.id, signal),
+    enabled: submitPlugin != null,
   })
   const sitesQuery = useQuery({
     // 与其他页面共用 list('all') 前缀，但缓存的是 items 数组而不是 { items, meta }，必须用独立的 key，
@@ -327,6 +337,28 @@ export function JSPluginsSettingsWorkspace() {
     },
   })
 
+  const submitMutation = useMutation({
+    mutationFn: (changelog: string) => {
+      if (!submitPlugin?.id || !submitPlugin.local_version) throw new Error('missing plugin')
+      return submitCloudPlugin({ pluginId: submitPlugin.id, version: submitPlugin.local_version, changelog })
+    },
+    onSuccess: (result) => {
+      const pluginId = submitPlugin?.id
+      toast.success(submissionStatusLabel(t, result.status))
+      setSubmitError('')
+      setSubmitPlugin(null)
+      void queryClient.invalidateQueries({ queryKey: jsPluginQueryKeys.uploaded() })
+      if (pluginId) void queryClient.invalidateQueries({ queryKey: cloudDeveloperQueryKeys.submissions(pluginId) })
+    },
+    onError: (error: unknown) => {
+      if (developerQuery.data?.unavailable && error instanceof APIError && error.code === 'not_developer') {
+        setSubmitError(t('settings:jsPlugins.submit.unavailable'))
+        return
+      }
+      setSubmitError(submitErrorText(t, error))
+    },
+  })
+
   const disableMutation = useMutation({
     mutationFn: (pluginId: string) => disableJSPlugin(pluginId),
     onSuccess: () => {
@@ -404,6 +436,32 @@ export function JSPluginsSettingsWorkspace() {
     },
   })
 
+  const updateMutation = useMutation({
+    mutationFn: (plugin: JSPluginListItem) => installPluginMarketPlugin(plugin.id, plugin.update_version),
+    onSuccess: async (row) => {
+      await queryClient.invalidateQueries({ queryKey: jsPluginQueryKeys.all })
+      await queryClient.invalidateQueries({ queryKey: pluginMarketQueryKeys.all })
+      requestEnableRef.current(row)
+    },
+    onError: (error: unknown) => {
+      toast.error(marketInstallErrorText((key) => t(key), error))
+    },
+  })
+
+  const subscriptionMutation = useMutation({
+    mutationFn: ({ pluginId, policy }: { pluginId: string; policy: 'off' | 'notify' | 'auto' }) =>
+      updateJSPluginSubscription(pluginId, policy),
+    onSuccess: (result) => {
+      setManagePlugin((current) => current && current.id === result.plugin_id
+        ? { ...current, update_policy: result.update_policy, paused_reason: result.paused_reason }
+        : current)
+      void queryClient.invalidateQueries({ queryKey: jsPluginQueryKeys.uploaded() })
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof APIError ? error.message : t('settings:jsPlugins.market.saveFailed'))
+    },
+  })
+
   const busy =
     uploadMutation.isPending ||
     enableMutation.isPending ||
@@ -413,7 +471,9 @@ export function JSPluginsSettingsWorkspace() {
     tryMutation.isPending ||
     bindProtocolMutation.isPending ||
     addTrustedKeyMutation.isPending ||
-    deleteTrustedKeyMutation.isPending
+    deleteTrustedKeyMutation.isPending ||
+    updateMutation.isPending ||
+    subscriptionMutation.isPending
 
   const submitUploadFile = (file: File | null | undefined) => {
     if (!file || uploadMutation.isPending) return
@@ -455,10 +515,16 @@ export function JSPluginsSettingsWorkspace() {
   const trustedKeyCount = trustedKeysQuery.data?.length ?? 0
 
   const refresh = () => {
-    void uploadedQuery.refetch()
+    void fetchCloudDeveloper(true).then((profile) => {
+      queryClient.setQueryData(cloudDeveloperQueryKeys.developer(), profile)
+      if (profile.status !== 'active') void uploadedQuery.refetch()
+    }).catch(() => {
+      void uploadedQuery.refetch()
+    })
     if (!uploadedUnavailable) {
       void trustedKeysQuery.refetch()
     }
+    void queryClient.invalidateQueries({ queryKey: pluginMarketQueryKeys.all })
   }
 
   const openManage = useCallback((plugin: JSPluginListItem) => {
@@ -482,109 +548,29 @@ export function JSPluginsSettingsWorkspace() {
   }
 
   const disablePlugin = disableMutation.mutate
+  const openSubmit = useCallback((plugin: JSPluginListItem) => {
+    setSubmitError('')
+    setSubmitPlugin(plugin)
+  }, [])
   const requestUninstall = useCallback(
     (plugin: JSPluginListItem) =>
       setUninstallTarget({ pluginId: plugin.id, name: plugin.name || plugin.id, versions: plugin.version_count }),
     [],
   )
 
-  const uploadedColumns = useMemo<ColumnDef<JSPluginListItem>[]>(
-    () => [
-      {
-        id: 'name',
-        header: t('settings:jsPlugins.columns.name'),
-        cell: ({ row }) => (
-          <div className="truncate font-medium text-label" title={row.original.name}>
-            {row.original.name || '—'}
-          </div>
-        ),
-        meta: { cellClassName: 'min-w-0' },
-      },
-      {
-        id: 'id',
-        header: t('settings:jsPlugins.columns.id'),
-        cell: ({ row }) => (
-          <div className="truncate font-mono text-footnote text-label-2" title={row.original.id}>
-            {row.original.id}
-          </div>
-        ),
-        meta: { cellClassName: 'min-w-0' },
-      },
-      {
-        id: 'kind',
-        header: t('settings:jsPlugins.columns.kind'),
-        cell: ({ row }) => <span className="text-body">{kindLabel(t, row.original.kind ?? '')}</span>,
-        meta: { align: 'center' },
-      },
-      {
-        id: 'enabled_version',
-        header: t('settings:jsPlugins.columns.enabledVersion'),
-        cell: ({ row }) =>
-          row.original.enabled_version ? (
-            <StatusBadge status="success">{row.original.enabled_version}</StatusBadge>
-          ) : (
-            <span className="text-body text-label-2">—</span>
-          ),
-        meta: { align: 'center' },
-      },
-      {
-        id: 'metrics_24h',
-        header: t('settings:jsPlugins.columns.metrics24h'),
-        cell: ({ row }) => (
-          <PluginMetrics24h className="text-body text-label-2" metrics={row.original.metrics_24h} />
-        ),
-        meta: { align: 'center' },
-      },
-      {
-        id: 'actions',
-        header: '',
-        cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-0.5">
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              className="size-7"
-              title={t('settings:jsPlugins.manageVersions')}
-              aria-label={t('settings:jsPlugins.manageVersions')}
-              onClick={() => openManage(row.original)}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-            </Button>
-            {row.original.enabled_version ? (
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                className="size-7"
-                title={t('settings:jsPlugins.disable')}
-                aria-label={t('settings:jsPlugins.disable')}
-                disabled={busy}
-                onClick={() => disablePlugin(row.original.id)}
-              >
-                <PowerOff className="h-4 w-4" />
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                className="size-7 text-danger hover:text-danger"
-                title={t('settings:jsPlugins.uninstall')}
-                aria-label={t('settings:jsPlugins.uninstall')}
-                disabled={busy}
-                onClick={() => requestUninstall(row.original)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        ),
-        meta: { align: 'right' },
-      },
-    ],
-    [t, busy, openManage, disablePlugin, requestUninstall],
-  )
+  const uploadedCards = (uploadedQuery.data ?? []).map((plugin) => (
+    <InstalledPluginCard
+      key={plugin.id}
+      plugin={plugin}
+      busy={busy}
+      developerUnavailable={developerQuery.data?.unavailable === true}
+      onSubmit={openSubmit}
+      onUpdate={() => updateMutation.mutate(plugin)}
+      onManage={() => openManage(plugin)}
+      onDisable={() => disablePlugin(plugin.id)}
+      onUninstall={() => requestUninstall(plugin)}
+    />
+  ))
 
   const applyEnableStep = (step: EnableFlowStep) => {
     if (step.type === 'cancel') {
@@ -612,6 +598,43 @@ export function JSPluginsSettingsWorkspace() {
       siteProvider: manifestString(row.manifest, 'kind') === 'site_provider',
     }))
   }
+  useEffect(() => {
+    requestEnableRef.current = requestEnable
+  })
+
+  const enableParam = params.get('enable')
+  useEffect(() => {
+    if (!enableParam) {
+      handledEnable.current = null
+      return
+    }
+    if (handledEnable.current === enableParam) return
+    handledEnable.current = enableParam
+    const request = ++enableRequest.current
+    const parsed = parseEnableParam(enableParam)
+    const next = new URLSearchParams(params)
+    next.delete('enable')
+    setParams(next, { replace: true })
+    if (!parsed) {
+      toast.error(t('settings:jsPlugins.market.enableMissing'))
+      return
+    }
+    const { id, version } = parsed
+    void getJSPlugin(id)
+      .then((detail) => {
+        if (enableRequest.current !== request) return
+        const row = (detail.versions ?? []).find((item) => item.version === version)
+        if (!row) {
+          toast.error(t('settings:jsPlugins.market.enableMissing'))
+          return
+        }
+        requestEnableRef.current(row)
+      })
+      .catch(() => {
+        if (enableRequest.current !== request) return
+        toast.error(t('settings:jsPlugins.market.enableMissing'))
+      })
+  }, [enableParam, params, setParams, t])
 
   const dismissEnableDialog = () => {
     if (cancelEnable().type === 'cancel') rememberEnableFlow(null)
@@ -624,31 +647,51 @@ export function JSPluginsSettingsWorkspace() {
   }
 
   const offerUntrusted = enableFlow ? enableFlowOffersUntrusted(enableFlow) : false
+  const submitVersion = (submitDetailQuery.data?.versions ?? []).find((row) => row.version === submitPlugin?.local_version)
 
   return (
-    <div className="max-w-5xl space-y-7">
+    <div className="space-y-7">
       <PageHeader
         eyebrow={t('settings:jsPlugins.eyebrow')}
         title={t('settings:jsPlugins.title')}
         description={t('settings:jsPlugins.description')}
+      />
+
+      <PluginTabBar
+        tab={tab}
+        installedLabel={t('settings:jsPlugins.tabs.installed')}
+        marketLabel={t('settings:jsPlugins.tabs.market')}
+        onTab={selectTab}
         actions={
-          <Button type="button" variant="secondary" size="sm" onClick={refresh} disabled={busy}>
+          <Button
+            type="button"
+            variant="secondary"
+            size={isMobile ? 'icon-sm' : 'sm'}
+            onClick={refresh}
+            disabled={busy}
+            aria-label={isMobile ? t('common:actions.refresh') : undefined}
+            title={isMobile ? t('common:actions.refresh') : undefined}
+          >
             <RotateCcw
               className={cn(
-                'mr-2 h-4 w-4',
+                isMobile ? 'h-4 w-4' : 'mr-2 h-4 w-4',
                 (uploadedQuery.isFetching || trustedKeysQuery.isFetching) && 'animate-spin',
               )}
             />
-            {t('common:actions.refresh')}
+            {isMobile ? null : t('common:actions.refresh')}
           </Button>
         }
       />
 
+      {tab === 'market' ? <PluginMarketPanel /> : (
       <section className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <h3 className="text-headline text-label">{t('settings:jsPlugins.uploadedTitle')}</h3>
             <p className="text-body text-label-2">{t('settings:jsPlugins.uploadedHint')}</p>
+            {developerQuery.data?.unavailable ? (
+              <p className="text-body text-label-2">{t('settings:jsPlugins.submit.unavailable')}</p>
+            ) : null}
           </div>
           {!uploadedUnavailable ? (
             <div className="flex shrink-0 flex-wrap gap-2">
@@ -669,75 +712,26 @@ export function JSPluginsSettingsWorkspace() {
             </div>
           ) : null}
         </div>
-        {isMobile && !uploadedUnavailable && (uploadedQuery.data ?? []).length > 0 ? (
-          <MobileCardList>
-            {(uploadedQuery.data ?? []).map((plugin) => (
-              <MobileUploadedCard
-                key={plugin.id}
-                name={plugin.name || plugin.id}
-                id={plugin.id}
-                kind={kindLabel(t, plugin.kind ?? '')}
-                enabledVersion={
-                  plugin.enabled_version ? (
-                    <StatusBadge status="success">{plugin.enabled_version}</StatusBadge>
-                  ) : (
-                    <span className="text-label-2">—</span>
-                  )
-                }
-                metrics={<PluginMetrics24h metrics={plugin.metrics_24h} />}
-                labels={{
-                  kind: t('settings:jsPlugins.columns.kind'),
-                  enabledVersion: t('settings:jsPlugins.columns.enabledVersion'),
-                  metrics: t('settings:jsPlugins.columns.metrics24h'),
-                }}
-                actions={
-                  <>
-                    <CardAction label={t('settings:jsPlugins.manageVersions')} onClick={() => openManage(plugin)}>
-                      <SlidersHorizontal />
-                    </CardAction>
-                    {plugin.enabled_version ? (
-                      <CardAction label={t('settings:jsPlugins.disable')} disabled={busy} onClick={() => disablePlugin(plugin.id)}>
-                        <PowerOff />
-                      </CardAction>
-                    ) : (
-                      <CardAction
-                        label={t('settings:jsPlugins.uninstall')}
-                        className="text-danger hover:text-danger"
-                        disabled={busy}
-                        onClick={() => requestUninstall(plugin)}
-                      >
-                        <Trash2 />
-                      </CardAction>
-                    )}
-                  </>
-                }
-              />
-            ))}
-          </MobileCardList>
-        ) : (
+        {uploadedUnavailable || uploadedCards.length === 0 ? (
           <Card material="thick" className="overflow-hidden p-0">
-            <DataTable
-              columnSizing={UPLOADED_COLUMN_SIZING}
-              columns={uploadedColumns}
-              data={uploadedUnavailable ? [] : uploadedQuery.data ?? []}
-              getRowId={(plugin) => plugin.id}
-              emptyState={
-                <EmptyState
-                  title={
-                    uploadedUnavailable
-                      ? t('settings:jsPlugins.unavailable')
-                      : uploadedQuery.isLoading
-                        ? t('settings:jsPlugins.loading')
-                        : t('settings:jsPlugins.emptyUploaded')
-                  }
-                  description={t('settings:jsPlugins.emptyUploadedHint')}
-                />
+            <EmptyState
+              title={
+                uploadedUnavailable
+                  ? t('settings:jsPlugins.unavailable')
+                  : uploadedQuery.isLoading
+                    ? t('settings:jsPlugins.loading')
+                    : t('settings:jsPlugins.emptyUploaded')
               }
-              hideHeaderWhenEmpty
+              description={t('settings:jsPlugins.emptyUploadedHint')}
             />
           </Card>
+        ) : isMobile ? (
+          <MobileCardList>{uploadedCards}</MobileCardList>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 2xl:grid-cols-3">{uploadedCards}</div>
         )}
       </section>
+      )}
 
       <Dialog
         open={managePlugin != null}
@@ -747,21 +741,46 @@ export function JSPluginsSettingsWorkspace() {
       >
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{managePlugin?.name || t('settings:jsPlugins.versionsDialogTitle')}</DialogTitle>
-            <DialogDescription className="space-y-1">
-              <span className="block font-mono text-footnote">{managePlugin?.id}</span>
-              {managePlugin?.kind ? (
-                <span className="block text-footnote">{kindLabel(t, managePlugin.kind)}</span>
+            <div className="flex items-start gap-3">
+              {managePlugin ? (
+                <PluginAvatar size="md" iconUrl={managePlugin.icon_url} name={managePlugin.name || managePlugin.id} />
               ) : null}
-              {managePlugin?.enabled_version && managePlugin.metrics_24h ? (
-                <span className="flex flex-wrap items-center gap-1.5 text-footnote text-label-2">
-                  <span>{t('settings:jsPlugins.metricsLabel')}:</span>
-                  <PluginMetrics24h metrics={managePlugin.metrics_24h} />
-                </span>
-              ) : null}
-            </DialogDescription>
+              <div className="min-w-0 flex-1">
+                <DialogTitle>{managePlugin?.name || t('settings:jsPlugins.versionsDialogTitle')}</DialogTitle>
+                <DialogDescription className="space-y-1">
+                  <span className="block font-mono text-footnote">{managePlugin?.id}</span>
+                  {managePlugin?.kind ? (
+                    <span className="block text-footnote">{kindLabel(t, managePlugin.kind)}</span>
+                  ) : null}
+                  {managePlugin?.enabled_version && managePlugin.metrics_24h ? (
+                    <span className="flex flex-wrap items-center gap-1.5 text-footnote text-label-2">
+                      <span>{t('settings:jsPlugins.metricsLabel')}:</span>
+                      <PluginMetrics24h metrics={managePlugin.metrics_24h} />
+                    </span>
+                  ) : null}
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
           <DialogBody className="space-y-4">
+            {managePlugin && isUpdatePolicy(managePlugin.update_policy) ? (
+              <FormField label={t('settings:jsPlugins.market.policyLabel')}>
+                <PluginPolicySelect
+                  value={managePlugin.update_policy}
+                  disabled={busy}
+                  onChange={(policy) => subscriptionMutation.mutate({ pluginId: managePlugin.id, policy })}
+                />
+                {managePlugin.paused_reason ? (
+                  <p className="text-footnote text-label-2">{t('settings:jsPlugins.market.pausedAuto')}</p>
+                ) : null}
+                <InstalledUpdateMarks plugin={managePlugin} />
+                {managePlugin.update_available ? (
+                  <Button type="button" size="sm" className="w-fit" disabled={busy} onClick={() => updateMutation.mutate(managePlugin)}>
+                    {t('settings:jsPlugins.market.update')}
+                  </Button>
+                ) : null}
+              </FormField>
+            ) : null}
             {detailQuery.isLoading ? (
               <div className="flex items-center justify-center gap-2 py-8 text-body text-label-2">
                 <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -939,12 +958,15 @@ export function JSPluginsSettingsWorkspace() {
                     </div>
                     <Button
                       type="button"
-                      size="sm"
-                      variant="secondary"
+                      size="icon"
+                      variant="ghost"
+                      className="text-danger hover:text-danger"
                       disabled={busy}
-                      onClick={() => deleteTrustedKeyMutation.mutate(key.id)}
+                      aria-label={t('common:actions.delete')}
+                      title={t('common:actions.delete')}
+                      onClick={() => setTrustedKeyDeleteTarget({ id: key.id, name: key.name })}
                     >
-                      {t('common:actions.delete')}
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </li>
                 ))}
@@ -1154,6 +1176,47 @@ export function JSPluginsSettingsWorkspace() {
       </Dialog>
 
       <Dialog
+        open={trustedKeyDeleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open && !deleteTrustedKeyMutation.isPending) setTrustedKeyDeleteTarget(null)
+        }}
+      >
+        <DialogContent presentation="center" className="w-[min(92vw,520px)] overflow-hidden">
+          <DialogHeader className="border-b-0 pb-2">
+            <DialogTitle>{t('settings:jsPlugins.trustedKeyDeleteTitle')}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="pt-0 text-body text-label-2">
+            <DialogDescription className="mt-0">
+              {t('settings:jsPlugins.trustedKeyDeleteBody', { name: trustedKeyDeleteTarget?.name })}
+            </DialogDescription>
+          </DialogBody>
+          <DialogFooter
+            className="border-t-0 pt-2"
+            cancel={
+              <Button variant="outline" onClick={() => setTrustedKeyDeleteTarget(null)} disabled={deleteTrustedKeyMutation.isPending}>
+                {t('common:actions.cancel')}
+              </Button>
+            }
+            confirm={
+              <Button
+                variant="destructive"
+                disabled={deleteTrustedKeyMutation.isPending}
+                onClick={() => {
+                  if (!trustedKeyDeleteTarget) return
+                  deleteTrustedKeyMutation.mutate(trustedKeyDeleteTarget.id, {
+                    onSettled: () => setTrustedKeyDeleteTarget(null),
+                  })
+                }}
+              >
+                {deleteTrustedKeyMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                {t('common:actions.delete')}
+              </Button>
+            }
+          />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={enableFlow?.dialog != null}
         onOpenChange={(open) => {
           if (!open) dismissEnableDialog()
@@ -1247,6 +1310,25 @@ export function JSPluginsSettingsWorkspace() {
         </DialogContent>
       </Dialog>
 
+      <MarketSubmitDialog
+        key={submitPlugin?.id ?? 'closed'}
+        plugin={submitPlugin}
+        hosts={siteProviderOf(submitVersion?.manifest)?.hosts ?? []}
+        permissions={automationManifest(submitVersion?.manifest)?.permissions ?? []}
+        signer={submitVersion?.signer ?? ''}
+        summaryLoading={submitDetailQuery.isLoading}
+        submitting={submitMutation.isPending}
+        error={submitError}
+        onClose={() => {
+          setSubmitPlugin(null)
+          setSubmitError('')
+        }}
+        onSubmit={(changelog) => {
+          setSubmitError('')
+          submitMutation.mutate(changelog)
+        }}
+      />
+
     </div>
   )
 }
@@ -1294,12 +1376,122 @@ function TrialStatus({ trial, t }: { trial: TrialState; t: TFunction }) {
 }
 
 function versionTrustBadge(row: JSPluginVersion, t: TFunction) {
-  if (row.trust === 'trusted') return <StatusBadge status="success">{t('settings:jsPlugins.trustTrusted')}</StatusBadge>
-  if (row.trust === 'untrusted_signer') {
-    return <StatusBadge status="warning">{t('settings:jsPlugins.trustUntrusted')}</StatusBadge>
-  }
-  if (row.signed) return <StatusBadge status="idle">{t('settings:jsPlugins.signed')}</StatusBadge>
-  return <StatusBadge status="idle">{t('settings:jsPlugins.unsigned')}</StatusBadge>
+  let badge = <StatusBadge status="idle">{t('settings:jsPlugins.unsigned')}</StatusBadge>
+  if (row.trust === 'marketplace') badge = <StatusBadge status="success">{t('settings:jsPlugins.trustMarketplace')}</StatusBadge>
+  else if (row.trust === 'trusted') badge = <StatusBadge status="success">{t('settings:jsPlugins.trustTrusted')}</StatusBadge>
+  else if (row.trust === 'untrusted_signer') badge = <StatusBadge status="warning">{t('settings:jsPlugins.trustUntrusted')}</StatusBadge>
+  else if (row.signed) badge = <StatusBadge status="idle">{t('settings:jsPlugins.signed')}</StatusBadge>
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {badge}
+      {row.signer_revoked ? <span className="text-footnote text-danger">{t('settings:jsPlugins.market.signerRevoked')}</span> : null}
+    </div>
+  )
+}
+
+function InstalledUpdateMarks({ plugin }: { plugin: JSPluginListItem }) {
+  const { t } = useTranslation('settings')
+  const reason = updateReasonText((key, options) => t(`settings:${key}`, options), plugin.auto_block_reason, plugin.auto_block_detail)
+  if (!plugin.update_available && !plugin.auto_rolled_back && !reason && !plugin.deprecated) return null
+  return (
+    <div className="mt-1 space-y-1">
+      {plugin.update_available ? (
+        <StatusBadge status="warning">
+          {plugin.update_version
+            ? t('settings:jsPlugins.market.updateTo', { version: plugin.update_version })
+            : t('settings:jsPlugins.market.badgeUpdate')}
+        </StatusBadge>
+      ) : null}
+      {plugin.auto_rolled_back ? <StatusBadge status="error">{t('settings:jsPlugins.market.autoRolledBack')}</StatusBadge> : null}
+      {plugin.deprecated ? <StatusBadge status="warning">{t('settings:jsPlugins.market.level.deprecated')}</StatusBadge> : null}
+      {reason ? <p className="line-clamp-2 text-footnote text-label-2">{reason}</p> : null}
+    </div>
+  )
+}
+
+function installedTrustBadge(plugin: JSPluginListItem, t: TFunction) {
+  if (plugin.trust === 'marketplace') return <StatusBadge status="success">{t('settings:jsPlugins.trustMarketplace')}</StatusBadge>
+  if (plugin.trust === 'trusted') return <StatusBadge status="success">{t('settings:jsPlugins.trustTrusted')}</StatusBadge>
+  if (plugin.trust === 'untrusted_signer') return <StatusBadge status="warning">{t('settings:jsPlugins.trustUntrusted')}</StatusBadge>
+  return null
+}
+
+function InstalledPluginCard({
+  plugin,
+  busy,
+  developerUnavailable,
+  onSubmit,
+  onUpdate,
+  onManage,
+  onDisable,
+  onUninstall,
+}: {
+  plugin: JSPluginListItem
+  busy: boolean
+  developerUnavailable: boolean
+  onSubmit: (plugin: JSPluginListItem) => void
+  onUpdate: () => void
+  onManage: () => void
+  onDisable: () => void
+  onUninstall: () => void
+}) {
+  const { t } = useTranslation('settings')
+  const reason = updateReasonText((key, options) => t(`settings:${key}`, options), plugin.auto_block_reason, plugin.auto_block_detail)
+  return (
+    <ItemCard>
+      <div className="flex min-w-0 items-start gap-3">
+        <PluginAvatar size="md" iconUrl={plugin.icon_url} name={plugin.name || plugin.id} />
+        <div className="flex h-10 min-w-0 flex-1 flex-col justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <h3 className="min-w-0 flex-1 truncate text-headline leading-5 text-label" title={plugin.name}>{plugin.name || '—'}</h3>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              {installedTrustBadge(plugin, t)}
+              {plugin.update_available ? (
+                <StatusBadge status="warning">
+                  {plugin.update_version
+                    ? t('settings:jsPlugins.market.updateTo', { version: plugin.update_version })
+                    : t('settings:jsPlugins.market.badgeUpdate')}
+                </StatusBadge>
+              ) : null}
+              {plugin.auto_rolled_back ? <StatusBadge status="error">{t('settings:jsPlugins.market.autoRolledBack')}</StatusBadge> : null}
+              {plugin.deprecated ? <StatusBadge status="warning">{t('settings:jsPlugins.market.level.deprecated')}</StatusBadge> : null}
+              {plugin.signer_revoked ? <StatusBadge status="warning">{t('settings:jsPlugins.market.signerRevoked')}</StatusBadge> : null}
+            </div>
+          </div>
+          <p className="truncate font-mono text-footnote leading-4 text-label-2" title={plugin.id}>{plugin.id}</p>
+        </div>
+      </div>
+      {reason ? <p className="line-clamp-2 text-footnote text-label-2">{reason}</p> : null}
+      <CardMetrics columns={3}>
+        <CardMetric label={t('settings:jsPlugins.columns.kind')} value={kindLabel(t, plugin.kind ?? '')} />
+        <CardMetric
+          label={t('settings:jsPlugins.columns.enabledVersion')}
+          value={plugin.enabled_version ? <StatusBadge status="success">{plugin.enabled_version}</StatusBadge> : <span className="text-label-2">—</span>}
+        />
+        <CardMetric label={t('settings:jsPlugins.columns.metrics24h')} value={<PluginMetrics24h metrics={plugin.metrics_24h} />} />
+      </CardMetrics>
+      <CardFooter className="flex-wrap gap-2">
+        <MarketSubmitActions plugin={plugin} busy={busy} developerUnavailable={developerUnavailable} onOpen={onSubmit} />
+        {plugin.update_available ? (
+          <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onUpdate}>
+            {t('settings:jsPlugins.market.update')}
+          </Button>
+        ) : null}
+        <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onManage}>
+          {t('settings:jsPlugins.manageVersions')}
+        </Button>
+        {plugin.enabled_version ? (
+          <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={onDisable}>
+            {t('settings:jsPlugins.disable')}
+          </Button>
+        ) : (
+          <Button type="button" size="sm" variant="secondary" className="text-danger hover:text-danger" disabled={busy} onClick={onUninstall}>
+            {t('settings:jsPlugins.uninstall')}
+          </Button>
+        )}
+      </CardFooter>
+    </ItemCard>
+  )
 }
 
 function selftestSummary(row: JSPluginVersion, t: TFunction) {
@@ -1364,6 +1556,12 @@ function VersionRow(props: VersionRowProps) {
     <tr className="border-b border-separator/60 last:border-0">
       <td className="px-3 py-2">
         <div className="font-mono text-body">{row.version}</div>
+        {row.auto_rolled_back ? <StatusBadge status="error">{t('settings:jsPlugins.market.autoRolledBack')}</StatusBadge> : null}
+        {row.revocation?.revoked ? (
+          <StatusBadge status={row.revocation.level === 'security' ? 'error' : 'warning'}>
+            {row.revocation.level === 'deprecated' ? t('settings:jsPlugins.market.level.deprecated') : t('settings:jsPlugins.market.revoked')}
+          </StatusBadge>
+        ) : null}
         {manifestName ? <div className="text-footnote text-label-2">{manifestName}</div> : null}
         {manifestKind ? <div className="text-footnote text-label-2">{kindLabel(t, manifestKind)}</div> : null}
       </td>
@@ -1399,7 +1597,17 @@ function VersionCard(props: VersionRowProps) {
       version={row.version}
       name={manifestName || undefined}
       kind={manifestKind ? kindLabel(t, manifestKind) : undefined}
-      status={versionStatusBadge(row.status)}
+      status={(
+        <div className="flex flex-wrap items-center gap-1">
+          {versionStatusBadge(row.status)}
+          {row.auto_rolled_back ? <StatusBadge status="error">{t('settings:jsPlugins.market.autoRolledBack')}</StatusBadge> : null}
+          {row.revocation?.revoked ? (
+            <StatusBadge status={row.revocation.level === 'security' ? 'error' : 'warning'}>
+              {row.revocation.level === 'deprecated' ? t('settings:jsPlugins.market.level.deprecated') : t('settings:jsPlugins.market.revoked')}
+            </StatusBadge>
+          ) : null}
+        </div>
+      )}
       trust={versionTrustBadge(row, t)}
       sha={shortSha256(row.package_sha256)}
       selftest={selftestSummary(row, t)}

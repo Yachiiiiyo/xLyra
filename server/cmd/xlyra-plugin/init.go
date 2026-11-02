@@ -43,7 +43,7 @@ func runInit(args []string) {
 	if err := scaffold(dir, *kind, pluginID, *name); err != nil {
 		fatal(err)
 	}
-	fmt.Fprintf(os.Stdout, "Created %s plugin %q in %s\nNext: cd %s && xlyra-plugin test\n", *kind, pluginID, dir, dir)
+	fmt.Fprintf(os.Stdout, "Created %s plugin %q in %s\nNext: cd %s && xlyra-plugin test\n可选：在 manifest 里加 \"icon\": \"assets/icon.png\"，规范见文档\n", *kind, pluginID, dir, dir)
 }
 
 // scaffold writes a new plugin project into dir, which must be empty or missing.

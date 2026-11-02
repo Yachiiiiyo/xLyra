@@ -320,6 +320,7 @@ export function APIKeyFormDraw({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        swipeDismiss={false}
 onOpenAutoFocus={(event) => event.preventDefault()}
       >
         <SheetHeader>

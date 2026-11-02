@@ -82,11 +82,7 @@ func proxyResponsesStreamPassthrough(ctx context.Context, w http.ResponseWriter,
 		w.WriteHeader(resp.StatusCode)
 		headersWritten = true
 	}
-	flush := func() {
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
+	client := newResponsesSSEExit(ctx, w, flusher, &capture)
 	commitPreOutput := func() error {
 		if headersWritten {
 			return nil
@@ -96,11 +92,10 @@ func proxyResponsesStreamPassthrough(ctx context.Context, w http.ResponseWriter,
 		if preOutput.Len() == 0 {
 			return nil
 		}
-		if _, writeErr := w.Write(preOutput.Bytes()); writeErr != nil {
+		if writeErr := client.Write(preOutput.Bytes()); writeErr != nil {
 			return writeErr
 		}
 		preOutput.Reset()
-		flush()
 		return nil
 	}
 	writeLine := func(line []byte) error {
@@ -111,11 +106,13 @@ func proxyResponsesStreamPassthrough(ctx context.Context, w http.ResponseWriter,
 			}
 			return err
 		}
-		if _, err := w.Write(line); err != nil {
-			return err
+		return client.Write(line)
+	}
+	finishClient := func() error {
+		if !headersWritten {
+			return nil
 		}
-		flush()
-		return nil
+		return client.finishTerminal()
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -172,6 +169,10 @@ func proxyResponsesStreamPassthrough(ctx context.Context, w http.ResponseWriter,
 			continue
 		}
 		if err == io.EOF {
+			if finishErr := finishClient(); finishErr != nil {
+				capture.endReason = "downstream_stream_write_failed"
+				return capture, headersWritten, finishErr
+			}
 			if capture.streamCompleted {
 				capture.endReason = "done"
 			} else if capture.endReason != "" {
@@ -185,6 +186,10 @@ func proxyResponsesStreamPassthrough(ctx context.Context, w http.ResponseWriter,
 				capture.endReason = "upstream_stream_empty"
 			}
 			return capture, headersWritten, nil
+		}
+		if finishErr := finishClient(); finishErr != nil {
+			capture.endReason = "downstream_stream_write_failed"
+			return capture, headersWritten, finishErr
 		}
 		if capture.endReason == "" && (capture.streamCompleted || capture.sawDone) {
 			capture.streamCompleted = true

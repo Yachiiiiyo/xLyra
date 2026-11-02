@@ -200,7 +200,7 @@ func (a anthropicMessagesProtocolAdapter) ProxyStream(ctx context.Context, w htt
 	if a.downstreamProtocol != "" && a.downstreamProtocol != canonicalProtocolAnthropicMessages {
 		return proxyCanonicalStream(ctx, w, resp, startedAt, canonicalProtocolAnthropicMessages, a.downstreamProtocol, canonicalStreamOptions{IncludeUsage: true, RequireUsage: true, Candidate: candidate, ResponseTools: a.responseTools()})
 	}
-	return proxyUpstreamStreamWithInspector(ctx, w, resp, startedAt, inspectAnthropicMessagesStreamLine)
+	return proxyUpstreamStreamSanitized(withSSESanitizeMeta(ctx, candidate), w, resp, startedAt, inspectAnthropicMessagesStreamLine, sanitizeAnthropicEventBlock)
 }
 
 func (a anthropicMessagesProtocolAdapter) responseTools() map[string]responsesToolIdentity {
@@ -309,7 +309,7 @@ func (a providerAnthropicMessagesProtocolAdapter) ProxyStream(ctx context.Contex
 			ResponseTools:       a.responseTools,
 		})
 	}
-	return proxyProviderAnthropicMessagesStream(ctx, w, resp, startedAt)
+	return proxyProviderAnthropicMessagesStream(withSSESanitizeMeta(ctx, candidate), w, resp, startedAt)
 }
 
 func (a providerAnthropicMessagesProtocolAdapter) ApplyUpstreamHeaders(req *http.Request, upstreamKey string, _ string, _ bool) {

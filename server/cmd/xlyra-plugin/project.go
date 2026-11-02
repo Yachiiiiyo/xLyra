@@ -82,9 +82,14 @@ func buildProject(dir string) (*builtProject, error) {
 	return built, nil
 }
 
-// attachDeclaredIcon copies siteProvider.display.icon into the package.
-// The path is the manifest's relative path; validation still checks the bytes.
+// attachDeclaredIcon copies manifest icon paths into the package.
+// Both the top-level icon and siteProvider.display.icon are copied when set.
 func attachDeclaredIcon(dir string, manifest map[string]any, files map[string][]byte) error {
+	if icon, _ := manifest["icon"].(string); strings.TrimSpace(icon) != "" {
+		if err := copyDeclaredIcon(dir, "icon", icon, files, ".png"); err != nil {
+			return err
+		}
+	}
 	section, _ := manifest["siteProvider"].(map[string]any)
 	if section == nil {
 		return nil
@@ -94,20 +99,60 @@ func attachDeclaredIcon(dir string, manifest map[string]any, files map[string][]
 		return nil
 	}
 	icon, _ := display["icon"].(string)
-	icon = strings.TrimSpace(icon)
-	if icon == "" {
+	if strings.TrimSpace(icon) == "" {
 		return nil
 	}
+	return copyDeclaredIcon(dir, "siteProvider.display.icon", icon, files, ".png", ".webp")
+}
+
+func copyDeclaredIcon(dir, field, icon string, files map[string][]byte, exts ...string) error {
+	icon = strings.TrimSpace(icon)
+	if strings.Contains(icon, `\`) || strings.Contains(icon, ":") || strings.HasPrefix(icon, "/") {
+		return fmt.Errorf("%s %q 必须是包内相对路径", field, icon)
+	}
 	cleaned := path.Clean(icon)
-	if cleaned == "." || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
-		return fmt.Errorf("siteProvider.display.icon %q must be a relative path inside the package", icon)
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("%s %q 必须是包内相对路径", field, icon)
+	}
+	ext := path.Ext(cleaned)
+	allowed := false
+	for _, candidate := range exts {
+		if ext == candidate {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		if field == "icon" {
+			return fmt.Errorf("icon 只能是 .png 文件")
+		}
+		return fmt.Errorf("%s 只能是 .png 或 .webp 文件", field)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(cleaned)))
 	if err != nil {
-		return fmt.Errorf("siteProvider.display.icon %q: %w", icon, err)
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s %q：文件不存在", field, cleaned)
+		}
+		return fmt.Errorf("%s %q：%w", field, cleaned, err)
 	}
 	files[cleaned] = data
 	return nil
+}
+
+// assembled loads a project the way build does, including the icon check.
+func assembled(dir string) (*builtProject, []byte, jsplugin.Package, error) {
+	built, err := buildProject(dir)
+	if err != nil {
+		return nil, nil, jsplugin.Package{}, err
+	}
+	raw, pkg, _, err := built.assemble()
+	if err != nil {
+		return built, nil, jsplugin.Package{}, err
+	}
+	if _, err := jsplugin.CheckIconLegibility(raw, pkg.Manifest); err != nil {
+		return built, raw, pkg, err
+	}
+	return built, raw, pkg, nil
 }
 
 // bundle compiles the entry point to a single ES2023 module. Bare imports and

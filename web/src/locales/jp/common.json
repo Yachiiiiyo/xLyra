@@ -47,6 +47,7 @@
     "models": "モデル",
     "apiKeys": "API キー",
     "operations": "操作",
+    "system": "システム",
     "routes": "ルート",
     "requests": "リクエスト",
     "trafficFlow": "トラフィックフロー",
@@ -58,8 +59,9 @@
     "globalSettings": "グローバル設定",
     "notificationConfig": "通知設定",
     "modelsPrice": "モデル価格",
-    "developer": "開発者",
+    "developer": "プラグイン",
     "backup": "設定バックアップ",
+    "xlyraCloud": "xLyra Cloud",
     "profile": "プロフィール"
   },
   "app": {
@@ -88,7 +90,8 @@
   },
   "notFound": {
     "title": "ページが見つかりません",
-    "description": "お探しのページは存在しないか、削除された可能性があります。"
+    "description": "お探しのページは存在しないか、削除された可能性があります。",
+    "backHome": "ホームに戻る"
   },
   "list": {
     "count": "{{count}} 件",

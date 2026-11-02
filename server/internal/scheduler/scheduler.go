@@ -15,6 +15,7 @@ import (
 	"xlyra/server/internal/claudeversion"
 	"xlyra/server/internal/codexversion"
 	"xlyra/server/internal/config"
+	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/site"
 	"xlyra/server/internal/usage"
 )
@@ -24,6 +25,7 @@ const (
 	modelPricingSyncCron      = "@every 4h"
 	codexVersionRefreshCron   = "@every 6h"
 	claudeVersionRefreshCron  = "@every 6h"
+	pluginMarketSyncCron      = "@every 1h"
 	automaticBackupJobTimeout = 10 * time.Minute
 )
 
@@ -69,6 +71,9 @@ type Scheduler struct {
 	versioning    atomic.Bool
 
 	claudeVersioning atomic.Bool
+	marketSync       atomic.Bool
+
+	pluginMarket *market.Service
 
 	modelsCacheInvalidator func()
 }
@@ -101,6 +106,11 @@ func New(logger *slog.Logger, options Options, siteService *site.Service, syncSe
 
 func (s *Scheduler) WithModelsCacheInvalidator(invalidate func()) *Scheduler {
 	s.modelsCacheInvalidator = invalidate
+	return s
+}
+
+func (s *Scheduler) WithPluginMarket(svc *market.Service) *Scheduler {
+	s.pluginMarket = svc
 	return s
 }
 
@@ -157,6 +167,17 @@ func (s *Scheduler) RegisterDefaultJobs() {
 		s.logger.Info("claude code version refresh scheduler registered", "interval", claudeVersionRefreshCron)
 	}
 	go s.runClaudeVersionRefresh()
+
+	if s.pluginMarket == nil {
+		s.logger.Warn("plugin market sync scheduler disabled: market service is unavailable")
+	} else {
+		if _, err := s.cron.AddFunc(pluginMarketSyncCron, s.runPluginMarketSync); err != nil {
+			s.logger.Error("register plugin market sync scheduler failed", "error", err)
+		} else {
+			s.logger.Info("plugin market sync scheduler registered", "interval", pluginMarketSyncCron)
+		}
+		go s.runPluginMarketSync()
+	}
 
 	s.RegisterConfiguredJobs()
 	if s.options.ConfigFile != nil {
@@ -471,6 +492,33 @@ func (s *Scheduler) runConfiguredNewAPICheckins() {
 	if successCount > 0 && s.modelsCacheInvalidator != nil {
 		s.modelsCacheInvalidator()
 	}
+}
+
+func (s *Scheduler) runPluginMarketSync() {
+	if s.pluginMarket == nil {
+		return
+	}
+	if !s.marketSync.CompareAndSwap(false, true) {
+		s.logger.Warn("plugin market sync skipped: previous run still active")
+		return
+	}
+	defer s.marketSync.Store(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	status, err := s.pluginMarket.SyncOnce(ctx, false)
+	if err != nil || status.Error != "" {
+		reason := status.Error
+		if err != nil {
+			reason = err.Error()
+		}
+		s.logger.Warn("plugin market sync failed", "error", reason)
+		return
+	}
+	if status.SourceURL == "" {
+		return
+	}
+	s.logger.Info("plugin market sync finished", "source", status.SourceURL)
 }
 
 func (s *Scheduler) runAutomaticBackup() {

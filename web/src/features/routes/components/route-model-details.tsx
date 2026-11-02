@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { LoaderCircle, XCircle } from 'lucide-react'
@@ -26,12 +26,14 @@ import {
   formatDateTime,
   formatDuration,
   formatLatency,
-  formatModelHealth,
-  formatRoutePricing,
+  formatModelHealthDetail,
+  formatRoutePricingDetail,
   routeCooldownReasonLabel,
   routeCooldownSiteName,
   routeCooldownSourceLabel,
   routeCooldownTargetLabel,
+  type RouteHealthDetail,
+  type RoutePricingDetail,
 } from '@/features/routes/lib/route-format'
 import type { PendingChannelState, RouteChannelRow } from '@/features/routes/lib/types'
 
@@ -115,6 +117,7 @@ export function RouteModelDetails({
               rows={channelRows}
               loading={matrixQuery.isLoading || candidatesQuery.isLoading}
               error={matrixQuery.isError ? matrixQuery.error.message : undefined}
+              currentChannelId={currentChannel?.id}
               pendingChannelState={pendingChannelState}
               onToggleChannel={onToggleChannel}
               t={t}
@@ -164,14 +167,14 @@ function CurrentRouteSection({ query, currentChannel, t }: { query: SelectionQue
     )
   }
 
-  if (!query.data) {
+  if (!query.data || currentChannel) {
     return null
   }
 
   return (
     <div className="space-y-3">
       <SectionTitle>{t('details.currentRoute.title')}</SectionTitle>
-      {currentChannel ? <RouteChannelLine row={currentChannel} current t={t} /> : <CandidateRouteLine candidate={query.data.selected} current t={t} />}
+      <CandidateRouteLine candidate={query.data.selected} current t={t} />
     </div>
   )
 }
@@ -180,6 +183,7 @@ function UpstreamCoverageSection({
   rows,
   loading,
   error,
+  currentChannelId,
   pendingChannelState,
   onToggleChannel,
   t,
@@ -187,6 +191,7 @@ function UpstreamCoverageSection({
   rows: RouteChannelRow[]
   loading: boolean
   error?: string
+  currentChannelId?: string
   pendingChannelState?: PendingChannelState
   onToggleChannel: (row: RouteChannelRow, enabled: boolean) => void
   t: TFunction
@@ -209,6 +214,7 @@ function UpstreamCoverageSection({
               <RouteChannelLine
                 key={row.id}
                 row={row}
+                current={row.id === currentChannelId}
                 pending={pendingChannelState?.id === row.id ? pendingChannelState : undefined}
                 onToggle={(enabled) => onToggleChannel(row, enabled)}
                 t={t}
@@ -234,17 +240,20 @@ function RouteChannelLine({
   pending?: PendingChannelState
   current?: boolean
   onToggle?: (enabled: boolean) => void
-  t?: TFunction
+  t: TFunction
 }) {
   const status = routeChannelStatus(row, t)
   const checked = pending ? pending.enabled : row.enabled
   const disabledReason = routeChannelSwitchDisabledReason(row, pending, t)
+  const health = formatModelHealthDetail(row.candidate, t)
+  const pricing = formatRoutePricingDetail(row.pricing, t)
+  const endpointTypes = supportedEndpointTypeLabels(row.candidate)
 
   return (
     <RouteInfoLine
       badges={
         <>
-          <Badge variant={current ? 'accent' : status.badgeVariant}>{current ? (t ? t('details.currentRoute.current') : '当前使用') : status.label}</Badge>
+          <Badge variant={current ? 'accent' : status.badgeVariant}>{current ? t('details.currentRoute.current') : status.label}</Badge>
           {row.apiKeyName ? (
             <Badge variant="neutral" title={row.groupName ? `${row.apiKeyName} · ${row.groupName}` : row.apiKeyName}>
               {row.apiKeyName}
@@ -255,12 +264,12 @@ function RouteChannelLine({
         </>
       }
       primary={`${row.siteName} → ${row.upstreamName}`}
-      meta={[
-        row.groupName ? (t ? t('details.coverage.group', { name: row.groupName }) : `分组 ${row.groupName}`) : '',
-        formatModelHealth(row.candidate, t),
-        formatRoutePricing(row.pricing, t),
-        formatSupportedEndpointTypes(row.candidate),
-      ].filter(Boolean)}
+      meta={compactMeta([
+        { label: t('details.meta.health'), value: <HealthValue detail={health} /> },
+        pricing ? { label: t('details.meta.price'), value: <PricingValue detail={pricing} /> } : undefined,
+        endpointTypes.length ? { label: t('details.meta.protocols'), value: <EndpointTypesValue types={endpointTypes} /> } : undefined,
+        row.groupName ? { label: t('details.meta.group'), value: row.groupName } : undefined,
+      ])}
       action={
         onToggle ? (
           <span className={cn('inline-flex', disabledReason && 'cursor-not-allowed')} title={disabledReason}>
@@ -269,13 +278,11 @@ function RouteChannelLine({
               disabled={Boolean(disabledReason)}
               className={cn(disabledReason && 'cursor-not-allowed opacity-50')}
               aria-label={
-                t
-                  ? t('details.coverage.switchLabel', {
-                      site: row.siteName,
-                      apiKey: row.apiKeyName ?? '',
-                      model: row.upstreamName,
-                    })
-                  : `切换 ${row.siteName} ${row.apiKeyName ?? ''} ${row.upstreamName}`
+                t('details.coverage.switchLabel', {
+                  site: row.siteName,
+                  apiKey: row.apiKeyName ?? '',
+                  model: row.upstreamName,
+                })
               }
               onCheckedChange={onToggle}
             />
@@ -286,55 +293,98 @@ function RouteChannelLine({
   )
 }
 
-function CandidateRouteLine({ candidate, current, t }: { candidate: RouteCandidateItem; current?: boolean; t?: TFunction }) {
+function CandidateRouteLine({ candidate, current, t }: { candidate: RouteCandidateItem; current?: boolean; t: TFunction }) {
+  const health = formatModelHealthDetail(candidate, t)
+  const pricing = formatRoutePricingDetail(candidate.pricing, t)
+  const endpointTypes = supportedEndpointTypeLabels(candidate)
+
   return (
     <RouteInfoLine
       badges={
         <>
           <Badge variant={current ? 'accent' : 'neutral'}>
-            {current
-              ? t
-                ? t('details.currentRoute.current')
-                : '当前使用'
-              : t
-                ? t('details.currentRoute.routable', { rank: candidate.rank })
-                : `可路由 #${candidate.rank}`}
+            {current ? t('details.currentRoute.current') : t('details.currentRoute.routable', { rank: candidate.rank })}
           </Badge>
-          {candidate.pricing.group_name ? <Badge variant="neutral">{candidate.pricing.group_name}</Badge> : null}
           {candidate.credential.name ? <Badge variant="neutral">{candidate.credential.name}</Badge> : null}
         </>
       }
       primary={`${candidate.site.name} → ${candidate.model.upstream_model_name}`}
-      meta={[
-        `Key ${candidate.availability.available_api_key_count}/${candidate.availability.total_api_key_count}`,
-        candidate.site.supports_api_key_cost_multiplier
-          ? `P${candidate.credential.routing_priority} · ${candidate.credential.upstream_cost_multiplier}x`
-          : `P${candidate.credential.routing_priority}`,
-        formatModelHealth(candidate, t),
-        formatRoutePricing(candidate.pricing, t),
-        formatSupportedEndpointTypes(candidate),
-      ].filter(Boolean)}
+      meta={compactMeta([
+        { label: t('details.meta.keys'), value: `${candidate.availability.available_api_key_count}/${candidate.availability.total_api_key_count}` },
+        {
+          label: t('details.meta.priority'),
+          value: candidate.site.supports_api_key_cost_multiplier
+            ? `P${candidate.credential.routing_priority} · ${candidate.credential.upstream_cost_multiplier}x`
+            : `P${candidate.credential.routing_priority}`,
+        },
+        { label: t('details.meta.health'), value: <HealthValue detail={health} /> },
+        pricing ? { label: t('details.meta.price'), value: <PricingValue detail={pricing} /> } : undefined,
+        endpointTypes.length ? { label: t('details.meta.protocols'), value: <EndpointTypesValue types={endpointTypes} /> } : undefined,
+        candidate.pricing.group_name ? { label: t('details.meta.group'), value: candidate.pricing.group_name } : undefined,
+      ])}
     />
   )
 }
 
-function formatSupportedEndpointTypes(candidate?: RouteCandidateItem): string {
-  return (candidate?.model.supported_endpoint_types ?? []).map(formatEndpointTypeLabel).join(' / ')
+function supportedEndpointTypeLabels(candidate?: RouteCandidateItem) {
+  return (candidate?.model.supported_endpoint_types ?? []).map(formatEndpointTypeLabel)
 }
 
-function RouteInfoLine({ badges, primary, meta, action }: { badges?: ReactNode; primary: string; meta?: string[]; action?: ReactNode }) {
+function compactMeta(items: Array<RouteInfoMetaItem | undefined>) {
+  return items.filter((item): item is RouteInfoMetaItem => Boolean(item))
+}
+
+function HealthValue({ detail }: { detail: RouteHealthDetail }) {
+  return <span className={cn(detail.muted && 'text-label-3')}>{detail.text}</span>
+}
+
+function PricingValue({ detail }: { detail: RoutePricingDetail }) {
+  return (
+    <span className="flex flex-col gap-0.5">
+      <span>{detail.effective}</span>
+      {detail.original ? <span className="text-label-3">{detail.original}</span> : null}
+    </span>
+  )
+}
+
+function EndpointTypesValue({ types }: { types: string[] }) {
+  return (
+    <span className="flex flex-wrap gap-1">
+      {types.map((type) => (
+        <Badge key={type} variant="neutral">
+          {type}
+        </Badge>
+      ))}
+    </span>
+  )
+}
+
+type RouteInfoMetaItem = { label?: string; value: ReactNode }
+
+function RouteInfoLine({ badges, primary, meta, action }: { badges?: ReactNode; primary: string; meta?: RouteInfoMetaItem[]; action?: ReactNode }) {
+  const labeled = meta?.filter((item): item is RouteInfoMetaItem & { label: string } => Boolean(item.label)) ?? []
+  const plain = meta?.filter((item) => !item.label) ?? []
+
   return (
     <div className="py-2.5">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            {badges}
-            <span className="min-w-0 break-all text-body font-medium text-label">{primary}</span>
-          </div>
-          {meta?.length ? (
+        <div className="min-w-0 flex-1">
+          <div className="break-all text-body font-medium text-label">{primary}</div>
+          {badges ? <div className="mt-1.5 flex flex-wrap items-center gap-1.5">{badges}</div> : null}
+          {labeled.length ? (
+            <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-footnote">
+              {labeled.map((item) => (
+                <Fragment key={item.label}>
+                  <div className="whitespace-nowrap text-label-3">{item.label}</div>
+                  <div className="min-w-0 text-label-2">{item.value}</div>
+                </Fragment>
+              ))}
+            </div>
+          ) : null}
+          {plain.length ? (
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-body text-label-2">
-              {meta.map((value) => (
-                <span key={value}>{value}</span>
+              {plain.map((item, index) => (
+                <span key={index}>{item.value}</span>
               ))}
             </div>
           ) : null}
@@ -371,16 +421,18 @@ function RouteTracesSection({ query, t }: { query: TracesQuery; t: TFunction }) 
                   </StatusBadge>
                 }
                 primary={attempt?.site.name ?? '-'}
-                meta={[
-                  formatDateTime(trace.started_at),
-                  formatLatency(trace.total_latency_ms),
-                  attempt?.credential.name ? `${t('format.upstreamCredential')} ${attempt.credential.name}` : '',
+                meta={compactMeta([
+                  { value: formatDateTime(trace.started_at) },
+                  { value: formatLatency(trace.total_latency_ms) },
+                  attempt?.credential.name ? { value: `${t('format.upstreamCredential')} ${attempt.credential.name}` } : undefined,
                   trace.failover_count > 0
-                    ? t('details.traces.failover', {
-                        count: trace.failover_count,
-                      })
-                    : '',
-                ].filter(Boolean)}
+                    ? {
+                        value: t('details.traces.failover', {
+                          count: trace.failover_count,
+                        }),
+                      }
+                    : undefined,
+                ])}
               />
             )
           })}
@@ -434,12 +486,14 @@ function CooldownsSection({
                       </>
                     }
                     primary={`${siteName} · ${target}`}
-                    meta={[
-                      reason,
-                      t('details.cooldowns.remaining', {
-                        duration: formatDuration(item.remaining_seconds),
-                      }),
-                    ].filter(Boolean)}
+                    meta={compactMeta([
+                      { value: reason },
+                      {
+                        value: t('details.cooldowns.remaining', {
+                          duration: formatDuration(item.remaining_seconds),
+                        }),
+                      },
+                    ])}
                   />
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => onClear(item)} disabled={clearing}>

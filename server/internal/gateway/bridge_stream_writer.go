@@ -171,13 +171,13 @@ func (b *bridgeStreamWriter) Write(p []byte) (int, error) {
 	b.pending.Write(p)
 	for {
 		raw := b.pending.Bytes()
-		end := bytes.Index(raw, []byte("\n\n"))
+		end, delim := indexSSEDelimiter(raw)
 		if end < 0 {
 			break
 		}
 		block := make([]byte, end)
 		copy(block, raw[:end])
-		b.pending.Next(end + 2)
+		b.pending.Next(end + delim)
 		b.handleEventBlockLocked(block)
 		if b.writeErr != nil {
 			return 0, b.writeErr
@@ -189,9 +189,18 @@ func (b *bridgeStreamWriter) Write(p []byte) (int, error) {
 func (b *bridgeStreamWriter) handleEventBlockLocked(block []byte) {
 	var data []byte
 	for _, line := range bytes.Split(block, []byte("\n")) {
-		if value, ok := bytes.CutPrefix(line, []byte("data: ")); ok {
-			data = append(data, value...)
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
 		}
+		value := line[len("data:"):]
+		if len(value) > 0 && value[0] == ' ' {
+			value = value[1:]
+		}
+		if len(data) > 0 {
+			data = append(data, '\n')
+		}
+		data = append(data, value...)
 	}
 	if len(data) == 0 {
 		return
@@ -233,6 +242,7 @@ func (b *bridgeStreamWriter) handleEventBlockLocked(block []byte) {
 		b.forwardTerminalLocked("response.incomplete", "incomplete", response)
 		return
 	case "response.failed", "response.error", "error":
+		fillBridgeFailureEnvelope(b, payload)
 		b.forwardEventLocked(eventType, payload)
 		b.finished = true
 		b.finishDownstreamLocked()

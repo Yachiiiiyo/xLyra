@@ -403,7 +403,7 @@ export function AgentSettingsPage() {
       </section>
 
       <Sheet open={scopeOpen} onOpenChange={setScopeOpen}>
-        <SheetContent onOpenAutoFocus={(event) => event.preventDefault()}>
+        <SheetContent swipeDismiss={false} onOpenAutoFocus={(event) => event.preventDefault()}>
           <SheetHeader>
             <SheetTitle>{t('settings:agent.scope.title')}</SheetTitle>
             <SheetDescription>{t('settings:agent.scope.description')}</SheetDescription>

@@ -439,6 +439,7 @@ func proxyProviderAnthropicMessagesStream(ctx context.Context, w http.ResponseWr
 	reader := bufio.NewReader(resp.Body)
 	headersWritten := false
 	inspector := newProviderAnthropicStreamInspector()
+	client := newProtocolSSEExit(ctx, w, flusher, &capture, sanitizeAnthropicEventBlock)
 
 	writeHeaders := func() {
 		if headersWritten {
@@ -462,12 +463,9 @@ func proxyProviderAnthropicMessagesStream(ctx context.Context, w http.ResponseWr
 				capture.firstByteLatency = time.Since(startedAt).Milliseconds()
 				writeHeaders()
 			}
-			if _, writeErr := w.Write(line); writeErr != nil {
+			if writeErr := client.Write(line); writeErr != nil {
 				capture.endReason = "downstream_stream_write_failed"
 				return capture, headersWritten, writeErr
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 			inspector.inspect(line, &capture)
 		}
@@ -476,6 +474,10 @@ func proxyProviderAnthropicMessagesStream(ctx context.Context, w http.ResponseWr
 			continue
 		}
 		if err == io.EOF {
+			if finishErr := client.Finish(); finishErr != nil {
+				capture.endReason = "downstream_stream_write_failed"
+				return capture, headersWritten, finishErr
+			}
 			if capture.streamCompleted {
 				return capture, headersWritten, nil
 			}
@@ -486,6 +488,10 @@ func proxyProviderAnthropicMessagesStream(ctx context.Context, w http.ResponseWr
 				capture.endReason = "upstream_stream_empty"
 			}
 			return capture, headersWritten, nil
+		}
+		if finishErr := client.Finish(); finishErr != nil {
+			capture.endReason = "downstream_stream_write_failed"
+			return capture, headersWritten, finishErr
 		}
 		capture.endReason = "upstream_stream_read_failed"
 		return capture, headersWritten, err

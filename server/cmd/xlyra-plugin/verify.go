@@ -29,14 +29,9 @@ func runVerify(args []string) {
 // verifyPackage applies the checks the server runs on upload: static
 // validation, compile, and fixtures. On success it prints a summary.
 func verifyPackage(raw []byte) error {
-	pkg, plugin, err := loadPackage(raw)
+	pkg, report, err := inspectPackage(raw)
 	if err != nil {
 		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := plugin.SelfTest(ctx); err != nil {
-		return fmt.Errorf("selftest: %w", err)
 	}
 	signer := "unsigned"
 	if pkg.Signer != "" {
@@ -44,10 +39,30 @@ func verifyPackage(raw []byte) error {
 	}
 	fmt.Fprintf(os.Stdout, "ok  %s@%s (%s), %d fixtures, %s\n", pkg.Manifest.ID, pkg.Manifest.Version, pkg.Manifest.Kind, len(pkg.Fixtures), signer)
 	fmt.Fprintf(os.Stdout, "sha256 %s\n", pkg.SHA256)
+	if report.Path != "" {
+		fmt.Fprintf(os.Stdout, "icon %s %dx%d 不透明 %.0f%% 亮度 %.2f\n", report.Path, report.Width, report.Height, report.OpaqueRatio*100, report.Luminance)
+	}
 	if pkg.Manifest.Kind == jsplugin.KindSiteProvider {
 		writeSiteProviderFixtures(pkg.Fixtures)
 	}
 	return nil
+}
+
+func inspectPackage(raw []byte) (jsplugin.Package, jsplugin.IconReport, error) {
+	pkg, plugin, err := loadPackage(raw)
+	if err != nil {
+		return jsplugin.Package{}, jsplugin.IconReport{}, err
+	}
+	report, err := jsplugin.CheckIconLegibility(raw, pkg.Manifest)
+	if err != nil {
+		return jsplugin.Package{}, jsplugin.IconReport{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := plugin.SelfTest(ctx); err != nil {
+		return jsplugin.Package{}, jsplugin.IconReport{}, fmt.Errorf("selftest: %w", err)
+	}
+	return pkg, report, nil
 }
 
 // writeSiteProviderFixtures lists each sample with its name and hook. Other

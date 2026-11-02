@@ -35,28 +35,40 @@ func (h Handler) ListJSPlugins(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_list_failed", "failed to list plugins")
 		return
 	}
+	headers, err := repo.ListAllVersionHeaders(r.Context())
+	if err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_list_failed", "failed to list plugins")
+		return
+	}
+	byPlugin := make(map[string][]store.JSPluginVersion, len(plugins))
+	for _, row := range headers {
+		byPlugin[row.PluginID] = append(byPlugin[row.PluginID], row)
+	}
+	marketState, _ := h.installedMarketState(r.Context())
+	index, indexReady := h.marketIndex(r.Context())
+	profile := h.cachedDeveloper(r.Context())
 	items := make([]map[string]any, 0, len(plugins))
 	for _, plugin := range plugins {
-		versions, _ := repo.ListVersions(r.Context(), plugin.ID)
+		versions := byPlugin[plugin.ID]
+		selected, ok := jsplugin.SelectPluginVersion(versions)
 		enabled := ""
-		var enabledRow store.JSPluginVersion
-		for _, row := range versions {
-			if row.Status == store.JSPluginStatusEnabled {
-				enabled = row.Version
-				enabledRow = row
-				break
-			}
-		}
-		if enabled == "" && len(versions) > 0 {
-			enabledRow = versions[0]
+		if ok && selected.Status == store.JSPluginStatusEnabled {
+			enabled = selected.Version
 		}
 		item := map[string]any{
 			"id":              plugin.ID,
 			"source":          plugin.Source,
 			"enabled_version": enabled,
 			"version_count":   len(versions),
+			"icon_url":        "",
 		}
-		if meta := jsPluginManifestSummary(enabledRow.Manifest); meta != nil {
+		if ok {
+			item["icon_url"] = jsplugin.PluginIconURL(plugin.ID, selected)
+		}
+		if meta := jsPluginManifestSummary(selected.Manifest); meta != nil {
 			for key, value := range meta {
 				item[key] = value
 			}
@@ -74,9 +86,21 @@ func (h Handler) ListJSPlugins(w http.ResponseWriter, r *http.Request) {
 				"window_ends": metrics.WindowEnds,
 			}
 		}
+		applyPluginMarketState(item, marketState, plugin.ID, versions)
+		if ok && attestedVersion(selected.Attestation) && h.jsPlugins != nil {
+			if trust, err := h.jsPlugins.TrustStatusForVersion(r.Context(), selected); err == nil {
+				item["trust"] = string(trust)
+			}
+		}
+		h.applyDeveloperFields(item, plugin.ID, versions, profile, index, indexReady)
 		items = append(items, item)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func attestedVersion(raw store.JSON) bool {
+	text := strings.TrimSpace(string(raw))
+	return text != "" && text != "null" && text != "{}"
 }
 
 func (h Handler) UploadJSPlugin(w http.ResponseWriter, r *http.Request) {
@@ -127,11 +151,29 @@ func (h Handler) GetJSPlugin(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
 		return
 	}
+	marketState, _ := h.installedMarketState(r.Context())
 	items := make([]map[string]any, 0, len(versions))
 	for _, row := range versions {
-		items = append(items, h.enrichJSPluginVersion(r.Context(), row))
+		item := h.enrichJSPluginVersion(r.Context(), row)
+		applyVersionMarketMark(item, marketState, row)
+		items = append(items, item)
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"id": pluginID, "versions": items})
+	body := map[string]any{"id": pluginID, "versions": items}
+	if view, ok := marketState.Plugins[pluginID]; ok && view.Policy != "" {
+		body["update_policy"] = view.Policy
+		body["paused_reason"] = view.PausedReason
+		body["update_available"] = view.UpdateAvailable
+		if view.UpdateVersion != "" {
+			body["update_version"] = view.UpdateVersion
+		}
+		if view.BlockReason != "" {
+			body["auto_block_reason"] = view.BlockReason
+			if view.BlockDetail != "" {
+				body["auto_block_detail"] = view.BlockDetail
+			}
+		}
+	}
+	httpx.JSON(w, http.StatusOK, body)
 }
 
 func (h Handler) EnableJSPluginVersion(w http.ResponseWriter, r *http.Request) {
@@ -395,8 +437,13 @@ func jsPluginVersionPayload(row store.JSPluginVersion) map[string]any {
 
 func (h Handler) enrichJSPluginVersion(ctx context.Context, row store.JSPluginVersion) map[string]any {
 	payload := jsPluginVersionPayload(row)
+	origin := strings.TrimSpace(row.Origin)
+	if origin == "" {
+		origin = store.JSPluginOriginManual
+	}
+	payload["origin"] = origin
 	if h.jsPlugins != nil {
-		trust, err := h.jsPlugins.TrustStatus(ctx, row.Signer)
+		trust, err := h.jsPlugins.TrustStatusForVersion(ctx, row)
 		if err == nil {
 			payload["trust"] = string(trust)
 		}

@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useEffect } from 'react'
 
 /**
  * 覆盖层当前的呈现形态：
@@ -14,4 +14,15 @@ export const OverlayModeContext = createContext<OverlayMode>('center')
 
 export function useOverlayMode() {
   return useContext(OverlayModeContext)
+}
+
+export const DrawFooterRegistrationContext = createContext<((registered: boolean) => void) | null>(null)
+
+export function useDrawFooterRegistration(hasSaveActions: boolean) {
+  const register = useContext(DrawFooterRegistrationContext)
+  useEffect(() => {
+    if (!hasSaveActions || !register) return
+    register(true)
+    return () => register(false)
+  }, [hasSaveActions, register])
 }

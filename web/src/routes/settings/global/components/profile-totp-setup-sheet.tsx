@@ -43,7 +43,7 @@ export function ProfileTOTPSetupSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right">
+      <SheetContent side="right" swipeDismiss={false}>
         <SheetHeader>
           <SheetTitle>{t('profile.totp.setupSheet.title')}</SheetTitle>
         </SheetHeader>

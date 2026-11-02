@@ -21,8 +21,10 @@ import (
 	"xlyra/server/internal/dashboard"
 	"xlyra/server/internal/downloads"
 	"xlyra/server/internal/gateway"
-	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/httpx"
+	"xlyra/server/internal/cloudclient"
+	"xlyra/server/internal/jsplugin"
+	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
 	oauthsvc "xlyra/server/internal/oauth"
 	routeengine "xlyra/server/internal/router"
@@ -36,22 +38,24 @@ var adminTimeZoneMu sync.RWMutex
 var adminTimeZoneValue = config.ResolveTimeZone()
 
 type Handler struct {
-	logger    *slog.Logger
-	auth      *auth.Service
-	sites     *site.Service
-	catalog   *catalog.Service
-	router    *routeengine.Service
-	usage     *usage.Service
-	dashboard *dashboard.Service
-	analytics *analytics.Service
-	system    *systemstats.Service
-	gateway   *gateway.Handler
-	newAPI    *newapi.Service
-	oauth     *oauthsvc.Service
-	downloads *downloads.Service
-	timeZone  config.TimeZone
-	trafficDB *store.Store
-	jsPlugins *jsplugin.Manager
+	logger       *slog.Logger
+	auth         *auth.Service
+	sites        *site.Service
+	catalog      *catalog.Service
+	router       *routeengine.Service
+	usage        *usage.Service
+	dashboard    *dashboard.Service
+	analytics    *analytics.Service
+	system       *systemstats.Service
+	gateway      *gateway.Handler
+	newAPI       *newapi.Service
+	oauth        *oauthsvc.Service
+	downloads    *downloads.Service
+	timeZone     config.TimeZone
+	trafficDB    *store.Store
+	jsPlugins    *jsplugin.Manager
+	pluginMarket *market.Service
+	cloudClient  *cloudclient.Client
 }
 
 func (h Handler) WithTrafficFlowStore(db *store.Store) Handler {
@@ -61,6 +65,16 @@ func (h Handler) WithTrafficFlowStore(db *store.Store) Handler {
 
 func (h Handler) WithJSPlugins(manager *jsplugin.Manager) Handler {
 	h.jsPlugins = manager
+	return h
+}
+
+func (h Handler) WithPluginMarket(svc *market.Service) Handler {
+	h.pluginMarket = svc
+	return h
+}
+
+func (h Handler) WithCloudClient(client *cloudclient.Client) Handler {
+	h.cloudClient = client
 	return h
 }
 

@@ -222,7 +222,7 @@ func TestCredentialResolverForKeepsBuiltinAccounts(t *testing.T) {
 
 func TestPluginAccountQuotaWeightAndExhaustion(t *testing.T) {
 	registerPluginAccountSite(t, pluginAccountSiteOptions{selection: "quota_weighted"})
-	now := time.Date(2026, 10, 21, 8, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 	soon := now.Add(48 * time.Hour)
 	later := now.Add(10 * 24 * time.Hour)
 	past := now.Add(-time.Hour)

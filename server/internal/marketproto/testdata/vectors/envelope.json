@@ -1,0 +1,210 @@
+[
+  {
+    "name": "envelope/bad_json",
+    "now": "2026-11-01T09:00:00Z",
+    "inputs": {
+      "root": "{"
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_envelope",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "envelope/payload_type",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.index+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}"
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_payload_type",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "envelope/sig_bitflip",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"98WSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}"
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_signature",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "envelope/unknown_key",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      },
+      "stranger": {
+        "seed": "6666666666666666666666666666666666666666666666666666666666666666",
+        "publicKey": "NLTZBDFWy23PC+sKKUm3VZyUDSvLbb6MU6mzAnjjp0Y=",
+        "keyId": "SHA256:97dnbJTffo/ZmY44+f/wTYWIsA0YAXZOPxh3o/6uRHc="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:97dnbJTffo/ZmY44+f/wTYWIsA0YAXZOPxh3o/6uRHc=\",\"sig\":\"LgxZEJ0Y9/+5ogPrua4kDmb8+rdmOEmKWbpkAgIeblfffqpM2uRsyVGIfvqo55/FtsQOgXiDwiiNQRoBuUGQAg==\"}]}"
+    },
+    "expect": {
+      "ok": false,
+      "code": "unknown_key",
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "envelope/one_of_many",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"98WSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"},{\"keyId\":\"SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y=\",\"sig\":\"LCWs2OSyC+5aYtoR2tOqydBr/mrDvlPr8C6xDus8yLC27ReUwVA9dlX+LhMf/QcuxB5E/aHdhmIcEjMH+6USAA==\"}]}"
+    },
+    "expect": {
+      "ok": true,
+      "effects": [],
+      "compare": 0
+    }
+  },
+  {
+    "name": "envelope/index_sig_as_attestation",
+    "now": "2026-11-01T09:00:00Z",
+    "keys": {
+      "dev": {
+        "seed": "5555555555555555555555555555555555555555555555555555555555555555",
+        "publicKey": "xoImN8fTEOxXYnvgC6JZ0lN0n0qvZERwz/vlOjX3MkI=",
+        "keyId": "SHA256:tMHs6Jjs4k4k5gEjL5XGoYlxaJoN1mnm14IYU3whw4k="
+      },
+      "online": {
+        "seed": "3333333333333333333333333333333333333333333333333333333333333333",
+        "publicKey": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4=",
+        "keyId": "SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U="
+      },
+      "retired": {
+        "seed": "4444444444444444444444444444444444444444444444444444444444444444",
+        "publicKey": "11l5O7wTooGagnx2rbb7qKSa7gB/SfLQmS2ZuCWtLEg=",
+        "keyId": "SHA256:sUcFiI9KaDkaCapZaN0l0Ww7unuzttFb81TY3KroWkc="
+      },
+      "rootA": {
+        "seed": "1111111111111111111111111111111111111111111111111111111111111111",
+        "publicKey": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+        "keyId": "SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0="
+      },
+      "rootB": {
+        "seed": "2222222222222222222222222222222222222222222222222222222222222222",
+        "publicKey": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+        "keyId": "SHA256:EyW4UMKHGRbq4gPw78PImH9k5ePNsnZ55tH6l4CDV+Y="
+      }
+    },
+    "rootKeys": [
+      "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA="
+    ],
+    "state": {
+      "root": {
+        "seq": 0,
+        "payloadSha256": ""
+      }
+    },
+    "inputs": {
+      "root": "{\"payloadType\":\"application/vnd.xlyra.root+json\",\"payload\":\"eyJ2IjoxLCJzZXEiOjEsImlzc3VlZEF0IjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJvbmxpbmVLZXlzIjpbeyJrZXlJZCI6IlNIQTI1NjpiSStHQjl2b2NIZW1LaW1RemdmWlNxOTBuZmR2aDdtT3Q0YW0wUThEQjJVPSIsInB1YmxpY0tleSI6IkY4dDUreXRCSVBLeDdHWGtHWTF1Q0xLT2dUL3JBZVNrQUlPYmhlR0FnTTQ9Iiwicm9sZXMiOlsiaW5kZXgiLCJyZXZvY2F0aW9ucyIsImF0dGVzdGF0aW9uIl0sIm5vdEJlZm9yZSI6IjIwMjYtMTEtMDFUMDA6MDA6MDBaIiwibm90QWZ0ZXIiOiIyMDI3LTExLTAxVDAwOjAwOjAwWiJ9XSwicmV0aXJlZEtleXMiOlt7ImtleUlkIjoiU0hBMjU2OnNVY0ZpSTlLYURrYUNhcFphTjBsMFd3N3VudXp0dEZiODFUWTNLcm9Xa2M9IiwicHVibGljS2V5IjoiMTFsNU83d1Rvb0dhZ254MnJiYjdxS1NhN2dCL1NmTFFtUzJadUNXdExFZz0iLCJub3RCZWZvcmUiOiIyMDI1LTExLTAxVDAwOjAwOjAwWiIsIm5vdEFmdGVyIjoiMjAyNi0xMS0wMVQwMDowMDowMFoifV0sImVuZHBvaW50cyI6eyJyZWdpc3RyeSI6WyJodHRwczovL3JlZ2lzdHJ5LnhseXJhLnlhY2hpeW8uaW0vdjEvIl0sImh1YiI6Imh0dHBzOi8vaHViLnhseXJhLnlhY2hpeW8uaW0iLCJwdXNoIjpudWxsfX0=\",\"signatures\":[{\"keyId\":\"SHA256:ELpoLIrRNROXHotWiBqri9cCu4B3luyoGTLHNalNbm0=\",\"sig\":\"9sWSxlXuZLyp2W0UgAZSeOwbWvu4/HbVrVPBVpkgfmCQQaqimP0YS5pXMq+k4iQyP2/yKMjDMrxK7HbyLZljBw==\"}]}",
+      "attestation": "{\"payloadType\":\"application/vnd.xlyra.attestation+json\",\"payload\":\"eyJ2IjoxLCJwbHVnaW5JZCI6IndhbmcucXVvdGEtZm9vIiwidmVyc2lvbiI6IjEuMC4xIiwicGFja2FnZURpZ2VzdCI6ImQ0ZDdlNzE0OTI5YTZmODNhODQxYWNkNzJhODRhOGY1YWY0MzRlZGVjNTk3MTNkYjAxMWZkM2RhYjliY2U0NjUiLCJkZXZlbG9wZXJGaW5nZXJwcmludCI6IlNIQTI1Njp0TUhzNkpqczRrNGs1Z0VqTDVYR29ZbHhhSm9OMW1ubTE0SVlVM3dodzRrPSIsImtpbmQiOiJxdW90YV9wcm9iZSIsImhvc3RzIjpbImEuZXhhbXBsZSIsImIuZXhhbXBsZSJdLCJwZXJtaXNzaW9ucyI6WyJuZXQuZmV0Y2giLCJzdG9yYWdlLnJlYWQiXSwiaXNzdWVkQXQiOiIyMDI2LTExLTAxVDA3OjQ5OjAwWiJ9\",\"signatures\":[{\"keyId\":\"SHA256:bI+GB9vocHemKimQzgfZSq90nfdvh7mOt4am0Q8DB2U=\",\"sig\":\"pXaHZf/+Z4Mby38yD9rCN2SxtrE96XZIMqAPThvjQsWStDjbz8msadzHlvVZiiVIzCcEcuATsutjeM/2S43HBg==\"}]}"
+    },
+    "expect": {
+      "ok": false,
+      "code": "bad_signature",
+      "effects": [],
+      "compare": 0
+    }
+  }
+]

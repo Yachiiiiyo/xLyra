@@ -66,7 +66,25 @@ func TestDevPostgresMigrationsInitializeNewSchema(t *testing.T) {
 	if !migrator.HasTable("js_plugin_catalog_state") {
 		t.Fatal("js_plugin_catalog_state table was not created")
 	}
-	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+	if !migrator.HasTable("js_plugin_market_subscriptions") {
+		t.Fatal("js_plugin_market_subscriptions table was not created")
+	}
+	if !migrator.HasTable("js_plugin_market_state") {
+		t.Fatal("js_plugin_market_state table was not created")
+	}
+	if !migrator.HasTable("js_plugin_auto_updates") {
+		t.Fatal("js_plugin_auto_updates table was not created")
+	}
+	if !migrator.HasTable("cloud_binding") {
+		t.Fatal("cloud_binding table was not created")
+	}
+	if !migrator.HasColumn(&JSPluginMarketSubscription{}, "NotifiedVersion") {
+		t.Fatal("js_plugin_market_subscriptions.notified_version column was not created")
+	}
+	if !migrator.HasColumn(&JSPluginVersion{}, "Origin") {
+		t.Fatal("js_plugin_versions.origin column was not created")
+	}
+	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18})
 }
 
 func TestDevPostgresMigrationsUpgradeExistingSchema(t *testing.T) {
@@ -95,7 +113,7 @@ func TestDevPostgresMigrationsUpgradeExistingSchema(t *testing.T) {
 	if !db.Migrator().HasColumn(&OAuthConnection{}, "RefreshLeaseID") {
 		t.Fatal("refresh lease column was not added by upgrade migration")
 	}
-	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18})
 }
 
 func TestDevPostgresMigrationsAreRepeatable(t *testing.T) {
@@ -109,7 +127,7 @@ func TestDevPostgresMigrationsAreRepeatable(t *testing.T) {
 	if err := ensureDatabaseInitializedOnce(ctx, cfg); err != nil {
 		t.Fatalf("second migration run: %v", err)
 	}
-	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18})
 }
 
 func TestDevPostgresFailedMigrationIsNotRecordedAndCanRetry(t *testing.T) {

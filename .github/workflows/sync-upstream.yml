@@ -21,7 +21,7 @@ jobs:
 
       - name: Sync from upstream
         run: |
-          git remote add upstream https://github.com/Yachiyo-5i/xLyra.git
+          git remote add upstream https://github.com/Yachiiiiyo/xLyra.git
           git fetch upstream
           git checkout main
           git reset --hard upstream/main

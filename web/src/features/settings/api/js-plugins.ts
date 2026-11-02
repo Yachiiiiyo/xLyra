@@ -29,13 +29,39 @@ export type JSPluginListItem = {
   enabled_version: string
   version_count: number
   name?: string
+  icon_url?: string
   kind?: JSPluginKind
   /** Where the kind takes effect; the server decides, so new kinds need no UI change. */
   scope?: JSPluginScope
   metrics_24h?: JSPluginMetrics24h
+  update_available?: boolean
+  update_version?: string
+  update_policy?: 'off' | 'notify' | 'auto'
+  paused_reason?: string
+  auto_block_reason?: string
+  auto_block_detail?: string
+  signer_revoked?: boolean
+  auto_rolled_back?: boolean
+  revocation_level?: string
+  revocation_reason?: string
+  deprecated?: boolean
+  owned?: boolean
+  market_ahead?: boolean
+  market_version?: string
+  local_version?: string
+  trust?: JSPluginTrust
+  submission?: {
+    id: string
+    plugin_id?: string
+    version?: string
+    status: string
+    check_summary?: string
+    review_note?: string
+    submitted_at?: string
+  }
 }
 
-export type JSPluginTrust = 'trusted' | 'untrusted_signer' | 'unsigned'
+export type JSPluginTrust = 'trusted' | 'untrusted_signer' | 'unsigned' | 'marketplace'
 
 export type JSPluginVersion = {
   plugin_id: string
@@ -45,6 +71,11 @@ export type JSPluginVersion = {
   signed?: boolean
   signer?: string
   trust?: JSPluginTrust
+  origin?: 'manual' | 'market'
+  revocation?: { revoked: boolean; level?: string; reason?: string }
+  signer_revoked?: boolean
+  signer_revoked_reason?: string
+  auto_rolled_back?: boolean
   manifest?: Record<string, unknown>
   /** Automation actions an admin allowed this version to return. */
   granted_permissions?: string[]
@@ -143,6 +174,13 @@ export async function enableJSPluginVersion(
   return apiFetch<{ ok: boolean; generation?: number }>(
     `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/versions/${encodeURIComponent(version)}/enable`,
     { method: 'POST', body: enableJSPluginRequestBody(options) },
+  )
+}
+
+export async function updateJSPluginSubscription(pluginId: string, updatePolicy: 'off' | 'notify' | 'auto') {
+  return apiFetch<{ plugin_id: string; update_policy: 'off' | 'notify' | 'auto'; paused_reason: string }>(
+    `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/subscription`,
+    { method: 'PUT', body: { update_policy: updatePolicy } },
   )
 }
 
