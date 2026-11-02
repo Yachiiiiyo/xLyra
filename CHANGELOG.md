@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.17.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.16.0...v1.17.0) (2026-11-02)
+
+
+### Features
+
+* ✨ 404 与 502 改为全屏独立状态页（不带侧边栏与顶栏，登录页同款玻璃卡片），404 增加返回首页按钮，502 增加刷新页面按钮 ([05e699c](https://github.com/Yachiiiiyo/xLyra/commit/05e699ce8330f550441fccc3033522996b500852))
+* ✨ xlyra-plugin publish：用 API 令牌提交已签名插件包并轮询审核状态，补充命令行与发布文档 ([3126673](https://github.com/Yachiiiiyo/xLyra/commit/3126673ca7c99679823e878676b9b9006ae335e8))
+* ✨ 前端把 Hub 统一改名为 xLyra Cloud：接口与字段对接 cloud-binding，文件名、标识符与三语文案同步 ([e4e0329](https://github.com/Yachiiiiyo/xLyra/commit/e4e032923ee28ea05ada153a17783f316d166c21))
+* ✨ 前端通用组件：SplitButton、共享 Notice、InputOTP，备份页提示块改用 Notice ([1295a12](https://github.com/Yachiiiiyo/xLyra/commit/1295a12ba936ae9f291d7255267e1db923683e00))
+* ✨ 合并 test 到 main：插件市场、xLyra Cloud、移动端优化与网关流式修复 ([87d22e6](https://github.com/Yachiiiiyo/xLyra/commit/87d22e61d62c3fbf5806b11aa3087d26fa97706e))
+* ✨ 后端把 Hub 统一改名为 xLyra Cloud：cloudclient 包、/cloud-binding 接口、cloud_binding 表、xlyra-plugin --cloud 参数与发布文档 ([0b312f7](https://github.com/Yachiiiiyo/xLyra/commit/0b312f7c2181fbe76d9fb5723dc5ca72023e4f93))
+* ✨ 实例绑定客户端：配对轮询、签名心跳与上报、开发者身份与提交转发 ([889b61d](https://github.com/Yachiiiiyo/xLyra/commit/889b61d867dbb2a72f5a41b636e07cf66a3baccb))
+* ✨ 引入插件市场协议 v1 校验包与测试向量 ([0d4f9b4](https://github.com/Yachiiiiyo/xLyra/commit/0d4f9b449268163ccdd48c1cc645752eb8b25908))
+* ✨ 插件市场与实例绑定的数据表、仓储与设置项 ([05d873b](https://github.com/Yachiiiiyo/xLyra/commit/05d873b4ff2a6aaf0d58fd7ead1e71407659a504))
+* ✨ 插件市场后端：同步、目录、图标中转、安装与 marketplace 信任、更新提示、自动升级回退与吊销执行 ([cb17642](https://github.com/Yachiiiiyo/xLyra/commit/cb17642980d606d291248626a1baa931857a5f36))
+* ✨ 插件页与 xLyra Cloud 页改版：已安装改卡片式、标签换胶囊、刷新与同步位置调整、受信公钥删除二次确认，去掉市场设置及前后端接口（配置内置默认），xLyra Cloud 页重构为横条实例卡、开发者身份双栏与独立危险区 ([b100cdc](https://github.com/Yachiiiiyo/xLyra/commit/b100cdc995688f83e06a47b49784151b3863f117))
+* ✨ 插件页前端：市场列表与详情、安装与更新提示、插件图标、一键提交到市场与三语文案 ([4813eb4](https://github.com/Yachiiiiyo/xLyra/commit/4813eb46b3299381bd166aca06a1a569a4425268))
+* ✨ 插件顶层 icon：深色可读性检查、图标接口泛化，xlyra-plugin 同步检查与打包 ([d66059c](https://github.com/Yachiiiiyo/xLyra/commit/d66059cbb600a7a8ae78c4c8e6b112a1be59de40))
+* ✨ 新增全局启动遮罩（星空背景 + 中央呼吸 logo，最短展示 1s，鉴权与首屏路由就绪后淡出），移除开屏 Loading 文案；移动端 viewport 恢复 1.0 缩放，避免 iOS 输入框聚焦被强制放大 ([e2ac394](https://github.com/Yachiiiiyo/xLyra/commit/e2ac394c520a2a6ced7d4da116a001f3848e518f))
+* ✨ 移动端体验优化：整体缩放到 0.8、抽屉支持上滑长高/下拉缩回/下拉关闭（保存类抽屉禁止下拉关闭）、更多菜单限高可滚动，并调整顶栏用户区、模型测试抽屉与路由详情布局 ([bdd3828](https://github.com/Yachiiiiyo/xLyra/commit/bdd3828e263114abf75fc608ae5aa6b1c2fe1ba3))
+* ✨ 管理接口与路由接入：插件市场、实例绑定、开发者身份与一键提交，已安装列表补图标、归属、领先判定与信任 ([a206c91](https://github.com/Yachiiiiyo/xLyra/commit/a206c9110136682fe356e166fb7b6dc7d19f0b0a))
+* ✨ 设置新增「系统」分组与 xLyra Cloud 页：插件页迁到 /system/plugins，配对弹窗、连接状态与开发者身份 ([5b9301c](https://github.com/Yachiiiiyo/xLyra/commit/5b9301c3be4731d1d7f061789d0359cf82909e11))
+
+
+### Bug Fixes
+
+* 🐛 启动时立即同步插件市场，避免刚重启时连接 xLyra Cloud 因未缓存 root 失败；Cloud 错误状态码改为 424 以免被 Cloudflare 替换成 HTML 页面；插件页「已上传」文案改为「已安装」并补充市场安装说明 ([61b3366](https://github.com/Yachiiiiyo/xLyra/commit/61b33661e45841baa60e574177b27d5e21de7230))
+* 🐛 移动端更多菜单顶部留足空间，避免最上面一项旋转后被容器上边裁掉 ([6c7999f](https://github.com/Yachiiiiyo/xLyra/commit/6c7999ff154cff6867befffd773756355d467ccd))
+* 🐛 网关流式出口新增 SSE 规整器：补全 response 信封（created_at 等）、转义控制字符、丢弃无法修复的事件、断流时合成 response.failed，并在请求日志记录 stream_sanitized ([d783a4d](https://github.com/Yachiiiiyo/xLyra/commit/d783a4d564903612a37aa59878900b3667f70248))
+* 🐛 账号池额度测试改用当前时间 ([9664d53](https://github.com/Yachiiiiyo/xLyra/commit/9664d532109a41eff8c36fed80c9b0249e33b4d0))
+
 ## [1.16.0](https://github.com/Yachiyo-5i/xLyra/compare/v1.15.2...v1.16.0) (2026-10-24)
 
 本版本是一次大更新：新增「站点类型插件」与「插件账号池」，并把前端整体重构为新的深色视觉（Apple HIG + Liquid Glass）。
