@@ -1,7 +1,14 @@
 name: Publish plugin SDK
 
-# Manual only. Normal commits, tags and releases never publish this package.
+# Publishes when sdk/js changes land on main and package.json carries a version
+# that is not on npm yet. Re-runs and unrelated commits are no-ops. Manual runs
+# default to a dry run.
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "sdk/js/**"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -42,7 +49,23 @@ jobs:
         working-directory: sdk/js
         run: npm pack --dry-run
 
+      - name: Check whether this version is already on npm
+        id: version
+        working-directory: sdk/js
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          published=$(npm view "$name@$version" version 2>/dev/null || true)
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ -n "$published" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "$name@$version is already published, skipping."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.version.outputs.already != 'true' }}
         working-directory: sdk/js
         run: npm publish
