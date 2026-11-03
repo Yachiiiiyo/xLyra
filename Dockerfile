@@ -38,9 +38,22 @@ RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
       -X 'xlyra/server/internal/version.BuildTime=${BUILD_TIME}'" \
     -o /out/xlyra-server ./cmd/server
 
+FROM node:22-alpine AS agent-runtime-build
+
+WORKDIR /src/agent-runtime
+
+COPY agent-runtime/package.json agent-runtime/package-lock.json ./
+RUN --mount=type=cache,id=npm,target=/root/.npm \
+    npm ci --ignore-scripts --omit=dev
+
+COPY agent-runtime/extension ./extension
+
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates tzdata
+# bash/ripgrep/fd 供 Agent 的 bash 工具与 Pi 的搜索工具使用;libstdc++/libgcc 是
+# 从 node 镜像拷来的 node 二进制的运行时依赖;tini 作 PID 1 回收沙箱里的孤儿进程。
+RUN apk add --no-cache ca-certificates tzdata tini bash ripgrep fd libstdc++ libgcc
+COPY --from=agent-runtime-build /usr/local/bin/node /usr/local/bin/node
 
 WORKDIR /app
 
@@ -48,12 +61,15 @@ ENV APP_ENV=production \
     WORKDIR=/data \
     HTTP_HOST=0.0.0.0 \
     HTTP_PORT=5801 \
-    STATIC_DIR=/app/dist
+    STATIC_DIR=/app/dist \
+    AGENT_NODE_BIN=/usr/local/bin/node \
+    AGENT_PI_ENTRY=/app/agent-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
 
 EXPOSE 5801
 VOLUME ["/data"]
 
 COPY --from=backend-build /out/xlyra-server /app/xlyra-server
 COPY --from=frontend-build /src/dist /app/dist
+COPY --from=agent-runtime-build /src/agent-runtime /app/agent-runtime
 
-ENTRYPOINT ["/app/xlyra-server"]
+ENTRYPOINT ["/sbin/tini", "--", "/app/xlyra-server"]
