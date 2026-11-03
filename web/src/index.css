@@ -505,21 +505,15 @@ body[data-scroll-locked] {
 }
 
 /* 表格里固定在右侧的列（如操作列）：横向滚动时停在可见区域右端。
-   底色与 thick 卡片（底色 + 5% 白）合成后的颜色一致，左侧一道淡阴影提示下面还有内容；行悬停时同步提亮 */
+   只负责定位，不单独定义背景、阴影或悬停色，外观与其他列一致 */
 .table-sticky-end {
   position: sticky;
   right: 0;
   z-index: 1;
-  background-color: rgb(29 31 38);
-  box-shadow: -14px 0 14px -14px rgb(0 0 0 / 0.5);
 }
 
 thead .table-sticky-end {
   z-index: 2;
-}
-
-tr:hover > .table-sticky-end {
-  background-color: rgb(38 40 47);
 }
 
 /* 背景（L0）：纯色、不做渐变光与动画。保留独立图层，便于统一调整 */
@@ -530,6 +524,101 @@ tr:hover > .table-sticky-end {
   z-index: -2;
   background-color: var(--bg-base);
   pointer-events: none;
+}
+
+/* 配置了实例背景图时的图片层（components/layout/app-background.tsx）：取代星点背景整层铺满 */
+.app-viewport > .app-background-image {
+  position: absolute;
+}
+
+.app-background-image {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+/* 非 /agent 页面的可读性遮罩：模糊 + 半透明压暗背景图。backdrop-filter 只作用于
+   其后的背景图片层，不影响上层正文与玻璃面板（它不是内容的祖先） */
+.app-viewport > .app-background-overlay {
+  position: absolute;
+}
+
+.app-background-overlay {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  background: rgb(0 0 0 / 0.4);
+}
+
+@media (min-width: 1024px) {
+  /* 整屏遮罩中挖掉主侧栏的圆角矩形：四条外边区域 + 四个圆角外侧 */
+  .app-background-overlay-main {
+    -webkit-mask-image:
+      linear-gradient(#000 0 0),
+      linear-gradient(#000 0 0),
+      linear-gradient(#000 0 0),
+      linear-gradient(#000 0 0),
+      radial-gradient(circle at right bottom, transparent 23.5px, #000 24px),
+      radial-gradient(circle at left bottom, transparent 23.5px, #000 24px),
+      radial-gradient(circle at right top, transparent 23.5px, #000 24px),
+      radial-gradient(circle at left top, transparent 23.5px, #000 24px);
+    mask-image:
+      linear-gradient(#000 0 0),
+      linear-gradient(#000 0 0),
+      linear-gradient(#000 0 0),
+      linear-gradient(#000 0 0),
+      radial-gradient(circle at right bottom, transparent 23.5px, #000 24px),
+      radial-gradient(circle at left bottom, transparent 23.5px, #000 24px),
+      radial-gradient(circle at right top, transparent 23.5px, #000 24px),
+      radial-gradient(circle at left top, transparent 23.5px, #000 24px);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position:
+      0 0,
+      0 100%,
+      0 0,
+      296px 0,
+      16px 16px,
+      272px 16px,
+      16px calc(100% - 16px),
+      272px calc(100% - 16px);
+    mask-position:
+      0 0,
+      0 100%,
+      0 0,
+      296px 0,
+      16px 16px,
+      272px 16px,
+      16px calc(100% - 16px),
+      272px calc(100% - 16px);
+    -webkit-mask-size:
+      100% 16px,
+      100% 16px,
+      16px 100%,
+      calc(100% - 296px) 100%,
+      24px 24px,
+      24px 24px,
+      24px 24px,
+      24px 24px;
+    mask-size:
+      100% 16px,
+      100% 16px,
+      16px 100%,
+      calc(100% - 296px) 100%,
+      24px 24px,
+      24px 24px,
+      24px 24px,
+      24px 24px;
+  }
 }
 
 /* 元素级重置放进 base 层：未分层的规则优先级高于 Tailwind 工具类，
@@ -645,6 +734,18 @@ select {
   backdrop-filter: blur(10px) saturate(200%) brightness(1.08);
 }
 
+/* Liquid Glass · pane —— 背景图上的整面玻璃（侧栏、无会话输入区）：只负责折射与
+   边缘高光，不加深色底、不提饱和提亮，让底下背景原样透出，与主区连成一块 */
+.lg-pane {
+  border: 1px solid transparent;
+  background:
+    var(--top-light) padding-box,
+    linear-gradient(160deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.035) 36%, rgb(255 255 255 / 0.02) 64%, rgb(255 255 255 / 0.06)) border-box;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
 /* 启用折射（Chromium，见 components/glass）时降低玻璃底色，让被弯折的背景透出来 */
 .lg-regular[data-refraction],
 .lg-clear[data-refraction] {
@@ -668,6 +769,25 @@ select {
     var(--top-light) padding-box,
     linear-gradient(rgb(20 21 25 / 0.12), rgb(20 21 25 / 0.12)) padding-box,
     linear-gradient(160deg, rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.07) 36%, rgb(255 255 255 / 0.04) 64%, rgb(255 255 255 / 0.16)) border-box;
+}
+
+.lg-pane[data-refraction] {
+  background:
+    var(--top-light) padding-box,
+    linear-gradient(160deg, rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.04) 36%, rgb(255 255 255 / 0.025) 64%, rgb(255 255 255 / 0.07)) border-box;
+  box-shadow:
+    inset 1px 1px 0 rgb(255 255 255 / 0.13),
+    inset -1px -1px 0 rgb(255 255 255 / 0.045),
+    inset 0 0 22px rgb(255 255 255 / 0.03);
+}
+
+/* 主侧栏透出清晰背景时轻微压暗；放在 pane 的 background 简写之后避免被重置 */
+.lg-pane.lg-pane-dim {
+  background-color: rgb(0 0 0 / 0.28);
+}
+
+.lg-pane.lg-pane-dim-strong {
+  background-color: rgb(0 0 0 / 0.42);
 }
 
 /* 标题使用 Literata + 思源宋体，KPI 数字使用 JetBrains Mono */
@@ -695,6 +815,14 @@ select {
   background: linear-gradient(rgb(17 19 26 / 0.7), rgb(17 19 26 / 0));
   -webkit-mask-image: linear-gradient(#000 45%, transparent);
   mask-image: linear-gradient(#000 45%, transparent);
+}
+
+/* 有背景图时侧栏下方是清晰背景，顶部渐隐层的左缘会在侧栏右侧形成硬边，这里让它横向渐隐进来 */
+.scroll-edge-top.scroll-edge-top-feather {
+  -webkit-mask-image: linear-gradient(#000 45%, transparent), linear-gradient(90deg, transparent, #000 56px);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(#000 45%, transparent), linear-gradient(90deg, transparent, #000 56px);
+  mask-composite: intersect;
 }
 
 /* Skeleton（components/ui/skeleton.tsx）：fill-4 底，一道微光每 1.6s 扫过 */
@@ -752,6 +880,7 @@ select {
   .lg-regular,
   .lg-thick,
   .lg-clear,
+  .lg-pane,
   .mat-thin,
   .mat-regular,
   .mat-thick {

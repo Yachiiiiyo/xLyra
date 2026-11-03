@@ -1,4 +1,21 @@
 {
+  "appearance": {
+    "title": "外観設定",
+    "description": "インスタンス全体のグローバル背景画像を設定します。すべてのページに適用されます。",
+    "loading": "設定を読み込み中...",
+    "saved": "外観設定を保存しました",
+    "saveFailed": "保存に失敗しました",
+    "background": {
+      "title": "背景画像",
+      "hint": "背景画像を選択またはアップロードします。未選択の場合はデフォルトの星景背景を使用します。",
+      "none": "なし（星景背景）",
+      "custom": "カスタム {{index}}",
+      "upload": "画像をアップロード",
+      "remove": "カスタム {{index}} を削除",
+      "imageTooLarge": "画像は 8MB 以内にしてください",
+      "imageReadFailed": "画像の読み込みに失敗しました"
+    }
+  },
   "general": {
     "title": "一般設定",
     "description": "基本的な実行時オプション。",
@@ -491,6 +508,7 @@
     "description": "カテゴリ別にグローバル設定を管理します。",
     "nav": {
       "general": "一般",
+      "appearance": "外観",
       "profile": "プロフィール",
       "systemProxy": "システムプロキシ",
       "rateLimit": "レート制限",

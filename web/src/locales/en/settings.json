@@ -1,4 +1,21 @@
 {
+  "appearance": {
+    "title": "Appearance",
+    "description": "Configure a global background image for the whole instance, applied to every page.",
+    "loading": "Loading settings...",
+    "saved": "Appearance settings saved",
+    "saveFailed": "Failed to save",
+    "background": {
+      "title": "Background image",
+      "hint": "Pick or upload a background image; leave unselected to keep the default starfield.",
+      "none": "None (starfield)",
+      "custom": "Custom {{index}}",
+      "upload": "Upload image",
+      "remove": "Remove custom {{index}}",
+      "imageTooLarge": "Image must be 8MB or smaller",
+      "imageReadFailed": "Failed to read image"
+    }
+  },
   "general": {
     "title": "General Settings",
     "description": "Basic runtime options.",
@@ -491,6 +508,7 @@
     "description": "Manage global settings by category.",
     "nav": {
       "general": "General",
+      "appearance": "Appearance",
       "profile": "Profile",
       "systemProxy": "System Proxy",
       "rateLimit": "Rate Limit",

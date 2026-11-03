@@ -11,7 +11,8 @@ import { MobileAppShell } from '@/components/layout/mobile-app-shell'
 import { SystemVersionText } from '@/components/layout/system-version-text'
 import { Button } from '@/components/ui/button'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { AmbientBackground } from '@/components/layout/ambient-background'
+import { AppBackground } from '@/components/layout/app-background'
+import { useHasAppBackground } from '@/features/appearance/api/appearance'
 
 export function AppShell({ children }: PropsWithChildren) {
   const isMobile = useMobileLayout()
@@ -29,11 +30,13 @@ function DesktopAppShell({ children }: PropsWithChildren) {
   const location = useLocation()
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const isAgentWorkspace = location.pathname === '/agent' || location.pathname.startsWith('/agent/')
+  // 配置了背景图时侧栏用 pane：只折射 + 边缘高光，不改变底下遮罩后的色调
+  const hasAppBackground = useHasAppBackground()
 
   if (isAgentWorkspace) {
     return (
       <div className="app-viewport">
-        <AmbientBackground />
+        <AppBackground />
         <main className="relative z-10 h-full min-h-0 overflow-hidden">{children}</main>
       </div>
     )
@@ -41,12 +44,13 @@ function DesktopAppShell({ children }: PropsWithChildren) {
 
   return (
     <div className="app-viewport">
-      <AmbientBackground />
+      <AppBackground mainContentOverlay />
       <div className="relative z-0 flex h-full w-full">
         {/* 功能层：浮动的 Liquid Glass 侧边栏，280 宽、距窗口 16、圆角 24 */}
         <LiquidGlass
           as="aside"
-          className="z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col"
+          variant={hasAppBackground ? 'pane' : 'regular'}
+          className={`z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col${hasAppBackground ? ' lg-pane-dim' : ''}`}
         >
           <AppSidebar />
         </LiquidGlass>
@@ -61,7 +65,7 @@ function DesktopAppShell({ children }: PropsWithChildren) {
               <AppFooter />
             </div>
           </main>
-          <div className="scroll-edge-top z-20" style={{ '--scroll-edge-height': '84px' } as CSSProperties} />
+          <div className={`scroll-edge-top z-20${hasAppBackground ? ' scroll-edge-top-feather' : ''}`} style={{ '--scroll-edge-height': '84px' } as CSSProperties} />
           <AppTopbar onMenuClick={() => setMobileSidebarOpen(true)} />
         </div>
       </div>

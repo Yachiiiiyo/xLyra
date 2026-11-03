@@ -1,4 +1,21 @@
 {
+  "appearance": {
+    "title": "外观设置",
+    "description": "为整个实例配置全局背景图，应用于主程序所有页面。",
+    "loading": "正在读取设置...",
+    "saved": "外观设置已保存",
+    "saveFailed": "保存失败",
+    "background": {
+      "title": "背景图",
+      "hint": "选择或上传一张背景图；不选择时使用默认的星点背景。",
+      "none": "无（星点背景）",
+      "custom": "自定义 {{index}}",
+      "upload": "上传图片",
+      "remove": "删除自定义 {{index}}",
+      "imageTooLarge": "图片不能超过 8MB",
+      "imageReadFailed": "图片读取失败"
+    }
+  },
   "general": {
     "title": "通用设置",
     "description": "基础运行时选项。",
@@ -491,6 +508,7 @@
     "description": "按类别管理全局设置。",
     "nav": {
       "general": "通用设置",
+      "appearance": "外观设置",
       "profile": "个人信息",
       "systemProxy": "系统代理",
       "rateLimit": "全局限流",

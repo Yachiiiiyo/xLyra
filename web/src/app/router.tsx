@@ -19,6 +19,7 @@ const APIKeysPage = lazyNamed(() => import('@/routes/api-keys'), 'APIKeysPage')
 const AnalyticsPage = lazyNamed(() => import('@/routes/analytics'), 'AnalyticsPage')
 const AgentPage = lazyNamed(() => import('@/routes/agent'), 'AgentPage')
 const AuditLogsPage = lazyNamed(() => import('@/routes/audit-logs-page'), 'AuditLogsPage')
+const AppearanceSettingsPage = lazyNamed(() => import('@/routes/settings/global/appearance-settings-page'), 'AppearanceSettingsPage')
 const BackupSettingsPage = lazyNamed(() => import('@/routes/settings/backup-settings-page'), 'BackupSettingsPage')
 const XlyraCloudSettingsPage = lazyNamed(() => import('@/routes/system/xlyra-cloud-settings-page'), 'XlyraCloudSettingsPage')
 const PluginsSettingsPage = lazyNamed(() => import('@/routes/system/plugins-settings-page'), 'PluginsSettingsPage')
@@ -86,6 +87,7 @@ export const appRouter = createBrowserRouter([
               { index: true, element: <Navigate to="/settings/global/general" replace /> },
               { path: 'profile', element: lazyElement(<ProfileSettingsPage />) },
               { path: 'general', element: lazyElement(<GeneralSettingsPage />) },
+              { path: 'appearance', element: lazyElement(<AppearanceSettingsPage />) },
               { path: 'system-proxy', element: lazyElement(<SystemProxySettingsPage />) },
               { path: 'rate-limit', element: lazyElement(<RateLimitSettingsPage />) },
               { path: 'site-groups', element: lazyElement(<SiteGroupsSettingsPage />) },
