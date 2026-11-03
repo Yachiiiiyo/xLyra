@@ -25,6 +25,10 @@ import (
 const (
 	DefaultTokenTTL    = 30 * time.Minute
 	TokenReasonInitial = "initial"
+
+	// BuiltinInstanceID 是内置 Agent(Pi 子进程)在 agent_runs 里的实例标识,
+	// 区别于外部 runner 经 /runs/register 登记的实例。
+	BuiltinInstanceID = "xlyra-builtin"
 )
 
 type Handler struct {
@@ -131,23 +135,43 @@ func (h Handler) Renew(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) issueToken(w http.ResponseWriter, r *http.Request, runInput store.AgentRunInput, now time.Time) {
-	// Every issuance displaces previous tokens: they die after the supersede
-	// grace period, so a leaked credential cannot outlive the next rotation.
-	if err := h.repo.SupersedeTokens(r.Context(), runInput, now); err != nil {
-		h.fail(w, r, http.StatusInternalServerError, "agent_credential_unavailable", "unable to rotate agent credential")
-		return
-	}
-	value, err := newToken()
+	value, expiresAt, err := h.issueRunToken(r.Context(), runInput, now)
 	if err != nil {
-		h.fail(w, r, http.StatusInternalServerError, "agent_credential_unavailable", "unable to create agent credential")
-		return
-	}
-	expiresAt := now.Add(DefaultTokenTTL)
-	if _, err := h.repo.CreateToken(r.Context(), runInput, value, expiresAt); err != nil {
-		h.fail(w, r, http.StatusInternalServerError, "agent_credential_unavailable", "unable to persist agent credential")
+		message := "unable to rotate agent credential"
+		switch {
+		case errors.Is(err, errTokenGenerate):
+			message = "unable to create agent credential"
+		case errors.Is(err, errTokenPersist):
+			message = "unable to persist agent credential"
+		}
+		h.fail(w, r, http.StatusInternalServerError, "agent_credential_unavailable", message)
 		return
 	}
 	h.writeCredential(w, credentialResponse{Active: true, Token: value, ExpiresAt: expiresAt.UTC().Format(time.RFC3339)})
+}
+
+var (
+	errTokenGenerate = errors.New("agent credential generation failed")
+	errTokenPersist  = errors.New("agent credential persistence failed")
+)
+
+// issueRunToken 是签发的核心路径,不依赖 http.ResponseWriter:supersede 旧令牌
+// →生成→落库,供凭据端点与内置 Pi 的进程内签发共用。
+func (h Handler) issueRunToken(ctx context.Context, runInput store.AgentRunInput, now time.Time) (string, time.Time, error) {
+	// Every issuance displaces previous tokens: they die after the supersede
+	// grace period, so a leaked credential cannot outlive the next rotation.
+	if err := h.repo.SupersedeTokens(ctx, runInput, now); err != nil {
+		return "", time.Time{}, err
+	}
+	value, err := newToken()
+	if err != nil {
+		return "", time.Time{}, errTokenGenerate
+	}
+	expiresAt := now.Add(DefaultTokenTTL)
+	if _, err := h.repo.CreateToken(ctx, runInput, value, expiresAt); err != nil {
+		return "", time.Time{}, errTokenPersist
+	}
+	return value, expiresAt, nil
 }
 
 func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +186,33 @@ func (h Handler) RegisterRun(ctx context.Context, agentInstanceID, sessionID, ru
 		Model:           model,
 	}, h.now())
 	return err
+}
+
+// IssueRunToken 登记 run(幂等)并签发/轮换绑定该 run 与 model 的短期令牌,
+// 供内置 Pi 进程使用:进程内调用,不经过 /credential 的 HTTP 路径。
+func (h Handler) IssueRunToken(ctx context.Context, sessionID, runID, model string) (string, time.Time, error) {
+	if !validIdentifiers(BuiltinInstanceID, sessionID, runID, model) {
+		return "", time.Time{}, errors.New("agentllm: session_id, run_id and model are required")
+	}
+	runInput := store.AgentRunInput{AgentInstanceID: BuiltinInstanceID, SessionID: sessionID, RunID: runID, Model: model}
+	now := h.now()
+	if _, err := h.repo.Register(ctx, runInput, now); err != nil {
+		return "", time.Time{}, err
+	}
+	return h.issueRunToken(ctx, runInput, now)
+}
+
+// EndRun 结束 run 登记并吊销其令牌,供内置 Pi 进程退出时调用。
+func (h Handler) EndRun(ctx context.Context, sessionID, runID, model string) error {
+	if !validIdentifiers(BuiltinInstanceID, sessionID, runID, model) {
+		return errors.New("agentllm: session_id, run_id and model are required")
+	}
+	return h.repo.End(ctx, store.AgentRunInput{
+		AgentInstanceID: BuiltinInstanceID,
+		SessionID:       sessionID,
+		RunID:           runID,
+		Model:           model,
+	}, h.now())
 }
 
 func (h Handler) End(w http.ResponseWriter, r *http.Request) {

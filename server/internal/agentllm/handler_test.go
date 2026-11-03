@@ -27,6 +27,14 @@ func TestValidIdentifiers(t *testing.T) {
 	}
 }
 
+type fakeAgentTokenEntry struct {
+	value        string
+	input        store.AgentRunInput
+	expiresAt    time.Time
+	supersededAt *time.Time
+	revokedAt    *time.Time
+}
+
 type fakeAgentRepository struct {
 	run            store.AgentRun
 	runErr         error
@@ -36,19 +44,70 @@ type fakeAgentRepository struct {
 	supersededInput *store.AgentRunInput
 	createdInput    *store.AgentRunInput
 	createdExpiry   time.Time
+	registerInput   *store.AgentRunInput
+	endedInput      *store.AgentRunInput
+	supersedeCalls  int
+
+	// tokens 让 FindUsableToken/End/SupersedeTokens 可以在内存里对账。
+	tokens []fakeAgentTokenEntry
 }
 
 func (f *fakeAgentRepository) FindRun(context.Context, store.AgentRunInput) (store.AgentRun, error) {
 	return f.run, f.runErr
 }
 
-func (f *fakeAgentRepository) Register(context.Context, store.AgentRunInput, time.Time) (store.AgentRun, error) {
-	return store.AgentRun{}, nil
+func (f *fakeAgentRepository) Register(_ context.Context, input store.AgentRunInput, _ time.Time) (store.AgentRun, error) {
+	f.registerInput = &input
+	if f.runErr != nil {
+		return store.AgentRun{}, f.runErr
+	}
+	if f.run.SessionID == "" && f.run.RunID == "" {
+		f.run = store.AgentRun{AgentInstanceID: input.AgentInstanceID, SessionID: input.SessionID, RunID: input.RunID, Model: input.Model, Status: store.AgentRunActive}
+		return f.run, nil
+	}
+	if f.run.AgentInstanceID != input.AgentInstanceID || f.run.Model != input.Model || f.run.Status == store.AgentRunEnded {
+		return store.AgentRun{}, errors.New("agent run identity conflict")
+	}
+	return f.run, nil
 }
 
-func (f *fakeAgentRepository) End(context.Context, store.AgentRunInput, time.Time) error { return nil }
+func (f *fakeAgentRepository) End(_ context.Context, input store.AgentRunInput, now time.Time) error {
+	f.endedInput = &input
+	if f.run.SessionID == "" && f.run.RunID == "" {
+		return nil
+	}
+	if f.run.AgentInstanceID != input.AgentInstanceID || f.run.Model != input.Model {
+		return errors.New("agent run identity conflict")
+	}
+	f.run.Status = store.AgentRunEnded
+	for i := range f.tokens {
+		if f.tokens[i].input.SessionID == input.SessionID && f.tokens[i].input.RunID == input.RunID && f.tokens[i].revokedAt == nil {
+			f.tokens[i].revokedAt = &now
+		}
+	}
+	return nil
+}
 
-func (f *fakeAgentRepository) FindUsableToken(context.Context, string, time.Time) (store.AgentLLMToken, error) {
+func (f *fakeAgentRepository) FindUsableToken(_ context.Context, token string, now time.Time) (store.AgentLLMToken, error) {
+	for _, entry := range f.tokens {
+		if entry.value != token {
+			continue
+		}
+		// 与真实仓库的差别:superseded 后不享受宽限期,立即不可用,便于断言轮换效果。
+		if entry.revokedAt != nil || entry.supersededAt != nil || !entry.expiresAt.After(now) {
+			break
+		}
+		if f.run.Status != store.AgentRunActive {
+			break
+		}
+		return store.AgentLLMToken{
+			AgentInstanceID: entry.input.AgentInstanceID,
+			SessionID:       entry.input.SessionID,
+			RunID:           entry.input.RunID,
+			Model:           entry.input.Model,
+			ExpiresAt:       entry.expiresAt,
+		}, nil
+	}
 	return store.AgentLLMToken{}, gorm.ErrRecordNotFound
 }
 
@@ -56,14 +115,21 @@ func (f *fakeAgentRepository) FindRenewableToken(context.Context, string, time.T
 	return f.renewableToken, f.renewableErr
 }
 
-func (f *fakeAgentRepository) CreateToken(_ context.Context, input store.AgentRunInput, _ string, expiresAt time.Time) (store.AgentLLMToken, error) {
+func (f *fakeAgentRepository) CreateToken(_ context.Context, input store.AgentRunInput, token string, expiresAt time.Time) (store.AgentLLMToken, error) {
 	f.createdInput = &input
 	f.createdExpiry = expiresAt
+	f.tokens = append(f.tokens, fakeAgentTokenEntry{value: token, input: input, expiresAt: expiresAt})
 	return store.AgentLLMToken{}, nil
 }
 
-func (f *fakeAgentRepository) SupersedeTokens(_ context.Context, input store.AgentRunInput, _ time.Time) error {
+func (f *fakeAgentRepository) SupersedeTokens(_ context.Context, input store.AgentRunInput, now time.Time) error {
 	f.supersededInput = &input
+	f.supersedeCalls++
+	for i := range f.tokens {
+		if f.tokens[i].input.SessionID == input.SessionID && f.tokens[i].input.RunID == input.RunID && f.tokens[i].supersededAt == nil {
+			f.tokens[i].supersededAt = &now
+		}
+	}
 	return nil
 }
 
@@ -243,5 +309,91 @@ func TestParseUUIDsSkipsInvalidAndDuplicates(t *testing.T) {
 	ids := parseUUIDs([]string{id.String(), "not-a-uuid", " ", id.String(), uuid.Nil.String()})
 	if len(ids) != 1 || ids[0] != id {
 		t.Fatalf("parseUUIDs = %v, want [%v]", ids, id)
+	}
+}
+
+func TestIssueRunTokenRegistersAndIssues(t *testing.T) {
+	repo := &fakeAgentRepository{}
+	handler := newTestHandler(repo)
+	token, expiresAt, err := handler.IssueRunToken(context.Background(), "sess-1", "run-1", "gpt-5")
+	if err != nil {
+		t.Fatalf("IssueRunToken: %v", err)
+	}
+	if token == "" {
+		t.Fatal("expected a non-empty token")
+	}
+	if !expiresAt.After(time.Now().Add(DefaultTokenTTL - time.Minute)) {
+		t.Fatal("token must carry a fresh TTL")
+	}
+	if repo.registerInput == nil || *repo.registerInput != (store.AgentRunInput{AgentInstanceID: BuiltinInstanceID, SessionID: "sess-1", RunID: "run-1", Model: "gpt-5"}) {
+		t.Fatalf("run registered with unexpected identity: %+v", repo.registerInput)
+	}
+	if _, err := repo.FindUsableToken(context.Background(), token, time.Now()); err != nil {
+		t.Fatalf("issued token must be usable: %v", err)
+	}
+}
+
+func TestIssueRunTokenRotatesPreviousToken(t *testing.T) {
+	repo := &fakeAgentRepository{}
+	handler := newTestHandler(repo)
+	first, _, err := handler.IssueRunToken(context.Background(), "sess-1", "run-1", "gpt-5")
+	if err != nil {
+		t.Fatalf("first IssueRunToken: %v", err)
+	}
+	second, _, err := handler.IssueRunToken(context.Background(), "sess-1", "run-1", "gpt-5")
+	if err != nil {
+		t.Fatalf("second IssueRunToken: %v", err)
+	}
+	if second == first {
+		t.Fatal("reissuance must rotate the token value")
+	}
+	if repo.supersedeCalls < 2 {
+		t.Fatalf("supersedeCalls = %d, want at least 2", repo.supersedeCalls)
+	}
+	if _, err := repo.FindUsableToken(context.Background(), first, time.Now()); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatal("previous token must be superseded by reissuance")
+	}
+	if _, err := repo.FindUsableToken(context.Background(), second, time.Now()); err != nil {
+		t.Fatalf("rotated token must be usable: %v", err)
+	}
+}
+
+func TestIssueRunTokenRequiresIdentifiers(t *testing.T) {
+	repo := &fakeAgentRepository{}
+	handler := newTestHandler(repo)
+	for _, input := range [][3]string{{"", "run-1", "gpt-5"}, {"sess-1", "", "gpt-5"}, {"sess-1", "run-1", ""}} {
+		if _, _, err := handler.IssueRunToken(context.Background(), input[0], input[1], input[2]); err == nil {
+			t.Fatalf("IssueRunToken(%v) must fail on empty identifiers", input)
+		}
+	}
+	if repo.registerInput != nil || repo.createdInput != nil {
+		t.Fatal("nothing should be registered or issued for empty identifiers")
+	}
+}
+
+func TestEndRunRevokesTokens(t *testing.T) {
+	repo := &fakeAgentRepository{}
+	handler := newTestHandler(repo)
+	token, _, err := handler.IssueRunToken(context.Background(), "sess-1", "run-1", "gpt-5")
+	if err != nil {
+		t.Fatalf("IssueRunToken: %v", err)
+	}
+	if err := handler.EndRun(context.Background(), "sess-1", "run-1", "gpt-5"); err != nil {
+		t.Fatalf("EndRun: %v", err)
+	}
+	if repo.endedInput == nil || repo.endedInput.AgentInstanceID != BuiltinInstanceID {
+		t.Fatalf("run ended with unexpected identity: %+v", repo.endedInput)
+	}
+	if _, err := repo.FindUsableToken(context.Background(), token, time.Now()); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatal("token must be unusable after EndRun")
+	}
+}
+
+func TestEndRunRequiresIdentifiers(t *testing.T) {
+	handler := newTestHandler(&fakeAgentRepository{})
+	for _, input := range [][3]string{{"", "run-1", "gpt-5"}, {"sess-1", "", "gpt-5"}, {"sess-1", "run-1", ""}} {
+		if err := handler.EndRun(context.Background(), input[0], input[1], input[2]); err == nil {
+			t.Fatalf("EndRun(%v) must fail on empty identifiers", input)
+		}
 	}
 }
