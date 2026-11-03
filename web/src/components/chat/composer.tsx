@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { ArrowUp, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ClawdPet } from '@/components/chat/clawd-pet'
+import { composerTextareaHeight } from '@/components/chat/composer-height'
 import { filesFromClipboard } from '@/lib/clipboard-files'
 
 type ComposerProps = {
@@ -19,6 +20,8 @@ type ComposerProps = {
   stopButtonClassName?: string
   stopIconClassName?: string
   sendButtonTitle?: string
+  /** 输入框最少展示的行数，自动增高不会低于这个下限（默认 1 行） */
+  minRows?: number
   /** 输入框右上角趴一只会动的小螃蟹，默认开启 */
   mascot?: boolean
 }
@@ -38,6 +41,7 @@ export function Composer({
   stopButtonClassName,
   stopIconClassName,
   sendButtonTitle,
+  minRows = 1,
   mascot = true,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -46,8 +50,8 @@ export function Composer({
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 220)}px`
-  }, [value])
+    el.style.height = `${composerTextareaHeight(el.scrollHeight, minRows)}px`
+  }, [value, minRows])
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -78,7 +82,7 @@ export function Composer({
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={placeholder}
-          rows={1}
+          rows={minRows}
           className="max-h-[220px] w-full resize-none bg-transparent px-1.5 text-[15px] leading-6 text-label outline-none placeholder:text-label-3"
         />
         <div className="mt-1 flex items-center justify-between gap-2">

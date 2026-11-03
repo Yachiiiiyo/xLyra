@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
-import { Folder, Globe, Menu, Paperclip, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
+import { Folder, Globe, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { Composer } from '@/components/chat/composer'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
-import { ModelReasoningPicker } from '@/components/chat/model-reasoning-picker'
+import { AttachmentMenu } from '@/features/playground/components/attachment-menu'
+import { ReasoningSettingsPicker } from '@/features/playground/components/reasoning-settings-picker'
 import { normalizeReasoningEffort, parseGatewayModelReasoning } from '@/lib/reasoning'
 import { attachmentMimeType, normalizeAttachmentDataURL } from '@/lib/attachments'
 import type { ChatAttachment, GatewayModel, ReasoningEffort } from '@/lib/chat-types'
@@ -18,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/components/common/app-logo'
 import { JumpToLatestButton } from '@/components/common/jump-to-latest-button'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
+import { useMobileLayout } from '@/hooks/use-media-query'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { LiquidGlass } from '@/components/glass/liquid-glass'
 import { AgentBackdrop } from '@/features/agent/components/agent-backdrop'
@@ -238,10 +240,10 @@ export function AgentWorkspace() {
   // A just-created session usually has no transcript persisted on the runner yet;
   // skip the reload that follows so the optimistically appended timeline survives.
   const skipTranscriptLoadFor = useRef<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   // 流式贴底跟随：贴底时内容增长自动滚到底，用户滚离阅读时静默不打扰；
   // 打开历史会话 / 发送 / 重放编辑时调用 scrollToBottom 强制跳到底部看最新
   const { scrollRef, scrollToBottom, showJump } = useStickToBottom()
+  const isMobileLayout = useMobileLayout()
 
   const sessions = sessionsQuery.data ?? []
   // 恢复的会话 id 可能已被删除：sessions 列表返回后校验，失效则回新聊天页
@@ -710,6 +712,7 @@ export function AgentWorkspace() {
       canSubmit={canSubmit}
       sendButtonTitle={agentUnavailableReason}
       placeholder={t('agent:chat.inputPlaceholder')}
+      minRows={isMobileLayout ? 2 : 3}
       onPasteFiles={(files) => {
         if (running || editingMessage) return false
         void addAttachments(files)
@@ -717,30 +720,16 @@ export function AgentWorkspace() {
       }}
       controls={
         <>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(event) => {
-              void addAttachments(event.target.files)
-              event.target.value = ''
-            }}
+          <AttachmentMenu
+            kinds={['photo', 'camera', 'file']}
+            onFiles={(files) => void addAttachments(files)}
+            disabled={running || Boolean(editingMessage) || attachments.length >= MAX_ATTACHMENTS}
+            label={t('chat:chat.attach')}
           />
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={running || Boolean(editingMessage) || attachments.length >= MAX_ATTACHMENTS}
-            className="flex h-11 w-11 items-center justify-center rounded-full text-muted-soft transition-colors active:bg-[hsl(var(--surface-subtle))] active:text-foreground disabled:cursor-not-allowed disabled:opacity-40 md:h-8 md:w-8 md:hover:bg-[hsl(var(--surface-subtle))] md:hover:text-foreground"
-            aria-label={t('chat:chat.attach')}
-            title={t('chat:chat.attach')}
-          >
-            <Paperclip className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
             onClick={togglePermissionMode}
-            className="flex h-11 items-center gap-1.5 rounded-full px-2.5 text-xs text-muted-soft transition-colors active:bg-[hsl(var(--surface-subtle))] active:text-foreground md:h-8 md:hover:bg-[hsl(var(--surface-subtle))] md:hover:text-foreground"
+            className="flex h-11 items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 transition-colors active:bg-fill-3 active:text-label md:h-8 md:hover:bg-fill-3 md:hover:text-label"
             aria-label={t('agent:composer.permissionMode')}
             title={permissionMode === 'ask' ? t('agent:composer.permissionAskHint') : t('agent:composer.permissionFullHint')}
           >
@@ -763,11 +752,11 @@ export function AgentWorkspace() {
               ))}
             </div>
           ) : null}
-          {attachmentError ? <p className="px-1 text-xs text-red-500">{attachmentError}</p> : null}
+          {attachmentError ? <p className="px-1 text-footnote text-danger">{attachmentError}</p> : null}
         </div>
       ) : undefined}
       trailingControls={
-        <ModelReasoningPicker
+        <ReasoningSettingsPicker
           models={gatewayModels}
           model={effectiveModel}
           onModelChange={(id) => {
@@ -777,7 +766,7 @@ export function AgentWorkspace() {
           effort={effort}
           onEffortChange={setEffort}
           disabled={gatewayModels.length === 0}
-          modelIconTransparent
+          triggerClassName="max-md:h-11"
         />
       }
     />
