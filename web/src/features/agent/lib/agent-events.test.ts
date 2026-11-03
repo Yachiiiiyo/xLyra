@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   appendUserMessage,
+  canForkFromMessage,
   canReconcileTimeline,
   decidePermission,
   extractEventText,
@@ -408,6 +409,17 @@ describe('reduceAgentEvent', () => {
   })
 })
 
+describe('canForkFromMessage', () => {
+  it('需要这一轮对应的用户消息 id，且会话不在运行中', () => {
+    expect(canForkFromMessage('message-1', false)).toBe(true)
+    expect(canForkFromMessage(undefined, false)).toBe(false)
+    expect(canForkFromMessage('', false)).toBe(false)
+    expect(canForkFromMessage(null, false)).toBe(false)
+    expect(canForkFromMessage('message-1', true)).toBe(false)
+    expect(canForkFromMessage(undefined, true)).toBe(false)
+  })
+})
+
 describe('timelineFromTranscript', () => {
   it('restores user attachments from the persisted transcript', () => {
     const timeline = timelineFromTranscript([
@@ -449,6 +461,67 @@ describe('timelineFromTranscript', () => {
       text: '重放问题',
       attachments: [{ name: 'report.pdf', mimeType: 'application/pdf' }],
     })
+  })
+
+  it('maps user message references from the transcript', () => {
+    const timeline = timelineFromTranscript([
+      {
+        type: 'message',
+        message_id: 'message-ref',
+        message: { role: 'user', content: '结合那个会话看看' },
+        references: [
+          { session_id: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' },
+          { session_id: 'fedcba98-7654-3210-fedc-ba9876543210' },
+          { title: '缺 session_id 的条目被丢弃' },
+        ],
+      },
+    ])
+    expect(timeline[0]).toMatchObject({
+      kind: 'user',
+      references: [
+        { sessionId: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' },
+        { sessionId: 'fedcba98-7654-3210-fedc-ba9876543210', title: '' },
+      ],
+    })
+  })
+
+  it('maps references nested under message (the backend shape)', () => {
+    const timeline = timelineFromTranscript([
+      {
+        type: 'message',
+        message_id: 'message-ref-nested',
+        message: { role: 'user', content: '看看另一个会话', references: [{ session_id: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' }] },
+      },
+    ])
+    expect(timeline[0]).toMatchObject({
+      kind: 'user',
+      references: [{ sessionId: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' }],
+    })
+  })
+
+  it('keeps references when appending a live user message', () => {
+    const timeline = appendUserMessage([], '问题', 'message-1', 1_000, undefined, [{ sessionId: 'session-a', title: '会话 A' }])
+    expect(timeline[0]).toMatchObject({ kind: 'user', references: [{ sessionId: 'session-a', title: '会话 A' }] })
+    // 无引用时不落字段
+    expect(appendUserMessage([], '问题')[0]).not.toHaveProperty('references')
+  })
+
+  it('preserves references when replacing a user message for replay', () => {
+    const initial = timelineFromTranscript([{
+      type: 'message',
+      message_id: 'message-ref',
+      message: { role: 'user', content: '原始问题' },
+      references: [{ session_id: 'session-a', title: '会话 A' }],
+    }])
+    // 未显式传 references：沿用原消息的引用
+    const preserved = replaceFromUserMessage(initial, 'message-ref', '重放问题')
+    expect(preserved[0]).toMatchObject({ kind: 'user', references: [{ sessionId: 'session-a', title: '会话 A' }] })
+    // 显式传空数组：编辑态移除了全部引用
+    const removed = replaceFromUserMessage(initial, 'message-ref', '重放问题', undefined, [])
+    expect(removed[0]).not.toHaveProperty('references')
+    // 显式传新引用：覆盖原消息的引用
+    const replaced = replaceFromUserMessage(initial, 'message-ref', '重放问题', undefined, [{ sessionId: 'session-b', title: '会话 B' }])
+    expect(replaced[0]).toMatchObject({ references: [{ sessionId: 'session-b', title: '会话 B' }] })
   })
 
   it('maps transcript entries to a closed timeline', () => {

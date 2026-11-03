@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
-import { Folder, Globe, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
+import { Folder, Globe, Link2, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { Composer } from '@/components/chat/composer'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
@@ -11,9 +11,11 @@ import { ReasoningSettingsPicker } from '@/features/playground/components/reason
 import { normalizeReasoningEffort, parseGatewayModelReasoning } from '@/lib/reasoning'
 import { attachmentMimeType, normalizeAttachmentDataURL } from '@/lib/attachments'
 import type { ChatAttachment, GatewayModel, ReasoningEffort } from '@/lib/chat-types'
+import { APIError } from '@/lib/http'
 import { newId } from '@/lib/id'
 import { AgentSidebar } from '@/features/agent/components/agent-sidebar'
 import { AgentSettingsDialog } from '@/features/agent/components/agent-settings-dialog'
+import { AgentReferenceDialog } from '@/features/agent/components/agent-reference-dialog'
 import { AgentTimeline } from '@/features/agent/components/agent-timeline'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/components/common/app-logo'
@@ -47,6 +49,7 @@ import {
   fetchAgentRuntimeSettings,
   fetchAgentTranscript,
   followAgentEvents,
+  forkAgentSession,
   grantAgentAccess,
   listAgentSessions,
   retryAgentSession,
@@ -54,6 +57,7 @@ import {
   stopAgentSession,
 } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
+import { MAX_SESSION_REFERENCES, referenceChipLabel, type AgentSessionReference } from '@/features/agent/lib/references'
 import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, loadLastSessionId, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -76,6 +80,7 @@ type EditReplaySnapshot = {
   draft: string
   attachments: ChatAttachment[]
   attachmentError: string | null
+  references: AgentSessionReference[]
   editingMessage: { messageId: string } | null
 }
 
@@ -232,6 +237,9 @@ export function AgentWorkspace() {
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [references, setReferences] = useState<AgentSessionReference[]>([])
+  const [referenceOpen, setReferenceOpen] = useState(false)
+  const [forking, setForking] = useState(false)
   const [running, setRunning] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [capabilityNoticeDismissed, setCapabilityNoticeDismissed] = useState(loadCapabilityNoticeDismissed)
@@ -436,7 +444,7 @@ export function AgentWorkspace() {
   })
 
   const sendMutation = useMutation({
-    mutationFn: (input: { content: string; files: ChatAttachment[] }) => createAgentSession({
+    mutationFn: (input: { content: string; files: ChatAttachment[]; references: string[] }) => createAgentSession({
       content: input.content,
       model: effectiveModel ?? undefined,
       session_id: selectedId ?? undefined,
@@ -445,6 +453,7 @@ export function AgentWorkspace() {
       attachments: input.files.length
         ? input.files.map((file) => ({ name: file.name, mime_type: file.mimeType, data_url: file.dataURL }))
         : undefined,
+      references: input.references.length ? input.references : undefined,
     }),
     onSuccess: async ({ session_id, message_id }) => {
       skipTranscriptLoadFor.current = session_id
@@ -452,6 +461,7 @@ export function AgentWorkspace() {
       setActiveId(session_id)
       setNewSession(false)
       setRunning(true)
+      setReferences([])
       if (message_id) {
         setTimeline((current) => {
           const next = current.slice()
@@ -474,7 +484,7 @@ export function AgentWorkspace() {
   })
 
   const retryMutation = useMutation({
-    mutationFn: (input: { messageId: string; content: string; files: ChatAttachment[] }) => {
+    mutationFn: (input: { messageId: string; content: string; files: ChatAttachment[]; references: string[] }) => {
       if (!selectedId) throw new Error('会话不存在')
       return retryAgentSession(selectedId, {
         message_id: input.messageId,
@@ -485,12 +495,14 @@ export function AgentWorkspace() {
         attachments: input.files.length
           ? input.files.map((file) => ({ name: file.name, mime_type: file.mimeType, data_url: file.dataURL }))
           : undefined,
+        references: input.references.length ? input.references : undefined,
       })
     },
     onSuccess: async ({ session_id, message_id }, variables) => {
       retryTimelineBeforeEdit.current = null
       setEditingMessage(null)
       setRunning(true)
+      setReferences([])
       if (message_id) {
         setTimeline((current) => current.map((item) => item.kind === 'user' && (item.messageId === variables.messageId || item.id === variables.messageId)
           ? { ...item, id: message_id, messageId: message_id }
@@ -506,6 +518,7 @@ export function AgentWorkspace() {
         setDraft(snapshot.draft)
         setAttachments(snapshot.attachments)
         setAttachmentError(snapshot.attachmentError)
+        setReferences(snapshot.references)
         setEditingMessage(snapshot.editingMessage)
         retryTimelineBeforeEdit.current = null
       }
@@ -547,6 +560,8 @@ export function AgentWorkspace() {
     setEditReplayConfirmation(null)
     retryTimelineBeforeEdit.current = null
     setAttachments([])
+    setReferences([])
+    setReferenceOpen(false)
     setRunning(false)
     setModel(null) // fall back to the globally last-used model from server memory
   }
@@ -578,6 +593,26 @@ export function AgentWorkspace() {
     if (sessionId === selectedId) createNew()
   }
 
+  /** 分叉会话：整会话（无 messageId）或到某一轮为止；成功后切换到新会话 */
+  async function handleFork(sessionId: string, messageId?: string) {
+    if (forking) return
+    setForking(true)
+    try {
+      const forked = await forkAgentSession(sessionId, messageId)
+      await queryClient.invalidateQueries({ queryKey: ['agent', 'sessions'] })
+      handleSelect(forked.session_id)
+      toast.success(t('agent:chat.forkCreated'), { description: t('agent:chat.forkCreatedDesc') })
+    } catch (error) {
+      if (error instanceof APIError && error.status === 409) {
+        toast.error(t('agent:chat.forkConflict'))
+      } else {
+        toast.error(t('agent:chat.forkFailed'), { description: error instanceof Error ? error.message : String(error) })
+      }
+    } finally {
+      setForking(false)
+    }
+  }
+
   function handleRevokeAccess(sessionId: string) {
     void revokeAgentAccess(sessionId).then(() => {
       toast.success(t('agent:sidebar.revoked'))
@@ -606,12 +641,13 @@ export function AgentWorkspace() {
       return
     }
     const files = attachments
+    const messageReferences = references
     scrollToBottom()
-    setTimeline((current) => appendUserMessage(current, content, undefined, Date.now(), files))
+    setTimeline((current) => appendUserMessage(current, content, undefined, Date.now(), files, messageReferences))
     setDraft('')
     setAttachments([])
     setAttachmentError(null)
-    sendMutation.mutate({ content, files })
+    sendMutation.mutate({ content, files, references: messageReferences.map((reference) => reference.sessionId) })
   }
 
   function confirmEditReplay() {
@@ -619,29 +655,34 @@ export function AgentWorkspace() {
     const { messageId, content } = editReplayConfirmation
     const original = timeline.find((item) => item.kind === 'user' && (item.messageId === messageId || item.id === messageId))
     const files = original?.kind === 'user' ? original.attachments ?? [] : attachments
+    const messageReferences = references
     retryTimelineBeforeEdit.current = {
       timeline,
       draft,
       attachments,
       attachmentError,
+      references,
       editingMessage,
     }
     scrollToBottom()
-    setTimeline((current) => replaceFromUserMessage(current, messageId, content, files))
+    setTimeline((current) => replaceFromUserMessage(current, messageId, content, files, messageReferences))
     setEditReplayConfirmation(null)
     setEditingMessage(null)
     setDraft('')
     setAttachments([])
     setAttachmentError(null)
-    retryMutation.mutate({ messageId, content, files })
+    retryMutation.mutate({ messageId, content, files, references: messageReferences.map((reference) => reference.sessionId) })
   }
 
   function handleUserEdit(messageId: string, text: string) {
     if (awaiting) return
+    const original = timeline.find((item) => item.kind === 'user' && (item.messageId === messageId || item.id === messageId))
     setEditingMessage({ messageId })
     setDraft(text)
     setAttachments([])
     setAttachmentError(null)
+    // 编辑重发沿用原消息的引用，编辑态可在 chip 区移除
+    setReferences(original?.kind === 'user' ? original.references ?? [] : [])
   }
 
   function handlePermissionDecision(request: AgentPermissionRequest, decision: 'allow' | 'deny' | 'allow_session') {
@@ -741,6 +782,17 @@ export function AgentWorkspace() {
           />
           <button
             type="button"
+            onClick={() => setReferenceOpen(true)}
+            disabled={references.length >= MAX_SESSION_REFERENCES || Boolean(editingMessage) || running}
+            className="flex h-11 items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 transition-colors active:bg-fill-3 active:text-label disabled:cursor-not-allowed disabled:opacity-40 md:h-8 md:hover:bg-fill-3 md:hover:text-label"
+            aria-label={t('agent:reference.action')}
+            title={t('agent:reference.hint')}
+          >
+            <Link2 className="h-4 w-4" />
+            <span className="hidden sm:inline">{t('agent:reference.action')}</span>
+          </button>
+          <button
+            type="button"
             onClick={togglePermissionMode}
             className="flex h-11 items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 transition-colors active:bg-fill-3 active:text-label md:h-8 md:hover:bg-fill-3 md:hover:text-label"
             aria-label={t('agent:composer.permissionMode')}
@@ -751,8 +803,28 @@ export function AgentWorkspace() {
           </button>
         </>
       }
-      attachments={attachments.length > 0 || attachmentError ? (
+      attachments={attachments.length > 0 || attachmentError || references.length > 0 ? (
         <div className="space-y-2">
+          {references.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {references.map((reference) => (
+                <span
+                  key={reference.sessionId}
+                  className="flex items-center gap-1 rounded-full border border-separator bg-fill-3 py-0.5 pl-2.5 pr-1 text-footnote text-label-2"
+                >
+                  <span className="max-w-56 truncate" title={reference.sessionId}>{referenceChipLabel(reference)}</span>
+                  <button
+                    type="button"
+                    onClick={() => setReferences((current) => current.filter((item) => item.sessionId !== reference.sessionId))}
+                    className="rounded-full p-0.5 text-label-3 transition-colors hover:bg-fill-2 hover:text-label"
+                    aria-label={t('agent:reference.remove')}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          ) : null}
           {attachments.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {attachments.map((attachment) => (
@@ -834,6 +906,7 @@ export function AgentWorkspace() {
     onSelect={handleSelect}
     onNew={createNew}
     onDelete={handleDelete}
+    onFork={(id) => void handleFork(id)}
     onRevokeAccess={handleRevokeAccess}
     onOpenSettings={() => setSettingsOpen(true)}
   />
@@ -867,6 +940,7 @@ export function AgentWorkspace() {
               createNew()
             }}
             onDelete={handleDelete}
+            onFork={(id) => void handleFork(id)}
             onRevokeAccess={handleRevokeAccess}
             onOpenSettings={() => {
               setMobileSidebarOpen(false)
@@ -887,6 +961,22 @@ export function AgentWorkspace() {
           onCancel={() => setEditReplayConfirmation(null)}
           onConfirm={confirmEditReplay}
         />
+        {referenceOpen ? (
+          <AgentReferenceDialog
+            open
+            onOpenChange={(next) => { if (!next) setReferenceOpen(false) }}
+            sessions={sessions}
+            currentId={selectedId}
+            selectedIds={references.map((reference) => reference.sessionId)}
+            onSelect={(reference) => {
+              setReferences((current) =>
+                current.some((item) => item.sessionId === reference.sessionId)
+                  ? current
+                  : [...current, reference].slice(0, MAX_SESSION_REFERENCES))
+              setReferenceOpen(false)
+            }}
+          />
+        ) : null}
         {/* 侧栏与主程序同款：浮动 Liquid Glass 面板，280 宽、距窗口 16、圆角 24 */}
         <LiquidGlass
           as="aside"
@@ -905,7 +995,15 @@ export function AgentWorkspace() {
             <div className="relative min-h-0 flex-1">
               <div ref={scrollRef} className="h-full overflow-y-auto">
                 <div className="mx-auto max-w-3xl px-4 pb-6 pt-16">
-                  <AgentTimeline items={timeline} onPermissionDecision={handlePermissionDecision} onUserEdit={handleUserEdit} />
+                  <AgentTimeline
+                    items={timeline}
+                    running={running}
+                    sessions={sessions}
+                    onPermissionDecision={handlePermissionDecision}
+                    onUserEdit={handleUserEdit}
+                    onFork={selectedId ? (messageId) => void handleFork(selectedId, messageId) : undefined}
+                    onOpenReference={handleSelect}
+                  />
                   {waitingReply ? <WaitingIndicator state={waitingOrbState} /> : null}
                 </div>
               </div>

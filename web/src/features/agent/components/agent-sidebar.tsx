@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { useTranslation } from 'react-i18next'
-import { Copy, Ellipsis, MoveLeft, Plus, Settings2, ShieldOff, Trash2 } from 'lucide-react'
+import { Copy, Ellipsis, GitBranch, MoveLeft, Plus, Settings2, ShieldOff, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
 import { toast } from '@/lib/toast'
@@ -17,11 +17,12 @@ type AgentSidebarProps = {
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onFork: (id: string) => void
   onRevokeAccess: (id: string) => void
   onOpenSettings: () => void
 }
 
-export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onRevokeAccess, onOpenSettings }: AgentSidebarProps) {
+export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onFork, onRevokeAccess, onOpenSettings }: AgentSidebarProps) {
   const { t, i18n } = useTranslation('agent')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
@@ -62,9 +63,11 @@ export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, 
               revokeLabel={revokeAccessLabel(session, t)}
               deleteLabel={t('sidebar.delete')}
               copyIdLabel={t('sidebar.copyId')}
+              forkLabel={t('sidebar.fork')}
               idCopiedLabel={t('sidebar.idCopied')}
               onSelect={onSelect}
               onDelete={setPendingDelete}
+              onFork={onFork}
               onRevoke={onRevokeAccess}
             />
           ))
@@ -118,9 +121,11 @@ function SessionRow({
   revokeLabel,
   deleteLabel,
   copyIdLabel,
+  forkLabel,
   idCopiedLabel,
   onSelect,
   onDelete,
+  onFork,
   onRevoke,
 }: {
   session: AgentSession
@@ -131,9 +136,11 @@ function SessionRow({
   revokeLabel: string
   deleteLabel: string
   copyIdLabel: string
+  forkLabel: string
   idCopiedLabel: string
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onFork: (id: string) => void
   onRevoke: (id: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -193,6 +200,18 @@ function SessionRow({
             >
               <Copy className="h-4 w-4 shrink-0 text-current" />
               {copyIdLabel}
+            </button>
+            <button
+              type="button"
+              data-agent-fork="true"
+              onClick={() => {
+                setMenuOpen(false)
+                onFork(session.session_id)
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-label-2 transition-colors hover:bg-fill-4 hover:text-label"
+            >
+              <GitBranch className="h-4 w-4 shrink-0 text-current" />
+              {forkLabel}
             </button>
             {revokeLabel ? (
               <button

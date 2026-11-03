@@ -10,7 +10,8 @@
     "revokeAccess": "Revoke auto-allow in this chat ({{tools}})",
     "revoked": "Auto-allow revoked for this chat",
     "copyId": "Copy session ID",
-    "idCopied": "Session ID copied"
+    "idCopied": "Session ID copied",
+    "fork": "Duplicate as new chat"
   },
   "header": {
     "back": "Back"
@@ -31,7 +32,13 @@
     "unavailable": "Agent is unavailable. Check its runtime environment and try again.",
     "readOnlyNotice": "Process isolation is unavailable in this environment. Agent is running with read-only tools.",
     "noBashNotice": "The command sandbox is unavailable, so bash is disabled.",
-    "dismissNotice": "Dismiss notice"
+    "dismissNotice": "Dismiss notice",
+    "forkFromHere": "Fork into a new session from here",
+    "forkCreated": "Forked session created",
+    "forkCreatedDesc": "Only the conversation history was copied; workspace files were not",
+    "forkFailed": "Failed to create the forked session",
+    "forkConflict": "This session is running. Try again later.",
+    "referencedTag": "Referenced: {{title}}"
   },
   "composer": {
     "permissionMode": "Permission mode",
@@ -50,6 +57,17 @@
     "fullConfirmRisk": "This carries risks such as sensitive data loss or leaks and prompt injection. You can turn it off at any time.",
     "fullConfirmCancel": "Cancel",
     "fullConfirmAccept": "Confirm"
+  },
+  "reference": {
+    "action": "Reference chat",
+    "hint": "Include context from another chat",
+    "dialogTitle": "Reference chat",
+    "dialogHint": "The referenced chat's history is sent along with this message as context.",
+    "searchPlaceholder": "Search titles or paste a session ID",
+    "useId": "Use this ID",
+    "empty": "No chats to reference yet",
+    "noMatch": "No matching chats",
+    "remove": "Remove reference"
   },
   "work": {
     "running": "Working…",

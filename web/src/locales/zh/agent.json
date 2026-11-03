@@ -10,7 +10,8 @@
     "revokeAccess": "撤销本会话的自动允许（{{tools}}）",
     "revoked": "已撤销本会话的自动允许",
     "copyId": "复制会话 ID",
-    "idCopied": "已复制会话 ID"
+    "idCopied": "已复制会话 ID",
+    "fork": "复制为新会话"
   },
   "header": {
     "back": "返回"
@@ -31,7 +32,13 @@
     "unavailable": "Agent 当前不可用，请检查运行环境后重试。",
     "readOnlyNotice": "当前环境不支持进程隔离，Agent 以只读工具运行。",
     "noBashNotice": "命令沙箱不可用，bash 已关闭。",
-    "dismissNotice": "关闭提示"
+    "dismissNotice": "关闭提示",
+    "forkFromHere": "从这里分叉为新会话",
+    "forkCreated": "已创建分叉会话",
+    "forkCreatedDesc": "仅复制了对话历史，未复制工作区文件",
+    "forkFailed": "创建分叉会话失败",
+    "forkConflict": "该会话正在运行，请稍后再试",
+    "referencedTag": "引用了：{{title}}"
   },
   "composer": {
     "permissionMode": "权限模式",
@@ -50,6 +57,17 @@
     "fullConfirmRisk": "这会带来敏感数据丢失或泄露、提示注入等风险。你可以随时将其关闭。",
     "fullConfirmCancel": "取消",
     "fullConfirmAccept": "确认"
+  },
+  "reference": {
+    "action": "引用会话",
+    "hint": "引用其他会话的上下文",
+    "dialogTitle": "引用会话",
+    "dialogHint": "被引用会话的对话历史会作为本条消息的上下文一并发送。",
+    "searchPlaceholder": "搜索标题或粘贴会话 ID",
+    "useId": "使用此 ID",
+    "empty": "暂无可引用的会话",
+    "noMatch": "没有匹配的会话",
+    "remove": "移除引用"
   },
   "work": {
     "running": "正在处理…",

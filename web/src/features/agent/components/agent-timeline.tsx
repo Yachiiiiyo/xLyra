@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Copy, FilePenLine, FileText, Globe, Info, LoaderCircle, Pencil, Search, ShieldAlert, TerminalSquare, Wrench } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Copy, FilePenLine, FileText, GitBranch, Globe, Info, LoaderCircle, Pencil, Search, ShieldAlert, TerminalSquare, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
@@ -8,29 +8,62 @@ import { MessageAction } from '@/components/chat/message-actions'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import type { ChatAttachment } from '@/lib/chat-types'
+import type { AgentSession } from '@/features/agent/api/agent'
+import { shortSessionId, type AgentSessionReference } from '@/features/agent/lib/references'
 import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/relative-time'
-import { runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { canForkFromMessage, runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
+  /** 当前会话是否在运行：运行中不提供「从这里分叉」入口 */
+  running?: boolean
+  /** 会话列表：判断被引用的会话是否还存在（存在才可点击跳转） */
+  sessions?: AgentSession[]
   onPermissionDecision?: (request: AgentPermissionRequest, decision: 'allow' | 'deny' | 'allow_session') => void
   onUserEdit?: (messageId: string, text: string) => void
+  onFork?: (messageId: string) => void
+  onOpenReference?: (sessionId: string) => void
 }
 
-export function AgentTimeline({ items, onPermissionDecision, onUserEdit }: AgentTimelineProps) {
+export function AgentTimeline({ items, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference }: AgentTimelineProps) {
   const lastUserIndex = items.reduce((index, item, current) => item.kind === 'user' ? current : index, -1)
+  const sessionIds = useMemo(() => new Set((sessions ?? []).map((session) => session.session_id)), [sessions])
+  // 分叉入口需要「这一轮对应的用户消息 id」：取时间线里紧邻当前 run 之前的 user 项
+  const forkMessageIds = useMemo(() => items.map((item, index) => {
+    if (item.kind !== 'run') return undefined
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const candidate = items[i]
+      if (candidate?.kind === 'user') return candidate.messageId
+    }
+    return undefined
+  }), [items])
   return (
     <div className="space-y-6">
       {items.map((item, index) => (
         item.kind === 'user'
-          ? <UserMessage key={item.id} text={item.text} attachments={item.attachments} editable={index === lastUserIndex && Boolean(item.messageId) && Boolean(onUserEdit)} onEdit={item.messageId && onUserEdit ? () => onUserEdit(item.messageId!, item.text) : undefined} />
-          : <RunBlock key={item.id} run={item.run} onPermissionDecision={onPermissionDecision} />
+          ? <UserMessage
+              key={item.id}
+              text={item.text}
+              attachments={item.attachments}
+              references={item.references}
+              referenceExists={sessionIds}
+              onOpenReference={onOpenReference}
+              editable={index === lastUserIndex && Boolean(item.messageId) && Boolean(onUserEdit)}
+              onEdit={item.messageId && onUserEdit ? () => onUserEdit(item.messageId!, item.text) : undefined}
+            />
+          : <RunBlock
+              key={item.id}
+              run={item.run}
+              forkMessageId={canForkFromMessage(forkMessageIds[index], Boolean(running)) ? forkMessageIds[index] : undefined}
+              onFork={onFork}
+              onPermissionDecision={onPermissionDecision}
+            />
       ))}
     </div>
   )
 }
 
-function UserMessage({ text, attachments, editable, onEdit }: { text: string; attachments?: ChatAttachment[]; editable?: boolean; onEdit?: () => void }) {
+function UserMessage({ text, attachments, references, referenceExists, onOpenReference, editable, onEdit }: { text: string; attachments?: ChatAttachment[]; references?: AgentSessionReference[]; referenceExists?: Set<string>; onOpenReference?: (sessionId: string) => void; editable?: boolean; onEdit?: () => void }) {
   const { t } = useTranslation(['agent', 'chat'])
   return (
     <div className="group flex flex-col items-end gap-1">
@@ -42,6 +75,33 @@ function UserMessage({ text, attachments, editable, onEdit }: { text: string; at
       <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl bg-[hsl(var(--surface-selected))] px-4 py-3 text-sm leading-6 text-foreground">
         {text}
       </div>
+      {references?.length ? (
+        <div className="flex max-w-[82%] flex-wrap justify-end gap-1.5">
+          {references.map((reference) => {
+            const label = t('agent:chat.referencedTag', { title: reference.title || shortSessionId(reference.sessionId) })
+            const openable = Boolean(onOpenReference) && (referenceExists?.has(reference.sessionId) ?? false)
+            return openable ? (
+              <button
+                key={reference.sessionId}
+                type="button"
+                title={reference.sessionId}
+                onClick={() => onOpenReference?.(reference.sessionId)}
+                className="max-w-64 truncate rounded-full border border-separator bg-fill-3 px-2.5 py-0.5 text-xs text-label-2 transition-colors hover:text-label"
+              >
+                {label}
+              </button>
+            ) : (
+              <span
+                key={reference.sessionId}
+                title={reference.sessionId}
+                className="max-w-64 truncate rounded-full border border-separator bg-fill-3 px-2.5 py-0.5 text-xs text-label-3"
+              >
+                {label}
+              </span>
+            )
+          })}
+        </div>
+      ) : null}
       <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
         <CopyMessageAction text={text} />
         {editable && onEdit ? (
@@ -139,7 +199,17 @@ function buildRunFlow(run: AgentRun): RunFlowItem[] {
   return items
 }
 
-function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
+function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: (messageId: string) => void }) {
+  const { t } = useTranslation('agent')
+  if (!onFork) return null
+  return (
+    <MessageAction label={t('chat.forkFromHere')} onClick={() => onFork(messageId)}>
+      <GitBranch className="h-3.5 w-3.5" />
+    </MessageAction>
+  )
+}
+
+function RunBlock({ run, forkMessageId, onFork, onPermissionDecision }: { run: AgentRun; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
   const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
@@ -225,6 +295,7 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
             // 桌面端 hover 回复文本时显现，移动端无 hover 保持常显
             <div className="flex items-center gap-2 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
               <CopyMessageAction text={replyText} />
+              {forkMessageId ? <ForkMessageAction messageId={forkMessageId} onFork={onFork} /> : null}
               <MessageTime at={run.endedAt ?? run.startedAt} />
             </div>
           ) : null}
@@ -233,6 +304,7 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
         // 回复文本未能提升为最终输出时（如出错 run 的部分输出在过程区），复制入口单独常显
         <div className="flex items-center gap-2">
           <CopyMessageAction text={replyText} />
+          {forkMessageId ? <ForkMessageAction messageId={forkMessageId} onFork={onFork} /> : null}
           <MessageTime at={run.endedAt ?? run.startedAt} />
         </div>
       ) : null}

@@ -294,7 +294,7 @@ export async function fetchAgentModelMemory(): Promise<AgentModelMemory> {
   return response.data ?? { default_model: '', sessions: {} }
 }
 
-export async function createAgentSession(input: { content: string; model?: string; session_id?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'full'; attachments?: AgentAttachment[] }) {
+export async function createAgentSession(input: { content: string; model?: string; session_id?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'full'; attachments?: AgentAttachment[]; references?: string[] }) {
   const response = await apiFetch<{ data: { session_id: string; message_id?: string; run_id: string } }>('/api/v1/agent/sessions', {
     method: 'POST',
     body: input,
@@ -302,7 +302,7 @@ export async function createAgentSession(input: { content: string; model?: strin
   return response.data
 }
 
-export async function retryAgentSession(sessionId: string, input: { message_id: string; content?: string; model?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'full'; attachments?: AgentAttachment[] }) {
+export async function retryAgentSession(sessionId: string, input: { message_id: string; content?: string; model?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'full'; attachments?: AgentAttachment[]; references?: string[] }) {
   const response = await apiFetch<{ data: { session_id: string; message_id?: string; run_id: string } }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/retry`, {
     method: 'POST',
     body: input,
@@ -315,9 +315,16 @@ export async function fetchAgentTranscript(sessionId: string) {
   return response.data?.entries ?? []
 }
 
+export type AgentTranscriptReference = {
+  session_id?: string
+  title?: string
+}
+
 export type AgentTranscriptEntry = {
   type?: string
   message_id?: string
+  /** 用户消息条目引用的其他会话 */
+  references?: AgentTranscriptReference[]
   /** Early flat-format fields (compat). */
   role?: string
   content?: string
@@ -328,6 +335,8 @@ export type AgentTranscriptEntry = {
     role?: 'system' | 'user' | 'assistant' | 'tool'
     content?: string
     attachments?: Array<{ name: string; mime_type: string; data_url?: string }>
+    /** 用户消息引用的其他会话(后端放在 message 里,与 attachments 同级) */
+    references?: AgentTranscriptReference[]
     tool_calls?: Array<{ id: string; name: string; raw_arguments: string }>
     tool_call_id?: string
     name?: string
@@ -349,6 +358,21 @@ export type AgentTranscriptEntry = {
   scope?: 'once' | 'session'
   /** type === 'escalation'：会话内允许自动放行 */
   auto?: boolean
+}
+
+export type AgentForkedSession = {
+  session_id: string
+  title?: string
+  workspace_copied?: boolean
+}
+
+/** 分叉会话：message_id 为空表示整段会话，否则复制到该用户消息所在一轮结束为止 */
+export async function forkAgentSession(sessionId: string, messageId?: string) {
+  const response = await apiFetch<{ data: AgentForkedSession }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/fork`, {
+    method: 'POST',
+    body: messageId ? { message_id: messageId } : {},
+  })
+  return response.data
 }
 
 export async function stopAgentSession(sessionId: string) {

@@ -10,7 +10,8 @@
     "revokeAccess": "このチャットの自動許可を取り消す（{{tools}}）",
     "revoked": "このチャットの自動許可を取り消しました",
     "copyId": "セッション ID をコピー",
-    "idCopied": "セッション ID をコピーしました"
+    "idCopied": "セッション ID をコピーしました",
+    "fork": "新しいチャットとして複製"
   },
   "header": {
     "back": "戻る"
@@ -31,7 +32,13 @@
     "unavailable": "Agent は現在利用できません。実行環境を確認して再試行してください。",
     "readOnlyNotice": "この環境ではプロセス分離を利用できないため、Agent は読み取り専用ツールで実行されています。",
     "noBashNotice": "コマンドサンドボックスを利用できないため、bash は無効です。",
-    "dismissNotice": "通知を閉じる"
+    "dismissNotice": "通知を閉じる",
+    "forkFromHere": "ここから新しいセッションにフォーク",
+    "forkCreated": "フォークセッションを作成しました",
+    "forkCreatedDesc": "会話履歴のみコピーされ、ワークスペースのファイルはコピーされていません",
+    "forkFailed": "フォークセッションの作成に失敗しました",
+    "forkConflict": "このセッションは実行中です。後でもう一度お試しください。",
+    "referencedTag": "参照：{{title}}"
   },
   "composer": {
     "permissionMode": "権限モード",
@@ -50,6 +57,17 @@
     "fullConfirmRisk": "機密データの損失や漏洩、プロンプトインジェクションなどのリスクがあります。いつでもオフにできます。",
     "fullConfirmCancel": "キャンセル",
     "fullConfirmAccept": "確認"
+  },
+  "reference": {
+    "action": "チャットを参照",
+    "hint": "他のチャットのコンテキストを参照",
+    "dialogTitle": "チャットを参照",
+    "dialogHint": "参照したチャットの履歴が、このメッセージのコンテキストとして一緒に送信されます。",
+    "searchPlaceholder": "タイトルを検索するかセッション ID を貼り付け",
+    "useId": "この ID を使用",
+    "empty": "参照できるチャットはまだありません",
+    "noMatch": "一致するチャットがありません",
+    "remove": "参照を削除"
   },
   "work": {
     "running": "処理中…",

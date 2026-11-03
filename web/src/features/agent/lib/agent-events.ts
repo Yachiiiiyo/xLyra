@@ -1,5 +1,6 @@
 import type { AgentTranscriptEntry } from '@/features/agent/api/agent'
 import type { ChatAttachment } from '@/lib/chat-types'
+import type { AgentSessionReference } from '@/features/agent/lib/references'
 
 export type AgentStepStatus = 'running' | 'done' | 'error'
 export type AgentRunStatus = 'running' | 'done' | 'error' | 'cancelled'
@@ -48,7 +49,7 @@ export type AgentRun = {
 }
 
 export type AgentTimelineItem =
-  | { kind: 'user'; id: string; text: string; messageId?: string; createdAt: number; attachments?: ChatAttachment[] }
+  | { kind: 'user'; id: string; text: string; messageId?: string; createdAt: number; attachments?: ChatAttachment[]; references?: AgentSessionReference[] }
   | { kind: 'run'; id: string; run: AgentRun }
 
 export type AgentTimeline = AgentTimelineItem[]
@@ -126,6 +127,22 @@ function pickDelta(record: Record<string, unknown> | null): string {
 function parseTimestamp(value?: string): number {
   const parsed = value ? Date.parse(value) : NaN
   return Number.isFinite(parsed) ? parsed : Date.now()
+}
+
+/** 后端把引用放在 message 里(与 attachments 同级);兼容放在条目顶层的写法。run_error 的 message 是字符串。 */
+function transcriptReferences(entry: AgentTranscriptEntry): AgentTranscriptEntry['references'] {
+  const message = entry.message
+  return (typeof message === 'object' && message !== null ? message.references : undefined) ?? entry.references
+}
+
+/** 转录里用户消息的 references 映射为时间线 user 项的引用；缺 session_id 的条目丢弃 */
+function parseTranscriptReferences(references: AgentTranscriptEntry['references']): AgentSessionReference[] | undefined {
+  if (!Array.isArray(references) || references.length === 0) return undefined
+  const mapped = references.flatMap((item) => {
+    const sessionId = typeof item?.session_id === 'string' ? item.session_id : ''
+    return sessionId ? [{ sessionId, title: typeof item?.title === 'string' ? item.title : '' }] : []
+  })
+  return mapped.length ? mapped : undefined
 }
 
 export function extractEventText(data: unknown): string {
@@ -275,19 +292,25 @@ export function runElapsedMs(run: AgentRun, now: number): number {
   return (run.elapsedMs ?? 0) + Math.max(0, now - run.startedAt - paused)
 }
 
-export function appendUserMessage(timeline: AgentTimeline, text: string, messageId?: string, createdAt = Date.now(), attachments?: ChatAttachment[]): AgentTimeline {
+export function appendUserMessage(timeline: AgentTimeline, text: string, messageId?: string, createdAt = Date.now(), attachments?: ChatAttachment[], references?: AgentSessionReference[]): AgentTimeline {
   // 上一轮若因丢失终态事件仍停留在 running，先就地落定：否则它的计时会跨轮
   // 继续走，看起来像「上一条消息的用时被算到了新消息的时间」
   const settled = updateLastRun(timeline, (run) => (run.status === 'running' ? closeRun(run, 'done') : run))
-  return [...settled, { kind: 'user', id: messageId ?? nextId('user'), messageId, text, createdAt, ...(attachments?.length ? { attachments } : {}) }]
+  return [...settled, { kind: 'user', id: messageId ?? nextId('user'), messageId, text, createdAt, ...(attachments?.length ? { attachments } : {}), ...(references?.length ? { references } : {}) }]
 }
 
-export function replaceFromUserMessage(timeline: AgentTimeline, messageId: string, text: string, attachments?: ChatAttachment[]): AgentTimeline {
+export function replaceFromUserMessage(timeline: AgentTimeline, messageId: string, text: string, attachments?: ChatAttachment[], references?: AgentSessionReference[]): AgentTimeline {
   const index = timeline.findIndex((item) => item.kind === 'user' && (item.messageId === messageId || item.id === messageId))
-  if (index < 0) return appendUserMessage(timeline, text, messageId, Date.now(), attachments)
+  if (index < 0) return appendUserMessage(timeline, text, messageId, Date.now(), attachments, references)
   const previous = timeline[index]
   const preservedAttachments = attachments ?? (previous.kind === 'user' ? previous.attachments : undefined)
-  return [...timeline.slice(0, index), { kind: 'user', id: messageId, messageId, text, createdAt: Date.now(), ...(preservedAttachments?.length ? { attachments: preservedAttachments } : {}) }]
+  const preservedReferences = references ?? (previous.kind === 'user' ? previous.references : undefined)
+  return [...timeline.slice(0, index), { kind: 'user', id: messageId, messageId, text, createdAt: Date.now(), ...(preservedAttachments?.length ? { attachments: preservedAttachments } : {}), ...(preservedReferences?.length ? { references: preservedReferences } : {}) }]
+}
+
+/** 回复底部「从这里分叉」按钮的可见性：需要这一轮对应的用户消息 id，且会话不在运行中 */
+export function canForkFromMessage(messageId: string | undefined | null, running: boolean): boolean {
+  return Boolean(messageId) && !running
 }
 
 export function canReconcileTimeline(current: AgentTimeline, transcript: AgentTimeline): boolean {
@@ -567,7 +590,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
             size: attachment.data_url ? Math.max(0, Math.floor((attachment.data_url.length * 3) / 4)) : 0,
             ...(attachment.data_url ? { dataURL: attachment.data_url } : {}),
           }))
-          timeline = appendUserMessage(timeline, message.content ?? '', entry.message_id, parseTimestamp(entry.timestamp), attachments)
+          timeline = appendUserMessage(timeline, message.content ?? '', entry.message_id, parseTimestamp(entry.timestamp), attachments, parseTranscriptReferences(transcriptReferences(entry)))
         }
         escalationInTurn = false
         continue
@@ -610,7 +633,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
       const text = typeof data === 'string' ? data : extractEventText(data)
       if (text) {
         const timestamp = parseTimestamp(entry.timestamp)
-        timeline = appendUserMessage(timeline, text, entry.message_id, Number.isFinite(timestamp) ? timestamp : undefined)
+        timeline = appendUserMessage(timeline, text, entry.message_id, Number.isFinite(timestamp) ? timestamp : undefined, undefined, parseTranscriptReferences(transcriptReferences(entry)))
       }
       continue
     }
