@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import { BrandMark } from '@/components/common/brand-mark'
 import { buildModelGlyph, siteTypeIconPath } from '@/components/common/brand-utils'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
@@ -134,8 +133,6 @@ export function AgentScopePane({ onActionsChange }: { onActionsChange: (actions:
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Badge variant="neutral">{t('agent:settings.scope.siteCount', { count: summary.sites })}</Badge>
-          <Badge variant="neutral">{t('agent:settings.scope.modelCount', { count: summary.models })}</Badge>
           <Button size="sm" variant="secondary" onClick={() => setPreviewOpen(true)}>
             {t('agent:settings.scope.view')}
           </Button>

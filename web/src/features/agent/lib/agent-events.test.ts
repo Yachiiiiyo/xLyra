@@ -783,3 +783,122 @@ describe('审批等待期间的计时', () => {
     expect(lastRunOf(timeline).elapsedMs).toBe(2_000)
   })
 })
+
+describe('会话内允许与自动放行', () => {
+  const lastRunOf = (timeline: AgentTimeline) => {
+    const item = timeline[timeline.length - 1]
+    if (item?.kind !== 'run') throw new Error('no run')
+    return item.run
+  }
+
+  it('会话内允许的乐观更新立刻标记 scope,并结算这段等待', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(4_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    vi.setSystemTime(9_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed', { scope: 'session' })
+    const run = lastRunOf(timeline)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session' })
+    expect(run.pausedMs).toBe(5_000)
+    expect(runElapsedMs(run, 9_000)).toBe(4_000)
+  })
+
+  it('拒绝时不记录会话内允许', () => {
+    let timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } },
+    ])
+    timeline = decidePermission(timeline, 'e1', 'denied', { scope: 'session' })
+    expect(lastRunOf(timeline).permissions[0]).toMatchObject({ decision: 'denied' })
+    expect(lastRunOf(timeline).permissions[0]?.scope).toBeUndefined()
+  })
+
+  it('自动放行的 permission_result 标记 auto,等待时长只扣一次', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(3_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    // 自动放行紧跟着到达:卡片刚出现就已决
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', auto: true, scope: 'session' })
+    expect(run.pendingSince).toBeUndefined()
+    // 重复的重放事件不应再次扣减等待时长
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true } })
+    expect(lastRunOf(timeline).pausedMs).toBe(0)
+    expect(runElapsedMs(lastRunOf(timeline), 8_000)).toBe(8_000)
+  })
+
+  it('用户先乐观更新、随后收到带 auto 的服务端结果时仍是同一条权限且幂等', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(2_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    vi.setSystemTime(5_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed', { scope: 'session' })
+    vi.setSystemTime(6_000)
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session', auto: true })
+    expect(run.pausedMs).toBe(3_000)
+    expect(runElapsedMs(run, 6_000)).toBe(3_000)
+  })
+
+  it('转录的 escalation scope/auto 映射到同样的展示字段', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', message: { role: 'user', content: '写两个文件' } },
+      { type: 'escalation', escalation_id: 'e1', tool_name: 'write', granted: true, scope: 'session' },
+      { type: 'escalation', escalation_id: 'e2', tool_name: 'write', granted: true, scope: 'session', auto: true },
+    ])
+    const run = timeline[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session' })
+    expect(run.run.permissions[1]).toMatchObject({ decision: 'allowed', scope: 'session', auto: true })
+  })
+})
+
+describe('run_error 转录条目', () => {
+  it('把当前 run 收束为 error 并带上错误文案', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:01.000Z', message: { role: 'user', content: '跑一下' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:02.000Z', message: { role: 'assistant', content: '开始' } },
+      { type: 'run_error', timestamp: '1970-01-01T00:00:05.000Z', message: '上游 500' },
+    ])
+    const run = timeline[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.status).toBe('error')
+    expect(run.run.errorMessage).toBe('上游 500')
+  })
+
+  it('这一轮还没写入任何内容时补一个空 run 承载错误', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:01.000Z', message: { role: 'user', content: '跑一下' } },
+      { type: 'run_error', timestamp: '1970-01-01T00:00:03.000Z', message: '模型不可用' },
+    ])
+    const run = timeline[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.status).toBe('error')
+    expect(run.run.errorMessage).toBe('模型不可用')
+    expect(run.run.steps).toHaveLength(0)
+  })
+
+  it('实时 error 在 reconcile 后不会被转录的完成状态覆盖', () => {
+    vi.setSystemTime(0)
+    let current = reduceAll([{ type: 'agent_start', data: {} }], appendUserMessage([], '问题', 'message-1', 0))
+    vi.setSystemTime(2_000)
+    current = reduceAgentEvent(current, { type: 'agent_error', data: { message: '上游中断' } })
+    // 旧服务端的转录没有 run_error：对应 run 是正常完成
+    const transcript = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:00.000Z', message_id: 'message-1', message: { role: 'user', content: '问题' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:01.000Z', message: { role: 'assistant', content: '回答' } },
+    ])
+    const reconciled = reconcileTimeline(current, transcript)
+    const run = reconciled[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.status).toBe('error')
+    expect(run.run.errorMessage).toBe('上游中断')
+    expect(run.run.elapsedMs).toBe(2_000)
+  })
+})

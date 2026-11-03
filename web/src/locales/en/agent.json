@@ -6,7 +6,9 @@
     "recent": "Recent",
     "delete": "Delete chat",
     "deleteConfirm": "Delete this chat?",
-    "menu": "Chat actions"
+    "menu": "Chat actions",
+    "revokeAccess": "Revoke auto-allow in this chat ({{tools}})",
+    "revoked": "Auto-allow revoked for this chat"
   },
   "header": {
     "back": "Back"
@@ -86,9 +88,18 @@
     "description": "Agent wants to use {{tool}}",
     "allow": "Allow",
     "deny": "Deny",
+    "allowSession": "Allow for chat",
+    "allowSessionHint": "No more prompts for \"{{tool}}\" in this chat",
     "allowed": "Allowed",
+    "allowedSession": "Allowed for chat",
+    "autoAllowed": "Auto-allowed (chat)",
     "denied": "Denied",
-    "failed": "Permission update failed"
+    "failed": "Permission update failed",
+    "tool": {
+      "write": "write file",
+      "edit": "edit file",
+      "bash": "run command"
+    }
   },
   "settings": {
     "entry": "Settings",

@@ -6,7 +6,9 @@
     "recent": "最近のチャット",
     "delete": "チャットを削除",
     "deleteConfirm": "このチャットを削除しますか？",
-    "menu": "チャットメニュー"
+    "menu": "チャットメニュー",
+    "revokeAccess": "このチャットの自動許可を取り消す（{{tools}}）",
+    "revoked": "このチャットの自動許可を取り消しました"
   },
   "header": {
     "back": "戻る"
@@ -86,9 +88,18 @@
     "description": "Agent が {{tool}} の使用を求めています",
     "allow": "許可",
     "deny": "拒否",
+    "allowSession": "チャット内で許可",
+    "allowSessionHint": "このチャットでは「{{tool}}」をこれ以上確認しません",
     "allowed": "許可済み",
+    "allowedSession": "許可済み（このチャット）",
+    "autoAllowed": "自動許可（チャット内）",
     "denied": "拒否済み",
-    "failed": "権限の更新に失敗しました"
+    "failed": "権限の更新に失敗しました",
+    "tool": {
+      "write": "ファイル書き込み",
+      "edit": "ファイル編集",
+      "bash": "コマンド実行"
+    }
   },
   "settings": {
     "entry": "設定",

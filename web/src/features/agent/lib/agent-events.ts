@@ -24,6 +24,9 @@ export type AgentPermissionRequest = {
   /** Resolved path/capability key recorded by the grant, echoed back to the grant-access API. */
   resolvedPath?: string
   decision?: 'allowed' | 'denied'
+  /** 决定的来源：'session' = 会话内允许；auto = 后端会话内自动放行 */
+  scope?: 'session'
+  auto?: boolean
   /** 权限请求到达时 run.steps 的长度，用于把它插回流程中的实际位置 */
   position?: number
 }
@@ -248,8 +251,10 @@ function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number, err
 }
 
 /** 记录一条权限决定;最后一条未决请求被处理后,结束这段审批等待,用时恢复计时。 */
-function applyPermissionDecision(run: AgentRun, requestId: string, decision: 'allowed' | 'denied'): AgentRun {
-  const permissions = run.permissions.map((request) => (request.id === requestId ? { ...request, decision } : request))
+function applyPermissionDecision(run: AgentRun, requestId: string, decision: 'allowed' | 'denied', options?: { scope?: 'session'; auto?: boolean }): AgentRun {
+  const permissions = run.permissions.map((request) => (request.id === requestId
+    ? { ...request, decision, ...(options?.scope && decision === 'allowed' ? { scope: options.scope } : {}), ...(options?.auto ? { auto: true } : {}) }
+    : request))
   if (run.pendingSince === undefined || permissions.some((request) => !request.decision)) return { ...run, permissions }
   return {
     ...run,
@@ -260,8 +265,8 @@ function applyPermissionDecision(run: AgentRun, requestId: string, decision: 'al
 }
 
 /** 用户在审批卡片上点了允许/拒绝:乐观更新本地时间线(与服务端的 permission_result 幂等)。 */
-export function decidePermission(timeline: AgentTimeline, requestId: string, decision: 'allowed' | 'denied'): AgentTimeline {
-  return timeline.map((item) => (item.kind === 'run' ? { ...item, run: applyPermissionDecision(item.run, requestId, decision) } : item))
+export function decidePermission(timeline: AgentTimeline, requestId: string, decision: 'allowed' | 'denied', options?: { scope?: 'session' }): AgentTimeline {
+  return timeline.map((item) => (item.kind === 'run' ? { ...item, run: applyPermissionDecision(item.run, requestId, decision, options) } : item))
 }
 
 /** 运行中的「用时」:等待审批期间冻结,审批完成后继续累加。 */
@@ -304,7 +309,13 @@ export function reconcileTimeline(current: AgentTimeline, transcript: AgentTimel
     if (item.kind !== 'run') return item
     const active = currentRuns[runIndex]
     runIndex += 1
-    if (!active || active.run.elapsedMs === undefined) return item
+    if (!active) return item
+    // 旧服务端在转录里不写 run_error：实时 run 已失败而转录丢失了错误时，保留实时的错误状态与文案
+    const keepError = active.run.status === 'error' && Boolean(active.run.errorMessage) && item.run.status !== 'error'
+    const liveError = keepError
+      ? { status: active.run.status, errorMessage: active.run.errorMessage }
+      : {}
+    if (active.run.elapsedMs === undefined) return keepError ? { ...item, run: { ...item.run, ...liveError } } : item
     return {
       ...item,
       run: {
@@ -312,6 +323,7 @@ export function reconcileTimeline(current: AgentTimeline, transcript: AgentTimel
         startedAt: active.run.startedAt,
         endedAt: active.run.endedAt,
         elapsedMs: active.run.elapsedMs,
+        ...liveError,
       },
     }
   })
@@ -475,7 +487,9 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
     case 'permission_result': {
       const requestId = pickId(record, ['request_id', 'permission_id', 'id'])
       const decision = record?.allowed === true || record?.decision === 'allow' || record?.decision === 'allowed' ? 'allowed' : 'denied'
-      return updateLastRun(timeline, (run) => applyPermissionDecision(run, requestId, decision))
+      // 会话内允许自动放行的 permission_result 带 auto:true，展示为「已自动允许(会话内)」
+      const auto = record?.auto === true
+      return updateLastRun(timeline, (run) => applyPermissionDecision(run, requestId, decision, auto ? { auto: true, scope: 'session' } : undefined))
     }
     case 'done':
       // 用墙钟收束（用户发出消息 → 最后输出结束），不用 runner 的 elapsed_ms：
@@ -508,6 +522,13 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
       timeline = markRunEndedAt(appendStatusStep(timeline, 'compacted'), entry.timestamp)
       continue
     }
+    if (entry.type === 'run_error') {
+      // 失败的 run 在转录里单独落一条；若这一轮还没写入任何内容（没有 run），补一个空 run 承载错误
+      const withRun = markRunEndedAt(ensureRun(timeline), entry.timestamp)
+      const errorMessage = typeof entry.message === 'string' ? entry.message : undefined
+      timeline = updateLastRun(withRun, (run) => closeRun(run, 'error', undefined, errorMessage))
+      continue
+    }
     if (entry.type === 'escalation') {
       // Escalations render as permission entries; granted null means undecided (stays interactive).
       const withRun = ensureRun(timeline)
@@ -522,6 +543,8 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
           note: entry.note || undefined,
           resolvedPath: entry.resolved_path || undefined,
           decision: entry.granted === true ? 'allowed' : entry.granted === false ? 'denied' : undefined,
+          ...(entry.granted === true && entry.scope === 'session' ? { scope: 'session' as const } : {}),
+          ...(entry.auto === true ? { auto: true } : {}),
           position: run.steps.length,
         }
         return { ...run, permissions: [...run.permissions, request] }
@@ -530,7 +553,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
       continue
     }
     const message = entry.message
-    if (message) {
+    if (message && typeof message === 'object') {
       // The runner's transcript format: { type: 'message', message: ChatMessage, ... }
       if (message.role === 'user') {
         // agent 注入的停滞/预算提醒属于内部机制，前端不展示；也不结束当前 run

@@ -12,7 +12,7 @@ import { runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTim
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
-  onPermissionDecision?: (request: AgentPermissionRequest, decision: 'allow' | 'deny') => void
+  onPermissionDecision?: (request: AgentPermissionRequest, decision: 'allow' | 'deny' | 'allow_session') => void
   onUserEdit?: (messageId: string, text: string) => void
 }
 
@@ -538,6 +538,15 @@ function previewText(value: string | undefined, limit: number): string {
 
 function PermissionCard({ request, onDecision }: { request: AgentPermissionRequest; onDecision?: AgentTimelineProps['onPermissionDecision'] }) {
   const { t } = useTranslation('agent')
+  // bash 审批带「命中规则」的 note 是高风险命令提示，后端不会自动放行，故不提供会话内允许
+  const allowSession = !(request.tool.toLowerCase() === 'bash' && (request.note ?? '').includes('命中规则'))
+  const decisionLabel = request.decision === 'denied'
+    ? t('permission.denied')
+    : request.auto
+      ? t('permission.autoAllowed')
+      : request.scope === 'session'
+        ? t('permission.allowedSession')
+        : t('permission.allowed')
 
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
@@ -558,14 +567,28 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
       ) : null}
       {request.decision ? (
         <p className={cn('mt-2 text-xs font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>
-          {request.decision === 'allowed' ? t('permission.allowed') : t('permission.denied')}
+          {decisionLabel}
         </p>
       ) : (
         <div className="mt-3 flex gap-2">
           <Button size="sm" onClick={() => onDecision?.(request, 'allow')}>{t('permission.allow')}</Button>
+          {allowSession ? (
+            <Button size="sm" variant="outline" title={t('permission.allowSessionHint', { tool: toolDisplayName(request.tool, t) })} onClick={() => onDecision?.(request, 'allow_session')}>
+              {t('permission.allowSession')}
+            </Button>
+          ) : null}
           <Button size="sm" variant="outline" onClick={() => onDecision?.(request, 'deny')}>{t('permission.deny')}</Button>
         </div>
       )}
     </div>
   )
+}
+
+/** 权限卡片里的工具显示名：write/edit/bash 用可读名称，其余直接用工具名 */
+function toolDisplayName(tool: string, t: (key: string) => string): string {
+  const name = tool.toLowerCase()
+  if (name === 'write') return t('permission.tool.write')
+  if (name === 'edit') return t('permission.tool.edit')
+  if (name === 'bash') return t('permission.tool.bash')
+  return tool
 }

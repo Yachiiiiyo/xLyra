@@ -6,7 +6,9 @@
     "recent": "最近对话",
     "delete": "删除对话",
     "deleteConfirm": "删除该对话？",
-    "menu": "会话菜单"
+    "menu": "会话菜单",
+    "revokeAccess": "撤销本会话的自动允许（{{tools}}）",
+    "revoked": "已撤销本会话的自动允许"
   },
   "header": {
     "back": "返回"
@@ -86,9 +88,18 @@
     "description": "Agent 请求使用 {{tool}}",
     "allow": "允许",
     "deny": "拒绝",
+    "allowSession": "会话内允许",
+    "allowSessionHint": "本会话内「{{tool}}」不再询问",
     "allowed": "已允许",
+    "allowedSession": "已允许（本会话）",
+    "autoAllowed": "已自动允许（会话内）",
     "denied": "已拒绝",
-    "failed": "权限操作失败"
+    "failed": "权限操作失败",
+    "tool": {
+      "write": "写入文件",
+      "edit": "编辑文件",
+      "bash": "执行命令"
+    }
   },
   "settings": {
     "entry": "配置",

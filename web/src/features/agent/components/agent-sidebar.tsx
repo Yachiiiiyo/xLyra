@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { useTranslation } from 'react-i18next'
-import { Ellipsis, MoveLeft, Plus, Settings2, Trash2 } from 'lucide-react'
+import { Ellipsis, MoveLeft, Plus, Settings2, ShieldOff, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AgentConfirmDialog } from '@/features/agent/components/agent-confirm-dialog'
 import { formatRelativeTime } from '@/features/agent/lib/relative-time'
@@ -15,10 +15,11 @@ type AgentSidebarProps = {
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onRevokeAccess: (id: string) => void
   onOpenSettings: () => void
 }
 
-export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onOpenSettings }: AgentSidebarProps) {
+export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onRevokeAccess, onOpenSettings }: AgentSidebarProps) {
   const { t, i18n } = useTranslation('agent')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
@@ -56,9 +57,11 @@ export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, 
               locale={i18n.language}
               untitledLabel={t('sidebar.untitled')}
               menuLabel={t('sidebar.menu')}
+              revokeLabel={revokeAccessLabel(session, t)}
               deleteLabel={t('sidebar.delete')}
               onSelect={onSelect}
               onDelete={setPendingDelete}
+              onRevoke={onRevokeAccess}
             />
           ))
         )}
@@ -89,24 +92,41 @@ export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, 
   )
 }
 
+function revokeAccessLabel(session: AgentSession, t: (key: string, options?: Record<string, unknown>) => string): string {
+  const tools = (session.session_allow ?? []).filter(Boolean)
+  if (tools.length === 0) return ''
+  const readable = tools.map((tool) => {
+    const name = tool.toLowerCase()
+    if (name === 'write') return t('permission.tool.write')
+    if (name === 'edit') return t('permission.tool.edit')
+    if (name === 'bash') return t('permission.tool.bash')
+    return tool
+  })
+  return t('sidebar.revokeAccess', { tools: readable.join(t('work.summaryJoin')) })
+}
+
 function SessionRow({
   session,
   active,
   locale,
   untitledLabel,
   menuLabel,
+  revokeLabel,
   deleteLabel,
   onSelect,
   onDelete,
+  onRevoke,
 }: {
   session: AgentSession
   active: boolean
   locale: string
   untitledLabel: string
   menuLabel: string
+  revokeLabel: string
   deleteLabel: string
   onSelect: (id: string) => void
   onDelete: (id: string) => void
+  onRevoke: (id: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -152,6 +172,20 @@ function SessionRow({
             onClick={(event) => event.stopPropagation()}
             className="lg-regular z-[120] w-max min-w-36 rounded-card p-1.5"
           >
+            {revokeLabel ? (
+              <button
+                type="button"
+                data-agent-revoke="true"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onRevoke(session.session_id)
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-label-2 transition-colors hover:bg-fill-4 hover:text-label"
+              >
+                <ShieldOff className="h-4 w-4 shrink-0 text-current" />
+                {revokeLabel}
+              </button>
+            ) : null}
             <button
               type="button"
               data-agent-delete="true"

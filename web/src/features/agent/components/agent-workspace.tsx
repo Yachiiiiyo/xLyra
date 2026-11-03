@@ -50,6 +50,7 @@ import {
   grantAgentAccess,
   listAgentSessions,
   retryAgentSession,
+  revokeAgentAccess,
   stopAgentSession,
 } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
@@ -577,6 +578,15 @@ export function AgentWorkspace() {
     if (sessionId === selectedId) createNew()
   }
 
+  function handleRevokeAccess(sessionId: string) {
+    void revokeAgentAccess(sessionId).then(() => {
+      toast.success(t('agent:sidebar.revoked'))
+      void queryClient.invalidateQueries({ queryKey: ['agent', 'sessions'] })
+    }).catch((error: unknown) => {
+      toast.error(t('agent:permission.failed'), { description: error instanceof Error ? error.message : String(error) })
+    })
+  }
+
   function submit() {
     const content = draft.trim() || attachments[0]?.name || ''
     if (!canSubmit || !content) return
@@ -634,16 +644,19 @@ export function AgentWorkspace() {
     setAttachmentError(null)
   }
 
-  function handlePermissionDecision(request: AgentPermissionRequest, decision: 'allow' | 'deny') {
+  function handlePermissionDecision(request: AgentPermissionRequest, decision: 'allow' | 'deny' | 'allow_session') {
     // bash 审批只有命令、没有路径(resolvedPath 为空),后端也不要求该字段
     if (!selectedId) return
-    setTimeline((current) => decidePermission(current, request.id, decision === 'allow' ? 'allowed' : 'denied'))
+    const allowed = decision !== 'deny'
+    const sessionScope = decision === 'allow_session'
+    setTimeline((current) => decidePermission(current, request.id, allowed ? 'allowed' : 'denied', sessionScope ? { scope: 'session' } : undefined))
     // 同一个 run 在审批后继续,原来的事件流仍然开着,会推送 permission_result 与后续输出;
     // 不能再 followSession:重新订阅会从 run 开头重放,把已有的卡片与文本再追加一遍。
     void grantAgentAccess(selectedId, {
       escalation_id: request.id,
-      granted: decision === 'allow',
+      granted: allowed,
       resolved_path: request.resolvedPath ?? '',
+      ...(sessionScope ? { scope: 'session' as const } : {}),
     }).catch((error: unknown) => {
       toast.error(t('agent:permission.failed'), { description: error instanceof Error ? error.message : String(error) })
     })
@@ -821,6 +834,7 @@ export function AgentWorkspace() {
     onSelect={handleSelect}
     onNew={createNew}
     onDelete={handleDelete}
+    onRevokeAccess={handleRevokeAccess}
     onOpenSettings={() => setSettingsOpen(true)}
   />
 
@@ -853,6 +867,7 @@ export function AgentWorkspace() {
               createNew()
             }}
             onDelete={handleDelete}
+            onRevokeAccess={handleRevokeAccess}
             onOpenSettings={() => {
               setMobileSidebarOpen(false)
               setSettingsOpen(true)

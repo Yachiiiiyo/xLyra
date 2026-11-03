@@ -7,6 +7,8 @@ export type AgentSession = {
   preview?: string
   updated_at?: string | number
   running?: boolean
+  /** 已被「会话内允许」的工具名,空数组表示没有 */
+  session_allow?: string[]
 }
 
 export type AgentHealth = {
@@ -321,7 +323,7 @@ export type AgentTranscriptEntry = {
   content?: string
   payload?: unknown
   timestamp?: string
-  /** Transcript envelope when type === 'message'. */
+  /** Transcript envelope when type === 'message'; type === 'run_error' 时为错误文案。 */
   message?: {
     role?: 'system' | 'user' | 'assistant' | 'tool'
     content?: string
@@ -331,8 +333,7 @@ export type AgentTranscriptEntry = {
     name?: string
     is_error?: boolean
     thinking?: string
-  }
-  /** type === 'compaction' */
+  } | string  /** type === 'compaction' */
   summary?: string
   tokens_before?: number
   tokens_after?: number
@@ -344,6 +345,10 @@ export type AgentTranscriptEntry = {
   requested_command?: string[]
   note?: string
   granted?: boolean | null
+  /** type === 'escalation'：'session' 表示本会话内不再询问 */
+  scope?: 'once' | 'session'
+  /** type === 'escalation'：会话内允许自动放行 */
+  auto?: boolean
 }
 
 export async function stopAgentSession(sessionId: string) {
@@ -366,11 +371,20 @@ export async function deleteAgentSession(sessionId: string) {
   return apiFetch<Record<string, unknown>>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
 }
 
-export async function grantAgentAccess(sessionId: string, input: { escalation_id: string; granted: boolean; resolved_path: string }) {
+export async function grantAgentAccess(sessionId: string, input: { escalation_id: string; granted: boolean; resolved_path: string; scope?: 'once' | 'session' }) {
   return apiFetch<Record<string, unknown>>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/grant-access`, {
     method: 'POST',
     body: input,
   })
+}
+
+/** 撤销会话内允许：tool 为空表示清空全部 */
+export async function revokeAgentAccess(sessionId: string, tool?: string) {
+  const response = await apiFetch<{ success?: boolean; session_allow?: string[] }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/revoke-access`, {
+    method: 'POST',
+    body: { tool: tool ?? '' },
+  })
+  return response.session_allow ?? []
 }
 
 export async function followAgentEvents(sessionId: string, signal: AbortSignal, onEvent: (event: { type: string; data: unknown }) => void) {
