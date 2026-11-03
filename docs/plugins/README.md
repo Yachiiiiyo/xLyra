@@ -8,7 +8,7 @@ xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能�
 
 | 文档 | 内容 |
 | --- | --- |
-| [快速开始](./quickstart.md) | 从 `init` 到上传启用的完整流程 |
+| [快速开始](./quickstart.md) | 从 `init` 到测试、签名、发布的完整流程 |
 | [选择插件类型](./kinds.md) | 十种 kind 的用途、状态，以及怎么选 |
 | [额度探测](./quota-probe.md) | `quota_probe` |
 | [协议](./protocol.md) | `protocol` |
@@ -26,7 +26,7 @@ xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能�
 | [资源上限与安全规则](./limits-and-security.md) | 超时、内存、URL 与请求头限制，为什么拿不到密钥 |
 | [错误码](./errors.md) | 运行时错误类型 |
 | [命令行工具](./cli.md) | `xlyra-plugin` 全部子命令 |
-| [发布、签名与安装](./publishing.md) | 打包、签名、管理员上传与启用 |
+| [发布、签名与安装](./publishing.md) | 打包、签名、上架 xLyra Cloud 市场或私下分发、管理员安装、更新与吊销 |
 | [版本与兼容](./compatibility.md) | 版本字段与升级规则 |
 
 ## 示例
@@ -45,4 +45,16 @@ xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能�
 - 流式响应：协议插件只处理非流式请求。
 - 由插件决定选路、价格、计费或冷却。`automation` 只能返回 xLyra 开放的几种动作，且需要管理员授予权限、绑定对象。
 - 访问环境变量、文件系统或任意主机。
-- 租户上传插件，插件只能由管理员上传。
+- 租户上传插件，插件只能由管理员上传或从市场安装。
+
+## 开发流程一览
+
+```text
+init → 写 src 与 fixtures → test → (run 试真实站点) → keygen（一次）→ pack --sign → verify
+  → 市场上架：登记公钥与命名空间 → publish → xLyra Cloud 审核 → 管理员在「市场」安装
+  → 私下分发：把 .xlp 交给管理员，在「已安装」手动上传
+```
+
+各步骤见[快速开始](./quickstart.md)，市场上架的前置条件（开发者身份、命名空间、API 令牌）见[发布、签名与安装](./publishing.md#上架市场的前置条件一次性)。
+
+官方维护的实际插件（额度自动重置、站点余额告警、账号池站点）在独立仓库 `xlyra-plugins`，可以当作 `automation` 与 `site_provider` 的完整示例。
