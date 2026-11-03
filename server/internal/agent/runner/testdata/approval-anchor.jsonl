@@ -1,0 +1,8 @@
+{"type":"agent_start"}
+{"type":"session_append","entry":{"type":"message","id":"u-$N","parentId":"$PREV","timestamp":"2026-10-29T08:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"第 $N 轮请求"}],"timestamp":1793246400000}}}
+{"type":"session_append","entry":{"type":"message","id":"a-$N","parentId":"u-$N","timestamp":"2026-10-29T08:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"第 $N 轮动手"},{"type":"toolCall","id":"call-$N","name":"write","arguments":{"path":"a.txt","content":"x"}}],"stopReason":"toolUse","timestamp":1793246400001}}}
+{"type":"tool_execution_start","toolCallId":"call-$N","toolName":"write","args":{"path":"a.txt","content":"x"}}
+{"type":"extension_ui_request","id":"esc-$N","method":"confirm","title":"允许写入 a.txt?","message":"{\"toolCallId\":\"call-$N\",\"toolName\":\"write\",\"path\":\"a.txt\",\"note\":\"写入 a.txt\"}"}
+{"type":"tool_execution_end","toolCallId":"call-$N","toolName":"write","isError":false,"result":{"content":[{"type":"text","text":"已写入"}]}}
+{"type":"session_append","entry":{"type":"message","id":"r-$N","parentId":"a-$N","timestamp":"2026-10-29T08:00:02.000Z","message":{"role":"toolResult","toolCallId":"call-$N","toolName":"write","content":[{"type":"text","text":"已写入"}],"isError":false,"timestamp":1793246400002}}}
+{"type":"agent_settled","aborted":false}

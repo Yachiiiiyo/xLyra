@@ -1,0 +1,8 @@
+{"type":"agent_start"}
+{"type":"tool_execution_start","toolCallId":"call_w1","toolName":"write","args":{"path":"a.txt"}}
+{"type":"extension_ui_request","id":"esc-s1","method":"confirm","title":"允许写入 a.txt?","message":"{\"toolCallId\":\"call_w1\",\"toolName\":\"write\",\"path\":\"a.txt\",\"note\":\"写入 a.txt\"}"}
+{"type":"tool_execution_end","toolCallId":"call_w1","toolName":"write","isError":false,"result":{"content":[{"type":"text","text":"已写入"}]}}
+{"type":"tool_execution_start","toolCallId":"call_w2","toolName":"write","args":{"path":"b.txt"}}
+{"type":"extension_ui_request","id":"esc-s2","method":"confirm","title":"允许写入 b.txt?","message":"{\"toolCallId\":\"call_w2\",\"toolName\":\"write\",\"path\":\"b.txt\",\"note\":\"写入 b.txt\"}"}
+{"type":"tool_execution_end","toolCallId":"call_w2","toolName":"write","isError":false,"result":{"content":[{"type":"text","text":"已写入"}]}}
+{"type":"agent_settled","aborted":false}

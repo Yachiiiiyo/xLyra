@@ -1,0 +1,4 @@
+{"type":"agent_start"}
+{"type":"tool_execution_start","toolCallId":"call_b1","toolName":"bash","args":{"command":"rm -rf build"}}
+{"type":"extension_ui_request","id":"esc-hr","method":"confirm","title":"这条命令有风险,允许执行?","message":"{\"toolCallId\":\"call_b1\",\"toolName\":\"bash\",\"command\":[\"rm -rf build\"],\"note\":\"工作目录: .;命中规则: 删除命令\"}"}
+{"type":"agent_settled","aborted":false}
