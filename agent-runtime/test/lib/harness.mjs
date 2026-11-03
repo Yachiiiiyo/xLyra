@@ -54,12 +54,13 @@ function modelsConfig(baseUrl) {
  *                    的 bash 字段(自动补 enabled:true),并把 bash 加进 --tools
  *                  - true:只把 bash 加进 --tools,不写 bash 配置(测“未启用”行为)
  *                  socket 一般用 caseDirs.root 下的路径(套接字由假执行器监听)
+ *   imageGeneration 生图配置对象或 (caseDirs) => 对象,自动补 enabled:true 与白名单
  *   prepare        ({root, home, agentDir, sessionDir, cwd, outside}) => 额外布置
  *   script         mock LLM 脚本 (req, n) => step
  *
  * 目录布局:root/{home,agent,sessions,cwd,outside};outside/secret.txt 是工作目录外的诱饵文件。
  */
-export async function startCase({ name, permissionMode, xlyraJson, readRoots, bash, prepare, script }) {
+export async function startCase({ name, permissionMode, xlyraJson, readRoots, bash, imageGeneration, prepare, script }) {
 	const root = mkdtempSync(join(tmpdir(), `xlyra-ext-${name}-`));
 	const home = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -80,21 +81,27 @@ export async function startCase({ name, permissionMode, xlyraJson, readRoots, ba
 	// bash 配置同样在 prepare 之后求值:套接字放在用例临时目录里
 	const bashOptions =
 		typeof bash === "function" ? bash({ root, home, agentDir, sessionDir, cwd, outside }) : bash;
+	const imageOptions =
+		typeof imageGeneration === "function"
+			? imageGeneration({ root, home, agentDir, sessionDir, cwd, outside })
+			: imageGeneration;
 	if (xlyraJson !== undefined) {
 		writeFileSync(join(agentDir, "xlyra.json"), xlyraJson);
-	} else if (permissionMode !== undefined || roots !== undefined || bashOptions !== undefined) {
+	} else if (permissionMode !== undefined || roots !== undefined || bashOptions !== undefined || imageOptions !== undefined) {
 		const config = { permissionMode: permissionMode !== undefined ? permissionMode : "ask" };
 		if (roots !== undefined) config.readRoots = roots;
 		// bash:true 只把工具加进 --tools(不写配置),用于验证“未启用不覆盖”
 		if (bashOptions !== undefined && bashOptions !== true) {
 			config.bash = { enabled: true, ...bashOptions };
 		}
+		if (imageOptions !== undefined) config.imageGeneration = { enabled: true, ...imageOptions };
 		writeFileSync(join(agentDir, "xlyra.json"), JSON.stringify(config));
 	}
 
 	// bash 传入(配置或仅 true)时把 bash 加进白名单,否则沿用改动前的六项
 	const tools = ["read", "ls", "grep", "find", "write", "edit"];
 	if (bash !== undefined) tools.push("bash");
+	if (imageGeneration !== undefined) tools.push("image_generation");
 
 	const client = startRpc({
 		entry: PI_ENTRY,
