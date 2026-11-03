@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -40,6 +41,32 @@ type Config struct {
 	StaticDir           string        `env:"STATIC_DIR" envDefault:"/app/dist"`
 	AgentRunnerBaseURL  string        `env:"AGENT_RUNNER_BASE_URL"`
 	AgentRunnerToken    string        `env:"AGENT_RUNNER_INTERNAL_TOKEN"`
+	AgentEngine         string        `env:"AGENT_ENGINE" envDefault:"pi"`
+	AgentNodeBin        string        `env:"AGENT_NODE_BIN"`
+	AgentPiEntry        string        `env:"AGENT_PI_ENTRY"`
+	AgentExtensionPath  string        `env:"AGENT_EXTENSION_PATH"`
+	AgentDataDir        string        `env:"AGENT_DATA_DIR"`
+	AgentMaxConcurrent  int           `env:"AGENT_MAX_CONCURRENT" envDefault:"4"`
+	AgentRunTimeout     time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
+	AgentGatewayBaseURL string        `env:"AGENT_GATEWAY_BASE_URL"`
+	// AgentIsolation 决定 uid 隔离的启动策略:auto(默认)按探测与自检
+	// 结果决定;required 在环境不支持时直接关闭 Agent;off 完全不隔离
+	// (仅本地开发)。
+	AgentIsolation string `env:"AGENT_ISOLATION" envDefault:"auto"`
+	// AgentUIDBase 与 AgentMaxSlots 是身份池参数(详见 agent/isolation 包)。
+	AgentUIDBase  int `env:"AGENT_UID_BASE" envDefault:"20000"`
+	AgentMaxSlots int `env:"AGENT_MAX_SLOTS" envDefault:"4000"`
+	// AgentBash 在沙箱自检通过后开放 bash;off 始终关闭。
+	AgentBash               string        `env:"AGENT_BASH" envDefault:"auto"`
+	AgentExecDefaultTimeout time.Duration `env:"AGENT_EXEC_TIMEOUT" envDefault:"2m"`
+	AgentExecMaxTimeout     time.Duration `env:"AGENT_EXEC_MAX_TIMEOUT" envDefault:"10m"`
+	// AgentNodeMaxHeapMB 是 node 的 --max-old-space-size(MB);0 表示不传。
+	AgentNodeMaxHeapMB     int           `env:"AGENT_NODE_MAX_HEAP_MB" envDefault:"1024"`
+	AgentMaxOutputBytes    int64         `env:"AGENT_MAX_OUTPUT_BYTES" envDefault:"67108864"`
+	AgentSessionQuotaBytes int64         `env:"AGENT_SESSION_QUOTA_BYTES" envDefault:"536870912"`
+	AgentQueueTimeout      time.Duration `env:"AGENT_QUEUE_TIMEOUT" envDefault:"2m"`
+	// AgentQueueMax 是并发满时的排队上限;-1 关闭排队。
+	AgentQueueMax int `env:"AGENT_QUEUE_MAX" envDefault:"32"`
 }
 
 func Load() (Config, error) {
@@ -55,6 +82,12 @@ func Load() (Config, error) {
 
 	return cfg, nil
 }
+
+const (
+	// agentRunTimeoutMax 限定内置 Agent 单次 run 的时长上限。令牌已改为文件
+	// 轮换 + 后台续期,run 不再受令牌 TTL 约束,上限仅作为防失控的资源保护。
+	agentRunTimeoutMax = 12 * time.Hour
+)
 
 func (c Config) Validate() error {
 	switch c.AppEnv {
@@ -153,6 +186,67 @@ func (c Config) Validate() error {
 
 	if c.SiteHealthWorkers <= 0 {
 		return fmt.Errorf("SITE_HEALTH_WORKERS must be greater than 0")
+	}
+
+	switch c.AgentEngine {
+	case "runner", "pi":
+	default:
+		return fmt.Errorf("AGENT_ENGINE must be one of runner, pi")
+	}
+
+	if c.AgentMaxConcurrent <= 0 {
+		return fmt.Errorf("AGENT_MAX_CONCURRENT must be greater than 0")
+	}
+
+	if c.AgentRunTimeout <= 0 || c.AgentRunTimeout > agentRunTimeoutMax {
+		return fmt.Errorf("AGENT_RUN_TIMEOUT must be greater than 0 and at most %s", agentRunTimeoutMax)
+	}
+
+	switch c.AgentIsolation {
+	case "auto", "required", "off":
+	default:
+		return fmt.Errorf("AGENT_ISOLATION must be one of auto, required, off")
+	}
+
+	// 身份池范围:UIDBase 不得落入系统用户区,池上限与 isolation 包的
+	// uid 越界校验保持一致(最大 ExecUID = UIDBase + 2*MaxSlots + 1)。
+	if c.AgentUIDBase < 1000 {
+		return fmt.Errorf("AGENT_UID_BASE must be at least 1000")
+	}
+	if c.AgentMaxSlots < 4 {
+		return fmt.Errorf("AGENT_MAX_SLOTS must be at least 4")
+	}
+	if int64(c.AgentUIDBase)+2*int64(c.AgentMaxSlots)+1 > math.MaxInt32 {
+		return fmt.Errorf("AGENT_UID_BASE + 2*AGENT_MAX_SLOTS exceeds the Linux uid limit")
+	}
+	switch c.AgentBash {
+	case "auto", "off":
+	default:
+		return fmt.Errorf("AGENT_BASH must be one of auto, off")
+	}
+	if c.AgentExecDefaultTimeout <= 0 {
+		return fmt.Errorf("AGENT_EXEC_TIMEOUT must be greater than 0")
+	}
+	if c.AgentExecMaxTimeout <= 0 {
+		return fmt.Errorf("AGENT_EXEC_MAX_TIMEOUT must be greater than 0")
+	}
+	if c.AgentExecDefaultTimeout > c.AgentExecMaxTimeout {
+		return fmt.Errorf("AGENT_EXEC_TIMEOUT must be less than or equal to AGENT_EXEC_MAX_TIMEOUT")
+	}
+	if c.AgentNodeMaxHeapMB < 0 {
+		return fmt.Errorf("AGENT_NODE_MAX_HEAP_MB must be greater than or equal to 0")
+	}
+	if c.AgentMaxOutputBytes <= 0 {
+		return fmt.Errorf("AGENT_MAX_OUTPUT_BYTES must be greater than 0")
+	}
+	if c.AgentSessionQuotaBytes <= 0 {
+		return fmt.Errorf("AGENT_SESSION_QUOTA_BYTES must be greater than 0")
+	}
+	if c.AgentQueueTimeout <= 0 {
+		return fmt.Errorf("AGENT_QUEUE_TIMEOUT must be greater than 0")
+	}
+	if c.AgentQueueMax != -1 && c.AgentQueueMax <= 0 {
+		return fmt.Errorf("AGENT_QUEUE_MAX must be greater than 0 or -1 to disable queueing")
 	}
 
 	return nil

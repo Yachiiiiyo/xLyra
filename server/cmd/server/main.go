@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"xlyra/server/internal/agent/sandbox"
 	"xlyra/server/internal/app"
 	"xlyra/server/internal/backup"
 	"xlyra/server/internal/catalog"
@@ -25,6 +26,11 @@ import (
 )
 
 func main() {
+	// 沙箱 helper 分发:argv 匹配时在 MaybeRunHelper 内部 os.Exit,不会
+	// 真正返回 true;必须先于任何配置/数据库初始化调用。
+	if sandbox.MaybeRunHelper() {
+		return
+	}
 	os.Exit(run())
 }
 

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/caarlos0/env/v11"
 )
 
 func TestValidateRejectsInvalidLogLevel(t *testing.T) {
@@ -219,6 +221,79 @@ func TestLoadUsesEnvironmentAndSanitizesOrigins(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidAgentEngine(t *testing.T) {
+	t.Parallel()
+
+	cfg := validConfig()
+	cfg.AgentEngine = "codex"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "AGENT_ENGINE") {
+		t.Fatalf("expected AGENT_ENGINE validation error, got %v", err)
+	}
+}
+
+func TestValidateRejectsAgentRunTimeoutOutsideBounds(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]func(*Config){
+		"zero":     func(cfg *Config) { cfg.AgentRunTimeout = 0 },
+		"negative": func(cfg *Config) { cfg.AgentRunTimeout = -time.Minute },
+		"over max": func(cfg *Config) { cfg.AgentRunTimeout = 13 * time.Hour },
+	}
+
+	for name, mutate := range cases {
+		cfg := validConfig()
+		mutate(&cfg)
+
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "AGENT_RUN_TIMEOUT") {
+			t.Fatalf("%s: expected AGENT_RUN_TIMEOUT validation error, got %v", name, err)
+		}
+	}
+}
+
+func TestValidateAcceptsAgentRunTimeoutAtLimit(t *testing.T) {
+	t.Parallel()
+
+	cfg := validConfig()
+	cfg.AgentRunTimeout = 12 * time.Hour
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected 12h run timeout to validate, got %v", err)
+	}
+}
+
+func TestLoadAppliesAgentDefaults(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+	t.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost:5432/xlyra?sslmode=disable")
+	t.Setenv("AGENT_ENGINE", "")
+	t.Setenv("AGENT_NODE_BIN", "")
+	t.Setenv("AGENT_PI_ENTRY", "")
+	t.Setenv("AGENT_EXTENSION_PATH", "")
+	t.Setenv("AGENT_DATA_DIR", "")
+	t.Setenv("AGENT_MAX_CONCURRENT", "")
+	t.Setenv("AGENT_RUN_TIMEOUT", "")
+	t.Setenv("AGENT_GATEWAY_BASE_URL", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.AgentEngine != "pi" {
+		t.Fatalf("AGENT_ENGINE default = %q, want pi", cfg.AgentEngine)
+	}
+	if cfg.AgentNodeBin != "" || cfg.AgentPiEntry != "" || cfg.AgentExtensionPath != "" || cfg.AgentDataDir != "" || cfg.AgentGatewayBaseURL != "" {
+		t.Fatalf("unexpected agent path defaults: %#v", cfg)
+	}
+	if cfg.AgentMaxConcurrent != 4 {
+		t.Fatalf("AGENT_MAX_CONCURRENT default = %d, want 4", cfg.AgentMaxConcurrent)
+	}
+	if cfg.AgentRunTimeout != 60*time.Minute {
+		t.Fatalf("AGENT_RUN_TIMEOUT default = %s, want 60m", cfg.AgentRunTimeout)
+	}
+}
+
 func TestSanitizeOriginsDropsBlankValues(t *testing.T) {
 	t.Parallel()
 
@@ -234,30 +309,158 @@ func TestSanitizeOriginsDropsBlankValues(t *testing.T) {
 
 func validConfig() Config {
 	return Config{
-		AppEnv:              "development",
-		AppName:             "xlyra-server",
-		HTTPHost:            "0.0.0.0",
-		HTTPPort:            5801,
-		LogLevel:            "info",
-		LogDir:              "logs",
-		LogFilePrefix:       "xlyra-server",
-		LogRetentionDays:    14,
-		ReadHeaderTimeout:   5 * time.Second,
-		RequestTimeout:      30 * time.Second,
-		MaxRequestBodyBytes: 33554432,
-		ShutdownTimeout:     10 * time.Second,
-		DBConnectTimeout:    30 * time.Second,
-		DBMinConns:          2,
-		DBMaxConns:          10,
-		CORSAllowedOrigins:  []string{"http://localhost:5173"},
-		DBHost:              "postgres",
-		DBPort:              5432,
-		DBName:              "xlyra",
-		DBUser:              "postgres",
-		DBPassword:          "postgres",
-		DBSSLMode:           "disable",
-		SiteHealthInterval:  15 * time.Minute,
-		SiteHealthTimeout:   10 * time.Second,
-		SiteHealthWorkers:   4,
+		AppEnv:                  "development",
+		AppName:                 "xlyra-server",
+		HTTPHost:                "0.0.0.0",
+		HTTPPort:                5801,
+		LogLevel:                "info",
+		LogDir:                  "logs",
+		LogFilePrefix:           "xlyra-server",
+		LogRetentionDays:        14,
+		ReadHeaderTimeout:       5 * time.Second,
+		RequestTimeout:          30 * time.Second,
+		MaxRequestBodyBytes:     33554432,
+		ShutdownTimeout:         10 * time.Second,
+		DBConnectTimeout:        30 * time.Second,
+		DBMinConns:              2,
+		DBMaxConns:              10,
+		CORSAllowedOrigins:      []string{"http://localhost:5173"},
+		DBHost:                  "postgres",
+		DBPort:                  5432,
+		DBName:                  "xlyra",
+		DBUser:                  "postgres",
+		DBPassword:              "postgres",
+		DBSSLMode:               "disable",
+		SiteHealthInterval:      15 * time.Minute,
+		SiteHealthTimeout:       10 * time.Second,
+		SiteHealthWorkers:       4,
+		AgentEngine:             "runner",
+		AgentMaxConcurrent:      4,
+		AgentRunTimeout:         60 * time.Minute,
+		AgentIsolation:          "auto",
+		AgentUIDBase:            20000,
+		AgentMaxSlots:           4000,
+		AgentBash:               "auto",
+		AgentExecDefaultTimeout: 2 * time.Minute,
+		AgentExecMaxTimeout:     10 * time.Minute,
+		AgentNodeMaxHeapMB:      1024,
+		AgentMaxOutputBytes:     64 << 20,
+		AgentSessionQuotaBytes:  512 << 20,
+		AgentQueueTimeout:       2 * time.Minute,
+		AgentQueueMax:           32,
+	}
+}
+
+// TestAgentIsolationDefaults:空环境下解析应得到文档默认值,且默认值能通过校验。
+func TestAgentIsolationDefaults(t *testing.T) {
+	t.Parallel()
+
+	var cfg Config
+	// 用空环境解析,避免宿主机环境变量影响默认值断言
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: map[string]string{}}); err != nil {
+		t.Fatalf("parse defaults: %v", err)
+	}
+	want := Config{
+		AgentIsolation:          "auto",
+		AgentUIDBase:            20000,
+		AgentMaxSlots:           4000,
+		AgentNodeMaxHeapMB:      1024,
+		AgentMaxOutputBytes:     64 << 20,
+		AgentSessionQuotaBytes:  512 << 20,
+		AgentQueueTimeout:       2 * time.Minute,
+		AgentQueueMax:           32,
+		AgentBash:               "auto",
+		AgentExecDefaultTimeout: 2 * time.Minute,
+		AgentExecMaxTimeout:     10 * time.Minute,
+	}
+	if cfg.AgentBash != want.AgentBash || cfg.AgentExecDefaultTimeout != want.AgentExecDefaultTimeout ||
+		cfg.AgentExecMaxTimeout != want.AgentExecMaxTimeout {
+		t.Fatalf("沙箱默认值不符: %+v", cfg)
+	}
+	if cfg.AgentIsolation != want.AgentIsolation || cfg.AgentUIDBase != want.AgentUIDBase ||
+		cfg.AgentMaxSlots != want.AgentMaxSlots || cfg.AgentNodeMaxHeapMB != want.AgentNodeMaxHeapMB ||
+		cfg.AgentMaxOutputBytes != want.AgentMaxOutputBytes ||
+		cfg.AgentSessionQuotaBytes != want.AgentSessionQuotaBytes ||
+		cfg.AgentQueueTimeout != want.AgentQueueTimeout || cfg.AgentQueueMax != want.AgentQueueMax {
+		t.Fatalf("隔离相关默认值不符:\n got %+v\nwant %+v", cfg, want)
+	}
+	// 默认值本身必须合法(把其余必填字段补齐后校验)
+	base := validConfig()
+	base.AgentIsolation = ""
+	base.AgentUIDBase = 0
+	base.AgentMaxSlots = 0
+	base.AgentNodeMaxHeapMB = 0
+	base.AgentMaxOutputBytes = 0
+	base.AgentSessionQuotaBytes = 0
+	base.AgentQueueTimeout = 0
+	base.AgentQueueMax = 0
+	base.AgentBash = cfg.AgentBash
+	base.AgentExecDefaultTimeout = cfg.AgentExecDefaultTimeout
+	base.AgentExecMaxTimeout = cfg.AgentExecMaxTimeout
+	base.AgentIsolation = cfg.AgentIsolation
+	base.AgentUIDBase = cfg.AgentUIDBase
+	base.AgentMaxSlots = cfg.AgentMaxSlots
+	base.AgentNodeMaxHeapMB = cfg.AgentNodeMaxHeapMB
+	base.AgentMaxOutputBytes = cfg.AgentMaxOutputBytes
+	base.AgentSessionQuotaBytes = cfg.AgentSessionQuotaBytes
+	base.AgentQueueTimeout = cfg.AgentQueueTimeout
+	base.AgentQueueMax = cfg.AgentQueueMax
+	if err := base.Validate(); err != nil {
+		t.Fatalf("默认值未通过校验: %v", err)
+	}
+	// QueueMax=-1(关闭排队)是显式合法值
+	base.AgentQueueMax = -1
+	if err := base.Validate(); err != nil {
+		t.Fatalf("AGENT_QUEUE_MAX=-1 应合法: %v", err)
+	}
+}
+
+// TestValidateRejectsInvalidAgentIsolation:非法 AGENT_ISOLATION 值。
+func TestValidateRejectsInvalidAgentIsolation(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"", "On", "AUTO", "force", "auto "} {
+		cfg := validConfig()
+		cfg.AgentIsolation = mode
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "AGENT_ISOLATION") {
+			t.Fatalf("AGENT_ISOLATION=%q 应报错,得到 %v", mode, err)
+		}
+	}
+}
+
+// TestValidateRejectsInvalidAgentIsolationRanges:身份池与限额的范围校验。
+func TestValidateRejectsInvalidAgentIsolationRanges(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]func(*Config){
+		"AGENT_UID_BASE":  func(c *Config) { c.AgentUIDBase = 999 },
+		"AGENT_MAX_SLOTS": func(c *Config) { c.AgentMaxSlots = 3 },
+		"uid 池上限": func(c *Config) {
+			c.AgentUIDBase = 2147483000
+			c.AgentMaxSlots = 4000
+		},
+		"AGENT_NODE_MAX_HEAP_MB":    func(c *Config) { c.AgentNodeMaxHeapMB = -1 },
+		"AGENT_MAX_OUTPUT_BYTES":    func(c *Config) { c.AgentMaxOutputBytes = 0 },
+		"AGENT_SESSION_QUOTA_BYTES": func(c *Config) { c.AgentSessionQuotaBytes = -1 },
+		"AGENT_QUEUE_TIMEOUT":       func(c *Config) { c.AgentQueueTimeout = 0 },
+		"AGENT_QUEUE_MAX":           func(c *Config) { c.AgentQueueMax = 0 },
+	}
+	for name, mutate := range cases {
+		cfg := validConfig()
+		mutate(&cfg)
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("%s 应报错", name)
+		}
+		if name != "uid 池上限" && !strings.Contains(err.Error(), name) {
+			t.Fatalf("%s 报错应带字段名,得到 %v", name, err)
+		}
+	}
+	// uid 池上限的报错信息说明越界即可
+	cfg := validConfig()
+	cfg.AgentUIDBase = 2147483000
+	cfg.AgentMaxSlots = 4000
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "uid limit") {
+		t.Fatalf("uid 池越界应报错,得到 %v", err)
 	}
 }

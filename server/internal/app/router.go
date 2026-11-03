@@ -24,6 +24,7 @@ import (
 	"xlyra/server/internal/analytics"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/catalog"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/dashboard"
 	"xlyra/server/internal/downloads"
@@ -31,7 +32,6 @@ import (
 	"xlyra/server/internal/health"
 	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
@@ -203,44 +203,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	agentLLMHandler := agentllm.NewHandler(logger.With("thread", "agent-llm"), db, gatewayHandler)
 	agentProxyHandler := agentproxy.NewHandler(cfg.AgentRunnerBaseURL, cfg.AgentRunnerToken, streamingHTTPClient, logger.With("thread", "agent-proxy"), config.ResolveWorkdir())
 	if routerService != nil {
-		agentProxyHandler.SetProtocolResolver(func(ctx context.Context, model string) (string, error) {
-			policy, modelPolicy, siteIDs, siteModelIDs := agentproxy.AccessPolicyFromConfig(confFile)
-			query := routeengine.CandidateQuery{ModelKey: model}
-			if policy == "allow_list" {
-				query.AllowedSiteIDs = parseAgentUUIDs(siteIDs)
-			}
-			if modelPolicy == "allow_list" {
-				query.AllowedSiteModelIDs = parseAgentUUIDs(siteModelIDs)
-			}
-			candidates, err := routerService.Candidates(ctx, query)
-			if err != nil {
-				// 解析失败（如模型未归一到 canonical、路由服务异常）不能阻断会话创建：
-				// 降级为 openai-responses，由网关在实际调用时做协议转换或报出真实路由错误
-				logger.Warn("agent protocol resolution failed, falling back to openai-responses", "model", model, "error", err)
-				return "openai-responses", nil
-			}
-			protocol := ""
-			for _, candidate := range candidates.Items {
-				for _, endpointType := range candidate.Model.SupportedEndpointTypes {
-					switch strings.ToLower(strings.TrimSpace(endpointType)) {
-					case "anthropic-messages", "messages":
-						return "anthropic-messages", nil
-					case "openai-response", "openai-responses", "responses":
-						protocol = "openai-responses"
-					case "openai", "chat", "chat-completions", "openai-chat-completions":
-						if protocol == "" {
-							protocol = "openai-chat-completions"
-						}
-					}
-				}
-			}
-			if protocol == "" {
-				// 候选为空（冷却/无可用凭证/白名单过滤）同样降级：错误应发生在实际 LLM 调用时，而不是会话创建时
-				logger.Warn("no supported agent protocol from candidates, falling back to openai-responses", "model", model, "candidates", len(candidates.Items))
-				return "openai-responses", nil
-			}
-			return protocol, nil
-		})
+		agentProxyHandler.SetProtocolResolver(agentProtocolResolver(logger, confFile, routerService))
 	}
 	agentProxyHandler.SetOnRunStarted(func(ctx context.Context, run agentproxy.RunRegistration) error {
 		return agentLLMHandler.RegisterRun(ctx, run.AgentInstanceID, run.SessionID, run.RunID, run.Model)
@@ -276,6 +239,21 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			gatewayHandler.PrewarmModelsCache(ctx)
 		}()
 		go syncAgentAccessPolicy()
+	}
+	// AGENT_ENGINE=pi 时装配内置 Agent；runner 引擎保持原有转发行为不变。
+	var builtin *builtinAgent
+	if cfg.AgentEngine == "pi" {
+		builtin = newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory)
+		if tasks != nil {
+			tasks.Add(1)
+			go func() {
+				defer tasks.Done()
+				<-ctx.Done()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				builtin.shutdown(shutdownCtx)
+			}()
+		}
 	}
 	adminHandler := admin.NewHandler(logger.With("thread", "admin"), authService, siteService, catalogService, routerService, usageService, dashboardService, systemStatsService, &gatewayHandler, newAPIService, oauthService, appTimeZone).WithDownloadService(downloadService).WithTrafficFlowStore(db).WithAnalyticsService(analyticsService)
 	if jsPluginManager != nil {
@@ -352,40 +330,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Use(requireAdminCSRF(authService))
 				protected.Use(adminHandler.AuditAdminMutation)
 				protected.Route("/agent", func(agentRouter chi.Router) {
-					agentRouter.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
-						agentProxyHandler.GetSettings(w, r, confFile)
-					})
-					agentRouter.With(httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)).Put("/settings", func(w http.ResponseWriter, r *http.Request) {
-						agentProxyHandler.UpdateSettings(w, r, confFile)
-					})
-					agentRouter.Get("/backgrounds/{name}", agentProxyHandler.ServeBackground)
-					agentRouter.Get("/health", agentProxyHandler.Forward)
-					agentRouter.Get("/version", agentProxyHandler.Forward)
-					agentRouter.Post("/upgrade", agentProxyHandler.Forward)
-					agentRouter.Get("/memory", agentProxyHandler.Forward)
-					agentRouter.Put("/memory/{target}", agentProxyHandler.Forward)
-					agentRouter.Get("/skills", agentProxyHandler.Forward)
-					agentRouter.Get("/skills/{name}", agentProxyHandler.Forward)
-					agentRouter.Get("/skills/{name}/file", agentProxyHandler.Forward)
-					agentRouter.Put("/skills/{name}", agentProxyHandler.Forward)
-					agentRouter.Delete("/skills/{name}", agentProxyHandler.Forward)
-					agentRouter.Get("/learning/status", agentProxyHandler.Forward)
-					agentRouter.Get("/workspace/file", agentProxyHandler.Forward)
-					agentRouter.Put("/workspace/file", agentProxyHandler.Forward)
-					agentRouter.Delete("/workspace/file", agentProxyHandler.Forward)
-					agentRouter.Get("/model-memory", agentProxyHandler.Forward)
-					agentRouter.Get("/config", agentProxyHandler.Forward)
-					agentRouter.Put("/config", agentProxyHandler.Forward)
-					agentRouter.Get("/sessions", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions", agentProxyHandler.Forward)
-					agentRouter.Get("/sessions/{id}/transcript", agentProxyHandler.Forward)
-					agentRouter.Patch("/sessions/{id}", agentProxyHandler.Forward)
-					agentRouter.Delete("/sessions/{id}", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/retry", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/stop", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/compact-context", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/grant-access", agentProxyHandler.Forward)
-					agentRouter.Get("/sessions/{id}/events", agentProxyHandler.Forward)
+					registerAgentRoutes(agentRouter, cfg, confFile, agentProxyHandler, builtin)
 				})
 				protected.Get("/auth/session", adminHandler.CurrentSession)
 				protected.Delete("/auth/session", adminHandler.DeleteSession)
@@ -660,6 +605,125 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	})
 
 	return r, &gatewayHandler, pluginMarket
+}
+
+// agentProtocolResolver 返回「模型 → 上游协议」的解析闭包，runner 转发与内置
+// Pi 引擎共用。解析失败或候选为空时降级为 openai-responses：错误应发生在实际
+// LLM 调用时，而不是会话创建时。
+func agentProtocolResolver(logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service) func(ctx context.Context, model string) (string, error) {
+	return func(ctx context.Context, model string) (string, error) {
+		if routerService == nil {
+			return "openai-responses", nil
+		}
+		policy, modelPolicy, siteIDs, siteModelIDs := agentproxy.AccessPolicyFromConfig(confFile)
+		query := routeengine.CandidateQuery{ModelKey: model}
+		if policy == "allow_list" {
+			query.AllowedSiteIDs = parseAgentUUIDs(siteIDs)
+		}
+		if modelPolicy == "allow_list" {
+			query.AllowedSiteModelIDs = parseAgentUUIDs(siteModelIDs)
+		}
+		candidates, err := routerService.Candidates(ctx, query)
+		if err != nil {
+			// 解析失败（如模型未归一到 canonical、路由服务异常）不能阻断会话创建：
+			// 降级为 openai-responses，由网关在实际调用时做协议转换或报出真实路由错误
+			logger.Warn("agent protocol resolution failed, falling back to openai-responses", "model", model, "error", err)
+			return "openai-responses", nil
+		}
+		protocol := ""
+		for _, candidate := range candidates.Items {
+			for _, endpointType := range candidate.Model.SupportedEndpointTypes {
+				switch strings.ToLower(strings.TrimSpace(endpointType)) {
+				case "anthropic-messages", "messages":
+					return "anthropic-messages", nil
+				case "openai-response", "openai-responses", "responses":
+					protocol = "openai-responses"
+				case "openai", "chat", "chat-completions", "openai-chat-completions":
+					if protocol == "" {
+						protocol = "openai-chat-completions"
+					}
+				}
+			}
+		}
+		if protocol == "" {
+			// 候选为空（冷却/无可用凭证/白名单过滤）同样降级
+			logger.Warn("no supported agent protocol from candidates, falling back to openai-responses", "model", model, "candidates", len(candidates.Items))
+			return "openai-responses", nil
+		}
+		return protocol, nil
+	}
+}
+
+// registerAgentRoutes 注册 /agent 路由组。settings 与 backgrounds 两种引擎都由
+// agentproxy 提供；pi 引擎（builtin 非 nil）下会话/事件/health 与
+// skills/workspace/config 能力接口改走内置 handler，已移除的接口给出明确错误；
+// runner 引擎保持原转发行为。
+func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *config.ConfigFile, agentProxyHandler *agentproxy.Handler, builtin *builtinAgent) {
+	agentRouter.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
+		agentProxyHandler.GetSettings(w, r, confFile)
+	})
+	agentRouter.With(httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)).Put("/settings", func(w http.ResponseWriter, r *http.Request) {
+		agentProxyHandler.UpdateSettings(w, r, confFile)
+	})
+	agentRouter.Get("/backgrounds/{name}", agentProxyHandler.ServeBackground)
+	if builtin == nil {
+		agentRouter.Get("/health", agentProxyHandler.Forward)
+		agentRouter.Get("/version", agentProxyHandler.Forward)
+		agentRouter.Post("/upgrade", agentProxyHandler.Forward)
+		agentRouter.Get("/memory", agentProxyHandler.Forward)
+		agentRouter.Put("/memory/{target}", agentProxyHandler.Forward)
+		agentRouter.Get("/skills", agentProxyHandler.Forward)
+		agentRouter.Get("/skills/{name}", agentProxyHandler.Forward)
+		agentRouter.Get("/skills/{name}/file", agentProxyHandler.Forward)
+		agentRouter.Put("/skills/{name}", agentProxyHandler.Forward)
+		agentRouter.Delete("/skills/{name}", agentProxyHandler.Forward)
+		agentRouter.Get("/learning/status", agentProxyHandler.Forward)
+		agentRouter.Get("/workspace/file", agentProxyHandler.Forward)
+		agentRouter.Put("/workspace/file", agentProxyHandler.Forward)
+		agentRouter.Delete("/workspace/file", agentProxyHandler.Forward)
+		agentRouter.Get("/model-memory", agentProxyHandler.Forward)
+		agentRouter.Get("/config", agentProxyHandler.Forward)
+		agentRouter.Put("/config", agentProxyHandler.Forward)
+		agentRouter.Get("/sessions", agentProxyHandler.Forward)
+		agentRouter.Post("/sessions", agentProxyHandler.Forward)
+		agentRouter.Get("/sessions/{id}/transcript", agentProxyHandler.Forward)
+		agentRouter.Patch("/sessions/{id}", agentProxyHandler.Forward)
+		agentRouter.Delete("/sessions/{id}", agentProxyHandler.Forward)
+		agentRouter.Post("/sessions/{id}/retry", agentProxyHandler.Forward)
+		agentRouter.Post("/sessions/{id}/stop", agentProxyHandler.Forward)
+		agentRouter.Post("/sessions/{id}/compact-context", agentProxyHandler.Forward)
+		agentRouter.Post("/sessions/{id}/grant-access", agentProxyHandler.Forward)
+		agentRouter.Get("/sessions/{id}/events", agentProxyHandler.Forward)
+		return
+	}
+	h := builtin.handler
+	agentRouter.Get("/health", h.Health)
+	agentRouter.Get("/version", h.FeatureRemoved)
+	agentRouter.Post("/upgrade", h.FeatureRemoved)
+	agentRouter.Get("/memory", h.FeatureRemoved)
+	agentRouter.Put("/memory/{target}", h.FeatureRemoved)
+	agentRouter.Get("/learning/status", h.FeatureRemoved)
+	agentRouter.Get("/skills", h.ListSkills)
+	agentRouter.Get("/skills/{name}", h.GetSkill)
+	agentRouter.Get("/skills/{name}/file", h.GetSkillFile)
+	agentRouter.Put("/skills/{name}", h.PutSkill)
+	agentRouter.Delete("/skills/{name}", h.DeleteSkill)
+	agentRouter.Get("/workspace/file", h.GetWorkspaceFile)
+	agentRouter.Put("/workspace/file", h.PutWorkspaceFile)
+	agentRouter.Delete("/workspace/file", h.DeleteWorkspaceFile)
+	agentRouter.Get("/config", h.GetConfig)
+	agentRouter.Put("/config", h.PutConfig)
+	agentRouter.Get("/model-memory", h.ModelMemory)
+	agentRouter.Get("/sessions", h.ListSessions)
+	agentRouter.Post("/sessions", h.CreateSession)
+	agentRouter.Get("/sessions/{id}/transcript", h.SessionTranscript)
+	agentRouter.Delete("/sessions/{id}", h.DeleteSession)
+	agentRouter.Post("/sessions/{id}/fork", h.ForkSession)
+	agentRouter.Post("/sessions/{id}/retry", h.RetrySession)
+	agentRouter.Post("/sessions/{id}/stop", h.StopSession)
+	agentRouter.Post("/sessions/{id}/grant-access", h.GrantAccess)
+	agentRouter.Post("/sessions/{id}/revoke-access", h.RevokeAccess)
+	agentRouter.Get("/sessions/{id}/events", h.SessionEvents)
 }
 
 func requireAdmin(authService *auth.Service) func(http.Handler) http.Handler {

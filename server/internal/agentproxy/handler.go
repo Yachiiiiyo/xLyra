@@ -282,6 +282,12 @@ func validateAgentAttachments(value any) error {
 	return nil
 }
 
+// ValidateAttachments 导出附件限额校验（≤4 个、单文件 5MB、总 20MB、base64
+// data URL），供内置 Agent 的 HTTP 层复用同一套规则。
+func ValidateAttachments(value any) error {
+	return validateAgentAttachments(value)
+}
+
 // decodedBase64Size 返回 base64 载荷的解码后字节数；字符集非法时 ok=false（不分配解码缓冲）
 func decodedBase64Size(encoded string) (int, bool) {
 	for i := 0; i < len(encoded); i++ {

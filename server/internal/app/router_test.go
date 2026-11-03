@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"xlyra/server/internal/agentproxy"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/gateway"
@@ -596,6 +598,97 @@ func TestRouteAwareTimeoutLeavesStreamingRoutesWithoutDeadline(t *testing.T) {
 				t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
 			}
 		})
+	}
+}
+
+// fakeBuiltinTokenIssuer 满足 runner.TokenIssuer，仅用于 pi 引擎的接线测试。
+type fakeBuiltinTokenIssuer struct{}
+
+func (fakeBuiltinTokenIssuer) IssueRunToken(context.Context, string, string, string) (string, time.Time, error) {
+	return "token", time.Now(), nil
+}
+
+func (fakeBuiltinTokenIssuer) EndRun(context.Context, string, string, string) error {
+	return nil
+}
+
+func newAgentOnlyRouter(cfg config.Config, builtin *builtinAgent) http.Handler {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	proxy := agentproxy.NewHandler("", "", nil, logger)
+	router := chi.NewRouter()
+	router.Route("/api/v1/agent", func(agentRouter chi.Router) {
+		registerAgentRoutes(agentRouter, cfg, nil, proxy, builtin)
+	})
+	return router
+}
+
+// AGENT_ENGINE=pi 且未配置 Pi 入口时，health 应报告不可用而非启动失败。
+func TestAgentRoutesBuiltinEngineReportsUnavailableHealth(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AgentEngine = "pi"
+	cfg.AgentDataDir = t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	builtin := newBuiltinAgent(cfg, logger, nil, nil, fakeBuiltinTokenIssuer{}, nil)
+
+	router := newAgentOnlyRouter(cfg, builtin)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/health", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Status string `json:"status"`
+		Runner string `json:"runner"`
+		Agent  string `json:"agent"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "unhealthy" || body.Runner != "builtin" || body.Agent != "pi" || body.Reason == "" {
+		t.Fatalf("health body = %+v", body)
+	}
+
+	// 会话命令在缺配置的降级 runner 上返回 503 agent_unavailable。
+	sessions := httptest.NewRequest(http.MethodPost, "/api/v1/agent/sessions", strings.NewReader(`{"content":"hi","model":"m"}`))
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, sessions)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("sessions status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "agent_unavailable") {
+		t.Fatalf("sessions body = %s", rec.Body.String())
+	}
+
+	// runner 专属的 compact-context 在 pi 引擎下不注册。
+	compact := httptest.NewRequest(http.MethodPost, "/api/v1/agent/sessions/11111111-1111-1111-1111-111111111111/compact-context", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, compact)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("compact-context status = %d, want 404", rec.Code)
+	}
+}
+
+// runner 引擎（builtin 为 nil）保持原有转发行为。
+func TestAgentRoutesRunnerEngineStillForwardsToProxy(t *testing.T) {
+	t.Parallel()
+
+	router := newAgentOnlyRouter(testConfig(), nil)
+	for _, path := range []string{"/api/v1/agent/health", "/api/v1/agent/sessions"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s: status = %d", path, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "agent_unavailable") {
+			t.Fatalf("%s: body = %s", path, rec.Body.String())
+		}
 	}
 }
 
