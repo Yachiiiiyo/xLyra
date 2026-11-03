@@ -86,8 +86,8 @@ export function Composer({
           className="max-h-[220px] w-full resize-none bg-transparent px-1.5 text-[15px] leading-6 text-label outline-none placeholder:text-label-3"
         />
         <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1">{controls}</div>
-          <div className="flex min-w-0 items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">{controls}</div>
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
             {trailingControls}
             {streaming ? (
               <button

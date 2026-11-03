@@ -798,20 +798,17 @@ export function AgentWorkspace() {
           <AttachmentMenu
             kinds={['photo', 'camera', 'file']}
             onFiles={(files) => void addAttachments(files)}
-            disabled={running || Boolean(editingMessage) || attachments.length >= MAX_ATTACHMENTS}
+            disabled={running || Boolean(editingMessage)}
+            kindsDisabled={attachments.length >= MAX_ATTACHMENTS}
+            extraItems={[{
+              key: 'reference',
+              icon: <Link2 />,
+              label: t('agent:reference.action'),
+              onSelect: () => setReferenceOpen(true),
+              disabled: references.length >= MAX_SESSION_REFERENCES || Boolean(editingMessage) || running,
+            }]}
             label={t('chat:chat.attach')}
           />
-          <button
-            type="button"
-            onClick={() => setReferenceOpen(true)}
-            disabled={references.length >= MAX_SESSION_REFERENCES || Boolean(editingMessage) || running}
-            className="flex h-11 items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 transition-colors active:bg-fill-3 active:text-label disabled:cursor-not-allowed disabled:opacity-40 md:h-8 md:hover:bg-fill-3 md:hover:text-label"
-            aria-label={t('agent:reference.action')}
-            title={t('agent:reference.hint')}
-          >
-            <Link2 className="h-4 w-4" />
-            <span className="hidden sm:inline">{t('agent:reference.action')}</span>
-          </button>
           <button
             type="button"
             onClick={togglePermissionMode}

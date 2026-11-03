@@ -71,7 +71,7 @@ export function ModelSettingsPicker<T extends string>({ models, model, onModelCh
           type="button"
           disabled={disabled}
           className={cn(
-            'inline-flex h-8 max-w-[15rem] items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 outline-none transition-colors hover:bg-fill-3 hover:text-label focus-visible:ring-2 focus-visible:ring-tint/40 disabled:opacity-50 data-[state=open]:bg-fill-3',
+            'inline-flex h-8 min-w-0 max-w-[15rem] shrink items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 outline-none transition-colors hover:bg-fill-3 hover:text-label focus-visible:ring-2 focus-visible:ring-tint/40 disabled:opacity-50 data-[state=open]:bg-fill-3',
             triggerClassName,
           )}
         >

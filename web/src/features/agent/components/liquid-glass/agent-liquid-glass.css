@@ -62,6 +62,8 @@
 }
 
 .agent-liquid-composer {
+  /* 输入框右上角的小螃蟹趴在面板外沿，不能被 surface 的 overflow:hidden 裁掉；canvas 自带圆角裁切 */
+  overflow: visible;
   border-radius: 26px;
   box-shadow: 0 26px 64px rgb(2 6 18 / 0.34), 0 4px 18px rgb(2 6 18 / 0.24);
 }

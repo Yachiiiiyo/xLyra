@@ -13,6 +13,8 @@ type AttachmentMenuProps = {
   kinds: AttachmentKind[]
   onFiles: (files: FileList | null) => void
   disabled?: boolean
+  kindsDisabled?: boolean
+  extraItems?: Array<{ key: string; icon: ReactNode; label: string; onSelect: () => void; disabled?: boolean }>
   label?: string
 }
 
@@ -26,7 +28,7 @@ function isTouchDevice() {
  * 每一项背后是一个隐藏的 <input type="file">，用 accept / capture 让移动端浏览器直接跳到
  * 相册（image/*）、相机（capture="environment"）或文件 App（不限类型）。
  */
-export function AttachmentMenu({ kinds, onFiles, disabled = false, label }: AttachmentMenuProps) {
+export function AttachmentMenu({ kinds, onFiles, disabled = false, kindsDisabled = false, extraItems, label }: AttachmentMenuProps) {
   const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const glassRef = useLiquidGlassRef<HTMLDivElement>('regular')
@@ -76,6 +78,7 @@ export function AttachmentMenu({ kinds, onFiles, disabled = false, label }: Atta
               <button
                 key={kind}
                 type="button"
+                disabled={kindsDisabled}
                 className={cn(menuButtonClass, '[&_svg]:size-4 [&_svg]:text-label-2')}
                 onClick={() => {
                   setOpen(false)
@@ -84,6 +87,21 @@ export function AttachmentMenu({ kinds, onFiles, disabled = false, label }: Atta
               >
                 {items[kind].icon}
                 <span className="min-w-0 flex-1">{items[kind].label}</span>
+              </button>
+            ))}
+            {extraItems?.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                disabled={item.disabled}
+                className={cn(menuButtonClass, '[&_svg]:size-4 [&_svg]:text-label-2')}
+                onClick={() => {
+                  setOpen(false)
+                  item.onSelect()
+                }}
+              >
+                {item.icon}
+                <span className="min-w-0 flex-1">{item.label}</span>
               </button>
             ))}
           </PopoverPrimitive.Content>
