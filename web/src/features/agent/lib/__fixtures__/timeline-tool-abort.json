@@ -1,0 +1,38 @@
+{
+  "run": {
+    "status": "cancelled"
+  },
+  "steps": [
+    {
+      "id": "call_sleep",
+      "kind": "tool",
+      "title": "sleep_tool",
+      "status": "done",
+      "inputLength": 11,
+      "outputLength": 13,
+      "inputPreview": "{\"ms\":3000}",
+      "outputPreview": "sleep aborted"
+    }
+  ],
+  "permissions": [],
+  "finalText": "",
+  "runs": [
+    {
+      "status": "cancelled",
+      "steps": [
+        {
+          "id": "call_sleep",
+          "kind": "tool",
+          "title": "sleep_tool",
+          "status": "done",
+          "inputLength": 11,
+          "outputLength": 13,
+          "inputPreview": "{\"ms\":3000}",
+          "outputPreview": "sleep aborted"
+        }
+      ],
+      "permissions": [],
+      "finalText": ""
+    }
+  ]
+}

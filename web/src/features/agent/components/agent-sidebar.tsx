@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import { Ellipsis, MoveLeft, Plus, Settings2, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AgentConfirmDialog } from '@/features/agent/components/agent-confirm-dialog'
-import type { AgentLiquidGlassSettings } from '@/features/agent/components/liquid-glass/agent-liquid-glass'
 import { formatRelativeTime } from '@/features/agent/lib/relative-time'
 import type { AgentSession } from '@/features/agent/api/agent'
 
@@ -12,12 +11,6 @@ type AgentSidebarProps = {
   className?: string
   sessions: AgentSession[]
   activeId: string | null
-  /** 弹层表面渲染器（液态玻璃面板），与模型选择器同一模式，由 workspace 提供 */
-  menuRenderer: (children: React.ReactNode) => React.ReactNode
-  /** 删除确认弹窗的玻璃材质参数：由 workspace 传入页面的深色态与背景图 */
-  backgroundImage?: string
-  dark?: boolean
-  glassSettings?: AgentLiquidGlassSettings
   onBack: () => void
   onSelect: (id: string) => void
   onNew: () => void
@@ -25,7 +18,7 @@ type AgentSidebarProps = {
   onOpenSettings: () => void
 }
 
-export function AgentSidebar({ className, sessions, activeId, menuRenderer, backgroundImage = '/agent-backdrop.png', dark = false, glassSettings, onBack, onSelect, onNew, onDelete, onOpenSettings }: AgentSidebarProps) {
+export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onOpenSettings }: AgentSidebarProps) {
   const { t, i18n } = useTranslation('agent')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
@@ -34,7 +27,7 @@ export function AgentSidebar({ className, sessions, activeId, menuRenderer, back
       <button
         type="button"
         onClick={onBack}
-        className="flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-sm text-muted-soft transition-colors hover:bg-[hsl(var(--surface-subtle))] hover:text-foreground"
+        className="flex h-10 max-lg:h-9 shrink-0 items-center gap-2 rounded-full px-3 max-lg:px-2.5 text-sm max-lg:text-[0.8rem] text-muted-soft transition-colors hover:bg-[hsl(var(--surface-subtle))] hover:text-foreground"
       >
         <MoveLeft className="h-4 w-4 shrink-0" />
         {t('header.back')}
@@ -43,15 +36,15 @@ export function AgentSidebar({ className, sessions, activeId, menuRenderer, back
       <button
         type="button"
         onClick={onNew}
-        className="mt-1 flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-sm font-medium text-foreground transition-colors hover:bg-[hsl(var(--surface-subtle))]"
+        className="mt-1 flex h-10 max-lg:h-9 shrink-0 items-center gap-2 rounded-full px-3 max-lg:px-2.5 text-sm max-lg:text-[0.8rem] font-medium text-foreground transition-colors hover:bg-[hsl(var(--surface-subtle))]"
       >
         <Plus className="h-4 w-4 shrink-0" />
         {t('sidebar.new')}
       </button>
 
-      <p className="mt-4 px-3 pb-2 text-xs font-medium text-faint">{t('sidebar.recent')}</p>
+      <p className="mt-4 max-lg:mt-2 px-3 max-lg:px-2.5 pb-2 max-lg:pb-1.5 text-xs max-lg:text-[0.68rem] font-medium text-faint">{t('sidebar.recent')}</p>
 
-      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain">
         {sessions.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-muted-soft">{t('sidebar.empty')}</p>
         ) : (
@@ -60,7 +53,6 @@ export function AgentSidebar({ className, sessions, activeId, menuRenderer, back
               key={session.session_id}
               session={session}
               active={session.session_id === activeId}
-              menuRenderer={menuRenderer}
               locale={i18n.language}
               untitledLabel={t('sidebar.untitled')}
               menuLabel={t('sidebar.menu')}
@@ -75,7 +67,7 @@ export function AgentSidebar({ className, sessions, activeId, menuRenderer, back
       <button
         type="button"
         onClick={onOpenSettings}
-        className="mt-2 flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-sm text-muted-soft transition-colors hover:bg-[hsl(var(--surface-subtle))] hover:text-foreground"
+        className="mt-2 flex h-10 max-lg:h-9 shrink-0 items-center gap-2 rounded-full px-3 max-lg:px-2.5 text-sm max-lg:text-[0.8rem] text-muted-soft transition-colors hover:bg-[hsl(var(--surface-subtle))] hover:text-foreground"
       >
         <Settings2 className="h-4 w-4 shrink-0" />
         {t('settings.entry')}
@@ -86,9 +78,6 @@ export function AgentSidebar({ className, sessions, activeId, menuRenderer, back
         title={t('sidebar.delete')}
         description={t('sidebar.deleteConfirm')}
         confirmLabel={t('sidebar.delete')}
-        backgroundImage={backgroundImage}
-        dark={dark}
-        glassSettings={glassSettings}
         destructive
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
@@ -103,7 +92,6 @@ export function AgentSidebar({ className, sessions, activeId, menuRenderer, back
 function SessionRow({
   session,
   active,
-  menuRenderer,
   locale,
   untitledLabel,
   menuLabel,
@@ -113,7 +101,6 @@ function SessionRow({
 }: {
   session: AgentSession
   active: boolean
-  menuRenderer: (children: React.ReactNode) => React.ReactNode
   locale: string
   untitledLabel: string
   menuLabel: string
@@ -128,10 +115,10 @@ function SessionRow({
       data-agent-session-row="true"
       data-active={active}
       className={cn(
-        'group flex items-center gap-1 rounded-xl px-3 py-2 text-sm transition-colors',
+        'group flex min-h-10 max-lg:min-h-9 items-center gap-1 rounded-full px-3 max-lg:px-2.5 py-2 max-lg:py-1.5 text-sm max-lg:text-[0.78rem] transition-colors',
         active
-          ? 'bg-[hsl(var(--surface-selected))] text-foreground'
-          : 'text-muted-soft hover:bg-[hsl(var(--surface-subtle))] hover:text-foreground',
+          ? 'nav-item-selected text-label'
+          : 'text-label-2 hover:bg-fill-4 hover:text-label',
       )}
     >
       <button
@@ -163,22 +150,20 @@ function SessionRow({
             align="end"
             sideOffset={6}
             onClick={(event) => event.stopPropagation()}
-            className="agent-liquid-picker-host z-[120]"
+            className="lg-regular z-[120] w-max min-w-36 rounded-card p-1.5"
           >
-            {menuRenderer(
-              <button
-                type="button"
-                data-agent-delete="true"
-                onClick={() => {
-                  setMenuOpen(false)
-                  onDelete(session.session_id)
-                }}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors"
-              >
-                <Trash2 className="h-4 w-4 text-current" />
-                {deleteLabel}
-              </button>
-            )}
+            <button
+              type="button"
+              data-agent-delete="true"
+              onClick={() => {
+                setMenuOpen(false)
+                onDelete(session.session_id)
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-danger/90 transition-colors hover:bg-danger/10 hover:text-danger"
+            >
+              <Trash2 className="h-4 w-4 shrink-0 text-current" />
+              {deleteLabel}
+            </button>
           </PopoverPrimitive.Content>
         </PopoverPrimitive.Portal>
       </PopoverPrimitive.Root>

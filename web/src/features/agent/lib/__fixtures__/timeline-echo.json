@@ -1,0 +1,27 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "kind": "tool",
+      "title": "echo_tool",
+      "status": "done",
+      "inputLength": 15,
+      "outputLength": 9,
+      "inputPreview": "{\"text\":\"ping\"}",
+      "outputPreview": "echo:ping"
+    },
+    {
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 7,
+      "inputPreview": "",
+      "outputPreview": "echo 完成"
+    }
+  ],
+  "permissions": [],
+  "finalText": "echo 完成"
+}

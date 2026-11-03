@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronRight, FileText, ImagePlus, Layers, LoaderCircle, MoveLeft, Palette, Pencil, Search, Sparkles, X, Brain } from 'lucide-react'
+import { ChevronRight, FileText, Layers, LoaderCircle, MonitorCog, MoveLeft, Pencil, Search, Settings2, Sparkles, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AgentConfirmDialog } from '@/features/agent/components/agent-confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -14,29 +14,23 @@ import { TextArea } from '@/components/ui/textarea'
 import { Slider } from '@/components/ui/slider'
 import {
   deleteAgentSkill,
-  fetchAgentMemory,
-  fetchAgentLearningStatus,
   fetchAgentCapabilities,
   fetchAgentConfigEnvelope,
-  fetchAgentRuntimeSettings,
   fetchAgentSkillDetail,
   fetchAgentSkillFile,
   fetchWorkspaceFile,
   listAgentSkills,
   putWorkspaceFile,
-  updateAgentMemory,
   updateAgentSkill,
   updateAgentCapabilities,
-  updateAgentAppearanceSettings,
   updateAgentContextSettings,
-  type AgentAppearanceSettings,
-  defaultAgentAppearance,
   type AgentSkill,
 } from '@/features/agent/api/agent'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { AgentLiquidGlassPanel, type AgentLiquidGlassSettings } from '@/features/agent/components/liquid-glass/agent-liquid-glass'
+import { AgentScopePane } from '@/features/agent/components/agent-scope-pane'
+import { AgentEnvironmentPane } from '@/features/agent/components/agent-environment-pane'
 
 const AGENTS_MD_LIMIT = 32_000
 
@@ -44,12 +38,14 @@ const capabilitiesKey = ['agent', 'capabilities'] as const
 const skillsKey = ['agent', 'skills'] as const
 const agentsMdKey = ['agent', 'workspace-file', 'AGENTS.md'] as const
 
-type SettingsTab = 'memory' | 'skills' | 'agentsMd' | 'appearance' | 'context' | 'learning'
+type SettingsTab = 'scope' | 'skills' | 'agentsMd' | 'context' | 'environment'
 type MobileSettingsView = 'menu' | 'detail'
 type SettingsActions = {
   save: () => void
   canSave: boolean
   pending: boolean
+  /** 当前 tab 有未保存的草稿时为 true：底部出现「未保存的更改」提示 */
+  dirty?: boolean
 }
 
 /** In-dialog navigation for Skills: list / detail / edit (name null means creating). */
@@ -61,41 +57,21 @@ type SkillsNav =
 type AgentSettingsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  backgroundImage?: string
-  /** 会话中为 true：与页面一致渲染深色玻璃（背景 URL 里没有可嗅探的标记，必须显式传） */
-  dark?: boolean
-  /** 玻璃着色器参数：不传则用对话框自身的默认值；传入侧栏的 glassSettings 可与之同款 */
-  glassSettings?: AgentLiquidGlassSettings
 }
 
-/** Agent capabilities dialog: left nav (Skills / AGENTS.md) + right content; new settings sections can extend the tabs. */
-export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/agent-backdrop.png', dark = false, glassSettings }: AgentSettingsDialogProps) {
+/** Agent 设置弹窗：主程序 Dialog 外壳（桌面居中 / 移动端底部抽屉），左侧纵向导航 + 内容 + 底部操作栏。 */
+export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogProps) {
   const { t } = useTranslation('agent')
   const mobileLayout = useMobileLayout()
-  const [tab, setTab] = useState<SettingsTab>('appearance')
+  const [tab, setTab] = useState<SettingsTab>('scope')
   const [mobileView, setMobileView] = useState<MobileSettingsView>('menu')
   const [paneActions, setPaneActions] = useState<SettingsActions | null>(null)
   const [skillsNav, setSkillsNav] = useState<SkillsNav>({ view: 'list' })
-  const runtime = useQuery({ queryKey: ['settings', 'agent', 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false })
-  const queryClient = useQueryClient()
-  const [appearanceDraftOverride, setAppearanceDraftOverride] = useState<AgentAppearanceSettings | null>(null)
-  const appearanceDraft = appearanceDraftOverride ?? runtime.data?.appearance ?? defaultAgentAppearance
-  const appearanceSave = useMutation({
-    mutationFn: () => updateAgentAppearanceSettings(appearanceDraft),
-    onSuccess: async () => {
-      setAppearanceDraftOverride(null)
-      await queryClient.invalidateQueries({ queryKey: ['settings', 'agent', 'runtime'] })
-      toast.success(t('settings.appearance.saved'))
-    },
-    onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
-  })
-  const darkBackground = dark
 
   function resetDialogState() {
-    setTab('appearance')
+    setTab('scope')
     setMobileView('menu')
     setSkillsNav({ view: 'list' })
-    setAppearanceDraftOverride(null)
     setPaneActions(null)
   }
 
@@ -104,20 +80,12 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
     onOpenChange(false)
   }
 
-  function resetAppearance() {
-    setAppearanceDraftOverride({
-      ...defaultAgentAppearance,
-      custom_background_images: appearanceDraft.custom_background_images,
-    })
-  }
-
   const tabs: Array<{ key: SettingsTab; label: string; icon: typeof Sparkles }> = [
-    { key: 'appearance', label: t('settings.tabAppearance'), icon: Palette },
-    { key: 'memory', label: t('settings.tabMemory'), icon: Brain },
-    { key: 'learning', label: t('settings.tabLearning'), icon: Layers },
+    { key: 'scope', label: t('settings.tabScope'), icon: Settings2 },
     { key: 'skills', label: t('settings.tabSkills'), icon: Sparkles },
     { key: 'agentsMd', label: t('settings.tabPersonality'), icon: FileText },
     { key: 'context', label: t('settings.tabContext'), icon: Layers },
+    { key: 'environment', label: t('settings.tabEnvironment'), icon: MonitorCog },
   ]
 
   // Header back button: detail/edit views go one level up (editing an existing skill returns to detail, otherwise to the list).
@@ -128,32 +96,28 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
       }
     : null
 
-  const dialogSidebarClass = cn(
-    'flex shrink-0 gap-0.5 p-3',
-    mobileLayout
-      ? 'w-full flex-row flex-nowrap items-center overflow-x-auto border-b border-[hsl(var(--glass-divider))] bg-[hsl(var(--surface-subtle))]/40 px-2 py-1.5'
-      : 'w-48 flex-col agent-liquid-dialog__sidebar',
-  )
-
-  const tabContent = tab === 'skills'
-    ? <SkillsPane nav={skillsNav} onNavigate={setSkillsNav} onActionsChange={setPaneActions} backgroundImage={backgroundImage} dark={darkBackground} glassSettings={glassSettings} />
-    : tab === 'memory'
-      ? <MemoryPane onActionsChange={setPaneActions} />
-      : tab === 'learning'
-        ? <LearningPane />
+  const tabContent = tab === 'scope'
+    ? <AgentScopePane onActionsChange={setPaneActions} />
+    : tab === 'skills'
+      ? <SkillsPane nav={skillsNav} onNavigate={setSkillsNav} onActionsChange={setPaneActions} />
       : tab === 'agentsMd'
-      ? <PersonalityPane onActionsChange={setPaneActions} />
-      : tab === 'context'
-        ? <ContextPane onActionsChange={setPaneActions} />
-        : <AppearancePane draft={appearanceDraft} onChange={setAppearanceDraftOverride} />
+        ? <PersonalityPane onActionsChange={setPaneActions} />
+        : tab === 'context'
+          ? <ContextPane onActionsChange={setPaneActions} />
+          : <AgentEnvironmentPane />
+
+  const actionsFooter = (
+    paneActions ? (
+      <Button size="sm" onClick={paneActions.save} disabled={!paneActions.canSave || paneActions.pending}>{t('settings.save')}</Button>
+    ) : null
+  )
+  // 编辑器类 tab（人格配置正文、skill 编辑）自带内部滚动，外层改为不滚动防双层滚动条
+  const editorTab = tab === 'agentsMd' || (tab === 'skills' && skillsNav.view === 'edit')
 
   const dialogBody = (
-    <div className={cn('flex min-h-0', mobileLayout ? 'h-full flex-col' : 'h-[min(80svh,600px)]')}>
-      <aside className={dialogSidebarClass}>
-        <p className={cn(
-          'px-2.5 pb-2 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-faint',
-          mobileLayout && 'sr-only',
-        )}>
+    <div className="flex min-h-0 flex-1">
+      <aside className="flex w-48 shrink-0 flex-col gap-0.5 border-r border-[hsl(var(--glass-divider))] p-3">
+        <p className="px-2.5 pb-2 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">
           {t('settings.title')}
         </p>
         {tabs.map((item) => (
@@ -165,10 +129,9 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
               setTab(item.key)
             }}
             className={cn(
-              'agent-liquid-dialog__nav flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors',
-              mobileLayout && 'min-w-[4.75rem] flex-none justify-center px-2 text-xs',
+              'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors',
               tab === item.key
-                ? 'agent-liquid-dialog__nav--active font-medium text-foreground'
+                ? 'nav-item-selected font-medium text-foreground'
                 : 'text-muted-soft hover:bg-[hsl(var(--surface-subtle))] hover:text-foreground',
             )}
           >
@@ -178,10 +141,7 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
         ))}
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className={cn(
-          'flex shrink-0 items-center justify-between border-b border-[hsl(var(--glass-divider))] py-3.5',
-          mobileLayout ? 'px-4' : 'pl-6 pr-4',
-        )}>
+        <div className="flex shrink-0 items-center justify-between border-b border-[hsl(var(--glass-divider))] py-3.5 pl-6 pr-4">
           {headerBack ? (
             <button
               type="button"
@@ -204,34 +164,29 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
           </button>
         </div>
         <div className={cn(
-          'agent-liquid-dialog__body min-h-0 flex-1 py-5',
-          mobileLayout ? 'px-4' : 'px-6',
-          tab === 'memory' || tab === 'agentsMd' || (tab === 'skills' && skillsNav.view === 'edit') ? 'overflow-hidden' : 'overflow-y-auto',
+          'min-h-0 flex-1 overscroll-contain px-6 py-5',
+          editorTab ? 'overflow-hidden' : 'overflow-y-auto',
         )}>
           {tabContent}
         </div>
-        <div className={cn(
-          'flex shrink-0 items-center justify-end gap-2 border-t border-[hsl(var(--glass-divider))] py-3',
-          mobileLayout ? 'px-4' : 'px-6',
-        )}>
-          {tab === 'appearance' ? <Button variant="ghost" size="sm" onClick={resetAppearance} disabled={appearanceSave.isPending}>{t('settings.appearance.reset')}</Button> : null}
-          <Button variant="outline" size="sm" onClick={closeDialog} disabled={appearanceSave.isPending || paneActions?.pending}>{t('settings.appearance.cancel')}</Button>
-          {tab === 'appearance' ? (
-            <Button size="sm" onClick={() => appearanceSave.mutate()} disabled={appearanceSave.isPending || runtime.isLoading}>{t('settings.save')}</Button>
-          ) : paneActions ? (
-            <Button size="sm" onClick={paneActions.save} disabled={!paneActions.canSave || paneActions.pending}>{t('settings.save')}</Button>
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[hsl(var(--glass-divider))] px-6 py-3">
+          {paneActions?.dirty ? (
+            <p className="mr-auto text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
           ) : null}
+          <Button variant="outline" size="sm" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>
+          {actionsFooter}
         </div>
       </div>
     </div>
   )
 
   const mobileDialogBody = mobileView === 'menu' ? (
-    <div className="agent-mobile-settings__layout agent-mobile-settings__layout--menu">
-      <div className="agent-mobile-settings__header">
-        <p className="agent-mobile-settings__title">{t('settings.title')}</p>
-      </div>
-      <div className="agent-mobile-settings__menu">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 主程序的 DialogHeader 在移动端为左上角的圆形关闭/返回按钮留了位置 */}
+      <DialogHeader>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">{t('settings.title')}</p>
+      </DialogHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-2">
         {tabs.map((item) => (
           <button
             key={item.key}
@@ -241,38 +196,32 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
               setTab(item.key)
               setMobileView('detail')
             }}
-            className="agent-mobile-settings__menu-item"
+            className="flex w-full min-h-11 items-center gap-3 border-b border-[hsl(var(--glass-divider))] px-2 py-3 text-left text-sm text-foreground last:border-b-0"
           >
-            <item.icon className="h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+            <item.icon className="h-4 w-4 shrink-0 text-muted-soft" />
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-soft" />
           </button>
         ))}
       </div>
     </div>
   ) : (
-    <div className="agent-mobile-settings__layout">
-      <div className="agent-mobile-settings__header">
-        <button type="button" onClick={() => { setPaneActions(null); setMobileView('menu') }} className="agent-mobile-settings__back">
-          <MoveLeft className="h-4 w-4" />
-          {t('header.back')}
-        </button>
-        <p className="agent-mobile-settings__title">{tabs.find((item) => item.key === tab)?.label}</p>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <DialogHeader>
+        <p className="truncate text-[15px] font-semibold text-foreground">{tabs.find((item) => item.key === tab)?.label}</p>
+      </DialogHeader>
       <div className={cn(
-        'agent-mobile-settings__content',
-        tab === 'memory' || tab === 'agentsMd' || (tab === 'skills' && skillsNav.view === 'edit') ? 'overflow-hidden' : 'overflow-y-auto',
+        'min-h-0 flex-1 overscroll-contain px-4 py-4',
+        editorTab ? 'overflow-hidden' : 'overflow-y-auto',
       )}>
         {tabContent}
       </div>
-      <div className="agent-mobile-settings__footer">
-        {tab === 'appearance' ? <Button variant="ghost" size="sm" onClick={resetAppearance} disabled={appearanceSave.isPending}>{t('settings.appearance.reset')}</Button> : null}
-        <Button variant="outline" size="sm" onClick={closeDialog} disabled={appearanceSave.isPending || paneActions?.pending}>{t('settings.appearance.cancel')}</Button>
-        {tab === 'appearance' ? (
-          <Button size="sm" onClick={() => appearanceSave.mutate()} disabled={appearanceSave.isPending || runtime.isLoading}>{t('settings.save')}</Button>
-        ) : paneActions ? (
-          <Button size="sm" onClick={paneActions.save} disabled={!paneActions.canSave || paneActions.pending}>{t('settings.save')}</Button>
+      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[hsl(var(--glass-divider))] px-4 py-3">
+        {paneActions?.dirty ? (
+          <p className="mr-auto text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
         ) : null}
+        <Button variant="outline" size="sm" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>
+        {actionsFooter}
       </div>
     </div>
   )
@@ -283,243 +232,33 @@ export function AgentSettingsDialog({ open, onOpenChange, backgroundImage = '/ag
       if (!nextOpen) resetDialogState()
       onOpenChange(nextOpen)
     }}>
-      {/* DialogContent's default single auto track sizes to max-content, so nowrap
-          text like skill descriptions would overflow the dialog; pinning the track
-          with grid-cols-[minmax(0,1fr)] constrains it to the container width. */}
       <DialogContent
-        surface="none"
-        className={cn(
-          'agent-liquid-dialog-host min-h-0 grid-rows-[minmax(0,1fr)] grid-cols-[minmax(0,1fr)] overflow-hidden',
-          mobileLayout
-            ? cn(
-                'w-[calc(100vw-2rem)] max-w-none rounded-[24px]',
-                mobileView === 'menu' ? 'h-auto max-h-[min(52svh,420px)]' : 'h-[min(78svh,680px)]',
-              )
-            : 'w-[min(94vw,920px)]',
-        )}
+        size="form"
         aria-describedby={undefined}
+        onBack={mobileLayout && mobileView === 'detail'
+          ? () => {
+              // Skills 的 list/detail/edit 先在内部分层返回，其余 tab 直接回菜单
+              if (headerBack) {
+                headerBack()
+                return
+              }
+              setPaneActions(null)
+              setMobileView('menu')
+            }
+          : undefined}
+        backLabel={tabs.find((item) => item.key === tab)?.label}
+        className={cn(
+          mobileLayout
+            ? mobileView === 'menu'
+              ? 'max-h-[min(60svh,480px)]'
+              : 'h-[min(78svh,680px)]'
+            : 'h-[min(80svh,620px)] w-[min(94vw,920px)]',
+        )}
       >
         <DialogTitle className="sr-only">{t('settings.title')}</DialogTitle>
-        <AgentLiquidGlassPanel
-          backgroundImage={backgroundImage}
-          variant={darkBackground ? 'dark' : 'frosted'}
-          sampleBackground={darkBackground ? false : 0.72}
-          className="agent-liquid-dialog"
-          contentClassName="agent-liquid-dialog__content"
-          settings={{
-            blur: darkBackground ? 0.18 : 0.34,
-            refraction: darkBackground ? 0.72 : 0.38,
-            chromaticAberration: darkBackground ? 0.045 : 0.025,
-            darkTint: darkBackground ? 0.18 : 0.24,
-            tintStrength: darkBackground ? 0.06 : 0.1,
-            edgeHighlight: darkBackground ? 0.08 : 0.1,
-            specular: darkBackground ? 0.14 : 0.12,
-            fresnel: darkBackground ? 1.08 : 0.9,
-            bevel: 0,
-            depth: 32,
-            radius: 28,
-            opacity: darkBackground ? 1 : 0.96,
-            ...glassSettings,
-          }}
-        >
-          {mobileLayout ? mobileDialogBody : dialogBody}
-        </AgentLiquidGlassPanel>
+        {mobileLayout ? mobileDialogBody : dialogBody}
       </DialogContent>
     </Dialog>
-  )
-}
-
-type AppearanceSliderKey = 'side_transparency' | 'side_brightness' | 'side_thickness' | 'backdrop_blur' | 'backdrop_dim'
-
-const appearanceSliderFields: Array<{ key: AppearanceSliderKey; labelKey: string; minLabelKey: string; maxLabelKey: string; unit: string }> = [
-  { key: 'side_transparency', labelKey: 'settings.appearance.sideTransparency', minLabelKey: 'settings.appearance.standard', maxLabelKey: 'settings.appearance.full', unit: '%' },
-  { key: 'side_brightness', labelKey: 'settings.appearance.sideBrightness', minLabelKey: 'settings.appearance.dark', maxLabelKey: 'settings.appearance.bright', unit: '%' },
-  { key: 'side_thickness', labelKey: 'settings.appearance.sideThickness', minLabelKey: 'settings.appearance.thin', maxLabelKey: 'settings.appearance.thick', unit: '' },
-  { key: 'backdrop_blur', labelKey: 'settings.appearance.backdropBlur', minLabelKey: 'settings.appearance.clear', maxLabelKey: 'settings.appearance.blurry', unit: '' },
-  { key: 'backdrop_dim', labelKey: 'settings.appearance.backdropDim', minLabelKey: 'settings.appearance.transparent', maxLabelKey: 'settings.appearance.full', unit: '%' },
-]
-
-function readFileAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('failed to read image'))
-    reader.readAsDataURL(file)
-  })
-}
-
-function blobToDataURL(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('failed to read image'))
-    reader.readAsDataURL(blob)
-  })
-}
-
-/**
- * 上传前压缩：缩放到最长边 ≤1920 并转 WebP。背景图实际会被模糊+压暗当底，
- * q0.85 的 1920px WebP 视觉无差而体积通常降到原图的 1/5~1/10。
- * 返回 null 表示不适合转换（动图、浏览器不支持 WebP 编码、无压缩收益），调用方回退原图。
- */
-const BACKGROUND_MAX_EDGE = 1920
-const BACKGROUND_WEBP_QUALITY = 0.85
-
-async function fileToWebpDataURL(file: File): Promise<string | null> {
-  // GIF 动图转换会丢失动画，保留原图
-  if (file.type === 'image/gif') return null
-  try {
-    const bitmap = await createImageBitmap(file)
-    const scale = Math.min(1, BACKGROUND_MAX_EDGE / Math.max(bitmap.width, bitmap.height))
-    // 已是 WebP 且尺寸在限内：沿用原文件，避免二次有损编码的代际质量损失
-    if (file.type === 'image/webp' && scale >= 1) {
-      bitmap.close()
-      return null
-    }
-    const width = Math.max(1, Math.round(bitmap.width * scale))
-    const height = Math.max(1, Math.round(bitmap.height * scale))
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const context = canvas.getContext('2d')
-    if (!context) {
-      bitmap.close()
-      return null
-    }
-    context.drawImage(bitmap, 0, 0, width, height)
-    bitmap.close()
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', BACKGROUND_WEBP_QUALITY))
-    // 老 Safari 不支持 WebP 编码（静默回退成 PNG），以及转换后反而更大时，都保留原图
-    if (!blob || blob.type !== 'image/webp' || blob.size >= file.size) return null
-    return await blobToDataURL(blob)
-  } catch {
-    return null
-  }
-}
-
-function AppearancePane({ draft, onChange }: { draft: AgentAppearanceSettings; onChange: (next: AgentAppearanceSettings) => void }) {
-  const { t } = useTranslation('agent')
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const customImages = draft.custom_background_images
-  const selectedImage = draft.background_image || defaultAgentAppearance.background_image
-  const selectedIsCustom = customImages.includes(selectedImage)
-
-  function selectBackground(value: string) {
-    onChange({ ...draft, background_image: value })
-  }
-
-  function removeCustomBackground(image: string) {
-    const remaining = customImages.filter((item) => item !== image)
-    onChange({
-      ...draft,
-      background_image: draft.background_image === image ? defaultAgentAppearance.background_image : draft.background_image,
-      custom_background_images: remaining,
-    })
-  }
-
-  async function uploadBackground(file: File | undefined) {
-    if (!file || !file.type.startsWith('image/')) return
-    if (file.size > 8 * 1024 * 1024) {
-      toast.error(t('settings.appearance.imageTooLarge'))
-      return
-    }
-    try {
-      const dataURL = await fileToWebpDataURL(file) ?? await readFileAsDataURL(file)
-      const nextImages = [...customImages.filter((item) => item !== dataURL), dataURL]
-      onChange({ ...draft, background_image: dataURL, custom_background_images: nextImages })
-    } catch (error) {
-      toast.error(t('settings.appearance.imageReadFailed'), { description: error instanceof Error ? error.message : String(error) })
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">{t('settings.appearance.backgroundTitle')}</h3>
-          <p className="mt-1 text-xs leading-5 text-muted-soft">{t('settings.appearance.backgroundHint')}</p>
-        </div>
-        <div className="appearance-background-preview group relative overflow-hidden rounded-xl border border-[hsl(var(--glass-border))]">
-          <img src={selectedImage} alt="" className="aspect-[16/9] w-full object-cover object-center" />
-          {selectedIsCustom ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/55">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="appearance-background-change rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground opacity-0 shadow-lg transition-[opacity,filter] hover:brightness-105 group-hover:opacity-100"
-              >
-                {t('settings.appearance.changeBackground')}
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <div className="appearance-background-list grid grid-cols-2 items-stretch gap-3 sm:grid-cols-3">
-          {[
-            { value: '/agent-backdrop.png', label: t('settings.appearance.defaultBackground') },
-          ].map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => selectBackground(item.value)}
-              className={cn('appearance-background-card group relative overflow-hidden rounded-xl border text-left transition-colors', draft.background_image === item.value ? 'border-foreground' : 'border-[hsl(var(--glass-border))]')}
-            >
-              <img src={item.value} alt="" className="aspect-[16/9] w-full object-cover object-center" />
-              <span className="block px-3 py-2 text-xs text-muted-soft">{item.label}</span>
-              {draft.background_image === item.value ? <Check className="absolute right-2 top-2 h-4 w-4 rounded-full bg-foreground p-0.5 text-background" /> : null}
-            </button>
-          ))}
-          {customImages.map((image, index) => (
-            <div key={image} className={cn('appearance-background-card relative overflow-hidden rounded-xl border text-left transition-colors', draft.background_image === image ? 'border-foreground' : 'border-[hsl(var(--glass-border))]')}>
-              <button type="button" onClick={() => selectBackground(image)} className="block w-full text-left">
-                <img src={image} alt="" className="aspect-[16/9] w-full object-cover object-center" />
-                <span className="block px-3 py-2 text-xs text-muted-soft">{t('settings.appearance.customBackground', { index: index + 1 })}</span>
-              </button>
-              {draft.background_image === image ? <Check className="absolute right-2 top-2 h-4 w-4 rounded-full bg-foreground p-0.5 text-background" /> : null}
-              <button
-                type="button"
-                onClick={(event) => { event.stopPropagation(); removeCustomBackground(image) }}
-                className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/65 text-white transition-colors hover:bg-black/85"
-                aria-label={t('settings.appearance.removeBackground')}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-          <div className="appearance-background-card relative h-full min-h-0">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex h-[calc(100%_-_4px)] min-h-[110px] w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[hsl(var(--glass-border))] text-xs text-muted-soft transition-colors hover:border-foreground hover:text-foreground"
-            >
-              <ImagePlus className="h-5 w-5" /><span>{t('settings.appearance.uploadBackground')}</span>
-            </button>
-          </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => { void uploadBackground(event.target.files?.[0]); event.target.value = '' }} />
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">{t('settings.appearance.materialTitle')}</h3>
-          <p className="mt-1 text-xs leading-5 text-muted-soft">{t('settings.appearance.materialHint')}</p>
-        </div>
-        {appearanceSliderFields.map((field) => (
-          <label key={field.key} className="block space-y-2">
-            <span className="flex items-center justify-between gap-3 text-sm">
-              <span className="font-medium text-foreground">{t(field.labelKey)}</span>
-              <span className="text-xs tabular-nums text-muted-soft">{draft[field.key]}{field.unit}</span>
-            </span>
-            <Slider
-              value={draft[field.key]}
-              onValueChange={(value) => onChange({ ...draft, [field.key]: value })}
-              aria-label={t(field.labelKey)}
-            />
-            <span className="flex justify-between text-[11px] text-faint"><span>{t(field.minLabelKey)}</span><span>{t(field.maxLabelKey)}</span></span>
-          </label>
-        ))}
-        <p className="pt-1 text-xs text-muted-soft">{t('settings.appearance.savedHint')}</p>
-      </section>
-    </div>
   )
 }
 
@@ -556,119 +295,10 @@ function useSkillToggle() {
   return { toggleSkill, pending: capabilitiesMutation.isPending }
 }
 
-function MemoryPane({ onActionsChange }: { onActionsChange: (actions: SettingsActions | null) => void }) {
-  const { t } = useTranslation('agent')
-  const queryClient = useQueryClient()
-  const memoryQuery = useQuery({ queryKey: ['agent', 'memory'], queryFn: fetchAgentMemory, retry: false })
-  const [draft, setDraft] = useState<string | null>(null)
-  const data = memoryQuery.data
-  const content = draft ?? data?.memory ?? ''
-  const save = useMutation<unknown, Error>({
-    mutationFn: () => updateAgentMemory('memory', content),
-    onSuccess: async () => {
-      setDraft(null)
-      await queryClient.invalidateQueries({ queryKey: ['agent', 'memory'] })
-      toast.success(t('settings.memory.saved'))
-    },
-    onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
-  })
-  const { mutate: saveMutate, isPending: savePending } = save
-  const saveAction = useCallback(() => saveMutate(), [saveMutate])
-  useEffect(() => {
-    onActionsChange({
-      save: saveAction,
-      canSave: Boolean(data && draft !== null && !memoryQuery.isLoading),
-      pending: savePending,
-    })
-    return () => onActionsChange(null)
-  }, [data, draft, memoryQuery.isLoading, onActionsChange, saveAction, savePending])
-
-  if (memoryQuery.data === null && !memoryQuery.isLoading) {
-    return <p className="rounded-lg border border-[hsl(var(--glass-border))] px-4 py-8 text-center text-xs text-muted-soft">{t('settings.memory.unavailable')}</p>
-  }
-
-  const editable = Boolean(data)
-
-  return (
-    <div className="flex h-full min-h-0 flex-col space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-foreground">MEMORY.md</span>
-        <span className="text-xs text-faint">{t('settings.memory.chars', { count: Array.from(content).length })}</span>
-      </div>
-      {editable ? (
-        <TextArea
-          value={content}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder={t('settings.memory.memoryPlaceholder')}
-          aria-label="MEMORY.md"
-          className="h-0 min-h-0 flex-1 resize-none font-mono text-xs leading-5 focus:ring-inset"
-        />
-      ) : (
-        <ReadOnlyFileContent
-          content={content}
-          loading={memoryQuery.isLoading}
-          loadingLabel={t('settings.memory.loading')}
-          emptyLabel={t('settings.memory.empty')}
-          readOnlyLabel={t('settings.memory.readOnly')}
-        />
-      )}
-      <p className="text-xs text-faint">{t('settings.memory.hint')}</p>
-    </div>
-  )
-}
-
-function ReadOnlyFileContent({ content, loading, loadingLabel, emptyLabel, readOnlyLabel }: {
-  content: string
-  loading: boolean
-  loadingLabel: string
-  emptyLabel: string
-  readOnlyLabel: string
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[hsl(var(--glass-border))] bg-[hsl(var(--surface-subtle))]/45">
-      <div className="flex shrink-0 items-center justify-between border-b border-[hsl(var(--glass-divider))] px-3 py-2">
-        <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-soft">{readOnlyLabel}</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-        {loading ? (
-          <p className="text-xs text-muted-soft">{loadingLabel}</p>
-        ) : content ? (
-          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground/90">{content}</pre>
-        ) : (
-          <p className="text-xs text-muted-soft">{emptyLabel}</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function LearningPane() {
-  const { t } = useTranslation('agent')
-  const query = useQuery({ queryKey: ['agent', 'learning-status'], queryFn: fetchAgentLearningStatus, retry: false })
-  if (query.data === null && !query.isLoading) {
-    return <p className="rounded-lg border border-[hsl(var(--glass-border))] px-4 py-8 text-center text-xs text-muted-soft">{t('settings.learning.unavailable')}</p>
-  }
-  const status = query.data
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-soft">{t('settings.learning.hint')}</p>
-      <div className="rounded-xl border border-[hsl(var(--glass-border))]">
-        <DetailRow label={t('settings.learning.running')} value={status?.inflight_review_id ? t('settings.learning.yes') : t('settings.learning.no')} />
-        <DetailRow label={t('settings.learning.backlog')} value={status?.backlog == null ? '—' : String(status.backlog)} />
-        <DetailRow label={t('settings.learning.lastReview')} value={status?.last_review_at ?? '—'} />
-        <DetailRow label={t('settings.learning.lastSuccess')} value={status?.last_success_at ?? '—'} />
-      </div>
-    </div>
-  )
-}
-
-function SkillsPane({ nav, onNavigate, onActionsChange, backgroundImage, dark, glassSettings }: {
+function SkillsPane({ nav, onNavigate, onActionsChange }: {
   nav: SkillsNav
   onNavigate: (nav: SkillsNav) => void
   onActionsChange: (actions: SettingsActions | null) => void
-  backgroundImage: string
-  dark: boolean
-  glassSettings?: AgentLiquidGlassSettings
 }) {
   const { t } = useTranslation('agent')
   const skillsQuery = useQuery({ queryKey: skillsKey, queryFn: listAgentSkills, retry: false })
@@ -687,9 +317,6 @@ function SkillsPane({ nav, onNavigate, onActionsChange, backgroundImage, dark, g
     return (
       <SkillEditor
         name={nav.name}
-        backgroundImage={backgroundImage}
-        dark={dark}
-        glassSettings={glassSettings}
         onBack={() => onNavigate(nav.name ? { view: 'detail', name: nav.name } : { view: 'list' })}
         onActionsChange={onActionsChange}
       />
@@ -912,7 +539,7 @@ function DetailRow({ label, value, mono = false }: { label: string; value: strin
 }
 
 /** Skill editor: edits the complete agent-owned SKILL.md. */
-function SkillEditor({ name, backgroundImage, dark, glassSettings, onBack, onActionsChange }: { name: string; backgroundImage: string; dark: boolean; glassSettings?: AgentLiquidGlassSettings; onBack: () => void; onActionsChange: (actions: SettingsActions | null) => void }) {
+function SkillEditor({ name, onBack, onActionsChange }: { name: string; onBack: () => void; onActionsChange: (actions: SettingsActions | null) => void }) {
   const { t } = useTranslation('agent')
   const queryClient = useQueryClient()
   const [contentDraft, setContentDraft] = useState<string | null>(null)
@@ -942,9 +569,9 @@ function SkillEditor({ name, backgroundImage, dark, glassSettings, onBack, onAct
   const saveAction = useCallback(() => saveMutate(), [saveMutate])
 
   useEffect(() => {
-    onActionsChange({ save: saveAction, canSave, pending: savePending })
+    onActionsChange({ save: saveAction, canSave, pending: savePending, dirty: contentDraft !== null })
     return () => onActionsChange(null)
-  }, [canSave, onActionsChange, saveAction, savePending])
+  }, [canSave, contentDraft, onActionsChange, saveAction, savePending])
 
   const remove = useMutation({
     mutationFn: () => deleteAgentSkill(name),
@@ -985,9 +612,6 @@ function SkillEditor({ name, backgroundImage, dark, glassSettings, onBack, onAct
         title={t('settings.skillDelete')}
         description={t('settings.skillDeleteConfirm')}
         confirmLabel={t('settings.skillDelete')}
-        backgroundImage={backgroundImage}
-        dark={dark}
-        glassSettings={glassSettings}
         destructive
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => {
@@ -1003,83 +627,44 @@ function PersonalityPane({ onActionsChange }: { onActionsChange: (actions: Setti
   const { t } = useTranslation('agent')
   const queryClient = useQueryClient()
   const fileQuery = useQuery({ queryKey: agentsMdKey, queryFn: () => fetchWorkspaceFile('AGENTS.md'), retry: false })
-  const memoryQuery = useQuery({ queryKey: ['agent', 'memory'], queryFn: fetchAgentMemory, retry: false })
-
-  const [target, setTarget] = useState<'agents' | 'user'>('agents')
-  const [agentsDraft, setAgentsDraft] = useState<string | null>(null)
-  const [userDraft, setUserDraft] = useState<string | null>(null)
-  const content = target === 'agents' ? (agentsDraft ?? fileQuery.data ?? '') : (userDraft ?? memoryQuery.data?.user ?? '')
-  const userDisabled = memoryQuery.data?.user_profile_enabled === false
-  const userUnavailable = memoryQuery.data === null && !memoryQuery.isLoading
-
+  const [draft, setDraft] = useState<string | null>(null)
+  const content = draft ?? fileQuery.data ?? ''
   const bytes = new TextEncoder().encode(content).length
   const overLimit = bytes > AGENTS_MD_LIMIT
 
-  const save = useMutation<unknown, Error>({
-    mutationFn: () => target === 'agents'
-      ? putWorkspaceFile('AGENTS.md', content)
-      : updateAgentMemory('user', content),
+  const save = useMutation({
+    mutationFn: () => putWorkspaceFile('AGENTS.md', content),
     onSuccess: async () => {
-      if (target === 'agents') {
-        setAgentsDraft(null)
-        await queryClient.invalidateQueries({ queryKey: agentsMdKey })
-      } else {
-        setUserDraft(null)
-        await queryClient.invalidateQueries({ queryKey: ['agent', 'memory'] })
-      }
-      toast.success(target === 'agents' ? t('settings.agentsMdSaved') : t('settings.memory.saved'))
+      setDraft(null)
+      await queryClient.invalidateQueries({ queryKey: agentsMdKey })
+      toast.success(t('settings.agentsMdSaved'))
     },
     onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
   })
-
   const { mutate: saveMutate, isPending: savePending } = save
   const saveAction = useCallback(() => saveMutate(), [saveMutate])
 
   useEffect(() => {
-    onActionsChange({
-      save: saveAction,
-      canSave: target === 'agents'
-        ? !overLimit && !fileQuery.isLoading && agentsDraft !== null
-        : !memoryQuery.isLoading && !userDisabled && !userUnavailable && userDraft !== null,
-      pending: savePending,
-    })
+    onActionsChange({ save: saveAction, canSave: !overLimit && !fileQuery.isLoading && draft !== null, pending: savePending, dirty: draft !== null })
     return () => onActionsChange(null)
-  }, [agentsDraft, fileQuery.isLoading, memoryQuery.isLoading, onActionsChange, overLimit, saveAction, savePending, target, userDisabled, userDraft, userUnavailable])
+  }, [draft, fileQuery.isLoading, onActionsChange, overLimit, saveAction, savePending])
 
   return (
     <div className="flex h-full flex-col space-y-4">
       <div className="flex items-center gap-2">
-        <Button size="sm" variant={target === 'agents' ? 'secondary' : 'ghost'} onClick={() => setTarget('agents')}>AGENTS.md</Button>
-        <Button size="sm" variant={target === 'user' ? 'secondary' : 'ghost'} onClick={() => setTarget('user')}>USER.md</Button>
+        <Button size="sm" variant="secondary">AGENTS.md</Button>
       </div>
-      {target === 'user' && userDisabled ? <p className="text-xs text-amber-500">{t('settings.memory.userDisabled')}</p> : null}
-      {target === 'user' && userUnavailable ? (
-        <p className="rounded-lg border border-[hsl(var(--glass-border))] px-4 py-8 text-center text-xs text-muted-soft">{t('settings.memory.unavailable')}</p>
-      ) : target === 'user' && userDisabled ? (
-        <ReadOnlyFileContent
-          content={content}
-          loading={memoryQuery.isLoading}
-          loadingLabel={t('settings.memory.loading')}
-          emptyLabel={t('settings.memory.empty')}
-          readOnlyLabel={t('settings.memory.readOnly')}
-        />
-      ) : (
-        <TextArea
-          value={content}
-          onChange={(event) => target === 'agents' ? setAgentsDraft(event.target.value) : setUserDraft(event.target.value)}
-          placeholder={target === 'agents' ? t('settings.agentsMdPlaceholder') : t('settings.memory.userPlaceholder')}
-          disabled={target === 'agents' ? fileQuery.isLoading : memoryQuery.isLoading}
-          aria-label={target === 'agents' ? 'AGENTS.md' : 'USER.md'}
-          className="h-0 min-h-0 flex-1 resize-none font-mono text-xs leading-5 focus:ring-inset"
-        />
-      )}
-
-      <div className="flex items-center justify-between gap-3">
-        <span className={cn('text-xs', overLimit ? 'text-red-500' : 'text-faint')}>
-          {t('settings.agentsMdBytes', { bytes: bytes.toLocaleString(), limit: AGENTS_MD_LIMIT.toLocaleString() })}
-        </span>
-        <div className="flex items-center gap-2" />
-      </div>
+      <TextArea
+        value={content}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder={t('settings.agentsMdPlaceholder')}
+        disabled={fileQuery.isLoading}
+        aria-label="AGENTS.md"
+        className="h-0 min-h-0 flex-1 resize-none font-mono text-xs leading-5 focus:ring-inset"
+      />
+      <span className={cn('text-xs', overLimit ? 'text-red-500' : 'text-faint')}>
+        {t('settings.agentsMdBytes', { bytes: bytes.toLocaleString(), limit: AGENTS_MD_LIMIT.toLocaleString() })}
+      </span>
       <p className="text-xs text-faint">{t('settings.effectiveHint')}</p>
     </div>
   )
@@ -1123,11 +708,12 @@ function ContextPane({ onActionsChange }: { onActionsChange: (actions: SettingsA
 
   const { mutate: saveMutate, isPending: savePending } = save
   const saveAction = useCallback(() => saveMutate(), [saveMutate])
+  const dirty = ratioDraft !== null || windowDraft !== null
 
   useEffect(() => {
-    onActionsChange({ save: saveAction, canSave: windowValid && !envelopeQuery.isLoading && envelopeQuery.data !== null, pending: savePending })
+    onActionsChange({ save: saveAction, canSave: windowValid && !envelopeQuery.isLoading && envelopeQuery.data !== null, pending: savePending, dirty })
     return () => onActionsChange(null)
-  }, [windowValid, envelopeQuery.isLoading, envelopeQuery.data, onActionsChange, saveAction, savePending])
+  }, [dirty, windowValid, envelopeQuery.isLoading, envelopeQuery.data, onActionsChange, saveAction, savePending])
 
   if (envelopeQuery.data === null && !envelopeQuery.isLoading) {
     return (

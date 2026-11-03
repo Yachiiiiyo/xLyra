@@ -1,0 +1,72 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_risky",
+      "kind": "tool",
+      "title": "risky_tool",
+      "status": "done",
+      "inputLength": 16,
+      "outputLength": 14,
+      "inputPreview": "{\"note\":\"hello\"}",
+      "outputPreview": "risky-ok:hello"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 3,
+      "inputPreview": "",
+      "outputPreview": "已允许"
+    }
+  ],
+  "permissions": [
+    {
+      "id": "84cd7d5a-5651-48f7-8c9d-5360491b2f64",
+      "tool": "risky_tool",
+      "decision": "allowed",
+      "detail": null
+    }
+  ],
+  "finalText": "已允许",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_risky",
+          "kind": "tool",
+          "title": "risky_tool",
+          "status": "done",
+          "inputLength": 16,
+          "outputLength": 14,
+          "inputPreview": "{\"note\":\"hello\"}",
+          "outputPreview": "risky-ok:hello"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 3,
+          "inputPreview": "",
+          "outputPreview": "已允许"
+        }
+      ],
+      "permissions": [
+        {
+          "id": "84cd7d5a-5651-48f7-8c9d-5360491b2f64",
+          "tool": "risky_tool",
+          "decision": "allowed",
+          "detail": null
+        }
+      ],
+      "finalText": "已允许"
+    }
+  ]
+}

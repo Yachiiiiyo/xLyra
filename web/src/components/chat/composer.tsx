@@ -18,6 +18,7 @@ type ComposerProps = {
   onPasteFiles?: (files: File[]) => boolean
   stopButtonClassName?: string
   stopIconClassName?: string
+  sendButtonTitle?: string
   /** 输入框右上角趴一只会动的小螃蟹，默认开启 */
   mascot?: boolean
 }
@@ -36,6 +37,7 @@ export function Composer({
   onPasteFiles,
   stopButtonClassName,
   stopIconClassName,
+  sendButtonTitle,
   mascot = true,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -104,6 +106,7 @@ export function Composer({
                     : 'cursor-not-allowed bg-fill-2 text-label-3',
                 )}
                 aria-label="send"
+                title={sendButtonTitle}
               >
                 <ArrowUp className="h-4 w-4" />
               </button>

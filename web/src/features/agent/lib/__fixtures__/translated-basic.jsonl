@@ -1,0 +1,10 @@
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"你好"}}
+{"type":"text_delta","data":{"delta":"，这"}}
+{"type":"text_delta","data":{"delta":"是一"}}
+{"type":"text_delta","data":{"delta":"段分"}}
+{"type":"text_delta","data":{"delta":"片返"}}
+{"type":"text_delta","data":{"delta":"回的"}}
+{"type":"text_delta","data":{"delta":"文本"}}
+{"type":"text_delta","data":{"delta":"。"}}
+{"type":"done","data":{"aborted":false}}

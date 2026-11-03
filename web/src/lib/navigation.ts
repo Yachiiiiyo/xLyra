@@ -36,7 +36,7 @@ export type AppNavSection = {
 
 type TFunction = (key: string) => string
 
-/** Feature gates for nav entries; the /agent entry hides while the runner is unconfigured. */
+/** Feature gates for nav entries; the /agent entry hides only when the built-in agent is absent. */
 export type NavFeatures = {
   agent?: boolean
 }
@@ -150,12 +150,6 @@ export function getAppNavSections(t: TFunction, features: NavFeatures = {}): App
               label: t('nav.globalSettings'),
               icon: Settings,
               description: 'Global gateway configuration and defaults.',
-            },
-            {
-              to: '/settings/agent',
-              label: t('nav.agentSettings'),
-              icon: Bot,
-              description: 'Configure Agent runtime, runner and model channels.',
             },
             {
               to: '/settings/models-price',

@@ -1,0 +1,72 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_deny",
+      "kind": "tool",
+      "title": "risky_tool",
+      "status": "error",
+      "inputLength": 15,
+      "outputLength": 22,
+      "inputPreview": "{\"note\":\"nope\"}",
+      "outputPreview": "user denied risky_tool"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 3,
+      "inputPreview": "",
+      "outputPreview": "已拒绝"
+    }
+  ],
+  "permissions": [
+    {
+      "id": "06bb688c-31a0-4268-ae98-96493102622d",
+      "tool": "risky_tool",
+      "decision": "denied",
+      "detail": null
+    }
+  ],
+  "finalText": "已拒绝",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_deny",
+          "kind": "tool",
+          "title": "risky_tool",
+          "status": "error",
+          "inputLength": 15,
+          "outputLength": 22,
+          "inputPreview": "{\"note\":\"nope\"}",
+          "outputPreview": "user denied risky_tool"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 3,
+          "inputPreview": "",
+          "outputPreview": "已拒绝"
+        }
+      ],
+      "permissions": [
+        {
+          "id": "06bb688c-31a0-4268-ae98-96493102622d",
+          "tool": "risky_tool",
+          "decision": "denied",
+          "detail": null
+        }
+      ],
+      "finalText": "已拒绝"
+    }
+  ]
+}

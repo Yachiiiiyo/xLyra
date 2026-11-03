@@ -1,0 +1,18 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 15,
+      "inputPreview": "",
+      "outputPreview": "你好，这是一段分片返回的文本。"
+    }
+  ],
+  "permissions": [],
+  "finalText": "你好，这是一段分片返回的文本。"
+}

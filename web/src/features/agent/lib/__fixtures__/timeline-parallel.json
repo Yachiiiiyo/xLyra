@@ -1,0 +1,78 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_a",
+      "kind": "tool",
+      "title": "echo_tool",
+      "status": "done",
+      "inputLength": 26,
+      "outputLength": 6,
+      "inputPreview": "{\"delayMs\":400,\"text\":\"a\"}",
+      "outputPreview": "echo:a"
+    },
+    {
+      "id": "call_b",
+      "kind": "tool",
+      "title": "echo_tool",
+      "status": "done",
+      "inputLength": 26,
+      "outputLength": 6,
+      "inputPreview": "{\"delayMs\":150,\"text\":\"b\"}",
+      "outputPreview": "echo:b"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 6,
+      "inputPreview": "",
+      "outputPreview": "两个都完成了"
+    }
+  ],
+  "permissions": [],
+  "finalText": "两个都完成了",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_a",
+          "kind": "tool",
+          "title": "echo_tool",
+          "status": "done",
+          "inputLength": 26,
+          "outputLength": 6,
+          "inputPreview": "{\"delayMs\":400,\"text\":\"a\"}",
+          "outputPreview": "echo:a"
+        },
+        {
+          "id": "call_b",
+          "kind": "tool",
+          "title": "echo_tool",
+          "status": "done",
+          "inputLength": 26,
+          "outputLength": 6,
+          "inputPreview": "{\"delayMs\":150,\"text\":\"b\"}",
+          "outputPreview": "echo:b"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 6,
+          "inputPreview": "",
+          "outputPreview": "两个都完成了"
+        }
+      ],
+      "permissions": [],
+      "finalText": "两个都完成了"
+    }
+  ]
+}

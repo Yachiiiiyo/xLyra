@@ -1,0 +1,38 @@
+{
+  "run": {
+    "status": "cancelled"
+  },
+  "steps": [
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 14,
+      "inputPreview": "",
+      "outputPreview": "PARTIAL-STREAM"
+    }
+  ],
+  "permissions": [],
+  "finalText": "PARTIAL-STREAM",
+  "runs": [
+    {
+      "status": "cancelled",
+      "steps": [
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 14,
+          "inputPreview": "",
+          "outputPreview": "PARTIAL-STREAM"
+        }
+      ],
+      "permissions": [],
+      "finalText": "PARTIAL-STREAM"
+    }
+  ]
+}

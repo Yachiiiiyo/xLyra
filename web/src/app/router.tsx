@@ -25,7 +25,6 @@ const PluginsSettingsPage = lazyNamed(() => import('@/routes/system/plugins-sett
 const dashboardModule = import('@/routes/dashboard')
 const DashboardPage = lazyNamed(() => dashboardModule, 'DashboardPage')
 const GeneralSettingsPage = lazyNamed(() => import('@/routes/settings/global/general-settings-page'), 'GeneralSettingsPage')
-const AgentSettingsPage = lazyNamed(() => import('@/routes/settings/agent-settings-page'), 'AgentSettingsPage')
 const GlobalConfigPage = lazyNamed(() => import('@/routes/settings/global-config-page'), 'GlobalConfigPage')
 const ModelsPage = lazyNamed(() => import('@/routes/models'), 'ModelsPage')
 const ModelsPriceSettingsPage = lazyNamed(() => import('@/routes/settings/models-price-settings-page'), 'ModelsPriceSettingsPage')
@@ -95,7 +94,7 @@ export const appRouter = createBrowserRouter([
               { path: 'portal', element: lazyElement(<PortalSettingsPage />) },
             ],
           },
-          { path: 'agent', element: lazyElement(<AgentSettingsPage />) },
+          { path: 'agent', element: <Navigate to="/agent" replace /> },
           { path: 'models-price', element: lazyElement(<ModelsPriceSettingsPage />) },
           { path: 'backup', element: lazyElement(<BackupSettingsPage />) },
         ],

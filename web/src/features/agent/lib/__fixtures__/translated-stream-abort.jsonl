@@ -1,0 +1,9 @@
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"PA"}}
+{"type":"text_delta","data":{"delta":"RT"}}
+{"type":"text_delta","data":{"delta":"IA"}}
+{"type":"text_delta","data":{"delta":"L-"}}
+{"type":"text_delta","data":{"delta":"ST"}}
+{"type":"text_delta","data":{"delta":"RE"}}
+{"type":"text_delta","data":{"delta":"AM"}}
+{"type":"cancelled","data":{"aborted":true}}

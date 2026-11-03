@@ -10,23 +10,25 @@ export type AgentSession = {
 }
 
 export type AgentHealth = {
-  status?: string
+  status?: 'healthy' | 'unhealthy' | 'missing' | string
+  reason?: string
+  isolation?: 'on' | 'degraded' | 'off' | 'failed'
+  isolation_reason?: string
+  write_tools_enabled?: boolean
+  sandbox?: 'on' | 'off' | 'unavailable' | 'failed'
+  sandbox_reason?: string
+  bash_enabled?: boolean
   runner?: string
   agent?: string
-  /** Runner version, injected at image build time. */
-  version?: string
-  /** Installed xlyra-agent npm version; absent when AGENT_MANAGED=false (self-managed). */
-  agent_version?: string
 }
 
 export type AgentRuntimeSettings = {
-  runner_base_url: string
-  runner_token_configured: boolean
   allowed_site_ids: string[]
   allowed_site_model_ids: string[]
   site_policy: 'allow_all' | 'allow_list'
   model_policy: 'allow_all' | 'allow_list'
-  appearance: AgentAppearanceSettings
+  /** 后端仍返回该字段；前端外观配置已下线，仅保留契约，不再消费 */
+  appearance?: AgentAppearanceSettings
 }
 
 export type AgentAppearanceSettings = {
@@ -39,16 +41,6 @@ export type AgentAppearanceSettings = {
   backdrop_dim: number
 }
 
-export const defaultAgentAppearance: AgentAppearanceSettings = {
-  background_image: '/agent-backdrop.png',
-  custom_background_images: [],
-  side_transparency: 49,
-  side_brightness: 32,
-  side_thickness: 28,
-  backdrop_blur: 13,
-  backdrop_dim: 69,
-}
-
 export type AgentAvailableSite = {
   site_id: string
   site_name: string
@@ -57,12 +49,11 @@ export type AgentAvailableSite = {
   models: Array<Pick<SiteModel, 'id' | 'upstream_model_name' | 'display_name' | 'canonical_model_id'> & { model_key?: string; category?: string; reasoning_effort?: unknown }>
 }
 
-// The runner returns 503 with a body that still carries version fields when
-// unhealthy, so this bypasses apiFetch (which throws on non-2xx) and parses the
-// body manually; network or proxy failures yield null.
+// Health keeps its JSON body on 503; only 404 means the built-in agent is absent.
 export async function fetchAgentHealth(): Promise<AgentHealth | null> {
   try {
     const response = await fetch(apiURL('/api/v1/agent/health'), { credentials: 'include' })
+    if (response.status === 404) return { status: 'missing' }
     const payload: unknown = await response.json().catch(() => null)
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       return { status: response.ok ? 'healthy' : 'unhealthy' }
@@ -73,83 +64,22 @@ export async function fetchAgentHealth(): Promise<AgentHealth | null> {
   }
 }
 
-export type AgentUpgradeState = {
-  status: 'installing' | 'restarting' | 'failed'
-  target: string
-  error?: string
-}
-
-export type AgentVersionInfo = {
-  managed: boolean
-  current?: string
-  latest: string | null
-  update_available: boolean
-  checked_at: string | null
-  check_error: string | null
-  active_runs: number
-  upgrade: AgentUpgradeState | null
-}
-
-// Older runners lack this endpoint (404) or may be unreachable; null degrades the UI to the current version only.
-export async function fetchAgentVersion(refresh = false): Promise<AgentVersionInfo | null> {
-  try {
-    return await apiFetch<AgentVersionInfo>(`/api/v1/agent/version${refresh ? '?refresh=true' : ''}`)
-  } catch {
-    return null
-  }
-}
-
-// Business rejections (agent_busy, upgrade_in_progress, ...) surface as APIError with the runner-proxied error code.
-export async function upgradeAgent(input: { force?: boolean } = {}) {
-  return apiFetch<{ success?: boolean; target?: string }>('/api/v1/agent/upgrade', { method: 'POST', body: input })
-}
-
 export async function fetchAgentRuntimeSettings() {
   const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings')
   return {
-    runner_base_url: response.data?.runner_base_url ?? '',
-    runner_token_configured: response.data?.runner_token_configured ?? false,
     allowed_site_ids: response.data?.allowed_site_ids ?? [],
     allowed_site_model_ids: response.data?.allowed_site_model_ids ?? [],
     site_policy: response.data?.site_policy ?? 'allow_all',
     model_policy: response.data?.model_policy ?? 'allow_all',
-    appearance: {
-      ...defaultAgentAppearance,
-      ...(response.data?.appearance ?? {}),
-      custom_background_images: response.data?.appearance?.custom_background_images ?? [],
-    },
+    appearance: response.data?.appearance,
   }
 }
 
-// The settings endpoint is a partial update: absent fields stay unchanged, so runner connection and site/model scope are saved independently.
-export async function updateAgentRunnerSettings(settings: { runner_base_url: string; runner_token?: string }) {
-  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
-    method: 'PUT',
-    body: settings,
-  })
-  return response.data
-}
-
-export async function clearAgentRunnerSettings() {
-  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
-    method: 'PUT',
-    body: { clear_runner: true },
-  })
-  return response.data
-}
-
+// The settings endpoint is a partial update: absent fields stay unchanged.
 export async function updateAgentScopeSettings(settings: { site_policy: 'allow_all' | 'allow_list'; model_policy: 'allow_all' | 'allow_list'; allowed_site_ids: string[]; allowed_site_model_ids: string[] }) {
   const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
     method: 'PUT',
     body: settings,
-  })
-  return response.data
-}
-
-export async function updateAgentAppearanceSettings(appearance: AgentAppearanceSettings) {
-  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
-    method: 'PUT',
-    body: { appearance },
   })
   return response.data
 }
@@ -180,7 +110,7 @@ export async function fetchAgentAvailableModels(): Promise<AgentAvailableSite[]>
   return rows.filter((site) => !site.enabled || site.models.length > 0)
 }
 
-// ---- Capabilities: Skills / AGENTS.md (xLyra → runner → agent) ----
+// ---- Capabilities: Skills / AGENTS.md ----
 
 export type AgentSkill = {
   name: string
@@ -201,7 +131,7 @@ export type AgentSkillsInfo = {
   warnings?: string[]
 }
 
-// Older runners/agents lack this endpoint (404) or may be unreachable; null degrades the UI.
+// Older agents may lack this endpoint (404) or be unreachable; null degrades the UI.
 export async function listAgentSkills(): Promise<AgentSkillsInfo | null> {
   try {
     const response = await apiFetch<{ data?: AgentSkillsInfo }>('/api/v1/agent/skills')
@@ -209,29 +139,6 @@ export async function listAgentSkills(): Promise<AgentSkillsInfo | null> {
   } catch {
     return null
   }
-}
-
-export type AgentMemory = {
-  memory: string
-  user: string
-  user_profile_enabled?: boolean
-}
-
-export async function fetchAgentMemory(): Promise<AgentMemory | null> {
-  try {
-    const response = await apiFetch<{ data?: AgentMemory }>('/api/v1/agent/memory')
-    return response.data ?? { memory: '', user: '' }
-  } catch {
-    return null
-  }
-}
-
-export async function updateAgentMemory(target: 'memory' | 'user', content: string) {
-  const response = await apiFetch<{ data?: { target: string; changed?: boolean } }>(`/api/v1/agent/memory/${target}`, {
-    method: 'PUT',
-    body: { content },
-  })
-  return response.data
 }
 
 /** Reads a workspace file; null when the file does not exist. */
@@ -278,24 +185,7 @@ export async function deleteAgentSkill(name: string) {
   return response.data
 }
 
-export type AgentLearningStatus = {
-  counters?: { memory_turns_since_review: number; skill_steps_since_review: number }
-  last_review_at?: string | null
-  last_success_at?: string | null
-  inflight_review_id?: string | null
-  backlog?: number
-}
-
-export async function fetchAgentLearningStatus(): Promise<AgentLearningStatus | null> {
-  try {
-    const response = await apiFetch<{ data?: AgentLearningStatus }>('/api/v1/agent/learning/status')
-    return response.data ?? null
-  } catch {
-    return null
-  }
-}
-
-// Older runners/agents lack this endpoint; returns null.
+// Older agents may lack this endpoint; returns null.
 export async function fetchAgentSkillDetail(name: string): Promise<AgentSkillDetail | null> {
   try {
     const response = await apiFetch<{ data?: AgentSkillDetail }>(`/api/v1/agent/skills/${encodeURIComponent(name)}`)
@@ -431,7 +321,7 @@ export type AgentTranscriptEntry = {
   content?: string
   payload?: unknown
   timestamp?: string
-  /** Runner transcript envelope when type === 'message'. */
+  /** Transcript envelope when type === 'message'. */
   message?: {
     role?: 'system' | 'user' | 'assistant' | 'tool'
     content?: string
@@ -452,6 +342,7 @@ export type AgentTranscriptEntry = {
   requested_path?: string
   resolved_path?: string
   requested_command?: string[]
+  note?: string
   granted?: boolean | null
 }
 
@@ -462,7 +353,7 @@ export async function stopAgentSession(sessionId: string) {
 /** 手动压缩指令：会话输入框发送的原文，前端识别后走压缩接口而不是普通消息 */
 export const AGENT_COMPACT_COMMAND = '/compact'
 
-/** 手动压缩：经 /sessions 命令路径（runner 拦截后登记合成 run 再转发压缩接口），同步返回摘要与 token 变化 */
+/** 手动压缩：经 /sessions 命令路径，同步返回摘要与 token 变化 */
 export async function compactAgentSession(sessionId: string, model?: string) {
   const response = await apiFetch<{ data?: { summary?: string; tokens_before?: number; tokens_after?: number; compaction_id?: string } }>('/api/v1/agent/sessions', {
     method: 'POST',

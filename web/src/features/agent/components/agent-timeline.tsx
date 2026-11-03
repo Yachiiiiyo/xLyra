@@ -8,7 +8,7 @@ import { MessageAction } from '@/components/chat/message-actions'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import type { ChatAttachment } from '@/lib/chat-types'
-import type { AgentPermissionRequest, AgentRun, AgentTimelineItem, AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
@@ -38,7 +38,7 @@ function UserMessage({ text, attachments, editable, onEdit }: { text: string; at
           {attachments.map((attachment) => <ChatAttachmentItem key={attachment.id} attachment={attachment} />)}
         </div>
       ) : null}
-      <div className="agent-liquid-user-message max-w-[82%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6">
+      <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl bg-[hsl(var(--surface-selected))] px-4 py-3 text-sm leading-6 text-foreground">
         {text}
       </div>
       <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
@@ -123,7 +123,7 @@ function buildRunFlow(run: AgentRun): RunFlowItem[] {
 function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
-  const pausedForPermission = run.status === 'cancelled' && run.permissions.length > 0
+  const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
   const flow = buildRunFlow(run)
   const lastTextIndex = flow.reduce((found, item, index) => (item.kind === 'text' ? index : found), -1)
   // 有最终回复的完成 run 才把工作过程自动折叠进「用时」行；纯状态步骤的 run
@@ -145,7 +145,7 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
   const now = useTickingNow(!done)
   const elapsedMs = done
     ? (run.elapsedMs ?? Math.max(0, (run.endedAt ?? now) - run.startedAt))
-    : (run.elapsedMs ?? 0) + Math.max(0, now - run.startedAt)
+    : runElapsedMs(run, now)
   const hasProcess = processItems.length > 0
   // 纯状态 run（如手动压缩）：没有用时行、没有折叠区，状态行直接顶层显示
   const onlyStatus = flow.length > 0 && flow.every((item) => item.kind === 'status')
@@ -154,7 +154,10 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
       <div className="space-y-1">
         {flow.map((item) => item.kind === 'status' ? <StatusStepLine key={item.id} step={item.step} /> : null)}
         {run.status === 'error' ? (
-          <p className="px-1.5 text-xs text-red-500">{t('work.failed')}</p>
+          <div className="space-y-1 px-1.5 text-xs text-red-500">
+            <p>{t('work.failed')}</p>
+            {run.errorMessage ? <p className="whitespace-pre-wrap break-words">{run.errorMessage}</p> : null}
+          </div>
         ) : null}
       </div>
     )
@@ -214,10 +217,13 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
       ) : null}
 
       {run.status === 'error' ? (
-        <p className="text-xs text-red-500">{t('work.failed')}</p>
+        <div className="space-y-1 text-xs text-red-500">
+          <p>{t('work.failed')}</p>
+          {run.errorMessage ? <p className="whitespace-pre-wrap break-words">{run.errorMessage}</p> : null}
+        </div>
       ) : null}
       {/* A cancellation caused by a pending escalation is a pause, not a stop — hide the label to avoid misleading. */}
-      {run.status === 'cancelled' && run.permissions.length === 0 ? (
+      {run.status === 'cancelled' && !pausedForPermission ? (
         <p className="text-xs text-muted-soft">{t('work.cancelled')}</p>
       ) : null}
     </div>
@@ -481,7 +487,7 @@ function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open
           open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
         )}>
           <div className="min-h-0 min-w-0 overflow-hidden">
-            <div data-step-body className="agent-step-detail mx-1 mb-1 min-w-0 rounded-md px-2 py-1.5">
+            <div data-step-body className="mx-1 mb-1 min-w-0 rounded-md bg-[hsl(var(--surface-subtle))] px-2 py-1.5">
               {inputPreview ? (
                 <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-4 text-muted-soft">{inputDetail}</pre>
               ) : null}
@@ -546,6 +552,9 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
         <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-md bg-[hsl(var(--surface-base))] px-2 py-1.5 font-mono text-[11px] leading-5 text-muted-soft">
           {request.detail}
         </pre>
+      ) : null}
+      {request.note ? (
+        <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-soft">{request.note}</p>
       ) : null}
       {request.decision ? (
         <p className={cn('mt-2 text-xs font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>

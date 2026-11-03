@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
-import { Folder, Globe, Menu, Paperclip, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare } from 'lucide-react'
+import { Folder, Globe, Menu, Paperclip, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { Composer } from '@/components/chat/composer'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
@@ -19,14 +19,15 @@ import { AppLogo } from '@/components/common/app-logo'
 import { JumpToLatestButton } from '@/components/common/jump-to-latest-button'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { AgentLiquidGlassPanel, type AgentLiquidGlassSettings } from '@/features/agent/components/liquid-glass/agent-liquid-glass'
-import { agentDialogGlassDefaults } from '@/features/agent/components/agent-dialog-material'
-import './liquid-glass/agent-liquid-glass.css'
+import { LiquidGlass } from '@/components/glass/liquid-glass'
+import { AgentBackdrop } from '@/features/agent/components/agent-backdrop'
+import './agent-page.css'
 import {
   appendUserMessage,
   reconcileTimeline,
   replaceFromUserMessage,
   reduceAgentEvent,
+  decidePermission,
   settleRunningRuns,
   timelineFromTranscript,
   type AgentPermissionRequest,
@@ -39,6 +40,7 @@ import {
   createAgentSession,
   deleteAgentSession,
   fetchAgentAvailableModels,
+  fetchAgentHealth,
   fetchAgentModelMemory,
   fetchAgentRuntimeSettings,
   fetchAgentTranscript,
@@ -47,11 +49,11 @@ import {
   listAgentSessions,
   retryAgentSession,
   stopAgentSession,
-  type AgentAppearanceSettings,
 } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
-import { loadCachedBackgroundImage, loadLastSessionId, saveCachedBackgroundImage, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
+import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, loadLastSessionId, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
 import { toast } from '@/lib/toast'
+import { cn } from '@/lib/utils'
 
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
@@ -79,40 +81,6 @@ function loadPermissionMode(): PermissionMode {
     return window.localStorage.getItem(PERMISSION_MODE_KEY) === 'full' ? 'full' : 'ask'
   } catch {
     return 'ask'
-  }
-}
-
-/**
- * 外观设置 → 玻璃着色器参数。空会话与会话中共用同一组用户滑杆：会话中（dark）保留
- * 调好的光学常数，但面板底色下是「模糊 + 压暗」后的背景图，因此把不透明度与暗色
- * 强度压低，让面板透出底色、呈半透明玻璃而非近黑的实心板。模糊/压暗/厚度/明暗/
- * 透明度仍由滑杆驱动。
- */
-function glassSettingsForAppearance(appearance: AgentAppearanceSettings, dark: boolean) {
-  const clamped = (value: number) => Math.max(0, Math.min(100, value))
-  const transparency = clamped(appearance.side_transparency) / 100
-  const brightness = (clamped(appearance.side_brightness) - 50) / 500
-  const blur = 0.22 + clamped(appearance.backdrop_blur) / 100 * 0.42
-  const darkTint = 0.06 + clamped(appearance.backdrop_dim) / 100 * 0.2
-  const depth = 20 + clamped(appearance.side_thickness) * 0.42
-  return {
-    blur,
-    refraction: dark ? 0.88 : 0.8,
-    chromaticAberration: dark ? 0.065 : 0.06,
-    // 会话中降暗色强度与不透明度：面板下是「模糊 + 压暗」后的背景图，半透明才能
-    // 透出底色，不再是一块近黑的实心板；文字仍压在暗色 scrim 上，可读性不受影响
-    darkTint: dark ? darkTint + 0.01 : darkTint,
-    brightness,
-    saturation: dark ? 0.06 : 0.04,
-    tintStrength: dark ? 0.08 : 0.14,
-    edgeHighlight: dark ? 0.16 : 0.2,
-    specular: 0.2,
-    fresnel: dark ? 1.18 : 1.08,
-    bevel: 0,
-    depth,
-    opacity: dark
-      ? 0.34 + (1 - transparency) * 0.22
-      : 0.82 + (1 - transparency) * 0.12,
   }
 }
 
@@ -159,18 +127,10 @@ function FullAccessConfirmDialog({
   open,
   onCancel,
   onConfirm,
-  backgroundImage,
-  dark,
-  glassSettings,
 }: {
   open: boolean
   onCancel: () => void
   onConfirm: () => void
-  backgroundImage: string
-  /** 会话中为 true：与页面一致渲染深色玻璃（背景 URL 里没有可嗅探的标记，必须显式传） */
-  dark: boolean
-  /** 玻璃着色器参数：传入侧栏的 glassSettings 可与之同款，不传用弹窗自身默认 */
-  glassSettings?: AgentLiquidGlassSettings
 }) {
   const { t } = useTranslation('agent')
   const items = [
@@ -178,49 +138,34 @@ function FullAccessConfirmDialog({
     { icon: TerminalSquare, title: t('composer.fullConfirmCommands'), description: t('composer.fullConfirmCommandsDesc') },
     { icon: Globe, title: t('composer.fullConfirmNetwork'), description: t('composer.fullConfirmNetworkDesc') },
   ]
-  const dialogBody = (
-    <>
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
-          <TriangleAlert className="h-4 w-4 text-amber-500" />
-          {t('composer.fullConfirmTitle')}
-        </DialogTitle>
-        <DialogDescription>{t('composer.fullConfirmDescription')}</DialogDescription>
-      </DialogHeader>
-      <DialogBody className="space-y-4">
-        <div className="space-y-1 rounded-xl border border-[hsl(var(--glass-border))] bg-[hsl(var(--surface-subtle))]/60 p-2">
-          {items.map((item) => (
-            <div key={item.title} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
-              <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-soft" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">{item.title}</p>
-                <p className="mt-0.5 text-xs leading-5 text-muted-soft">{item.description}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs leading-5 text-muted-soft">{t('composer.fullConfirmRisk')}</p>
-      </DialogBody>
-      <DialogFooter
-        cancel={<Button variant="outline" onClick={onCancel}>{t('composer.fullConfirmCancel')}</Button>}
-        confirm={<Button variant="destructive" onClick={onConfirm}>{t('composer.fullConfirmAccept')}</Button>}
-      />
-    </>
-  )
-
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
-      <DialogContent surface="none" className="agent-liquid-access-dialog-host w-[min(92vw,480px)]">
-        <AgentLiquidGlassPanel
-          backgroundImage={backgroundImage}
-          variant={dark ? 'dark' : 'frosted'}
-          sampleBackground={!dark}
-          className="agent-liquid-access-dialog"
-          contentClassName="agent-liquid-access-dialog__content"
-          settings={{ ...agentDialogGlassDefaults(dark, 0.12), ...glassSettings }}
-        >
-          {dialogBody}
-        </AgentLiquidGlassPanel>
+      <DialogContent size="sm" presentation="center" className="w-[min(92vw,480px)]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <TriangleAlert className="h-4 w-4 text-amber-500" />
+            {t('composer.fullConfirmTitle')}
+          </DialogTitle>
+          <DialogDescription>{t('composer.fullConfirmDescription')}</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <div className="space-y-1 rounded-xl border border-[hsl(var(--glass-border))] bg-[hsl(var(--surface-subtle))]/60 p-2">
+            {items.map((item) => (
+              <div key={item.title} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
+                <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-soft" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">{item.title}</p>
+                  <p className="mt-0.5 text-xs leading-5 text-muted-soft">{item.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs leading-5 text-muted-soft">{t('composer.fullConfirmRisk')}</p>
+        </DialogBody>
+        <DialogFooter
+          cancel={<Button variant="outline" onClick={onCancel}>{t('composer.fullConfirmCancel')}</Button>}
+          confirm={<Button variant="destructive" onClick={onConfirm}>{t('composer.fullConfirmAccept')}</Button>}
+        />
       </DialogContent>
     </Dialog>
   )
@@ -230,40 +175,23 @@ function EditReplayConfirmDialog({
   open,
   onCancel,
   onConfirm,
-  backgroundImage,
-  dark,
-  glassSettings,
 }: {
   open: boolean
   onCancel: () => void
   onConfirm: () => void
-  backgroundImage: string
-  dark: boolean
-  glassSettings?: AgentLiquidGlassSettings
 }) {
   const { t } = useTranslation('agent')
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
-      <DialogContent surface="none" className="agent-liquid-access-dialog-host w-[min(92vw,440px)]">
-        <AgentLiquidGlassPanel
-          backgroundImage={backgroundImage}
-          variant={dark ? 'dark' : 'frosted'}
-          sampleBackground={!dark}
-          className="agent-liquid-access-dialog"
-          contentClassName="agent-liquid-access-dialog__content"
-          settings={{ ...agentDialogGlassDefaults(dark, 0.12), ...glassSettings }}
-        >
-          <DialogHeader>
-            <DialogTitle>{t('chat.editReplayTitle')}</DialogTitle>
-            <DialogDescription>{t('chat.editReplayDescription')}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter
-            cancel={<Button variant="outline" onClick={onCancel}>{t('chat.editReplayCancel')}</Button>}
-            confirm={(
-              <Button className="border-white bg-white text-black hover:bg-white/90 hover:text-black" onClick={onConfirm}>{t('chat.editReplayConfirm')}</Button>
-            )}
-          />
-        </AgentLiquidGlassPanel>
+      <DialogContent size="sm" presentation="center" className="w-[min(92vw,440px)]">
+        <DialogHeader>
+          <DialogTitle>{t('chat.editReplayTitle')}</DialogTitle>
+          <DialogDescription>{t('chat.editReplayDescription')}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter
+          cancel={<Button variant="outline" onClick={onCancel}>{t('chat.editReplayCancel')}</Button>}
+          confirm={<Button onClick={onConfirm}>{t('chat.editReplayConfirm')}</Button>}
+        />
       </DialogContent>
     </Dialog>
   )
@@ -286,7 +214,7 @@ export function AgentWorkspace() {
     refetchOnMount: 'always',
     refetchOnWindowFocus: 'always',
   })
-  const runtimeSettingsQuery = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false })
+  const healthQuery = useQuery({ queryKey: [...agentSettingsKey, 'health'], queryFn: fetchAgentHealth, retry: false, staleTime: 30_000, refetchInterval: 30_000 })
 
   // 刷新后恢复上次会话：transcript 请求与 sessions/settings 并行发出，不等页面渲染完
   const [activeId, setActiveId] = useState<string | null>(() => loadLastSessionId())
@@ -303,6 +231,7 @@ export function AgentWorkspace() {
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [capabilityNoticeDismissed, setCapabilityNoticeDismissed] = useState(loadCapabilityNoticeDismissed)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const eventAbort = useRef<AbortController | null>(null)
   const retryTimelineBeforeEdit = useRef<EditReplaySnapshot | null>(null)
@@ -335,24 +264,8 @@ export function AgentWorkspace() {
   }, [sessionsData, queryClient])
   const activeSession = selectedId ? sessions.find((session) => session.session_id === selectedId) : undefined
   const hasMessages = timeline.length > 0
-  const appearance = runtimeSettingsQuery.data?.appearance
-  // settings 接口返回前先用上次缓存的背景 URL 起图（命中浏览器缓存时零网络），返回后再校正
-  const [cachedBackground] = useState(() => loadCachedBackgroundImage())
-  const configuredBackground = appearance?.background_image || cachedBackground || '/agent-backdrop.png'
-  const serverBackground = appearance?.background_image
-  useEffect(() => {
-    if (serverBackground) saveCachedBackgroundImage(serverBackground)
-  }, [serverBackground])
-  const agentBackgroundImage = configuredBackground
-  const sidebarGlassSettings = glassSettingsForAppearance(appearance ?? {
-    background_image: '/agent-backdrop.png',
-    custom_background_images: [],
-    side_transparency: 49,
-    side_brightness: 32,
-    side_thickness: 28,
-    backdrop_blur: 13,
-    backdrop_dim: 69,
-  }, hasMessages)
+  // 自定义背景预留：将来由接口层提供背景图 URL；当前恒为 null，页面露出全局星点背景
+  const backdropImage: string | null = null
 
   const gatewayModels = useMemo<GatewayModel[]>(() => {
     const data = availableModelsQuery.data
@@ -598,7 +511,11 @@ export function AgentWorkspace() {
     },
   })
 
-  const canSubmit = Boolean((draft.trim() || attachments.length > 0) && !running && !sendMutation.isPending && !retryMutation.isPending && !compactMutation.isPending)
+  const agentUnavailable = healthQuery.data?.status === 'unhealthy'
+  const agentUnavailableReason = agentUnavailable
+    ? healthQuery.data?.reason || t('agent:chat.unavailable')
+    : undefined
+  const canSubmit = Boolean((draft.trim() || attachments.length > 0) && !running && !agentUnavailable && !sendMutation.isPending && !retryMutation.isPending && !compactMutation.isPending)
   // Busy = session creation pending or a run in flight; drives the send/stop button state.
   const awaiting = sendMutation.isPending || retryMutation.isPending || running
   // Waiting indicator shows while busy before the final response, including active tool calls.
@@ -716,28 +633,15 @@ export function AgentWorkspace() {
   }
 
   function handlePermissionDecision(request: AgentPermissionRequest, decision: 'allow' | 'deny') {
-    if (!selectedId || !request.resolvedPath) return
-    setTimeline((current) => current.map((item) => {
-      if (item.kind !== 'run') return item
-      return {
-        ...item,
-        run: {
-          ...item.run,
-          permissions: item.run.permissions.map((entry) => entry.id === request.id
-            ? { ...entry, decision: decision === 'allow' ? 'allowed' as const : 'denied' as const }
-            : entry),
-        },
-      }
-    }))
+    // bash 审批只有命令、没有路径(resolvedPath 为空),后端也不要求该字段
+    if (!selectedId) return
+    setTimeline((current) => decidePermission(current, request.id, decision === 'allow' ? 'allowed' : 'denied'))
+    // 同一个 run 在审批后继续,原来的事件流仍然开着,会推送 permission_result 与后续输出;
+    // 不能再 followSession:重新订阅会从 run 开头重放,把已有的卡片与文本再追加一遍。
     void grantAgentAccess(selectedId, {
       escalation_id: request.id,
       granted: decision === 'allow',
-      resolved_path: request.resolvedPath,
-    }).then(() => {
-      // Allow/deny both resume the run agent-side; follow the new run's event
-      // stream (the registry is per-run, so only the new run replays).
-      setRunning(true)
-      void followSession(selectedId)
+      resolved_path: request.resolvedPath ?? '',
     }).catch((error: unknown) => {
       toast.error(t('agent:permission.failed'), { description: error instanceof Error ? error.message : String(error) })
     })
@@ -791,35 +695,6 @@ export function AgentWorkspace() {
     }
   }
 
-  const renderPickerSurface = useCallback((children: React.ReactNode, kind: 'panel' | 'subpanel') => (
-    <AgentLiquidGlassPanel
-      backgroundImage={agentBackgroundImage}
-      variant="dark"
-      sampleBackground={hasMessages ? false : 0.82}
-      flat={hasMessages}
-      className={kind === 'panel' ? 'agent-liquid-picker-surface' : 'agent-liquid-picker-surface agent-liquid-picker-surface--sub'}
-      contentClassName="agent-liquid-picker-surface__content"
-      settings={{ ...sidebarGlassSettings, radius: 14, depth: Math.min(sidebarGlassSettings.depth, 28) }}
-    >
-      {children}
-    </AgentLiquidGlassPanel>
-  ), [agentBackgroundImage, hasMessages, sidebarGlassSettings])
-
-  // 会话删除菜单等小型弹层：与模型选择器共用玻璃表面模式（空会话采样背景、会话中 flat）
-  const renderMenuSurface = useCallback((children: React.ReactNode) => (
-    <AgentLiquidGlassPanel
-      backgroundImage={agentBackgroundImage}
-      variant="dark"
-      sampleBackground={hasMessages ? false : 0.82}
-      flat={hasMessages}
-      className="agent-liquid-picker-surface agent-liquid-picker-surface--menu"
-      contentClassName="agent-liquid-picker-surface__content"
-      settings={{ ...sidebarGlassSettings, radius: 14, depth: Math.min(sidebarGlassSettings.depth, 28) }}
-    >
-      {children}
-    </AgentLiquidGlassPanel>
-  ), [agentBackgroundImage, hasMessages, sidebarGlassSettings])
-
   const composerContent = (
     <Composer
       value={draft}
@@ -833,8 +708,7 @@ export function AgentWorkspace() {
       }}
       streaming={awaiting}
       canSubmit={canSubmit}
-      stopButtonClassName="agent-stop-button bg-white text-black hover:bg-white/90"
-      stopIconClassName="text-black"
+      sendButtonTitle={agentUnavailableReason}
       placeholder={t('agent:chat.inputPlaceholder')}
       onPasteFiles={(files) => {
         if (running || editingMessage) return false
@@ -903,37 +777,57 @@ export function AgentWorkspace() {
           effort={effort}
           onEffortChange={setEffort}
           disabled={gatewayModels.length === 0}
-          panelClassName="agent-liquid-picker-host"
-          subPanelClassName="agent-liquid-picker-subpanel"
-          panelRenderer={renderPickerSurface}
           modelIconTransparent
         />
       }
     />
   )
 
+  const readOnlyMode = healthQuery.data?.isolation === 'degraded'
+  const noBashMode = healthQuery.data?.bash_enabled === false
+    && (healthQuery.data.sandbox === 'failed' || healthQuery.data.sandbox === 'unavailable')
+  const healthNotices = agentUnavailableReason || (!capabilityNoticeDismissed && (readOnlyMode || noBashMode)) ? (
+    <div className="mb-2 space-y-2">
+      {agentUnavailableReason ? (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs leading-5 text-red-500">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="whitespace-pre-wrap break-words">{agentUnavailableReason}</span>
+        </div>
+      ) : null}
+      {!capabilityNoticeDismissed && (readOnlyMode || noBashMode) ? (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-5 text-muted-soft">
+          <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <span className="min-w-0 flex-1">
+            {readOnlyMode ? t('agent:chat.readOnlyNotice') : null}
+            {readOnlyMode && noBashMode ? ' · ' : null}
+            {noBashMode ? t('agent:chat.noBashNotice') : null}
+          </span>
+          <button
+            type="button"
+            aria-label={t('agent:chat.dismissNotice')}
+            title={t('agent:chat.dismissNotice')}
+            className="shrink-0 text-faint hover:text-foreground"
+            onClick={() => {
+              dismissCapabilityNotice()
+              setCapabilityNoticeDismissed(true)
+            }}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : null}
+    </div>
+  ) : null
+
   const composer = (
-    <AgentLiquidGlassPanel
-      backgroundImage={agentBackgroundImage}
-      variant="dark"
-      // 会话中页面背景是纯黑（canvas 纹理却始终是背景图），继续采样会让图片
-      // 从玻璃里透出来；与侧栏一致改为纯中性深色玻璃
-      sampleBackground={hasMessages ? false : 1}
-      className="agent-liquid-composer"
-      contentClassName="agent-liquid-composer__content"
-      settings={{ ...sidebarGlassSettings, radius: 26, depth: Math.min(sidebarGlassSettings.depth, 30) }}
-    >
+    <LiquidGlass variant="regular" className="agent-composer rounded-[26px]">
       {composerContent}
-    </AgentLiquidGlassPanel>
+    </LiquidGlass>
   )
 
   const sidebarContent = <AgentSidebar
     sessions={sessions}
     activeId={selectedId}
-    menuRenderer={renderMenuSurface}
-    backgroundImage={agentBackgroundImage}
-    dark={hasMessages}
-    glassSettings={hasMessages ? { ...sidebarGlassSettings, radius: 26 } : undefined}
     onBack={() => navigate(-1)}
     onSelect={handleSelect}
     onNew={createNew}
@@ -942,93 +836,64 @@ export function AgentWorkspace() {
   />
 
   return (
-    <div className="agent-liquid-shell agent-page" data-agent-visual={hasMessages ? 'dark' : 'bright'}>
-      <AgentMobileHeader
-        title={selectedId ? (activeSession?.title || activeSession?.preview || t('sidebar.untitled')) : undefined}
-        onOpenMenu={() => setMobileSidebarOpen(true)}
-      />
-      <AgentMobileDrawer
-        open={mobileSidebarOpen}
-        backgroundImage={agentBackgroundImage}
-        hasMessages={hasMessages}
-        glassSettings={sidebarGlassSettings}
-        onClose={() => setMobileSidebarOpen(false)}
-      >
-        <AgentSidebar
-          className="agent-mobile-sidebar"
-          sessions={sessions}
-          activeId={selectedId}
-          menuRenderer={renderMenuSurface}
-          backgroundImage={agentBackgroundImage}
-          dark={hasMessages}
-          glassSettings={hasMessages ? { ...sidebarGlassSettings, radius: 26 } : undefined}
-          onBack={() => {
-            setMobileSidebarOpen(false)
-            navigate(-1)
-          }}
-          onSelect={(id) => {
-            setMobileSidebarOpen(false)
-            handleSelect(id)
-          }}
-          onNew={() => {
-            setMobileSidebarOpen(false)
-            createNew()
-          }}
-          onDelete={handleDelete}
-          onOpenSettings={() => {
-            setMobileSidebarOpen(false)
-            setSettingsOpen(true)
+    <div className="relative h-full min-h-0 overflow-hidden">
+      {/* 自定义背景预留层：image 为空时什么都不渲染，露出全局星点背景 */}
+      <AgentBackdrop image={backdropImage} />
+      <div className="relative z-10 flex h-full min-h-0 overflow-hidden">
+        <AgentMobileHeader
+          title={selectedId ? (activeSession?.title || activeSession?.preview || t('sidebar.untitled')) : undefined}
+          onOpenMenu={() => setMobileSidebarOpen(true)}
+        />
+        <AgentMobileDrawer
+          open={mobileSidebarOpen}
+          onClose={() => setMobileSidebarOpen(false)}
+        >
+          <AgentSidebar
+            sessions={sessions}
+            activeId={selectedId}
+            onBack={() => {
+              setMobileSidebarOpen(false)
+              navigate(-1)
+            }}
+            onSelect={(id) => {
+              setMobileSidebarOpen(false)
+              handleSelect(id)
+            }}
+            onNew={() => {
+              setMobileSidebarOpen(false)
+              createNew()
+            }}
+            onDelete={handleDelete}
+            onOpenSettings={() => {
+              setMobileSidebarOpen(false)
+              setSettingsOpen(true)
+            }}
+          />
+        </AgentMobileDrawer>
+        <FullAccessConfirmDialog
+          open={confirmFullAccess}
+          onCancel={() => setConfirmFullAccess(false)}
+          onConfirm={() => {
+            applyPermissionMode('full')
+            setConfirmFullAccess(false)
           }}
         />
-      </AgentMobileDrawer>
-      {/* 背景图始终作为底层渲染：新聊天页直接露出，进入会话时叠一层高斯模糊的
-          半透明遮罩，隐约透出背景图而不影响正文可读性 */}
-      <div
-        className="agent-liquid-backdrop"
-        style={{ backgroundImage: `url("${configuredBackground}")` }}
-        data-liquid-glass-background="true"
-        aria-hidden="true"
-      />
-      {hasMessages ? <div className="agent-liquid-backdrop agent-liquid-backdrop--dull" aria-hidden="true" /> : null}
-      <div className="relative z-10 flex h-full min-h-0 overflow-hidden">
-      <FullAccessConfirmDialog
-        open={confirmFullAccess}
-        backgroundImage={agentBackgroundImage}
-        dark={hasMessages}
-        glassSettings={hasMessages ? { ...sidebarGlassSettings, radius: 26 } : undefined}
-        onCancel={() => setConfirmFullAccess(false)}
-        onConfirm={() => {
-          applyPermissionMode('full')
-          setConfirmFullAccess(false)
-        }}
-      />
-      <EditReplayConfirmDialog
-        open={Boolean(editReplayConfirmation)}
-        backgroundImage={agentBackgroundImage}
-        dark={hasMessages}
-        glassSettings={hasMessages ? { ...sidebarGlassSettings, radius: 26 } : undefined}
-        onCancel={() => setEditReplayConfirmation(null)}
-        onConfirm={confirmEditReplay}
-      />
-      <aside className="my-4 ml-4 hidden h-[calc(100vh-2rem)] w-[280px] shrink-0 overflow-hidden md:block">
-        <AgentLiquidGlassPanel
-          backgroundImage={agentBackgroundImage}
-          variant={hasMessages ? 'dark' : 'frosted'}
-          sampleBackground={hasMessages ? false : 0.72}
-          className="agent-liquid-sidebar"
-          contentClassName="agent-liquid-sidebar__content"
-          settings={{ ...sidebarGlassSettings, radius: 24 }}
+        <EditReplayConfirmDialog
+          open={Boolean(editReplayConfirmation)}
+          onCancel={() => setEditReplayConfirmation(null)}
+          onConfirm={confirmEditReplay}
+        />
+        {/* 侧栏与主程序同款：浮动 Liquid Glass 面板，280 宽、距窗口 16、圆角 24 */}
+        <LiquidGlass
+          as="aside"
+          className="z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col"
         >
           {sidebarContent}
-        </AgentLiquidGlassPanel>
-      </aside>
-      <AgentSettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        backgroundImage={agentBackgroundImage}
-        dark={hasMessages}
-        glassSettings={hasMessages ? { ...sidebarGlassSettings, radius: 28 } : undefined}
-      />
+        </LiquidGlass>
+        <AgentSettingsDialog
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+        />
 
       <div className="relative flex min-w-0 flex-1 flex-col">
         {hasMessages ? (
@@ -1044,6 +909,7 @@ export function AgentWorkspace() {
             </div>
             <div className="shrink-0 px-4 pb-4">
               <div className="mx-auto max-w-3xl">
+                {healthNotices}
                 {composer}
                 <p className="mt-2 text-center text-xs text-faint">{t('agent:chat.hint')}</p>
               </div>
@@ -1053,8 +919,9 @@ export function AgentWorkspace() {
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4">
             <div className="w-full max-w-2xl">
               <div className="mb-6 flex h-20 items-center justify-center text-center">
-                <h2 className="text-2xl font-semibold text-foreground">{t('agent:chat.emptyTitle')}</h2>
+                <h2 className="text-title-1 text-label">{t('agent:chat.emptyTitle')}</h2>
               </div>
+              {healthNotices}
               {composer}
               <p className="mt-3 text-center text-xs text-faint">{t('agent:chat.hint')}</p>
             </div>
@@ -1073,23 +940,26 @@ function AgentMobileHeader({ title, onOpenMenu }: { title?: string; onOpenMenu: 
 
   return (
     <header
-      className={`agent-mobile-header mobile-safe-top${hasTitle ? ' agent-mobile-header--session' : ''}`}
+      className={cn(
+        'mobile-safe-top pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-4 pb-2 lg:hidden',
+        hasTitle && 'border-b border-[hsl(var(--glass-divider))] bg-black/45 backdrop-blur-md',
+      )}
       style={{ '--mobile-safe-top-extra': '0.75rem' } as React.CSSProperties}
     >
-      <div className="flex items-center gap-2">
+      <div className="pointer-events-auto flex items-center gap-2">
         <Button
           variant="ghost"
           size="icon"
-          className="agent-mobile-header__button"
+          className="-ml-2 rounded-full"
           aria-label={t('sidebar.menu')}
           onClick={onOpenMenu}
         >
           <Menu className="size-5" />
         </Button>
         {title ? (
-          <p className="agent-mobile-header__title">{title}</p>
+          <p className="max-w-[min(70vw,20rem)] truncate text-title-3 text-label">{title}</p>
         ) : (
-          <Link to="/dashboard" aria-label={t('header.back')} className="agent-mobile-header__logo">
+          <Link to="/dashboard" aria-label={t('header.back')} className="grid size-8 shrink-0 place-items-center">
             <AppLogo className="size-full !bg-transparent" decorative />
           </Link>
         )}
@@ -1100,16 +970,10 @@ function AgentMobileHeader({ title, onOpenMenu }: { title?: string; onOpenMenu: 
 
 function AgentMobileDrawer({
   open,
-  backgroundImage,
-  hasMessages,
-  glassSettings,
   onClose,
   children,
 }: {
   open: boolean
-  backgroundImage: string
-  hasMessages: boolean
-  glassSettings: ReturnType<typeof glassSettingsForAppearance>
   onClose: () => void
   children: React.ReactNode
 }) {
@@ -1127,25 +991,19 @@ function AgentMobileDrawer({
   if (!open) return null
 
   return (
-    <>
+    <div className="fixed inset-0 z-50 lg:hidden">
       <button
         type="button"
         aria-label={t('settings.close')}
-        className="agent-mobile-drawer__overlay"
+        className="absolute inset-0 bg-black/45"
         onClick={onClose}
       />
-      <aside className="agent-mobile-drawer" aria-label={t('sidebar.recent')}>
-        <AgentLiquidGlassPanel
-          backgroundImage={backgroundImage}
-          variant={hasMessages ? 'dark' : 'frosted'}
-          sampleBackground={hasMessages ? false : 0.72}
-          className="agent-liquid-sidebar agent-mobile-drawer__panel"
-          contentClassName="agent-liquid-sidebar__content"
-          settings={{ ...glassSettings, radius: 24 }}
-        >
-          {children}
-        </AgentLiquidGlassPanel>
+      <aside
+        className="lg-thick absolute inset-y-0 left-0 w-[min(84vw,320px)] overflow-hidden rounded-r-[24px] pb-[env(safe-area-inset-bottom,0px)] pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] shadow-[18px_0_54px_rgb(0_0_0/0.28)] animate-in slide-in-from-left-full duration-300 ease-out"
+        aria-label={t('sidebar.recent')}
+      >
+        {children}
       </aside>
-    </>
+    </div>
   )
 }

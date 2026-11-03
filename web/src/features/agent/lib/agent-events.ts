@@ -20,6 +20,7 @@ export type AgentPermissionRequest = {
   id: string
   tool: string
   detail?: string
+  note?: string
   /** Resolved path/capability key recorded by the grant, echoed back to the grant-access API. */
   resolvedPath?: string
   decision?: 'allowed' | 'denied'
@@ -36,6 +37,11 @@ export type AgentRun = {
   startedAt: number
   endedAt?: number
   elapsedMs?: number
+  errorMessage?: string
+  /** 最早一条未决权限请求的到达时间:等待用户审批期间「用时」暂停计时 */
+  pendingSince?: number
+  /** 已结束的审批等待累计时长(不计入用时) */
+  pausedMs?: number
 }
 
 export type AgentTimelineItem =
@@ -167,6 +173,7 @@ function ensureRun(timeline: AgentTimeline): AgentTimeline {
   if (current && current.run.status === 'running') return timeline
   const resumedAfterEscalation = current?.run.status === 'cancelled'
     && current.run.permissions.length > 0
+    && current.run.permissions.every((request) => request.decision !== undefined)
   if (resumedAfterEscalation) {
     return updateLastRun(timeline, (run) => ({
       ...run,
@@ -220,16 +227,47 @@ function finishRunAt(timeline: AgentTimeline, timestamp?: string): AgentTimeline
     : run)
 }
 
-function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number): AgentRun {
+function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number, errorMessage?: string): AgentRun {
   const endedAt = run.endedAt ?? Date.now()
-  const phaseElapsedMs = elapsedMs ?? Math.max(0, endedAt - run.startedAt)
+  // 审批等待(含收尾时仍未决的那段)不计入用时
+  const pausedMs = (run.pausedMs ?? 0) + (run.pendingSince !== undefined ? Math.max(0, endedAt - run.pendingSince) : 0)
+  const phaseElapsedMs = elapsedMs ?? Math.max(0, endedAt - run.startedAt - pausedMs)
   return {
     ...run,
+    pendingSince: undefined,
+    pausedMs: 0,
     endedAt,
     elapsedMs: (run.elapsedMs ?? 0) + phaseElapsedMs,
     status,
+    errorMessage: errorMessage || run.errorMessage,
+    permissions: status === 'error' || status === 'cancelled'
+      ? run.permissions.map((request) => request.decision ? request : { ...request, decision: 'denied' as const })
+      : run.permissions,
     steps: run.steps.map((step) => (step.status === 'running' ? { ...step, status: status === 'error' ? 'error' : 'done' } : step)),
   }
+}
+
+/** 记录一条权限决定;最后一条未决请求被处理后,结束这段审批等待,用时恢复计时。 */
+function applyPermissionDecision(run: AgentRun, requestId: string, decision: 'allowed' | 'denied'): AgentRun {
+  const permissions = run.permissions.map((request) => (request.id === requestId ? { ...request, decision } : request))
+  if (run.pendingSince === undefined || permissions.some((request) => !request.decision)) return { ...run, permissions }
+  return {
+    ...run,
+    permissions,
+    pausedMs: (run.pausedMs ?? 0) + Math.max(0, Date.now() - run.pendingSince),
+    pendingSince: undefined,
+  }
+}
+
+/** 用户在审批卡片上点了允许/拒绝:乐观更新本地时间线(与服务端的 permission_result 幂等)。 */
+export function decidePermission(timeline: AgentTimeline, requestId: string, decision: 'allowed' | 'denied'): AgentTimeline {
+  return timeline.map((item) => (item.kind === 'run' ? { ...item, run: applyPermissionDecision(item.run, requestId, decision) } : item))
+}
+
+/** 运行中的「用时」:等待审批期间冻结,审批完成后继续累加。 */
+export function runElapsedMs(run: AgentRun, now: number): number {
+  const paused = (run.pausedMs ?? 0) + (run.pendingSince !== undefined ? Math.max(0, now - run.pendingSince) : 0)
+  return (run.elapsedMs ?? 0) + Math.max(0, now - run.startedAt - paused)
 }
 
 export function appendUserMessage(timeline: AgentTimeline, text: string, messageId?: string, createdAt = Date.now(), attachments?: ChatAttachment[]): AgentTimeline {
@@ -427,28 +465,26 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
           detail: Array.isArray(command)
             ? command.map(String).join(' ')
             : pickDetail(payload, ['requested_command', 'requested_path', 'arguments', 'args', 'input', 'command', 'description', 'message']) || undefined,
+          note: pickString(payload, ['note']) || undefined,
           resolvedPath: pickString(payload, ['resolved_path']) || undefined,
           position: run.steps.length,
         }
-        return { ...run, permissions: [...run.permissions, request] }
+        return { ...run, permissions: [...run.permissions, request], pendingSince: run.pendingSince ?? Date.now() }
       })
     }
     case 'permission_result': {
       const requestId = pickId(record, ['request_id', 'permission_id', 'id'])
       const decision = record?.allowed === true || record?.decision === 'allow' || record?.decision === 'allowed' ? 'allowed' : 'denied'
-      return updateLastRun(timeline, (run) => ({
-        ...run,
-        permissions: run.permissions.map((request) => (request.id === requestId ? { ...request, decision } : request)),
-      }))
+      return updateLastRun(timeline, (run) => applyPermissionDecision(run, requestId, decision))
     }
     case 'done':
       // 用墙钟收束（用户发出消息 → 最后输出结束），不用 runner 的 elapsed_ms：
       // closeRun 会按 endedAt??now 计算，并对暂停/恢复的分段累加
       return updateLastRun(timeline, (run) => closeRun(run, 'done'))
     case 'error':
-      return updateLastRun(timeline, (run) => closeRun(run, 'error'))
+      return updateLastRun(timeline, (run) => closeRun(run, 'error', undefined, pickString(record, ['message'])))
     case 'cancelled':
-      return updateLastRun(timeline, (run) => closeRun(run, 'cancelled'))
+      return updateLastRun(timeline, (run) => closeRun(run, 'cancelled', undefined, pickString(record, ['message'])))
     default:
       return timeline
   }
@@ -483,6 +519,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
           detail: Array.isArray(command) && command.length
             ? command.join(' ')
             : entry.requested_path || undefined,
+          note: entry.note || undefined,
           resolvedPath: entry.resolved_path || undefined,
           decision: entry.granted === true ? 'allowed' : entry.granted === false ? 'denied' : undefined,
           position: run.steps.length,

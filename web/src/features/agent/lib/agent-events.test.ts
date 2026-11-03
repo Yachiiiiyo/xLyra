@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   appendUserMessage,
   canReconcileTimeline,
+  decidePermission,
   extractEventText,
   replaceFromUserMessage,
   reduceAgentEvent,
   reconcileTimeline,
+  runElapsedMs,
   settleRunningRuns,
   timelineFromTranscript,
   type AgentTimeline,
@@ -321,6 +323,79 @@ describe('reduceAgentEvent', () => {
     expect(item.run.permissions[0].resolvedPath).toBe('capability://exec_command')
   })
 
+  it('records terminal error and cancellation messages', () => {
+    const failed = reduceAll([
+      { type: 'message', data: 'partial' },
+      { type: 'agent_error', data: { message: '模型返回错误' } },
+    ])
+    const failedRun = failed[0]
+    if (failedRun.kind !== 'run') throw new Error('expected failed run')
+    expect(failedRun.run.status).toBe('error')
+    expect(failedRun.run.errorMessage).toBe('模型返回错误')
+
+    const cancelled = reduceAll([
+      { type: 'message', data: 'partial' },
+      { type: 'agent_cancelled', data: { message: '用户停止了任务' } },
+    ])
+    const cancelledRun = cancelled[0]
+    if (cancelledRun.kind !== 'run') throw new Error('expected cancelled run')
+    expect(cancelledRun.run.errorMessage).toBe('用户停止了任务')
+  })
+
+  it('denies unresolved permissions when a run errors or is cancelled', () => {
+    const events = [
+      { type: 'permission_request', data: { request_id: 'p1', tool: 'bash', input: 'ls' } },
+      { type: 'permission_request', data: { request_id: 'p2', tool: 'read', input: '/tmp/a' } },
+      { type: 'permission_result', data: { request_id: 'p2', decision: 'allow' } },
+    ]
+    const cancelled = reduceAll([...events, { type: 'agent_cancelled', data: {} }])
+    const cancelledRun = cancelled[0]
+    if (cancelledRun.kind !== 'run') throw new Error('expected cancelled run')
+    expect(cancelledRun.run.permissions.map((request) => request.decision)).toEqual(['denied', 'allowed'])
+
+    const failed = reduceAll([...events, { type: 'agent_error', data: {} }])
+    const failedRun = failed[0]
+    if (failedRun.kind !== 'run') throw new Error('expected failed run')
+    expect(failedRun.run.permissions.map((request) => request.decision)).toEqual(['denied', 'allowed'])
+  })
+
+  it('does not reopen a cancelled run with unresolved permissions for a new message', () => {
+    let timeline = reduceAll([
+      { type: 'escalation_request', data: { escalation: { escalation_id: 'esc-1', requested_path: '/tmp/a' } } },
+      { type: 'agent_cancelled', data: {} },
+    ], appendUserMessage([], '第一问', 'message-1', 1_000))
+    timeline = appendUserMessage(timeline, '第二问', 'message-2', 2_000)
+    timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'message', data: '新的回答' },
+      { type: 'agent_done', data: {} },
+    ], timeline)
+    expect(timeline).toHaveLength(4)
+    const oldRun = timeline[1]
+    const newRun = timeline[3]
+    if (oldRun.kind !== 'run' || newRun.kind !== 'run') throw new Error('expected runs')
+    expect(oldRun.run.status).toBe('cancelled')
+    expect(oldRun.run.finalText).toBe('')
+    expect(newRun.run.status).toBe('done')
+    expect(newRun.run.finalText).toBe('新的回答')
+  })
+
+  it('preserves the complete bash command and note on approval requests', () => {
+    const command = 'printf "first line\\nsecond line"\nfind /tmp -name "*.log"'
+    const timeline = reduceAll([
+      { type: 'escalation_request', data: { escalation: {
+        escalation_id: 'esc-bash',
+        tool_name: 'bash',
+        requested_command: [command],
+        resolved_path: 'capability://exec_command',
+        note: '工作目录：/workspace',
+      } } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.permissions[0]).toMatchObject({ detail: command, note: '工作目录：/workspace' })
+  })
+
   it('closes open steps on cancel', () => {
     const timeline = reduceAll([
       { type: 'tool_call', data: { name: 'bash' } },
@@ -476,9 +551,8 @@ describe('timelineFromTranscript', () => {
     if (compactRun?.kind !== 'run') throw new Error('expected compact run')
     expect(compactRun.run.steps.find((step) => step.kind === 'status')).toMatchObject({ title: 'compacted', detail: undefined })
     expect(compactRun.run.permissions[0]).toMatchObject({ id: 'e1', tool: 'bash', detail: 'rm -rf /tmp/x', decision: 'denied' })
-    // An undecided escalation (granted: null) stays interactive and must not render as denied.
-    expect(compactRun.run.permissions[1]).toMatchObject({ id: 'e2', tool: 'read_file', resolvedPath: '/Users/x/secrets' })
-    expect(compactRun.run.permissions[1].decision).toBeUndefined()
+    // Closing a historical run with an undecided escalation denies the stale request so it is no longer interactive.
+    expect(compactRun.run.permissions[1]).toMatchObject({ id: 'e2', tool: 'read_file', resolvedPath: '/Users/x/secrets', decision: 'denied' })
   })
 
   it('downgrades legacy interrupted seal receipts to neutral when an escalation paused the run', () => {
@@ -652,5 +726,60 @@ describe('上下文压缩状态', () => {
     expect(replyRun.run.steps.some((s) => s.kind === 'status')).toBe(false)
     expect(compactRun.run.steps).toHaveLength(1)
     expect(compactRun.run.steps[0]).toMatchObject({ title: 'compacted', status: 'done', detail: undefined })
+  })
+})
+
+describe('审批等待期间的计时', () => {
+  const lastRunOf = (timeline: AgentTimeline) => {
+    const item = timeline[timeline.length - 1]
+    if (item?.kind !== 'run') throw new Error('no run')
+    return item.run
+  }
+
+  it('等待审批期间用时冻结,审批后继续累加,收尾时不含等待时长', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(10_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    expect(runElapsedMs(lastRunOf(timeline), 10_000)).toBe(10_000)
+    // 用户 30 秒后才点:用时仍停在 10s
+    expect(runElapsedMs(lastRunOf(timeline), 40_000)).toBe(10_000)
+    vi.setSystemTime(40_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed')
+    expect(runElapsedMs(lastRunOf(timeline), 40_000)).toBe(10_000)
+    expect(runElapsedMs(lastRunOf(timeline), 45_000)).toBe(15_000)
+    vi.setSystemTime(47_000)
+    timeline = reduceAgentEvent(timeline, { type: 'agent_done', data: {} })
+    expect(lastRunOf(timeline).elapsedMs).toBe(17_000)
+  })
+
+  it('乐观更新之后再收到服务端 permission_result 是幂等的(不重复计入等待时长)', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(5_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    vi.setSystemTime(20_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed')
+    vi.setSystemTime(21_000)
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]?.decision).toBe('allowed')
+    expect(run.pausedMs).toBe(15_000)
+    expect(runElapsedMs(run, 21_000)).toBe(6_000)
+  })
+
+  it('多条权限请求:全部处理完才恢复计时;中途取消时未决的等待也不计入', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(2_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e2', tool_name: 'write', requested_path: 'b.txt' } } })
+    vi.setSystemTime(8_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed')
+    expect(runElapsedMs(lastRunOf(timeline), 20_000)).toBe(2_000)
+    vi.setSystemTime(12_000)
+    timeline = reduceAgentEvent(timeline, { type: 'agent_cancelled', data: {} })
+    expect(lastRunOf(timeline).elapsedMs).toBe(2_000)
   })
 })
