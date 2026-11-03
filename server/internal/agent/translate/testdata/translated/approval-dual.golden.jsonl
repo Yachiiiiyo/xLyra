@@ -1,0 +1,17 @@
+{"type":"agent_start","data":{}}
+{"type":"tool_call_start","data":{"tool_call":{"id":"call_dual","name":"risky_tool"}}}
+{"type":"tool_call_delta","data":{"delta":"{\"note\":","tool_call_id":"call_dual"}}
+{"type":"tool_call_delta","data":{"delta":"\"pair\",\"","tool_call_id":"call_dual"}}
+{"type":"tool_call_delta","data":{"delta":"mode\":\"d","tool_call_id":"call_dual"}}
+{"type":"tool_call_delta","data":{"delta":"ual\"}","tool_call_id":"call_dual"}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_dual","name":"risky_tool","raw_arguments":"{\"mode\":\"dual\",\"note\":\"pair\"}"}}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_dual","name":"risky_tool","raw_arguments":"{\"mode\":\"dual\",\"note\":\"pair\"}"}}}
+{"type":"escalation_request","data":{"escalation":{"escalation_id":"e4eed413-c119-478d-b401-817c27fcf11f","tool_name":"risky_tool"}}}
+{"type":"permission_result","data":{"allowed":false,"request_id":"e4eed413-c119-478d-b401-817c27fcf11f"}}
+{"type":"escalation_request","data":{"escalation":{"escalation_id":"a85e1736-1653-4b70-92aa-43a57a123a3a","tool_name":"risky_tool"}}}
+{"type":"permission_result","data":{"allowed":true,"request_id":"a85e1736-1653-4b70-92aa-43a57a123a3a"}}
+{"type":"tool_result","data":{"tool_result":{"is_error":true,"name":"risky_tool","output":"dual a=false b=true","tool_call_id":"call_dual"}}}
+{"type":"text_delta","data":{"delta":"双对"}}
+{"type":"text_delta","data":{"delta":"话框"}}
+{"type":"text_delta","data":{"delta":"结束"}}
+{"type":"agent_done","data":{}}
