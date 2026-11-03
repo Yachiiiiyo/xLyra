@@ -2,6 +2,7 @@ import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentScopePane } from './agent-scope-pane'
 import type { AgentImageModelSelection } from '@/features/agent/api/agent'
@@ -37,7 +38,11 @@ vi.mock('@tanstack/react-query', () => ({
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     const key = queryKey.at(-1)
     if (key === 'runtime') return { data: { allowed_site_ids: [], allowed_site_model_ids: [], site_policy: 'allow_all', model_policy: 'allow_all', image_models: overview.imageModels }, isLoading: false }
-    if (key === 'available-models') return { data: overview.sites, isLoading: false }
+    if (key === 'sites') return { data: { items: overview.sites.map((site) => ({ id: site.site_id, name: site.site_name, site_type: site.site_type, enabled: site.enabled })) }, isLoading: false }
+    if (queryKey.at(-2) === 'models' && key === 'all') return {
+      data: Object.fromEntries(overview.sites.map((site) => [site.site_id, site.models.map((model) => ({ ...model, site_id: site.site_id, capabilities: {}, status: 'active' }))])),
+      isLoading: false,
+    }
     return { data: { items: [] }, isLoading: false }
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
@@ -71,7 +76,7 @@ beforeEach(() => {
 
 function render() {
   entry.stateIndex = 0
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}><AgentScopePane /></I18nextProvider>)
+  return renderToStaticMarkup(<I18nextProvider i18n={i18n}><MemoryRouter><AgentScopePane /></MemoryRouter></I18nextProvider>)
 }
 
 describe('AgentScopePane 概览', () => {
@@ -109,7 +114,7 @@ describe('AgentScopePane 概览', () => {
     expect(imageConfig.open).toBe(true)
   })
 
-  it('生图摘要按已选顺序用箭头连接模型名及其站点', () => {
+  it('生图摘要按已选顺序用箭头连接模型名，不显示站点名', () => {
     overview.imageModels = [
       { model: 'second', site_ids: ['site-1'] },
       { model: 'gpt', site_ids: ['site-1'] },
@@ -119,11 +124,11 @@ describe('AgentScopePane 概览', () => {
       { id: 'model-2', upstream_model_name: 'second', display_name: 'Second', canonical_model_id: '', model_key: 'second' },
     ] }]
     const html = render()
-    expect(html).toContain('Second (Site)</span></span><span> › <span>GPT (Site)</span>')
-    expect(html).not.toContain('Site ·')
+    expect(html).toContain('Second</span></span><span> › <span>GPT</span>')
+    expect(html).not.toContain('(Site)')
   })
 
-  it('生图摘要列出多个选中站点且不限站点时不带括号', () => {
+  it('生图摘要不论限制几个站点都只显示模型名', () => {
     overview.imageModels = [
       { model: 'shared', site_ids: ['site-1', 'site-2'] },
       { model: 'unrestricted', site_ids: [] },
@@ -136,8 +141,8 @@ describe('AgentScopePane 概览', () => {
       ] },
     ]
     const html = render()
-    expect(html).toContain('Shared (Site、Beta)</span></span><span> › <span>Unrestricted</span>')
-    expect(html).not.toContain('Unrestricted (')
+    expect(html).toContain('Shared</span></span><span> › <span>Unrestricted</span>')
+    expect(html).not.toContain('Beta')
   })
 
   it('生图摘要为没有已启用选中站点提供的模型添加琥珀色和提示', () => {

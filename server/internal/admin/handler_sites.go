@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -61,7 +62,8 @@ func (h Handler) ListSites(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var usageBySite map[uuid.UUID]store.SiteUsageSummaryRow
-	if h.usage != nil {
+	lite, _ := strconv.ParseBool(strings.TrimSpace(r.URL.Query().Get("lite")))
+	if h.usage != nil && !lite {
 		if rows, err := h.usage.UsageSummaryBySite(r.Context(), nil); err == nil {
 			usageBySite = make(map[uuid.UUID]store.SiteUsageSummaryRow, len(rows))
 			for _, row := range rows {
@@ -78,7 +80,10 @@ func (h Handler) ListSites(w http.ResponseWriter, r *http.Request) {
 		if oauthFilter == "only" && !isOAuthSite {
 			continue
 		}
-		payload := h.withAccountCounts(r.Context(), h.sitePayloadWithState(item, states[item.ID]), item)
+		payload := h.sitePayloadWithState(item, states[item.ID])
+		if !lite {
+			payload = h.withAccountCounts(r.Context(), payload, item)
+		}
 		if usageBySite != nil {
 			if row, ok := usageBySite[item.ID]; ok {
 				payload["usage"] = siteUsagePayload(row)
@@ -552,6 +557,57 @@ func (h Handler) ListSiteModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeItems(w, http.StatusOK, siteModelPayloads(models), map[string]any{"count": len(models)})
+}
+
+func (h Handler) ListAllSiteModels(w http.ResponseWriter, r *http.Request) {
+	if h.sites == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "site_service_unavailable", "site service is not available")
+		return
+	}
+
+	modelsBySite, err := h.sites.ListAllModelsBySite(r.Context())
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "site_models_list_failed", "failed to list site models")
+		return
+	}
+
+	enabledOnly, _ := strconv.ParseBool(strings.TrimSpace(r.URL.Query().Get("enabled_only")))
+	if enabledOnly {
+		sites, err := h.sites.List(r.Context())
+		if err != nil {
+			h.writeError(w, r, http.StatusInternalServerError, "site_list_failed", "failed to list sites")
+			return
+		}
+		enabledSiteIDs := make(map[uuid.UUID]struct{}, len(sites))
+		for _, site := range sites {
+			if site.Enabled {
+				enabledSiteIDs[site.ID] = struct{}{}
+			}
+		}
+		for siteID := range modelsBySite {
+			if _, ok := enabledSiteIDs[siteID]; !ok {
+				delete(modelsBySite, siteID)
+			}
+		}
+	}
+
+	siteIDs := make([]uuid.UUID, 0, len(modelsBySite))
+	for siteID := range modelsBySite {
+		siteIDs = append(siteIDs, siteID)
+	}
+	sort.Slice(siteIDs, func(i, j int) bool {
+		return siteIDs[i].String() < siteIDs[j].String()
+	})
+
+	items := make([]map[string]any, 0, len(siteIDs))
+	for _, siteID := range siteIDs {
+		models := modelsBySite[siteID]
+		items = append(items, map[string]any{
+			"site_id": siteID.String(),
+			"models":  siteModelPayloads(models),
+		})
+	}
+	h.writeItems(w, http.StatusOK, items, map[string]any{"count": len(items)})
 }
 
 func (h Handler) CreateSiteModel(w http.ResponseWriter, r *http.Request) {

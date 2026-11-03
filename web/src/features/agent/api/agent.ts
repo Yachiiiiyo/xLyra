@@ -1,5 +1,5 @@
 import { apiFetch, apiFetchResponse, apiURL, APIError } from '@/lib/http'
-import { listCanonicalModels, listSiteModels, listSitesWithOAuth, type SiteModel } from '@/features/sites/api/sites'
+import { listAllSiteModels, listCanonicalModels, listSitesLite, type CanonicalModelItem, type Site, type SiteModel } from '@/features/sites/api/sites'
 
 export type AgentSession = {
   session_id: string
@@ -144,27 +144,23 @@ export async function updateAgentScopeSettings(settings: { site_policy: 'allow_a
 }
 
 export async function fetchAgentAvailableModels(): Promise<AgentAvailableSite[]> {
-  const [sitesResponse, canonicalResponse] = await Promise.all([listSitesWithOAuth(), listCanonicalModels()])
-  const canonicalById = new Map((canonicalResponse.items ?? []).map((model) => [model.id, model]))
-  const rows = await Promise.all((sitesResponse.items ?? []).map(async (site) => {
-    if (!site.enabled) {
-      return { site_id: site.id, site_name: site.name, site_type: site.site_type, enabled: false, models: [] }
-    }
-    try {
-      const response = await listSiteModels(site.id)
-      return {
-        site_id: site.id,
-        site_name: site.name,
-        site_type: site.site_type,
-        enabled: true,
-        models: (response.items ?? []).filter((model) => model.enabled !== false && model.status === 'active').map(({ id, upstream_model_name, display_name, canonical_model_id }) => {
+  const [sitesResponse, canonicalResponse, modelsBySite] = await Promise.all([listSitesLite(), listCanonicalModels(), listAllSiteModels()])
+  return buildAgentAvailableModels(sitesResponse.items ?? [], canonicalResponse.items ?? [], modelsBySite)
+}
+
+export function buildAgentAvailableModels(sites: Site[], canonicalModels: CanonicalModelItem[], modelsBySite: Record<string, SiteModel[]>): AgentAvailableSite[] {
+  const canonicalById = new Map(canonicalModels.map((model) => [model.id, model]))
+  const rows = sites.map((site) => ({
+    site_id: site.id,
+    site_name: site.name,
+    site_type: site.site_type,
+    enabled: site.enabled,
+    models: site.enabled
+      ? (modelsBySite[site.id] ?? []).filter((model) => model.enabled !== false && model.status === 'active').map(({ id, upstream_model_name, display_name, canonical_model_id }) => {
           const canonical = canonical_model_id ? canonicalById.get(canonical_model_id) : undefined
           return { id, upstream_model_name, display_name, canonical_model_id, model_key: canonical?.model_key, category: canonical?.category, reasoning_effort: canonical?.reasoning_effort }
-        }),
-      }
-    } catch {
-      return { site_id: site.id, site_name: site.name, site_type: site.site_type, enabled: true, models: [] }
-    }
+        })
+      : [],
   }))
   return rows.filter((site) => !site.enabled || site.models.length > 0)
 }

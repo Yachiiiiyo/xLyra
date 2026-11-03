@@ -1,12 +1,11 @@
 import { useMemo } from 'react'
-import { useQueries } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
-  listSiteModels,
+  listAllSiteModels,
   sitesQueryKeys,
   type Site,
   type SiteModel,
 } from '@/features/sites/api/sites'
-import { siteModelItems } from '@/features/sites/lib/site-cache'
 import { sortSitesByName } from '@/features/sites/lib/site-utils'
 import type { SiteGroup } from '@/features/settings/api/site-groups'
 
@@ -75,28 +74,21 @@ export function useSiteModelScope({
     }
     return [...ids]
   }, [advancedExpanded, effectiveModelPolicy, effectiveSiteIds, enabledSites, imageBridgeEnabled])
-  const siteModelQueries = useQueries({
-    queries: requestedSiteModelIds.map((siteID) => ({
-      queryKey: sitesQueryKeys.models(siteID),
-      queryFn: async () => {
-        try {
-          return await listSiteModels(siteID)
-        } catch {
-          return { items: [] as SiteModel[] }
-        }
-      },
-    })),
+  const siteModelsQuery = useQuery({
+    queryKey: sitesQueryKeys.allModels(),
+    queryFn: listAllSiteModels,
+    // 站点页的模型编辑只失效单站点缓存，批量缓存每次挂载都重新取一次
+    staleTime: 0,
+    enabled: requestedSiteModelIds.length > 0,
   })
   const siteModelsMap = useMemo(() => {
     const result: Record<string, SiteModel[]> = {}
-    requestedSiteModelIds.forEach((siteID, index) => {
-      result[siteID] = siteModelItems(siteModelQueries[index]?.data)
-    })
+    for (const siteID of requestedSiteModelIds) result[siteID] = siteModelsQuery.data?.[siteID] ?? []
     return result
-  }, [requestedSiteModelIds, siteModelQueries])
+  }, [requestedSiteModelIds, siteModelsQuery.data])
   const loadingSiteModelIds = useMemo(() => new Set(
-    requestedSiteModelIds.filter((_, index) => siteModelQueries[index]?.isLoading),
-  ), [requestedSiteModelIds, siteModelQueries])
+    siteModelsQuery.isLoading ? requestedSiteModelIds : [],
+  ), [requestedSiteModelIds, siteModelsQuery.isLoading])
   const siteModelsLoading = effectiveSiteIds.some((siteID) => loadingSiteModelIds.has(siteID))
 
   const siteModelRows = useMemo(() => {

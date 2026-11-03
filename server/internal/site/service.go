@@ -1545,6 +1545,21 @@ func (s *Service) ListModels(ctx context.Context, siteID uuid.UUID) ([]store.Sit
 	return visibleSiteModels(models), nil
 }
 
+func (s *Service) ListAllModelsBySite(ctx context.Context) (map[uuid.UUID][]store.SiteModel, error) {
+	models, err := store.NewSiteModelRepository(s.db.DB()).ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	modelsBySite := make(map[uuid.UUID][]store.SiteModel)
+	for _, model := range models {
+		modelsBySite[model.SiteID] = append(modelsBySite[model.SiteID], model)
+	}
+	for siteID, models := range modelsBySite {
+		modelsBySite[siteID] = visibleSiteModels(models)
+	}
+	return modelsBySite, nil
+}
+
 func (s *Service) SitePricingGroups(ctx context.Context, siteID uuid.UUID) ([]store.SitePricingGroup, error) {
 	return store.NewSitePricingGroupRepository(s.db.DB()).ListBySite(ctx, siteID)
 }

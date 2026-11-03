@@ -2,17 +2,20 @@ import * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentScopeConfigDialog } from './agent-scope-config-dialog'
 import { updateAgentScopeSettings } from '@/features/agent/api/agent'
 import zhAgent from '@/locales/zh/agent.json'
 import zhCommon from '@/locales/zh/common.json'
 
-const mutation = vi.hoisted(() => ({ options: undefined as undefined | { mutationFn: () => Promise<unknown> } }))
+const mutation = vi.hoisted(() => ({ options: undefined as undefined | { mutationFn: () => Promise<unknown>; onSuccess?: () => Promise<void> } }))
 const runtime = vi.hoisted(() => ({ value: { allowed_site_ids: ['site-1'], allowed_site_model_ids: ['model-1'], site_policy: 'allow_list', model_policy: 'allow_list', image_model: { site_id: 'site-1', model: 'image-key' } } as Record<string, unknown> }))
 const siteModels = vi.hoisted(() => ({ value: {} as Record<string, Array<{ id: string; upstream_model_name: string; display_name: string; canonical_model_id?: string; status: string; capabilities: Record<string, unknown> }>>, failed: false }))
 const confirmOpen = vi.hoisted(() => ({ value: false }))
 const selectedScope = vi.hoisted(() => ({ selectedSiteModelIds: ['model-1'] }))
+const layout = vi.hoisted(() => ({ mobile: false }))
+const onOpenChange = vi.hoisted(() => vi.fn())
 
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
@@ -42,14 +45,8 @@ vi.mock('@tanstack/react-query', () => ({
       ] }, isLoading: false, isError: false, refetch: vi.fn() }
     return { data: { items: [] }, isLoading: false, isError: false, refetch: vi.fn() }
   },
-  useQueries: ({ queries }: { queries: Array<{ queryKey: string[] }> }) => queries.map((query) => ({
-    data: { items: siteModels.value[query.queryKey.at(-1) as string] ?? [] },
-    isLoading: false,
-    isError: false,
-    refetch: vi.fn(),
-  })),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-  useMutation: (options: { mutationFn: () => Promise<unknown> }) => {
+  useMutation: (options: { mutationFn: () => Promise<unknown>; onSuccess?: () => Promise<void> }) => {
     mutation.options = options
     return { mutate: vi.fn(), isPending: false }
   },
@@ -65,7 +62,7 @@ vi.mock('@/features/api-keys/lib/use-site-model-scope', () => ({
   }),
 }))
 vi.mock('@/features/api-keys/components/site-model-scope-picker', () => ({ SiteModelScopePicker: () => null }))
-vi.mock('@/hooks/use-media-query', () => ({ useMobileLayout: () => false }))
+vi.mock('@/hooks/use-media-query', () => ({ useMobileLayout: () => layout.mobile }))
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const i18n = createInstance()
@@ -79,6 +76,8 @@ beforeAll(async () => {
 })
 beforeEach(() => {
   confirmOpen.value = false
+  layout.mobile = false
+  onOpenChange.mockReset()
   siteModels.failed = false
   selectedScope.selectedSiteModelIds = ['model-1']
   runtime.value = { allowed_site_ids: ['site-1'], allowed_site_model_ids: ['model-1'], site_policy: 'allow_list', model_policy: 'allow_list', image_model: { site_id: 'site-1', model: 'image-key' } }
@@ -92,8 +91,8 @@ beforeEach(() => {
   }
 })
 
-function render() {
-  return renderToStaticMarkup(<I18nextProvider i18n={i18n}><AgentScopeConfigDialog open onOpenChange={() => {}} /></I18nextProvider>)
+function render(path = '/') {
+  return renderToStaticMarkup(<I18nextProvider i18n={i18n}><MemoryRouter initialEntries={[path]}><AgentScopeConfigDialog open onOpenChange={onOpenChange} /></MemoryRouter></I18nextProvider>)
 }
 
 describe('AgentScopeConfigDialog 保存', () => {

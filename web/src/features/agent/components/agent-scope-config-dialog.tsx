@@ -8,7 +8,7 @@ import { SiteModelScopePicker, type SiteModelScopePatch, type SiteModelScopePoli
 import { useSiteModelScope } from '@/features/api-keys/lib/use-site-model-scope'
 import { fetchAgentRuntimeSettings, updateAgentScopeSettings } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
-import { listCanonicalModels, listSitesWithOAuth } from '@/features/sites/api/sites'
+import { listCanonicalModels, listSitesLite } from '@/features/sites/api/sites'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { toast } from '@/lib/toast'
 
@@ -23,7 +23,7 @@ export function AgentScopeConfigDialog({ open, onOpenChange }: {
   const mobileLayout = useMobileLayout()
   const queryClient = useQueryClient()
   const runtime = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false, enabled: open })
-  const sitesQuery = useQuery({ queryKey: [...agentSettingsKey, 'sites'], queryFn: listSitesWithOAuth, retry: false, enabled: open })
+  const sitesQuery = useQuery({ queryKey: [...agentSettingsKey, 'sites'], queryFn: listSitesLite, retry: false, enabled: open })
   const canonicalQuery = useQuery({ queryKey: [...agentSettingsKey, 'canonical-models'], queryFn: listCanonicalModels, retry: false, enabled: open })
   const [sitePolicy, setSitePolicy] = useState<SiteModelScopePolicy | null>(null)
   const [modelPolicy, setModelPolicy] = useState<SiteModelScopePolicy | null>(null)
@@ -85,6 +85,23 @@ export function AgentScopeConfigDialog({ open, onOpenChange }: {
     else close()
   }
 
+  const content = (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-foreground">{t('settings.scope.configTitle')}</h3>
+      <SiteModelScopePicker
+        scope={scope}
+        sitesLoading={sitesQuery.isLoading}
+        canonicalModels={canonicalModels}
+        canonicalModelsLoading={canonicalQuery.isLoading}
+        sitePolicy={effectiveSitePolicy}
+        modelPolicy={modelPolicy ?? runtime.data?.model_policy ?? 'allow_all'}
+        siteIds={selectedSiteIDs}
+        siteModelIds={storedSiteModelIDs}
+        onChange={handleScopeChange}
+      />
+    </section>
+  )
+
   return (
     <>
       <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) requestClose() }}>
@@ -101,20 +118,7 @@ export function AgentScopeConfigDialog({ open, onOpenChange }: {
             <DialogDescription className="max-lg:sr-only">{t('settings.scope.configDialogHint')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-6">
-            <section className="space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">{t('settings.scope.configTitle')}</h3>
-              <SiteModelScopePicker
-                scope={scope}
-                sitesLoading={sitesQuery.isLoading}
-                canonicalModels={canonicalModels}
-                canonicalModelsLoading={canonicalQuery.isLoading}
-                sitePolicy={effectiveSitePolicy}
-                modelPolicy={modelPolicy ?? runtime.data?.model_policy ?? 'allow_all'}
-                siteIds={selectedSiteIDs}
-                siteModelIds={storedSiteModelIDs}
-                onChange={handleScopeChange}
-              />
-            </section>
+            {content}
           </DialogBody>
           <div className="shrink-0">
             {dirty ? <p className="px-6 pt-3 text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p> : null}
