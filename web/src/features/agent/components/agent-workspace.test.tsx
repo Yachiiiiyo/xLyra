@@ -77,7 +77,7 @@ describe('AgentWorkspace 玻璃面板', () => {
     useHasAppBackground.mockReturnValue(true)
     useAppBackgroundImage.mockReturnValue('/api/v1/appearance/backgrounds/appearance-bg-abcd.png')
     const html = renderWorkspace()
-    expect(html).toMatch(/<aside class="lg-pane [^"]*lg-pane-dim-strong/)
+    expect(html).toMatch(/<aside class="lg-pane [^"]*lg-pane-dim/)
     expect(html).toContain('agent-liquid-surface agent-liquid-surface--dark')
     expect(html).toContain('agent-liquid-composer agent-composer-on-background')
     expect(html).toContain('agent-liquid-surface__canvas')
@@ -92,7 +92,7 @@ describe('AgentWorkspace 玻璃面板', () => {
     expect(html).toContain('lg-regular agent-composer')
     expect(html).not.toContain('agent-liquid-surface')
     expect(html).not.toContain('lg-pane')
-    expect(html).not.toContain('lg-pane-dim-strong')
+    expect(html).not.toContain('lg-pane-dim')
     expect(html).toContain('mt-3 text-center text-xs text-faint')
   })
 
@@ -117,7 +117,7 @@ describe('AgentWorkspace 玻璃面板', () => {
         </AgentMobileDrawer>
       </I18nextProvider>,
     )
-    expect(withBackground).toMatch(/<aside class="lg-pane [^"]*lg-pane-dim-strong/)
+    expect(withBackground).toMatch(/<aside class="lg-pane [^"]*lg-pane-dim/)
     expect(withBackground).toContain('rounded-shell')
     expect(withBackground).not.toContain('lg-thick')
 
@@ -129,6 +129,6 @@ describe('AgentWorkspace 玻璃面板', () => {
       </I18nextProvider>,
     )
     expect(withoutBackground).toContain('<aside class="lg-regular ')
-    expect(withoutBackground).not.toContain('lg-pane-dim-strong')
+    expect(withoutBackground).not.toContain('lg-pane-dim')
   })
 })

@@ -38,7 +38,15 @@
     "forkCreatedDesc": "会話履歴のみコピーされ、ワークスペースのファイルはコピーされていません",
     "forkFailed": "フォークセッションの作成に失敗しました",
     "forkConflict": "このセッションは実行中です。後でもう一度お試しください。",
-    "referencedTag": "参照：{{title}}"
+    "referencedTag": "参照：{{title}}",
+    "image": {
+      "missing": "画像ファイルが見つかりません（フォーク時にコピーされていない可能性があります）",
+      "generating": "画像を生成しています…",
+      "download": "ダウンロード",
+      "copyPath": "パスをコピー",
+      "close": "閉じる",
+      "caption": "{{model}}@{{site}}"
+    }
   },
   "composer": {
     "permissionMode": "権限モード",
@@ -184,6 +192,9 @@
     "detailOwnership": "所有者",
     "scope": {
       "configTitle": "利用可能なモデルの設定",
+      "configDialogTitle": "利用可能なモデルを設定",
+      "configDialogHint": "Agent が使用するサイトとモデルを設定します。",
+      "configure": "設定",
       "noModels": "一致するモデルがありません",
       "allSites": "すべてのサイト",
       "allModels": "すべてのモデル",
@@ -191,11 +202,29 @@
       "modelCount": "{{count}} モデル",
       "saved": "利用可能なモデルの設定を保存しました",
       "previewTitle": "この Agent が利用できるモデル",
-      "view": "表示",
-      "includesUnsaved": "(未保存の変更を含む)",
+      "imageTitle": "画像生成モデル",
+      "imageNotConfigured": "未設定",
+      "imageClear": "クリア",
+      "imageEmpty": "システムに利用可能な画像生成モデルがありません（先にサイトへ画像対応モデルを追加してください）",
+      "imageLoadFailed": "画像生成モデルの読み込みに失敗しました",
+      "imageRetry": "再試行",
+      "imageSiteUnavailable": "このモデルを提供する有効なサイトがありません",
+      "discardTitle": "未保存の変更を破棄しますか？",
+      "discardDescription": "閉じると、今回の変更は保存されません。",
+      "discardConfirm": "変更を破棄",
       "previewSearch": "サイトまたはモデルを検索",
       "previewEmpty": "利用可能なサイトがまだありません。Agent はモデルを選択できません。",
-      "unsavedChanges": "未保存の変更があります"
+      "unsavedChanges": "未保存の変更があります",
+      "imageDialogTitle": "画像生成モデルを設定",
+      "imageDialogHint": "Agent が画像生成に使うモデルを選択します。サイトとモデルは独立した軸で、あるサイトでモデルにチェックしても、他サイトの同名モデルには影響しません。モデル名で重複排除して順に試行し、各モデルは選択したサイト間でフォールバックし、すべて失敗したら次のモデルを試します。利用可能なモデルの設定とは独立しています。",
+      "imageSites": "サイト",
+      "imageModels": "画像生成モデル",
+      "imageOrder": "順序",
+      "imageMoveUp": "上へ",
+      "imageMoveDown": "下へ",
+      "imageRemove": "削除",
+      "imageOrderHint": "モデルを選んだ後にここで試行順を調整します。上から順に試し、前のモデルがすべて失敗した場合のみ次を使います。",
+      "imageRemoveSite": "このサイトを外す"
     },
     "environment": {
       "hint": "内蔵 Agent のリアルタイム状態です。30 秒ごとに自動更新されます。",

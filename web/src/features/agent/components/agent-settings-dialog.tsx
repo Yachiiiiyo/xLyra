@@ -57,12 +57,18 @@ type AgentSettingsDialogProps = {
 
 /** Agent 设置弹窗：主程序 Dialog 外壳（桌面居中 / 移动端底部抽屉），左侧纵向导航 + 内容 + 底部操作栏。 */
 export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogProps) {
-  const { t } = useTranslation('agent')
+  const { t, i18n } = useTranslation('agent')
   const mobileLayout = useMobileLayout()
   const [tab, setTab] = useState<SettingsTab>('scope')
   const [mobileView, setMobileView] = useState<MobileSettingsView>('menu')
   const [paneActions, setPaneActions] = useState<SettingsActions | null>(null)
   const [skillsNav, setSkillsNav] = useState<SkillsNav>({ view: 'list' })
+
+  // 配置弹窗里的站点模型选择器用到 api-keys 命名空间;弹窗一打开就预加载,
+  // 避免进入「可用模型」页时整页挂起闪出 Loading
+  useEffect(() => {
+    if (open) void i18n.loadNamespaces(['api-keys', 'components'])
+  }, [open, i18n])
 
   function resetDialogState() {
     setTab('scope')
@@ -92,7 +98,7 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
     : null
 
   const tabContent = tab === 'scope'
-    ? <AgentScopePane onActionsChange={setPaneActions} />
+    ? <AgentScopePane />
     : tab === 'skills'
       ? <SkillsPane nav={skillsNav} onNavigate={setSkillsNav} onActionsChange={setPaneActions} />
       : tab === 'context'
@@ -162,16 +168,18 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
         )}>
           {tabContent}
         </div>
-        <div className="shrink-0">
-          {paneActions?.dirty ? (
-            <p className="px-6 pt-3 text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
-          ) : null}
-          <DialogFooter
-            className={cn('py-3', paneActions?.dirty && 'border-t-0')}
-            cancel={<Button variant="outline" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>}
-            confirm={actionsFooter}
-          />
-        </div>
+        {paneActions ? (
+          <div className="shrink-0">
+            {paneActions?.dirty ? (
+              <p className="px-6 pt-3 text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
+            ) : null}
+            <DialogFooter
+              className={cn('py-3', paneActions?.dirty && 'border-t-0')}
+              cancel={<Button variant="outline" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>}
+              confirm={actionsFooter}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   )

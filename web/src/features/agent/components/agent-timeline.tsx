@@ -12,9 +12,12 @@ import type { AgentSession } from '@/features/agent/api/agent'
 import { shortSessionId, type AgentSessionReference } from '@/features/agent/lib/references'
 import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/relative-time'
 import { canForkFromMessage, runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { AgentGeneratedImage } from '@/features/agent/components/agent-generated-image'
+import { isGeneratedImagePath, runGeneratedImages } from '@/features/agent/lib/generated-images'
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
+  sessionId?: string
   /** 当前会话是否在运行：运行中不提供「从这里分叉」入口 */
   running?: boolean
   /** 会话列表：判断被引用的会话是否还存在（存在才可点击跳转） */
@@ -25,7 +28,7 @@ type AgentTimelineProps = {
   onOpenReference?: (sessionId: string) => void
 }
 
-export function AgentTimeline({ items, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference }: AgentTimelineProps) {
+export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference }: AgentTimelineProps) {
   const lastUserIndex = items.reduce((index, item, current) => item.kind === 'user' ? current : index, -1)
   const sessionIds = useMemo(() => new Set((sessions ?? []).map((session) => session.session_id)), [sessions])
   // 分叉入口需要「这一轮对应的用户消息 id」：取时间线里紧邻当前 run 之前的 user 项
@@ -54,6 +57,7 @@ export function AgentTimeline({ items, running, sessions, onPermissionDecision, 
           : <RunBlock
               key={item.id}
               run={item.run}
+              sessionId={sessionId}
               forkMessageId={canForkFromMessage(forkMessageIds[index], Boolean(running)) ? forkMessageIds[index] : undefined}
               onFork={onFork}
               onPermissionDecision={onPermissionDecision}
@@ -209,7 +213,7 @@ function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: 
   )
 }
 
-function RunBlock({ run, forkMessageId, onFork, onPermissionDecision }: { run: AgentRun; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
+function RunBlock({ run, sessionId, forkMessageId, onFork, onPermissionDecision }: { run: AgentRun; sessionId?: string; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
   const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
@@ -229,6 +233,14 @@ function RunBlock({ run, forkMessageId, onFork, onPermissionDecision }: { run: A
   const finalItem = tailIndex >= 0 ? flow[tailIndex] : undefined
   // 复制内容与展示口径一致：只复制作为回复展示的最后一段，不带中间输出
   const replyText = finalItem?.kind === 'text' ? finalItem.text : run.finalText
+  const galleryImages = run.status === 'done' && sessionId
+    ? runGeneratedImages(run).filter((image) => !replyText.includes(image.path))
+    : []
+  const renderImage = sessionId
+    ? ({ src, alt }: { src?: string; alt?: string }) => isGeneratedImagePath(src) && src
+      ? <AgentGeneratedImage sessionId={sessionId} path={src} alt={alt} />
+      : <img src={src} alt={alt} />
+    : undefined
   const [override, setOverride] = useState<boolean | null>(null)
   const processExpanded = override ?? !settled
   const now = useTickingNow(!done)
@@ -271,7 +283,7 @@ function RunBlock({ run, forkMessageId, onFork, onPermissionDecision }: { run: A
           <div className="mt-1.5 space-y-3 border-l-2 border-[hsl(var(--glass-divider))] pl-3">
             {processItems.map((item, index) => {
               if (item.kind === 'text') {
-                return <MarkdownMessage key={item.id} content={item.text} className="text-[15px] leading-7" />
+                return <MarkdownMessage key={item.id} content={item.text} className="text-[15px] leading-7" renderImage={renderImage} />
               }
               if (item.kind === 'permission') {
                 return <PermissionCard key={item.id} request={item.request} onDecision={onPermissionDecision} />
@@ -281,15 +293,21 @@ function RunBlock({ run, forkMessageId, onFork, onPermissionDecision }: { run: A
               }
               // 末尾文本段被提升为实时回复时，它前面的工具组不再是流式尾部，
               // 保持完成汇总标签，不要在文本流式期间跳回「运行中」
-              return <StepGroup key={item.id} steps={item.steps} active={!done && liveTailIndex < 0 && index === processItems.length - 1} />
+              return <StepGroup key={item.id} steps={item.steps} sessionId={sessionId} active={!done && liveTailIndex < 0 && index === processItems.length - 1} />
             })}
           </div>
         ) : null}
       </div>
 
+      {galleryImages.length ? (
+        <div data-generated-gallery className={cn('grid gap-3', galleryImages.length > 1 && 'sm:grid-cols-2')}>
+          {galleryImages.map((image) => <AgentGeneratedImage key={image.path} sessionId={sessionId!} {...image} />)}
+        </div>
+      ) : null}
+
       {finalItem?.kind === 'text' ? (
         <div className="group space-y-1">
-          <MarkdownMessage content={finalItem.text} className="text-[15px] leading-7" />
+          <MarkdownMessage content={finalItem.text} className="text-[15px] leading-7" renderImage={renderImage} />
           {done && !pausedForPermission && replyText ? (
             // 复制入口常驻布局（opacity 切换，不占位消失），避免 hover 时下方内容跳动；
             // 桌面端 hover 回复文本时显现，移动端无 hover 保持常显
@@ -363,7 +381,7 @@ function measureStepDetail(container: HTMLElement | null, stepId: string): numbe
   return body ? body.scrollHeight : 0
 }
 
-function StepGroup({ steps, active }: { steps: AgentWorkStep[]; active?: boolean }) {
+function StepGroup({ steps, sessionId, active }: { steps: AgentWorkStep[]; sessionId?: string; active?: boolean }) {
   const { t } = useTranslation('agent')
   const [expanded, setExpanded] = useState(false)
   // 互斥展开：同组最多一个详情展开，点开新行自动收起上一行
@@ -376,7 +394,9 @@ function StepGroup({ steps, active }: { steps: AgentWorkStep[]; active?: boolean
   const contentRef = useRef<HTMLDivElement | null>(null)
   const runningStep = [...steps].reverse().find((step) => step.status === 'running')
   const statusLabel = runningStep
-    ? t(runningStep.argsDone === false ? 'work.preparingTool' : 'work.runningTool', { tool: runningStep.title })
+    ? runningStep.title === 'image_generation'
+      ? t('chat.image.generating')
+      : t(runningStep.argsDone === false ? 'work.preparingTool' : 'work.runningTool', { tool: runningStep.title })
     : active
       ? t('work.running', { count: steps.length })
       : summarizeSteps(steps, t)
@@ -431,6 +451,7 @@ function StepGroup({ steps, active }: { steps: AgentWorkStep[]; active?: boolean
               <StepRow
                 key={step.id}
                 step={step}
+                sessionId={sessionId}
                 open={openStepId === step.id}
                 onToggle={handleRowToggle}
               />
@@ -521,7 +542,7 @@ const STATUS_TITLE_KEYS: Record<string, string> = {
 }
 
 /** open/onToggle 由组内受控（互斥展开）；脱离组单独渲染时退回本地自持状态 */
-function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open?: boolean; onToggle?: (stepId: string) => void }) {
+function StepRow({ step, sessionId, open: openProp, onToggle }: { step: AgentWorkStep; sessionId?: string; open?: boolean; onToggle?: (stepId: string) => void }) {
   const { t } = useTranslation('agent')
   const [localOpen, setLocalOpen] = useState(false)
   const open = openProp ?? localOpen
@@ -536,7 +557,7 @@ function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open
   const inputPreview = step.kind === 'tool' ? previewToolInput(step.input) : ''
   const inputDetail = step.kind === 'tool' ? summarizeToolInput(step.input) : ''
   const detail = step.kind === 'tool' ? (step.output ?? step.detail ?? '') : (step.detail ?? '')
-  const canExpand = Boolean(inputDetail || detail)
+  const canExpand = Boolean(inputDetail || detail || (sessionId && step.images?.length))
 
   const toggle = () => {
     if (onToggle) {
@@ -586,6 +607,11 @@ function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open
               ) : null}
               {detail ? (
                 <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all border-t border-[hsl(var(--glass-divider))] pt-1 font-mono text-[10px] leading-4 text-muted-soft">{detail}</pre>
+              ) : null}
+              {sessionId && step.images?.length ? (
+                <div className={cn('mt-2 grid gap-2', step.images.length > 1 && 'grid-cols-2')}>
+                  {step.images.map((image) => <AgentGeneratedImage key={image.path} sessionId={sessionId} {...image} compact />)}
+                </div>
               ) : null}
             </div>
           </div>

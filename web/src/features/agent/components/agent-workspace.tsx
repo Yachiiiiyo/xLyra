@@ -223,7 +223,8 @@ function EditReplayConfirmDialog({
 }
 
 export function AgentWorkspace() {
-  const { t } = useTranslation(['agent', 'chat'])
+  // 配置弹窗用到的命名空间随工作台一起加载：首次点开「配置」时再加载会让整棵 Suspense 树挂起，页面闪一下空屏
+  const { t } = useTranslation(['agent', 'chat', 'api-keys', 'components'])
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({ queryKey: ['agent', 'sessions'], queryFn: listAgentSessions, retry: false })
@@ -1015,7 +1016,7 @@ export function AgentWorkspace() {
         <LiquidGlass
           as="aside"
           variant={hasBackgroundImage ? 'pane' : 'regular'}
-          className={cn('z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col', hasBackgroundImage && 'lg-pane-dim-strong')}
+          className={cn('z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col', hasBackgroundImage && 'lg-pane-dim')}
         >
           {sidebarContent}
         </LiquidGlass>
@@ -1032,6 +1033,7 @@ export function AgentWorkspace() {
                 <div className="mx-auto max-w-3xl px-4 pb-6 pt-16">
                   <AgentTimeline
                     items={timeline}
+                    sessionId={selectedId ?? undefined}
                     running={running}
                     sessions={sessions}
                     onPermissionDecision={handlePermissionDecision}
@@ -1140,7 +1142,7 @@ export function AgentMobileDrawer({
       <LiquidGlass
         as="aside"
         variant={hasBackgroundImage ? 'pane' : 'regular'}
-        className={cn('absolute bottom-[calc(env(safe-area-inset-bottom,0px)+8px)] left-2 top-[calc(env(safe-area-inset-top,0px)+8px)] w-[min(84vw,320px)] overflow-hidden rounded-shell animate-in slide-in-from-left-full duration-300 ease-out', hasBackgroundImage && 'lg-pane-dim-strong')}
+        className={cn('absolute bottom-[calc(env(safe-area-inset-bottom,0px)+8px)] left-2 top-[calc(env(safe-area-inset-top,0px)+8px)] w-[min(84vw,320px)] overflow-hidden rounded-shell animate-in slide-in-from-left-full duration-300 ease-out', hasBackgroundImage && 'lg-pane-dim')}
         aria-label={t('sidebar.recent')}
       >
         {children}

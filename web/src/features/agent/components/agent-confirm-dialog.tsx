@@ -10,6 +10,8 @@ type AgentConfirmDialogProps = {
   confirmLabel: string
   pending?: boolean
   destructive?: boolean
+  /** 叠在更高 z-index 的弹窗之上时提升层级，否则遮罩与内容会被压在下面 */
+  elevated?: boolean
   onCancel: () => void
   onConfirm: () => void
 }
@@ -22,14 +24,17 @@ export function AgentConfirmDialog({
   confirmLabel,
   pending = false,
   destructive,
+  elevated,
   onCancel,
   onConfirm,
 }: AgentConfirmDialogProps) {
   const { t } = useTranslation('common')
+  // 配置弹窗等第二层弹窗用 z-[60]，确认弹窗必须再高一层
+  const layerClassName = elevated ? 'z-[70]' : undefined
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
-      <DialogContent size="sm" presentation="center">
+      <DialogContent size="sm" presentation="center" overlayClassName={layerClassName} className={layerClassName}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

@@ -12,6 +12,7 @@ import { copyToClipboard } from '@/components/common/copy-to-clipboard'
 type MarkdownMessageProps = {
   content: string
   className?: string
+  renderImage?: (props: { src?: string; alt?: string }) => ReactNode
 }
 
 function reactNodeText(node: ReactNode): string {
@@ -47,10 +48,10 @@ function normalizeMathDelimiters(content: string): string {
     .replace(/\\\(([^\n]*?)\\\)/g, (_, expression: string) => `$${expression}$`)
 }
 
-function MarkdownMessageImpl({ content, className }: MarkdownMessageProps) {
+function MarkdownMessageImpl({ content, className, renderImage }: MarkdownMessageProps) {
   return (
     <div className={cn('chat-markdown text-body leading-6 text-label', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ pre: MarkdownCodeBlock }}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ pre: MarkdownCodeBlock, ...(renderImage ? { img: ({ src, alt }) => renderImage({ src, alt }) } : {}) }}>
         {normalizeMathDelimiters(content)}
       </ReactMarkdown>
     </div>

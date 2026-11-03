@@ -24,11 +24,21 @@ export type AgentHealth = {
   agent?: string
 }
 
+export type AgentImageModelSelection = {
+  model: string
+  /** 该模型选中的站点;空数组 = 不限站点(含该模型的所有站点) */
+  site_ids: string[]
+}
+
 export type AgentRuntimeSettings = {
   allowed_site_ids: string[]
   allowed_site_model_ids: string[]
   site_policy: 'allow_all' | 'allow_list'
   model_policy: 'allow_all' | 'allow_list'
+  /** 生图模型,按模型名去重并排序;每个模型各自选定站点,site_ids 为空表示不限站点 */
+  image_models: AgentImageModelSelection[]
+  /** 后端过渡期可能仍返回的旧单值字段,仅用于兼容读取 */
+  image_model?: { site_id: string; model: string } | null
   /** 后端仍返回该字段；前端外观配置已下线，仅保留契约，不再消费 */
   appearance?: AgentAppearanceSettings
 }
@@ -73,12 +83,59 @@ export async function fetchAgentRuntimeSettings() {
     allowed_site_model_ids: response.data?.allowed_site_model_ids ?? [],
     site_policy: response.data?.site_policy ?? 'allow_all',
     model_policy: response.data?.model_policy ?? 'allow_all',
+    image_models: normalizeImageModels(response.data?.image_models, response.data?.image_model),
     appearance: response.data?.appearance,
   }
 }
 
 // The settings endpoint is a partial update: absent fields stay unchanged.
-export async function updateAgentScopeSettings(settings: { site_policy: 'allow_all' | 'allow_list'; model_policy: 'allow_all' | 'allow_list'; allowed_site_ids: string[]; allowed_site_model_ids: string[] }) {
+// 兼容旧格式:元素是字符串(模型 key,不限站点),或后端过渡期返回的单个 image_model。
+function normalizeImageModels(models: unknown, legacy: unknown): AgentImageModelSelection[] {
+  const list: unknown[] = Array.isArray(models)
+    ? models
+    : legacy && typeof legacy === 'object' ? [(legacy as { model?: unknown }).model] : []
+  return dedupeImageModels(list.flatMap((item): AgentImageModelSelection[] => {
+    if (typeof item === 'string') return [{ model: item, site_ids: [] }]
+    if (item && typeof item === 'object' && typeof (item as { model?: unknown }).model === 'string') {
+      const sites = (item as { site_ids?: unknown }).site_ids
+      return [{
+        model: (item as { model: string }).model,
+        site_ids: Array.isArray(sites) ? sites.filter((id): id is string => typeof id === 'string') : [],
+      }]
+    }
+    return []
+  }))
+}
+
+/** 按模型名去重保序:同名合并站点(任一为「不限站点」则整体不限),站点去重保序。 */
+export function dedupeImageModels(models: AgentImageModelSelection[]): AgentImageModelSelection[] {
+  const merged = new Map<string, AgentImageModelSelection>()
+  for (const item of models) {
+    const model = item.model.trim()
+    if (!model) continue
+    const sites = [...new Set(item.site_ids.map((id) => id.trim()).filter(Boolean))]
+    const existing = merged.get(model)
+    if (!existing) {
+      merged.set(model, { model, site_ids: sites })
+    } else if (existing.site_ids.length === 0 || sites.length === 0) {
+      existing.site_ids = []
+    } else {
+      existing.site_ids = [...new Set([...existing.site_ids, ...sites])]
+    }
+  }
+  return [...merged.values()]
+}
+
+// 只改生图模型列表,不动站点/模型白名单(部分更新);空数组表示清除。
+export async function updateAgentImageModels(imageModels: AgentImageModelSelection[]) {
+  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
+    method: 'PUT',
+    body: { image_models: dedupeImageModels(imageModels) },
+  })
+  return response.data
+}
+
+export async function updateAgentScopeSettings(settings: { site_policy: 'allow_all' | 'allow_list'; model_policy: 'allow_all' | 'allow_list'; allowed_site_ids: string[]; allowed_site_model_ids: string[]; image_models?: AgentImageModelSelection[] }) {
   const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
     method: 'PUT',
     body: settings,
@@ -315,6 +372,15 @@ export async function fetchAgentTranscript(sessionId: string) {
   return response.data?.entries ?? []
 }
 
+export type AgentGeneratedImage = {
+  path: string
+  mime: string
+  bytes: number
+  model?: string
+  site?: string
+  alt?: string
+}
+
 export type AgentTranscriptReference = {
   session_id?: string
   title?: string
@@ -341,6 +407,7 @@ export type AgentTranscriptEntry = {
     tool_call_id?: string
     name?: string
     is_error?: boolean
+    images?: AgentGeneratedImage[]
     thinking?: string
   } | string  /** type === 'compaction' */
   summary?: string

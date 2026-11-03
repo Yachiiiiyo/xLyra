@@ -1,4 +1,4 @@
-import type { AgentTranscriptEntry } from '@/features/agent/api/agent'
+import type { AgentGeneratedImage, AgentTranscriptEntry } from '@/features/agent/api/agent'
 import type { ChatAttachment } from '@/lib/chat-types'
 import type { AgentSessionReference } from '@/features/agent/lib/references'
 
@@ -12,6 +12,7 @@ export type AgentWorkStep = {
   title: string
   input?: string
   output?: string
+  images?: AgentGeneratedImage[]
   argsDone?: boolean
   detail?: string
   status: AgentStepStatus
@@ -150,6 +151,22 @@ export function extractEventText(data: unknown): string {
   const record = asRecord(data)
   if (!record) return ''
   return pickString(record, ['text', 'content', 'message', 'delta'])
+}
+
+/**
+ * 正文流式增量:纯空白的非空字符串也要保留(段落间的 "\n\n"、行首缩进),
+ * 丢掉会让 Markdown 的换行和空行消失,实时渲染成一坨,刷新读转录才正常。
+ */
+export function extractTextChunk(data: unknown): string {
+  const text = extractEventText(data)
+  if (text) return text
+  const record = asRecord(data)
+  if (!record) return ''
+  for (const key of ['text', 'content', 'message', 'delta']) {
+    const value = record[key]
+    if (typeof value === 'string' && value.length > 0) return value
+  }
+  return ''
 }
 
 function classifyEvent(type: string, data: unknown): EventKind {
@@ -372,7 +389,7 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
       return timeline
     }
     case 'text': {
-      const text = extractEventText(event.data)
+      const text = extractTextChunk(event.data)
       if (!text) return timeline
       const withRun = ensureRun(timeline)
       // finalText 保留全量拼接（复制/重试判断用）；text step 记录与工具步骤的交错顺序
@@ -436,16 +453,17 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
       const stepId = pickId(payload, ['tool_call_id', 'call_id', 'step_id', 'id'])
       const detail = pickDetail(payload, ['output', 'result', 'content', 'detail']) || extractEventText(payload) || undefined
       const isError = /error|fail/i.test(event.type) || payload?.is_error === true || payload?.ok === false
+      const images = Array.isArray(payload?.images) && payload.images.length ? payload.images as AgentGeneratedImage[] : undefined
       return updateLastRun(withRun, (run) => {
         const index = stepId
           ? run.steps.findIndex((step) => step.id === stepId)
           : run.steps.map((step, position) => (step.status === 'running' ? position : -1)).filter((position) => position >= 0).pop() ?? -1
         if (index < 0) {
-          const step: AgentWorkStep = { id: stepId || nextId('step'), kind: 'tool', title: pickString(payload, ['name', 'tool', 'tool_name']) || 'tool', output: detail, detail, argsDone: true, status: isError ? 'error' : 'done' }
+          const step: AgentWorkStep = { id: stepId || nextId('step'), kind: 'tool', title: pickString(payload, ['name', 'tool', 'tool_name']) || 'tool', output: detail, images, detail, argsDone: true, status: isError ? 'error' : 'done' }
           return { ...run, steps: [...run.steps, step] }
         }
         const steps = run.steps.slice()
-        steps[index] = { ...steps[index], output: detail ?? steps[index].output, detail: detail ?? steps[index].detail, argsDone: true, status: isError ? 'error' : 'done' }
+        steps[index] = { ...steps[index], output: detail ?? steps[index].output, images: images ?? steps[index].images, detail: detail ?? steps[index].detail, argsDone: true, status: isError ? 'error' : 'done' }
         return { ...run, steps }
       })
     }
@@ -606,6 +624,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
             name: message.name,
             content: pausedByEscalation ? AWAITING_SEAL : message.content,
             is_error: pausedByEscalation ? false : message.is_error,
+            images: message.images,
           },
         }, entry.timestamp)
         continue

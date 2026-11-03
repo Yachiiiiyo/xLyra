@@ -6,6 +6,7 @@ import {
   canReconcileTimeline,
   decidePermission,
   extractEventText,
+  extractTextChunk,
   replaceFromUserMessage,
   reduceAgentEvent,
   reconcileTimeline,
@@ -34,7 +35,36 @@ describe('extractEventText', () => {
   })
 })
 
+describe('extractTextChunk', () => {
+  it('保留纯空白的流式增量,有正文时行为与 extractEventText 一致', () => {
+    expect(extractTextChunk({ delta: '\n\n' })).toBe('\n\n')
+    expect(extractTextChunk({ delta: ' ' })).toBe(' ')
+    expect(extractTextChunk('\n')).toBe('\n')
+    expect(extractTextChunk({ text: 'a', delta: '\n' })).toBe('a')
+    expect(extractTextChunk({ delta: '' })).toBe('')
+    expect(extractTextChunk(null)).toBe('')
+  })
+})
+
 describe('reduceAgentEvent', () => {
+  it('流式正文里纯空白的增量(段落空行、换行)不能丢,否则 Markdown 实时渲染会糊成一坨', () => {
+    const timeline = reduceAll([
+      { type: 'text_delta', data: { delta: '## 标题' } },
+      { type: 'text_delta', data: { delta: '\n\n' } },
+      { type: 'text_delta', data: { delta: '- 项一' } },
+      { type: 'text_delta', data: { delta: '\n' } },
+      { type: 'text_delta', data: { delta: '- 项二' } },
+      { type: 'text_delta', data: { delta: ' ' } },
+      { type: 'text_delta', data: { delta: 'end' } },
+    ])
+    const item = timeline[0]
+    expect(item?.kind).toBe('run')
+    if (item?.kind !== 'run') return
+    expect(item.run.finalText).toBe('## 标题\n\n- 项一\n- 项二 end')
+    expect(item.run.steps).toHaveLength(1)
+    expect(item.run.steps[0]?.detail).toBe('## 标题\n\n- 项一\n- 项二 end')
+  })
+
   it('accumulates assistant text into the active run', () => {
     const timeline = reduceAll([
       { type: 'message', data: { delta: '你好' } },
@@ -138,6 +168,18 @@ describe('reduceAgentEvent', () => {
     const item = timeline[0]
     if (item.kind !== 'run') throw new Error('expected run')
     expect(item.run.steps[0]).toMatchObject({ input: '{"path":"/a.ts"}', argsDone: false, status: 'running' })
+  })
+
+  it('maps generated images from nested SSE tool results by tool_call_id', () => {
+    const timeline = reduceAll([
+      { type: 'tool_call', data: { tool_call: { id: 'image-call', name: 'image_generation', raw_arguments: '{}' } } },
+      { type: 'tool_call', data: { tool_call: { id: 'other-call', name: 'read_file', raw_arguments: '{}' } } },
+      { type: 'tool_result', data: { tool_result: { tool_call_id: 'image-call', name: 'image_generation', output: 'done', images: [{ path: 'images/a.png', mime: 'image/png', bytes: 12, model: 'gpt-image', site: 'site-a', alt: 'cat' }] } } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.steps[0]?.images).toEqual([{ path: 'images/a.png', mime: 'image/png', bytes: 12, model: 'gpt-image', site: 'site-a', alt: 'cat' }])
+    expect(item.run.steps[1]?.images).toBeUndefined()
   })
 
   it('marks tool errors from nested tool_result payloads', () => {
@@ -565,6 +607,16 @@ describe('timelineFromTranscript', () => {
     expect(tool?.detail).toBe('file body')
     expect(tool?.status).toBe('done')
     expect(run.run.status).toBe('done')
+  })
+
+  it('restores generated images on the matching transcript tool step', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', message: { role: 'assistant', tool_calls: [{ id: 'image-call', name: 'image_generation', raw_arguments: '{}' }] } },
+      { type: 'message', message: { role: 'tool', tool_call_id: 'image-call', name: 'image_generation', content: 'done', images: [{ path: 'images/a.png', mime: 'image/png', bytes: 12 }] } },
+    ])
+    const run = timeline[0]
+    if (run?.kind !== 'run') throw new Error('expected run')
+    expect(run.run.steps[0]?.images).toEqual([{ path: 'images/a.png', mime: 'image/png', bytes: 12 }])
   })
 
   it('restores text before tool calls within one assistant message', () => {

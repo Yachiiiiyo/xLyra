@@ -21,9 +21,7 @@ vi.mock('react', async (importOriginal) => {
         ? 'detail' as T
         : mobileSettingsView.current === 'detail' && initial === 'scope'
           ? mobileSettingsView.tab as T
-          : mobileSettingsView.current === 'detail' && mobileSettingsView.tab === 'scope' && initial === null
-            ? { save: () => {}, canSave: true, pending: false, dirty: false } as T
-            : initial,
+          : initial,
     ),
   }
 })
@@ -68,15 +66,15 @@ describe('Agent 移动端弹窗', () => {
     expect(html).not.toContain('uppercase tracking-[0.18em]')
   })
 
-  it('设置详情使用标准标题与等分 DialogFooter', () => {
+  it('可用模型详情不渲染外层保存页脚', () => {
     mobileSettingsView.current = 'detail'
     mobileSettingsView.tab = 'scope'
     const html = render(<AgentSettingsDialog open onOpenChange={() => {}} />)
     expect(html.match(/<h2/g)).toHaveLength(1)
     expect(html).toContain(`<h2 class="text-title-2 text-label truncate">${zhAgent.settings.tabScope}</h2>`)
-    expect(html).toContain('grid grid-flow-col auto-cols-fr')
-    expect(html).toContain(zhAgent.settings.cancel)
-    expect(html).toContain(zhAgent.settings.save)
+    expect(html).not.toContain('grid grid-flow-col auto-cols-fr')
+    expect(html).not.toContain(zhAgent.settings.cancel)
+    expect(html).not.toContain(zhAgent.settings.save)
   })
 
   it('没有保存动作的设置详情不渲染页脚', () => {

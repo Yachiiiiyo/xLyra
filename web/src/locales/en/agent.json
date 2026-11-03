@@ -38,7 +38,15 @@
     "forkCreatedDesc": "Only the conversation history was copied; workspace files were not",
     "forkFailed": "Failed to create the forked session",
     "forkConflict": "This session is running. Try again later.",
-    "referencedTag": "Referenced: {{title}}"
+    "referencedTag": "Referenced: {{title}}",
+    "image": {
+      "missing": "Image file not found (it may not have been copied with the fork)",
+      "generating": "Generating image…",
+      "download": "Download",
+      "copyPath": "Copy path",
+      "close": "Close",
+      "caption": "{{model}}@{{site}}"
+    }
   },
   "composer": {
     "permissionMode": "Permission mode",
@@ -184,6 +192,9 @@
     "detailOwnership": "Ownership",
     "scope": {
       "configTitle": "Available model configuration",
+      "configDialogTitle": "Configure available models",
+      "configDialogHint": "Choose the sites and models available to the agent.",
+      "configure": "Configure",
       "noModels": "No matching models",
       "allSites": "All sites",
       "allModels": "All models",
@@ -191,11 +202,29 @@
       "modelCount": "{{count}} models",
       "saved": "Available model settings saved",
       "previewTitle": "Models available to this agent",
-      "view": "View",
-      "includesUnsaved": "(includes unsaved changes)",
+      "imageTitle": "Image generation model",
+      "imageNotConfigured": "Not configured",
+      "imageClear": "Clear",
+      "imageEmpty": "No image generation models in the system (add an image-capable model to a site first)",
+      "imageLoadFailed": "Failed to load image generation models",
+      "imageRetry": "Retry",
+      "imageSiteUnavailable": "No enabled site provides this model",
+      "discardTitle": "Discard unsaved changes?",
+      "discardDescription": "Your changes will not be saved if you close this dialog.",
+      "discardConfirm": "Discard changes",
       "previewSearch": "Search sites or models",
       "previewEmpty": "No sites are configured yet. The agent cannot pick models for now.",
-      "unsavedChanges": "You have unsaved changes"
+      "unsavedChanges": "You have unsaved changes",
+      "imageDialogTitle": "Configure image model",
+      "imageDialogHint": "Choose the models the agent uses to generate images. Sites and models are independent: ticking a model on one site only affects that site; the same model on another site must be ticked separately. Models are deduplicated by name and tried in order: each model fails over across its selected sites, then the next model is tried. Independent of the available models.",
+      "imageSites": "Sites",
+      "imageModels": "Image models",
+      "imageOrder": "Order",
+      "imageMoveUp": "Move up",
+      "imageMoveDown": "Move down",
+      "imageRemove": "Remove",
+      "imageOrderHint": "Adjust the order after choosing models: tried from top to bottom; the next one is used only after the previous fails everywhere.",
+      "imageRemoveSite": "Remove this site"
     },
     "environment": {
       "hint": "Live status of the built-in Agent, refreshed every 30 seconds.",

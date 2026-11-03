@@ -38,7 +38,15 @@
     "forkCreatedDesc": "仅复制了对话历史，未复制工作区文件",
     "forkFailed": "创建分叉会话失败",
     "forkConflict": "该会话正在运行，请稍后再试",
-    "referencedTag": "引用了：{{title}}"
+    "referencedTag": "引用了：{{title}}",
+    "image": {
+      "missing": "图片文件不存在（可能未随分叉复制）",
+      "generating": "正在生成图片…",
+      "download": "下载",
+      "copyPath": "复制路径",
+      "close": "关闭",
+      "caption": "{{model}}@{{site}}"
+    }
   },
   "composer": {
     "permissionMode": "权限模式",
@@ -184,6 +192,9 @@
     "detailOwnership": "所有权",
     "scope": {
       "configTitle": "可用模型配置",
+      "configDialogTitle": "配置可用模型",
+      "configDialogHint": "设置 Agent 可使用的站点和模型。",
+      "configure": "配置",
       "noModels": "没有符合条件的模型",
       "allSites": "全部站点",
       "allModels": "全部模型",
@@ -191,11 +202,29 @@
       "modelCount": "{{count}} 个模型",
       "saved": "可用模型设置已保存",
       "previewTitle": "当前 Agent 可用模型",
-      "view": "查看",
-      "includesUnsaved": "(含未保存的修改)",
+      "imageTitle": "生图模型",
+      "imageNotConfigured": "未配置",
+      "imageClear": "清除",
+      "imageEmpty": "系统内还没有可用的生图模型（请先在站点里添加支持生图的模型）",
+      "imageLoadFailed": "生图模型加载失败",
+      "imageRetry": "重试",
+      "imageSiteUnavailable": "没有已启用的站点提供该模型",
+      "discardTitle": "放弃未保存的更改？",
+      "discardDescription": "关闭后，本次修改将不会保存。",
+      "discardConfirm": "放弃更改",
       "previewSearch": "搜索站点或模型",
       "previewEmpty": "尚未配置可用站点，Agent 暂时无法选择模型。",
-      "unsavedChanges": "有未保存的更改"
+      "unsavedChanges": "有未保存的更改",
+      "imageDialogTitle": "配置生图模型",
+      "imageDialogHint": "选择 Agent 生成图片时使用的模型。站点和模型是两个独立的维度:在某个站点上勾选某个模型,只影响该站点,同名模型在其他站点要单独勾选。按模型名去重排序,依次尝试:每个模型先在它选中的站点间兜底,全部失败再换下一个模型。与可用模型范围互不影响。",
+      "imageSites": "选择站点",
+      "imageModels": "选择生图模型",
+      "imageOrder": "排序",
+      "imageMoveUp": "上移",
+      "imageMoveDown": "下移",
+      "imageRemove": "移除",
+      "imageOrderHint": "选完模型后在这里调整尝试顺序:从上到下依次尝试,前一个全部失败才换下一个。",
+      "imageRemoveSite": "移除该站点"
     },
     "environment": {
       "hint": "内置 Agent 的实时运行状态，每 30 秒自动刷新。",

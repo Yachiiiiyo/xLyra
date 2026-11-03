@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Search } from 'lucide-react'
+import { Search, Settings2 } from 'lucide-react'
 import { BrandMark } from '@/components/common/brand-mark'
 import { buildModelGlyph, siteTypeIconPath } from '@/components/common/brand-utils'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
@@ -9,159 +9,92 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { SiteModelScopePicker, type SiteModelScopePatch, type SiteModelScopePolicy } from '@/features/api-keys/components/site-model-scope-picker'
-import { useSiteModelScope } from '@/features/api-keys/lib/use-site-model-scope'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { fetchAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentScopeSettings } from '@/features/agent/api/agent'
+import { fetchAgentAvailableModels, fetchAgentRuntimeSettings } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
+import { agentImageModelsSummary } from '@/features/agent/lib/agent-image-model'
 import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview, type AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
-import { listCanonicalModels, listSitesWithOAuth, type CanonicalModelItem } from '@/features/sites/api/sites'
+import { listCanonicalModels, type CanonicalModelItem } from '@/features/sites/api/sites'
 import { formatSiteTypeLabel } from '@/features/sites/lib/site-utils'
 import { canonicalModelIconInfo, modelNameIconInfo } from '@/features/sites/lib/model-icon'
-import { toast } from '@/lib/toast'
+import { AgentImageModelDialog } from '@/features/agent/components/agent-image-model-dialog'
+import { AgentScopeConfigDialog } from '@/features/agent/components/agent-scope-config-dialog'
 
-/**
- * 「可用模型」tab：顶部「当前 Agent 可用模型」概览行（信息徽标 + 「查看」打开平铺弹窗），
- * 下方是站点/模型访问策略的配置（SiteModelScopePicker，与 API Key 页同款）。
- * 草稿与已保存值分离：修改后 dirty，底部「保存」可点，保存 / 取消（关闭弹窗）都会丢弃草稿。
- */
-export function AgentScopePane({ onActionsChange }: { onActionsChange: (actions: { save: () => void; canSave: boolean; pending: boolean; dirty?: boolean } | null) => void }) {
-  const { t } = useTranslation(['agent', 'components'])
-  const queryClient = useQueryClient()
+export function AgentScopePane() {
+  // api-keys 命名空间原本要等配置弹窗里的站点模型选择器首次渲染才加载,加载期间整棵 Suspense 树挂起重挂,
+  // 会打乱叠在设置弹窗之上的 Radix 层级(配置弹窗整体不可点);这里提前加载,弹窗打开时不再挂起
+  const { t } = useTranslation(['agent', 'components', 'api-keys'])
   const runtime = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false })
-  const sitesQuery = useQuery({ queryKey: [...agentSettingsKey, 'sites'], queryFn: listSitesWithOAuth, retry: false })
-  const canonicalQuery = useQuery({ queryKey: [...agentSettingsKey, 'canonical-models'], queryFn: listCanonicalModels, retry: false })
   const available = useQuery({ queryKey: [...agentSettingsKey, 'available-models'], queryFn: fetchAgentAvailableModels, retry: false })
-  const [sitePolicy, setSitePolicy] = useState<SiteModelScopePolicy | null>(null)
-  const [modelPolicy, setModelPolicy] = useState<SiteModelScopePolicy | null>(null)
-  const [siteIDs, setSiteIDs] = useState<string[] | null>(null)
-  const [siteModelIDs, setSiteModelIDs] = useState<string[] | null>(null)
+  const canonicalQuery = useQuery({ queryKey: [...agentSettingsKey, 'canonical-models'], queryFn: listCanonicalModels, retry: false })
   const [previewOpen, setPreviewOpen] = useState(false)
-
-  const sites = useMemo(() => sitesQuery.data?.items ?? [], [sitesQuery.data])
-  const canonicalModels = useMemo(() => canonicalQuery.data?.items ?? [], [canonicalQuery.data])
-  const canonicalById = useMemo(() => new Map(canonicalModels.map((model) => [model.id, model])), [canonicalModels])
-  const effectiveSitePolicy = sitePolicy ?? runtime.data?.site_policy ?? 'allow_all'
-  const effectiveModelPolicy = effectiveSitePolicy === 'allow_list' ? 'allow_list' : modelPolicy ?? runtime.data?.model_policy ?? 'allow_all'
-  const storedSiteModelIDs = useMemo(() => siteModelIDs ?? runtime.data?.allowed_site_model_ids ?? [], [runtime.data?.allowed_site_model_ids, siteModelIDs])
-  const selectedSiteIDs = useMemo(() => siteIDs ?? runtime.data?.allowed_site_ids ?? [], [runtime.data?.allowed_site_ids, siteIDs])
-  const scope = useSiteModelScope({
-    sites,
-    sitePolicy: effectiveSitePolicy,
-    modelPolicy: effectiveModelPolicy,
-    siteIds: selectedSiteIDs,
-    siteModelIds: storedSiteModelIDs,
-  })
-  // 自定义站点 + 模型访问「全部模型」= 所选站点下的全部模型:后端只认显式的模型 id 列表,
-  // 空列表会把所有模型都挡掉(403 model_not_allowed),所以保存与预览都要展开成该站点集合的全部模型 id。
-  const expandAllSiteModels = effectiveSitePolicy === 'allow_list' && (modelPolicy ?? runtime.data?.model_policy ?? 'allow_all') === 'allow_all'
-  const effectiveSiteModelIDs = expandAllSiteModels ? scope.allSiteModelIds : storedSiteModelIDs
-  const dirty = sitePolicy !== null || modelPolicy !== null || siteIDs !== null || siteModelIDs !== null
-
-  const saveScope = useMutation({
-    mutationFn: () => updateAgentScopeSettings({
-      site_policy: effectiveSitePolicy,
-      model_policy: effectiveModelPolicy,
-      allowed_site_ids: effectiveSitePolicy === 'allow_list' ? selectedSiteIDs : [],
-      allowed_site_model_ids: effectiveModelPolicy === 'allow_list'
-        ? (expandAllSiteModels ? scope.allSiteModelIds : scope.selectedSiteModelIds.filter((id) => scope.availableSiteModelIds.has(id)))
-        : [],
-    }),
-    onSuccess: async () => {
-      setSitePolicy(null)
-      setModelPolicy(null)
-      setSiteIDs(null)
-      setSiteModelIDs(null)
-      await queryClient.invalidateQueries({ queryKey: agentSettingsKey })
-      toast.success(t('agent:settings.scope.saved'))
-    },
-    onError: (error) => toast.error(t('agent:settings.saveFailed'), { description: error.message }),
-  })
-  const { mutate: save, isPending: saving } = saveScope
-  const saveAction = useCallback(() => save(), [save])
-  const canSave = !runtime.isLoading
-    && runtime.data !== undefined
-    && dirty
-    && !(effectiveSitePolicy === 'allow_list' && scope.siteModelsLoading)
-  useEffect(() => {
-    onActionsChange({ save: saveAction, canSave, pending: saving, dirty })
-    return () => onActionsChange(null)
-  }, [canSave, dirty, onActionsChange, saveAction, saving])
-
-  function handleScopeChange(patch: SiteModelScopePatch) {
-    if (patch.sitePolicy !== undefined) setSitePolicy(patch.sitePolicy)
-    if (patch.modelPolicy !== undefined) setModelPolicy(patch.modelPolicy)
-    if (patch.siteIds !== undefined) setSiteIDs(patch.siteIds)
-    if (patch.siteModelIds !== undefined) setSiteModelIDs(patch.siteModelIds)
-  }
-
-  const previewLoading = available.isLoading || runtime.isLoading
-  const noSitesConfigured = !sitesQuery.isLoading && sites.length === 0
+  const [scopeConfigOpen, setScopeConfigOpen] = useState(false)
+  const [imageConfigOpen, setImageConfigOpen] = useState(false)
+  const canonicalById = useMemo(() => new Map((canonicalQuery.data?.items ?? []).map((model) => [model.id, model])), [canonicalQuery.data])
+  const imageSummary = agentImageModelsSummary(runtime.data?.image_models ?? [], available.data ?? [])
   const previewGroups = useMemo(() => groupAgentScopePreview({
     sites: available.data ?? [],
-    sitePolicy: effectiveSitePolicy,
-    siteIds: selectedSiteIDs,
-    modelPolicy: effectiveModelPolicy,
-    siteModelIds: effectiveSiteModelIDs,
-  }), [available.data, effectiveModelPolicy, effectiveSitePolicy, selectedSiteIDs, effectiveSiteModelIDs])
+    sitePolicy: runtime.data?.site_policy ?? 'allow_all',
+    siteIds: runtime.data?.allowed_site_ids ?? [],
+    modelPolicy: runtime.data?.model_policy ?? 'allow_all',
+    siteModelIds: runtime.data?.allowed_site_model_ids ?? [],
+  }), [available.data, runtime.data])
   const summary = summarizeAgentScopePreview(previewGroups)
-  const summaryText = effectiveSitePolicy === 'allow_all' && effectiveModelPolicy === 'allow_all'
+  const summaryText = runtime.data?.site_policy === 'allow_all' && runtime.data.model_policy === 'allow_all'
     ? `${t('agent:settings.scope.allSites')} · ${t('agent:settings.scope.allModels')}`
-    : effectiveSitePolicy === 'allow_all'
+    : runtime.data?.site_policy === 'allow_all'
       ? `${t('agent:settings.scope.allSites')} · ${t('agent:settings.scope.modelCount', { count: summary.models })}`
-      : effectiveModelPolicy === 'allow_all'
+      : runtime.data?.model_policy === 'allow_all'
         ? `${t('agent:settings.scope.siteCount', { count: summary.sites })} · ${t('agent:settings.scope.allModels')}`
         : `${t('agent:settings.scope.siteCount', { count: summary.sites })} · ${t('agent:settings.scope.modelCount', { count: summary.models })}`
 
-  if (noSitesConfigured) {
-    return (
-      <div className="space-y-5">
-        <p className="rounded-xl border border-[hsl(var(--glass-border))] px-4 py-8 text-center text-xs leading-5 text-muted-soft">
-          {t('agent:settings.scope.previewEmpty')}
-        </p>
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-[hsl(var(--glass-border))] px-4 py-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.previewTitle')}</p>
-          <p className="mt-0.5 text-xs text-muted-soft">
+          <button type="button" className="mt-0.5 text-left text-xs text-muted-soft underline-offset-4 hover:text-foreground hover:underline" onClick={() => setPreviewOpen(true)}>
             {summaryText}
-            {dirty ? ` ${t('agent:settings.scope.includesUnsaved')}` : ''}
-          </p>
+          </button>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setPreviewOpen(true)}>
-            {t('agent:settings.scope.view')}
-          </Button>
-        </div>
+        <Button size="sm" variant="secondary" onClick={() => setScopeConfigOpen(true)}>
+          <Settings2 className="h-3.5 w-3.5" />
+          {t('agent:settings.scope.configure')}
+        </Button>
       </section>
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-foreground">{t('agent:settings.scope.configTitle')}</h3>
-        <SiteModelScopePicker
-          scope={scope}
-          sitesLoading={sitesQuery.isLoading}
-          canonicalModels={canonicalModels}
-          canonicalModelsLoading={canonicalQuery.isLoading}
-          sitePolicy={effectiveSitePolicy}
-          modelPolicy={modelPolicy ?? runtime.data?.model_policy ?? 'allow_all'}
-          siteIds={selectedSiteIDs}
-          siteModelIds={storedSiteModelIDs}
-          onChange={handleScopeChange}
-        />
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-[hsl(var(--glass-border))] px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.imageTitle')}</p>
+          <p className="mt-0.5 line-clamp-2 break-words text-xs text-muted-soft">
+            {imageSummary.length
+              ? imageSummary.map((item, index) => (
+                  <span key={item.key}>
+                    {index > 0 ? ' › ' : ''}
+                    <span className={item.available ? undefined : 'text-amber-500'} title={item.available ? undefined : t('agent:settings.scope.imageSiteUnavailable')}>
+                      {item.name}
+                      {item.siteNames?.length ? ` (${item.siteNames.join('、')})` : ''}
+                    </span>
+                  </span>
+                ))
+              : t('agent:settings.scope.imageNotConfigured')}
+          </p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => setImageConfigOpen(true)}>
+          <Settings2 className="h-3.5 w-3.5" />
+          {t('agent:settings.scope.configure')}
+        </Button>
       </section>
 
       <ScopePreviewDialog
         open={previewOpen}
         onOpenChange={setPreviewOpen}
         groups={previewGroups}
-        loading={previewLoading}
+        loading={available.isLoading || runtime.isLoading}
         canonicalById={canonicalById}
       />
+      <AgentScopeConfigDialog open={scopeConfigOpen} onOpenChange={setScopeConfigOpen} />
+      <AgentImageModelDialog open={imageConfigOpen} onOpenChange={setImageConfigOpen} />
     </div>
   )
 }
