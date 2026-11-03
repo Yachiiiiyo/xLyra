@@ -1,16 +1,14 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Copy, Download, ImageOff, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Download, ImageOff } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { copyToClipboard } from '@/components/common/copy-to-clipboard'
 import { objectUrlFor } from '@/features/agent/lib/object-url'
 import { apiFetchBlob } from '@/lib/http'
 import { cn } from '@/lib/utils'
 
-export function AgentGeneratedImage({ sessionId, path, alt, model, site, compact = false }: {
+export function AgentGeneratedImage({ sessionId, path, alt, compact = false }: {
   sessionId: string
   path: string
   alt?: string
@@ -38,9 +36,6 @@ export function AgentGeneratedImage({ sessionId, path, alt, model, site, compact
     anchor.click()
     URL.revokeObjectURL(downloadUrl)
   }
-
-  const modelLabel = model && site ? t('chat.image.caption', { model, site }) : model || site
-  const caption = [alt, modelLabel].filter(Boolean).join(' · ')
 
   if (query.isError) {
     return (
@@ -70,15 +65,21 @@ export function AgentGeneratedImage({ sessionId, path, alt, model, site, compact
         )}
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent presentation="center" className="w-[min(94vw,1100px)] max-w-none overflow-hidden p-4">
+        <DialogContent surface="none" presentation="center" overlayClassName="bg-black/85" className="w-auto max-w-[92vw] bg-transparent p-0 shadow-none backdrop-blur-0">
           <DialogTitle className="sr-only">{alt || path}</DialogTitle>
-          {url ? <img src={url} alt={alt || path} className="max-h-[72dvh] w-full rounded-lg object-contain" /> : null}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {caption ? <p className="min-w-0 flex-1 break-words text-xs text-muted-soft">{caption}</p> : <span className="flex-1" />}
-            <Button size="sm" variant="outline" onClick={download}><Download className="h-3.5 w-3.5" />{t('chat.image.download')}</Button>
-            <Button size="sm" variant="outline" onClick={() => void copyToClipboard(path, null, null)}><Copy className="h-3.5 w-3.5" />{t('chat.image.copyPath')}</Button>
-            <Button size="sm" variant="outline" onClick={() => setOpen(false)}><X className="h-3.5 w-3.5" />{t('chat.image.close')}</Button>
-          </div>
+          {url ? (
+            <div className="flex flex-col items-center gap-3">
+              <img src={url} alt={alt || path} className="max-h-[80dvh] max-w-[92vw] rounded-2xl object-contain" />
+              <button
+                type="button"
+                onClick={download}
+                className="inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-body text-white backdrop-blur-md transition-colors hover:bg-white/25"
+              >
+                <Download className="h-4 w-4" />
+                {t('chat.image.download')}
+              </button>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </span>
