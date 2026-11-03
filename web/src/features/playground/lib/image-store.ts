@@ -1,4 +1,5 @@
-import { migrateConversationIds, newId } from '@/features/playground/lib/storage'
+import { newId } from '@/lib/id'
+import { migrateConversationIds } from '@/features/playground/lib/storage'
 import type { ImageConversation, ImageHistoryEntry } from '@/features/playground/lib/types'
 
 const DB_NAME = 'xlyra-playground'

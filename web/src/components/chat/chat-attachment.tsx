@@ -13,7 +13,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import type { ChatAttachment } from '@/features/playground/lib/types'
+import type { ChatAttachment } from '@/lib/chat-types'
 
 type ChatAttachmentItemProps = {
   attachment: ChatAttachment

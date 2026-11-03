@@ -25,7 +25,7 @@ export function ConfirmPopover({
   side = 'top',
   align = 'center',
 }: ConfirmPopoverProps) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
 
   return (

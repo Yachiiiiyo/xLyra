@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
-import { ModelParameterPicker } from '@/features/playground/components/model-parameter-picker'
-import { normalizeReasoningEffort, reasoningEffortsForModel } from '@/features/playground/lib/reasoning'
-import type { GatewayModel, ReasoningEffort } from '@/features/playground/lib/types'
+import { ModelParameterPicker } from '@/components/chat/model-parameter-picker'
+import { normalizeReasoningEffort, reasoningEffortsForModel } from '@/lib/reasoning'
+import type { GatewayModel, ReasoningEffort } from '@/lib/chat-types'
 
 type ModelReasoningPickerProps = {
   apiKeys?: Array<{ id: string; name: string }>
@@ -36,7 +36,7 @@ export function ModelReasoningPicker({
   panelRenderer,
   modelIconTransparent,
 }: ModelReasoningPickerProps) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const selectedModel = models.find((item) => item.id === model)
   const availableEfforts = reasoningEffortsForModel(selectedModel)
   const effectiveEffort = normalizeReasoningEffort(selectedModel, effort)

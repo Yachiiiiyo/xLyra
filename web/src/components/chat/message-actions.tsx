@@ -6,7 +6,7 @@ import { ConfirmPopover } from '@/components/common/confirm-popover'
 const ACTION_BUTTON_CLASS =
   'flex h-7 w-7 items-center justify-center rounded-md text-label-2 transition-colors hover:bg-fill-3 hover:text-label disabled:opacity-40'
 
-type PlaygroundMessageActionProps = {
+type MessageActionProps = {
   label: string
   onClick: () => void
   disabled?: boolean
@@ -14,13 +14,13 @@ type PlaygroundMessageActionProps = {
   children: ReactNode
 }
 
-export function PlaygroundMessageAction({
+export function MessageAction({
   label,
   onClick,
   disabled,
   className,
   children,
-}: PlaygroundMessageActionProps) {
+}: MessageActionProps) {
   return (
     <button
       type="button"
@@ -35,7 +35,7 @@ export function PlaygroundMessageAction({
   )
 }
 
-type PlaygroundRegenerateActionProps = {
+type RegenerateActionProps = {
   label: string
   message: string
   disabled?: boolean
@@ -43,13 +43,13 @@ type PlaygroundRegenerateActionProps = {
   onConfirm: () => void
 }
 
-export function PlaygroundRegenerateAction({
+export function RegenerateAction({
   label,
   message,
   disabled,
   className,
   onConfirm,
-}: PlaygroundRegenerateActionProps) {
+}: RegenerateActionProps) {
   return (
     <ConfirmPopover message={message} confirmLabel={label} onConfirm={onConfirm} side="top" align="end">
       <button

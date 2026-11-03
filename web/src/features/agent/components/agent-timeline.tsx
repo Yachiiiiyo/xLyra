@@ -4,10 +4,10 @@ import { Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Copy, FilePenLi
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
-import { PlaygroundMessageAction } from '@/features/playground/components/playground-message-actions'
-import { ChatAttachmentItem } from '@/features/playground/components/chat-attachment'
-import { MarkdownMessage } from '@/features/playground/components/markdown-message'
-import type { ChatAttachment } from '@/features/playground/lib/types'
+import { MessageAction } from '@/components/chat/message-actions'
+import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
+import { MarkdownMessage } from '@/components/chat/markdown-message'
+import type { ChatAttachment } from '@/lib/chat-types'
 import type { AgentPermissionRequest, AgentRun, AgentTimelineItem, AgentWorkStep } from '@/features/agent/lib/agent-events'
 
 type AgentTimelineProps = {
@@ -30,7 +30,7 @@ export function AgentTimeline({ items, onPermissionDecision, onUserEdit }: Agent
 }
 
 function UserMessage({ text, attachments, editable, onEdit }: { text: string; attachments?: ChatAttachment[]; editable?: boolean; onEdit?: () => void }) {
-  const { t } = useTranslation(['agent', 'playground'])
+  const { t } = useTranslation(['agent', 'chat'])
   return (
     <div className="group flex flex-col items-end gap-1">
       {attachments?.length ? (
@@ -44,9 +44,9 @@ function UserMessage({ text, attachments, editable, onEdit }: { text: string; at
       <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
         <CopyMessageAction text={text} />
         {editable && onEdit ? (
-          <PlaygroundMessageAction label={t('playground:actions.edit')} onClick={onEdit}>
+          <MessageAction label={t('chat:actions.edit')} onClick={onEdit}>
             <Pencil className="h-3.5 w-3.5" />
-          </PlaygroundMessageAction>
+          </MessageAction>
         ) : null}
       </div>
     </div>
@@ -54,7 +54,7 @@ function UserMessage({ text, attachments, editable, onEdit }: { text: string; at
 }
 
 function CopyMessageAction({ text }: { text: string }) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const [copied, setCopied] = useState(false)
   const timerRef = useRef<number | null>(null)
 
@@ -71,9 +71,9 @@ function CopyMessageAction({ text }: { text: string }) {
   }
 
   return (
-    <PlaygroundMessageAction label={copied ? t('actions.copied') : t('actions.copy')} onClick={() => void copy()}>
+    <MessageAction label={copied ? t('actions.copied') : t('actions.copy')} onClick={() => void copy()}>
       {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-    </PlaygroundMessageAction>
+    </MessageAction>
   )
 }
 

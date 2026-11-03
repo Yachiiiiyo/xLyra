@@ -67,7 +67,6 @@ import {
 } from '@/features/sites/api/sites'
 import { listSiteGroups, siteGroupQueryKeys, type SiteGroup } from '@/features/settings/api/site-groups'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { invalidatePlaygroundModels } from '@/features/playground/api/model-queries'
 
 const EMPTY_API_KEYS: DownstreamAPIKey[] = []
 const EMPTY_MODELS: CanonicalModelItem[] = []
@@ -160,7 +159,6 @@ export function DownstreamAPIKeysWorkspace() {
         },
       )
       await queryClient.invalidateQueries({ queryKey: downstreamAPIKeyQueryKeys.list() })
-      await invalidatePlaygroundModels(queryClient, result.id)
       setFormOpen(false)
       setEditingKey(null)
       toast.success(variables.id ? t('workspace.toast.keyUpdated') : t('workspace.toast.keyCreated'))

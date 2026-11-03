@@ -1,0 +1,35 @@
+{
+  "actions": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Copy failed",
+    "edit": "Edit"
+  },
+  "chat": {
+    "attach": "Add attachment",
+    "removeAttachment": "Remove attachment",
+    "attachmentLimit": "You can attach up to {{count}} files",
+    "attachmentTooLarge": "{{name}} exceeds 5 MB",
+    "attachmentReadFailed": "Failed to read attachment"
+  },
+  "credential": {
+    "keyLabel": "Downstream key",
+    "keyPlaceholder": "Select a key",
+    "modelPlaceholder": "Select a model"
+  },
+  "picker": {
+    "model": "Model",
+    "reasoning": "Reasoning",
+    "noModels": "No models available"
+  },
+  "effort": {
+    "none": "Off",
+    "minimal": "Minimal",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "Extra high",
+    "max": "Max",
+    "ultra": "Ultra"
+  }
+}

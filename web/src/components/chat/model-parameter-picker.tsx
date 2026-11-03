@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { PlaygroundModelIcon } from '@/features/playground/components/playground-model-icon'
-import type { GatewayModel } from '@/features/playground/lib/types'
+import { ModelIcon } from '@/components/chat/model-icon'
+import type { GatewayModel } from '@/lib/chat-types'
 
 type APIKeyOption = {
   id: string
@@ -164,7 +164,7 @@ export function ModelParameterPicker<T extends string>({
   panelRenderer,
   modelIconTransparent,
 }: ModelParameterPickerProps<T>) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const isMobile = useMobileLayout()
   const [open, setOpen] = useState(false)
   const selectedModel = models.find((item) => item.id === model)
@@ -205,7 +205,7 @@ export function ModelParameterPicker<T extends string>({
       ) : null}
       <PickerRow label={t('picker.model')} value={modelLabel} overlap={isMobile}>
         <SubPanel
-          items={models.map((item) => ({ value: item.id, label: item.id, icon: <PlaygroundModelIcon modelId={item.id} displayName={item.displayName} ownedBy={item.ownedBy} transparent={modelIconTransparent} /> }))}
+          items={models.map((item) => ({ value: item.id, label: item.id, icon: <ModelIcon modelId={item.id} displayName={item.displayName} ownedBy={item.ownedBy} transparent={modelIconTransparent} /> }))}
           selected={model}
           onSelect={selectModel}
           emptyLabel={t('picker.noModels')}
@@ -239,7 +239,7 @@ export function ModelParameterPicker<T extends string>({
           )}
         >
           {selectedModel ? (
-            <PlaygroundModelIcon
+            <ModelIcon
               modelId={selectedModel.id}
               displayName={selectedModel.displayName}
               ownedBy={selectedModel.ownedBy}

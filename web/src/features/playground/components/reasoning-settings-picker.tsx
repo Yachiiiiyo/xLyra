@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { ModelSettingsPicker } from '@/features/playground/components/model-settings-picker'
-import { normalizeReasoningEffort, reasoningEffortsForModel } from '@/features/playground/lib/reasoning'
+import { normalizeReasoningEffort, reasoningEffortsForModel } from '@/lib/reasoning'
 import type { GatewayModel, ReasoningEffort } from '@/features/playground/lib/types'
 
 type ReasoningSettingsPickerProps = {

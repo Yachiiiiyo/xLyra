@@ -27,10 +27,10 @@ import { ImageView } from '@/features/playground/components/image-view'
 import {
   loadConversations,
   loadSettings,
-  newId,
   saveConversations,
   saveSettings,
 } from '@/features/playground/lib/storage'
+import { newId } from '@/lib/id'
 import {
   loadImageConversationsAsync,
   saveImageConversationsAsync,
@@ -39,7 +39,7 @@ import {
   hydrateChatAttachmentsAsync,
   pruneChatAttachmentDataAsync,
 } from '@/features/playground/lib/attachment-store'
-import { normalizeReasoningEffort } from '@/features/playground/lib/reasoning'
+import { normalizeReasoningEffort } from '@/lib/reasoning'
 import type {
   Conversation,
   ImageConversation,

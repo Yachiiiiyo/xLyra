@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attachmentMimeType, normalizeAttachmentDataURL } from '@/features/playground/lib/attachments'
+import { attachmentMimeType, normalizeAttachmentDataURL } from '@/lib/attachments'
 
 describe('attachment MIME normalization', () => {
   it('infers text MIME from the extension when the browser omits it', () => {

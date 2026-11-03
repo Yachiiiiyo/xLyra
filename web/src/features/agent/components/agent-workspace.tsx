@@ -4,13 +4,13 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import { Folder, Globe, Menu, Paperclip, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
-import { Composer } from '@/features/playground/components/composer'
-import { ChatAttachmentItem } from '@/features/playground/components/chat-attachment'
-import { ModelReasoningPicker } from '@/features/playground/components/model-reasoning-picker'
-import { normalizeReasoningEffort, parseGatewayModelReasoning } from '@/features/playground/lib/reasoning'
-import { attachmentMimeType, normalizeAttachmentDataURL } from '@/features/playground/lib/attachments'
-import type { ChatAttachment, GatewayModel, ReasoningEffort } from '@/features/playground/lib/types'
-import { newId } from '@/features/playground/lib/storage'
+import { Composer } from '@/components/chat/composer'
+import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
+import { ModelReasoningPicker } from '@/components/chat/model-reasoning-picker'
+import { normalizeReasoningEffort, parseGatewayModelReasoning } from '@/lib/reasoning'
+import { attachmentMimeType, normalizeAttachmentDataURL } from '@/lib/attachments'
+import type { ChatAttachment, GatewayModel, ReasoningEffort } from '@/lib/chat-types'
+import { newId } from '@/lib/id'
 import { AgentSidebar } from '@/features/agent/components/agent-sidebar'
 import { AgentSettingsDialog } from '@/features/agent/components/agent-settings-dialog'
 import { AgentTimeline } from '@/features/agent/components/agent-timeline'
@@ -138,7 +138,7 @@ function orbStateForRun(run?: AgentRun): OrbState {
 
 /** Placeholder shown while awaiting an agent reply: pulsing orb + label. 时长由 run 的「用时」行承担，这里不再重复计时。 */
 function WaitingIndicator({ state }: { state: OrbState }) {
-  const { t } = useTranslation(['agent', 'playground'])
+  const { t } = useTranslation(['agent', 'chat'])
   const statusLabel = state === 'breathing'
     ? t('agent:work.thinking')
     : state === 'searching'
@@ -270,7 +270,7 @@ function EditReplayConfirmDialog({
 }
 
 export function AgentWorkspace() {
-  const { t } = useTranslation(['agent', 'playground'])
+  const { t } = useTranslation(['agent', 'chat'])
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({ queryKey: ['agent', 'sessions'], queryFn: listAgentSessions, retry: false })
@@ -764,12 +764,12 @@ export function AgentWorkspace() {
     const remaining = MAX_ATTACHMENTS - attachments.length
     const selected = Array.from(files).slice(0, Math.max(remaining, 0))
     if (selected.length === 0) {
-      setAttachmentError(t('playground:chat.attachmentLimit', { count: MAX_ATTACHMENTS }))
+      setAttachmentError(t('chat:chat.attachmentLimit', { count: MAX_ATTACHMENTS }))
       return
     }
     const oversized = selected.find((file) => file.size > MAX_ATTACHMENT_BYTES)
     if (oversized) {
-      setAttachmentError(t('playground:chat.attachmentTooLarge', { name: oversized.name }))
+      setAttachmentError(t('chat:chat.attachmentTooLarge', { name: oversized.name }))
       return
     }
     try {
@@ -785,9 +785,9 @@ export function AgentWorkspace() {
         }
       }))
       setAttachments((current) => [...current, ...next].slice(0, MAX_ATTACHMENTS))
-      setAttachmentError(files.length > remaining ? t('playground:chat.attachmentLimit', { count: MAX_ATTACHMENTS }) : null)
+      setAttachmentError(files.length > remaining ? t('chat:chat.attachmentLimit', { count: MAX_ATTACHMENTS }) : null)
     } catch {
-      setAttachmentError(t('playground:chat.attachmentReadFailed'))
+      setAttachmentError(t('chat:chat.attachmentReadFailed'))
     }
   }
 
@@ -858,8 +858,8 @@ export function AgentWorkspace() {
             onClick={() => fileInputRef.current?.click()}
             disabled={running || Boolean(editingMessage) || attachments.length >= MAX_ATTACHMENTS}
             className="flex h-11 w-11 items-center justify-center rounded-full text-muted-soft transition-colors active:bg-[hsl(var(--surface-subtle))] active:text-foreground disabled:cursor-not-allowed disabled:opacity-40 md:h-8 md:w-8 md:hover:bg-[hsl(var(--surface-subtle))] md:hover:text-foreground"
-            aria-label={t('playground:chat.attach')}
-            title={t('playground:chat.attach')}
+            aria-label={t('chat:chat.attach')}
+            title={t('chat:chat.attach')}
           >
             <Paperclip className="h-4 w-4" />
           </button>
@@ -883,7 +883,7 @@ export function AgentWorkspace() {
                 <ChatAttachmentItem
                   key={attachment.id}
                   attachment={attachment}
-                  removeLabel={t('playground:chat.removeAttachment')}
+                  removeLabel={t('chat:chat.removeAttachment')}
                   onRemove={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
                 />
               ))}

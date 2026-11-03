@@ -22,11 +22,11 @@ function reactNodeText(node: ReactNode): string {
 }
 
 function MarkdownCodeBlock({ children }: ComponentPropsWithoutRef<'pre'>) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const code = reactNodeText(children)
 
   return (
-    <div className="playground-code-block">
+    <div className="chat-code-block">
       <button
         type="button"
         onClick={() => void copyToClipboard(code, t('actions.copied'), t('actions.copyFailed'))}
@@ -49,7 +49,7 @@ function normalizeMathDelimiters(content: string): string {
 
 function MarkdownMessageImpl({ content, className }: MarkdownMessageProps) {
   return (
-    <div className={cn('playground-markdown text-body leading-6 text-label', className)}>
+    <div className={cn('chat-markdown text-body leading-6 text-label', className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ pre: MarkdownCodeBlock }}>
         {normalizeMathDelimiters(content)}
       </ReactMarkdown>

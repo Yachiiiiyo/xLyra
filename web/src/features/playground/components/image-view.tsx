@@ -14,17 +14,17 @@ import {
   type PlaygroundRolloutEvent,
   type ServerConversationView,
 } from '@/features/playground/api/playground'
-import { Composer } from '@/features/playground/components/composer'
-import { ChatAttachmentItem } from '@/features/playground/components/chat-attachment'
+import { Composer } from '@/components/chat/composer'
+import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
 import { AttachmentMenu } from '@/features/playground/components/attachment-menu'
 import { ModelSettingsPicker } from '@/features/playground/components/model-settings-picker'
 import {
-  PlaygroundMessageAction,
-  PlaygroundRegenerateAction,
-} from '@/features/playground/components/playground-message-actions'
-import { PlaygroundModelIcon } from '@/features/playground/components/playground-model-icon'
+  MessageAction,
+  RegenerateAction,
+} from '@/components/chat/message-actions'
+import { ModelIcon } from '@/components/chat/model-icon'
 import { CollapsibleUserMessage } from '@/features/playground/components/collapsible-user-message'
-import { newId } from '@/features/playground/lib/storage'
+import { newId } from '@/lib/id'
 import {
   formatResponseDuration,
   RESPONSE_TIMER_TICK_MS,
@@ -641,16 +641,16 @@ export function ImageView({
                     )}
                     {!editing ? (
                       <div className="flex items-center gap-0.5 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-                        <PlaygroundMessageAction
+                        <MessageAction
                           label={t('actions.copy')}
                           onClick={() =>
                             void copyToClipboard(entry.prompt, t('actions.copied'), t('actions.copyFailed'))
                           }
                         >
                           <Copy className="h-3.5 w-3.5" />
-                        </PlaygroundMessageAction>
+                        </MessageAction>
                         {isLast ? (
-                          <PlaygroundMessageAction
+                          <MessageAction
                             label={t('actions.edit')}
                             onClick={() => {
                               setEditDraft(entry.prompt)
@@ -659,7 +659,7 @@ export function ImageView({
                             disabled={submitting}
                           >
                             <Pencil className="h-3.5 w-3.5" />
-                          </PlaygroundMessageAction>
+                          </MessageAction>
                         ) : null}
                       </div>
                     ) : null}
@@ -667,7 +667,7 @@ export function ImageView({
                   {renderImages(entry)}
                   <div className="flex items-center gap-2">
                     {isLast && !entry.pending ? (
-                      <PlaygroundRegenerateAction
+                      <RegenerateAction
                         label={t('actions.regenerate')}
                         message={t('confirm.regenerateImage')}
                         disabled={submitting}
@@ -675,7 +675,7 @@ export function ImageView({
                       />
                     ) : null}
                     <div className="flex min-w-0 flex-1 items-center gap-1.5 text-footnote text-label-3">
-                      <PlaygroundModelIcon
+                      <ModelIcon
                         modelId={entry.model}
                         displayName={entryModel?.displayName}
                         ownedBy={entryModel?.ownedBy}

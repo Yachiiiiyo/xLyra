@@ -541,7 +541,7 @@ body:has(.agent-page) {
   box-shadow: 0 26px 64px rgb(2 6 18 / 0.34), 0 4px 18px rgb(2 6 18 / 0.24);
 }
 
-.agent-liquid-composer [data-playground-composer='true'] {
+.agent-liquid-composer [data-chat-composer='true'] {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
@@ -550,35 +550,35 @@ body:has(.agent-page) {
   flex-direction: column;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea {
+.agent-liquid-composer [data-chat-composer='true'] textarea {
   flex: 1;
   min-height: 2.5rem;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea + div {
+.agent-liquid-composer [data-chat-composer='true'] textarea + div {
   margin-top: auto;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea,
-.agent-liquid-composer [data-playground-composer='true'] textarea::placeholder {
+.agent-liquid-composer [data-chat-composer='true'] textarea,
+.agent-liquid-composer [data-chat-composer='true'] textarea::placeholder {
   color: hsl(var(--agent-text-primary)) !important;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea::placeholder {
+.agent-liquid-composer [data-chat-composer='true'] textarea::placeholder {
   opacity: 0.58;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] button {
+.agent-liquid-composer [data-chat-composer='true'] button {
   color: hsl(var(--agent-text-muted));
 }
 
-.agent-liquid-composer [data-playground-composer='true'] button:hover {
+.agent-liquid-composer [data-chat-composer='true'] button:hover {
   background: var(--agent-control-hover);
   color: hsl(var(--agent-text-primary));
 }
 
-.agent-liquid-composer [data-playground-composer='true'] button.agent-stop-button,
-.agent-liquid-composer [data-playground-composer='true'] button.agent-stop-button:hover {
+.agent-liquid-composer [data-chat-composer='true'] button.agent-stop-button,
+.agent-liquid-composer [data-chat-composer='true'] button.agent-stop-button:hover {
   background: #fff;
   color: #000;
 }
@@ -586,7 +586,7 @@ body:has(.agent-page) {
 /* 发送按钮禁用态（输入为空）：别吃主题的 --surface-subtle（浅色主题下是奶白半透明，
    浅灰箭头落上去几乎不可见），统一为玻璃 scrim + 弱化文字。
    启用态已由 .agent-page button.bg-primary 固定为白底黑箭头。 */
-.agent-liquid-composer [data-playground-composer='true'] button[aria-label='send']:disabled {
+.agent-liquid-composer [data-chat-composer='true'] button[aria-label='send']:disabled {
   background: var(--agent-control-scrim);
   color: hsl(var(--agent-text-faint)) !important;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);

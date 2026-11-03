@@ -1,5 +1,5 @@
 import { apiFetch, apiFetchResponse, APIError } from '@/lib/http'
-import { parseGatewayModelReasoning } from '@/features/playground/lib/reasoning'
+import { parseGatewayModelReasoning } from '@/lib/reasoning'
 import type {
   ChatProtocol,
   Conversation,

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react'
 import { useLiquidGlassRef } from '@/components/glass/use-liquid-glass'
 import { EffortSlider } from '@/features/playground/components/effort-slider'
-import { PlaygroundModelIcon } from '@/features/playground/components/playground-model-icon'
+import { ModelIcon } from '@/components/chat/model-icon'
 import type { GatewayModel } from '@/features/playground/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -75,7 +75,7 @@ export function ModelSettingsPicker<T extends string>({ models, model, onModelCh
             triggerClassName,
           )}
         >
-          {selectedModel ? <PlaygroundModelIcon modelId={selectedModel.id} displayName={selectedModel.displayName} ownedBy={selectedModel.ownedBy} /> : null}
+          {selectedModel ? <ModelIcon modelId={selectedModel.id} displayName={selectedModel.displayName} ownedBy={selectedModel.ownedBy} /> : null}
           <span className="min-w-0 truncate text-label">{modelLabel}</span>
           <span className="shrink-0" style={parameter.kind === 'slider' ? { color } : undefined}>
             · {selectedOption?.label ?? parameter.value}
@@ -107,7 +107,7 @@ export function ModelSettingsPicker<T extends string>({ models, model, onModelCh
                     {selectedOption?.label ?? parameter.value}
                   </span>
                   <span className="mt-0.5 flex max-w-full items-center justify-center gap-1 text-footnote text-label-2">
-                    {selectedModel ? <PlaygroundModelIcon modelId={selectedModel.id} displayName={selectedModel.displayName} ownedBy={selectedModel.ownedBy} /> : null}
+                    {selectedModel ? <ModelIcon modelId={selectedModel.id} displayName={selectedModel.displayName} ownedBy={selectedModel.ownedBy} /> : null}
                     <span className="truncate">{modelLabel}</span>
                     <ChevronRight className="size-3 shrink-0 opacity-60" />
                   </span>
@@ -181,7 +181,7 @@ export function ModelSettingsPicker<T extends string>({ models, model, onModelCh
                       item.id === model ? 'text-label' : 'text-label-2 hover:text-label',
                     )}
                   >
-                    <PlaygroundModelIcon modelId={item.id} displayName={item.displayName} ownedBy={item.ownedBy} />
+                    <ModelIcon modelId={item.id} displayName={item.displayName} ownedBy={item.ownedBy} />
                     <span className="min-w-0 flex-1 truncate">{item.displayName || item.id}</span>
                     {item.id === model ? <Check className="size-4 shrink-0 text-label-2" /> : null}
                   </button>

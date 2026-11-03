@@ -1,5 +1,5 @@
 import type { AgentTranscriptEntry } from '@/features/agent/api/agent'
-import type { ChatAttachment } from '@/features/playground/lib/types'
+import type { ChatAttachment } from '@/lib/chat-types'
 
 export type AgentStepStatus = 'running' | 'done' | 'error'
 export type AgentRunStatus = 'running' | 'done' | 'error' | 'cancelled'

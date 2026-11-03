@@ -5,13 +5,13 @@ import { cn } from '@/lib/utils'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
 import { TextArea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { MarkdownMessage } from '@/features/playground/components/markdown-message'
+import { MarkdownMessage } from '@/components/chat/markdown-message'
 import {
-  PlaygroundMessageAction,
-  PlaygroundRegenerateAction,
-} from '@/features/playground/components/playground-message-actions'
-import { PlaygroundModelIcon } from '@/features/playground/components/playground-model-icon'
-import { ChatAttachmentItem } from '@/features/playground/components/chat-attachment'
+  MessageAction,
+  RegenerateAction,
+} from '@/components/chat/message-actions'
+import { ModelIcon } from '@/components/chat/model-icon'
+import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
 import { CollapsibleUserMessage } from '@/features/playground/components/collapsible-user-message'
 import { formatResponseDuration } from '@/features/playground/lib/response-timing'
 import type { ChatMessage, GatewayModel } from '@/features/playground/lib/types'
@@ -105,14 +105,14 @@ export function ChatMessageItem({
         ) : null}
         <div className="flex items-center gap-0.5 transition-opacity md:opacity-0 md:group-hover:opacity-100">
           {message.content ? (
-            <PlaygroundMessageAction label={t('actions.copy')} onClick={copy}>
+            <MessageAction label={t('actions.copy')} onClick={copy}>
               <Copy className="h-3.5 w-3.5" />
-            </PlaygroundMessageAction>
+            </MessageAction>
           ) : null}
           {canEdit ? (
-            <PlaygroundMessageAction label={t('actions.edit')} onClick={startEdit} disabled={busy}>
+            <MessageAction label={t('actions.edit')} onClick={startEdit} disabled={busy}>
               <Pencil className="h-3.5 w-3.5" />
-            </PlaygroundMessageAction>
+            </MessageAction>
           ) : null}
         </div>
       </div>
@@ -138,7 +138,7 @@ export function ChatMessageItem({
           {reasoningOpen ? (
             <MarkdownMessage
               content={message.reasoning}
-              className="playground-markdown-reasoning px-3 pb-3 text-footnote leading-5 text-label-2"
+              className="chat-markdown-reasoning px-3 pb-3 text-footnote leading-5 text-label-2"
             />
           ) : null}
         </div>
@@ -170,7 +170,7 @@ export function ChatMessageItem({
           <div className="hidden items-center gap-2 md:flex">
             <div className="flex items-center gap-0.5">
               {isLast ? (
-                <PlaygroundRegenerateAction
+                <RegenerateAction
                   label={t('actions.regenerate')}
                   message={t('confirm.regenerate')}
                   disabled={busy}
@@ -178,16 +178,16 @@ export function ChatMessageItem({
                 />
               ) : null}
               {message.content ? (
-                <PlaygroundMessageAction label={t('actions.copy')} onClick={copy}>
+                <MessageAction label={t('actions.copy')} onClick={copy}>
                   <Copy className="h-3.5 w-3.5" />
-                </PlaygroundMessageAction>
+                </MessageAction>
               ) : null}
             </div>
             {hasSource || hasUsage || responseDuration ? (
               <div className="flex min-w-0 items-center gap-1.5 text-footnote text-label-3">
                 {message.model ? (
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <PlaygroundModelIcon
+                    <ModelIcon
                       modelId={message.model}
                       displayName={gatewayModel?.displayName}
                       ownedBy={gatewayModel?.ownedBy}
@@ -221,7 +221,7 @@ export function ChatMessageItem({
 
           <div className="flex min-w-0 items-center gap-1 md:hidden">
             {isLast ? (
-              <PlaygroundRegenerateAction
+              <RegenerateAction
                 label={t('actions.regenerate')}
                 message={t('confirm.regenerate')}
                 disabled={busy}
@@ -229,14 +229,14 @@ export function ChatMessageItem({
               />
             ) : null}
             {message.content ? (
-              <PlaygroundMessageAction label={t('actions.copy')} onClick={copy}>
+              <MessageAction label={t('actions.copy')} onClick={copy}>
                 <Copy className="h-3.5 w-3.5" />
-              </PlaygroundMessageAction>
+              </MessageAction>
             ) : null}
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-footnote text-label-3">
               {message.model ? (
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <PlaygroundModelIcon
+                  <ModelIcon
                     modelId={message.model}
                     displayName={gatewayModel?.displayName}
                     ownedBy={gatewayModel?.ownedBy}

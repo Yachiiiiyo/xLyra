@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { isUUID } from '@/features/playground/lib/storage'
+import { isUUID } from '@/lib/id'
 import { loadImageConversationsAsync } from '@/features/playground/lib/image-store'
 
 const values = new Map<string, string>()

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filesFromClipboard } from '@/features/playground/lib/clipboard-files'
+import { filesFromClipboard } from '@/lib/clipboard-files'
 
 function clipboardData(files: File[], itemFiles: Array<File | null>) {
   return {
@@ -11,7 +11,7 @@ function clipboardData(files: File[], itemFiles: Array<File | null>) {
   } as unknown as Pick<DataTransfer, 'files' | 'items'>
 }
 
-describe('playground clipboard files', () => {
+describe('chat clipboard files', () => {
   it('reads files exposed through clipboard items', () => {
     const image = new File(['image'], 'pasted.png', { type: 'image/png' })
 

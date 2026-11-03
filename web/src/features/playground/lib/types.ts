@@ -1,14 +1,8 @@
-export type ChatRole = 'system' | 'user' | 'assistant'
+import type { ChatAttachment, ReasoningEffort } from '@/lib/chat-types'
 
-export type ChatAttachment = {
-  id: string
-  name: string
-  mimeType: string
-  size: number
-  dataURL?: string
-  assetId?: string
-  src?: string
-}
+export type { ChatAttachment, GatewayModel, GatewayModelReasoning, ReasoningEffort } from '@/lib/chat-types'
+
+export type ChatRole = 'system' | 'user' | 'assistant'
 
 export type ChatMessage = {
   id: string
@@ -43,26 +37,7 @@ export type Conversation = {
   activeRun?: PlaygroundRun
 }
 
-export type GatewayModel = {
-  id: string
-  mappedModel?: string
-  displayName: string
-  category: string
-  ownedBy?: string
-  endpointTypes: string[]
-  siteTypes?: string[]
-  reasoning?: GatewayModelReasoning
-}
-
 export type ChatProtocol = 'chat' | 'responses' | 'messages' | 'gemini'
-
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-
-/** Server-declared reasoning effort spec for a model (from protocol_specs.json via the gateway). */
-export type GatewayModelReasoning = {
-  levels: ReasoningEffort[]
-  thinkingMandatory?: boolean
-}
 
 export type ImageResultItem = {
   id: string

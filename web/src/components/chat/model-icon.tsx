@@ -1,7 +1,7 @@
 import { BrandMark } from '@/components/common/brand-mark'
 import { modelNameIconInfo } from '@/features/sites/lib/model-icon'
 
-type PlaygroundModelIconProps = {
+type ModelIconProps = {
   modelId: string
   displayName?: string
   ownedBy?: string
@@ -9,13 +9,13 @@ type PlaygroundModelIconProps = {
   size?: 'xs' | 'sm'
 }
 
-export function PlaygroundModelIcon({
+export function ModelIcon({
   modelId,
   displayName,
   ownedBy,
   transparent,
   size = 'xs',
-}: PlaygroundModelIconProps) {
+}: ModelIconProps) {
   const icon = modelNameIconInfo([modelId, displayName, ownedBy], modelId)
 
   return (

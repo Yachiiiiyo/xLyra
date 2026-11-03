@@ -5,12 +5,12 @@ import {
   reasoningEffortsForModel,
   supportsMaxReasoning,
   supportsUltraReasoning,
-} from '@/features/playground/lib/reasoning'
-import type { GatewayModelReasoning, ReasoningEffort } from '@/features/playground/lib/types'
+} from '@/lib/reasoning'
+import type { GatewayModelReasoning, ReasoningEffort } from '@/lib/chat-types'
 
 const serverLevels = (levels: ReasoningEffort[]): GatewayModelReasoning => ({ levels })
 
-describe('playground reasoning effort rules', () => {
+describe('chat reasoning effort rules', () => {
   it('offers max across the gpt-5.6 family and ultra only for sol and terra', () => {
     expect(supportsMaxReasoning({ id: 'gpt-5.6' })).toBe(true)
     expect(supportsMaxReasoning({ id: 'gpt-5.6-luna' })).toBe(true)

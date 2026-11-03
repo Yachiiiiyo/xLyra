@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { ArrowUp, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ClawdPet } from '@/features/playground/components/clawd-pet'
-import { filesFromClipboard } from '@/features/playground/lib/clipboard-files'
+import { ClawdPet } from '@/components/chat/clawd-pet'
+import { filesFromClipboard } from '@/lib/clipboard-files'
 
 type ComposerProps = {
   value: string
@@ -64,7 +64,7 @@ export function Composer({
     <div className="relative">
       {mascot ? <ClawdPet value={value} streaming={streaming} /> : null}
       <div
-        data-playground-composer="true"
+        data-chat-composer="true"
         // 输入框：浮起的面板质感，见 index.css .composer-surface
         className="composer-surface rounded-[26px] px-3 pb-2 pt-3"
       >

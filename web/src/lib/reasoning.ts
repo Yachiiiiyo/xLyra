@@ -1,4 +1,4 @@
-import type { GatewayModel, GatewayModelReasoning, ReasoningEffort } from '@/features/playground/lib/types'
+import type { GatewayModel, GatewayModelReasoning, ReasoningEffort } from '@/lib/chat-types'
 
 const BASE_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high', 'xhigh']
 
