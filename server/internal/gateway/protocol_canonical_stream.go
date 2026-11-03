@@ -446,7 +446,13 @@ func (d *openAIChatStreamDecoder) DecodeLine(line []byte) ([]canonicalStreamEven
 		for _, citation := range canonicalCitationsFromResponsesAnnotations(choice.Delta.Annotations) {
 			events = append(events, canonicalStreamEvent{Type: canonicalStreamEventCitation, Citation: citation})
 		}
-		if reasoning := firstNonEmptyGatewayString(choice.Delta.ReasoningContent, choice.Delta.Thinking); strings.TrimSpace(reasoning) != "" {
+		// 推理增量必须原样转发:词与词之间的空格常常是单独的一段(或词的前导空格),
+		// 这里不能 TrimSpace 或丢掉纯空白段,否则思考文本会变成「AppStoreConnect」。
+		reasoning := choice.Delta.ReasoningContent
+		if reasoning == "" {
+			reasoning = choice.Delta.Thinking
+		}
+		if reasoning != "" {
 			events = append(events, canonicalStreamEvent{
 				Type:          canonicalStreamEventReasoningDelta,
 				ID:            chunk.ID,
