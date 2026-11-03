@@ -61,7 +61,7 @@ import {
 } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
 import { MAX_SESSION_REFERENCES, referenceChipLabel, type AgentSessionReference } from '@/features/agent/lib/references'
-import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, loadLastSessionId, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
+import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -242,8 +242,8 @@ export function AgentWorkspace() {
   })
   const healthQuery = useQuery({ queryKey: [...agentSettingsKey, 'health'], queryFn: fetchAgentHealth, retry: false, staleTime: 30_000, refetchInterval: 30_000 })
 
-  // 刷新后恢复上次会话：transcript 请求与 sessions/settings 并行发出，不等页面渲染完
-  const [activeId, setActiveId] = useState<string | null>(() => loadLastSessionId())
+  // 打开 Agent 页默认停在无对话的初始页，不恢复上次的会话；选中会话后才进入对话
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [newSession, setNewSession] = useState(false)
   const [timeline, setTimeline] = useState<AgentTimelineData>([])
   const [draft, setDraft] = useState('')
@@ -1027,7 +1027,7 @@ export function AgentWorkspace() {
           <>
             <div className="relative min-h-0 flex-1">
               <div ref={scrollRef} className="h-full overflow-y-auto">
-                <div className="mx-auto max-w-3xl px-4 pb-6 pt-16">
+                <div className="mx-auto max-w-3xl px-4 pb-6 pt-[calc(env(safe-area-inset-top,0px)+5rem)] lg:pt-16">
                   <AgentTimeline
                     items={timeline}
                     sessionId={selectedId ?? undefined}
