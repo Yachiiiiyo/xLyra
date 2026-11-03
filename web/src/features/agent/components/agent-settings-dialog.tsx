@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, FileText, Layers, LoaderCircle, MonitorCog, MoveLeft, Pencil, Search, Settings2, Sparkles, X } from 'lucide-react'
+import { ChevronRight, Layers, LoaderCircle, MonitorCog, MoveLeft, Pencil, Plus, Search, Settings2, Sparkles, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -18,27 +18,23 @@ import {
   fetchAgentConfigEnvelope,
   fetchAgentSkillDetail,
   fetchAgentSkillFile,
-  fetchWorkspaceFile,
   listAgentSkills,
-  putWorkspaceFile,
   updateAgentSkill,
   updateAgentCapabilities,
   updateAgentContextSettings,
   type AgentSkill,
 } from '@/features/agent/api/agent'
+import { buildSkillTemplate, isValidSkillName, syncSkillNameInContent } from '@/features/agent/lib/skill-editor'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { AgentScopePane } from '@/features/agent/components/agent-scope-pane'
 import { AgentEnvironmentPane } from '@/features/agent/components/agent-environment-pane'
 
-const AGENTS_MD_LIMIT = 32_000
-
 const capabilitiesKey = ['agent', 'capabilities'] as const
 const skillsKey = ['agent', 'skills'] as const
-const agentsMdKey = ['agent', 'workspace-file', 'AGENTS.md'] as const
 
-type SettingsTab = 'scope' | 'skills' | 'agentsMd' | 'context' | 'environment'
+type SettingsTab = 'scope' | 'skills' | 'context' | 'environment'
 type MobileSettingsView = 'menu' | 'detail'
 type SettingsActions = {
   save: () => void
@@ -52,7 +48,7 @@ type SettingsActions = {
 type SkillsNav =
   | { view: 'list' }
   | { view: 'detail'; name: string }
-  | { view: 'edit'; name: string }
+  | { view: 'edit'; name: string | null }
 
 type AgentSettingsDialogProps = {
   open: boolean
@@ -83,7 +79,6 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
   const tabs: Array<{ key: SettingsTab; label: string; icon: typeof Sparkles }> = [
     { key: 'scope', label: t('settings.tabScope'), icon: Settings2 },
     { key: 'skills', label: t('settings.tabSkills'), icon: Sparkles },
-    { key: 'agentsMd', label: t('settings.tabPersonality'), icon: FileText },
     { key: 'context', label: t('settings.tabContext'), icon: Layers },
     { key: 'environment', label: t('settings.tabEnvironment'), icon: MonitorCog },
   ]
@@ -100,19 +95,17 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
     ? <AgentScopePane onActionsChange={setPaneActions} />
     : tab === 'skills'
       ? <SkillsPane nav={skillsNav} onNavigate={setSkillsNav} onActionsChange={setPaneActions} />
-      : tab === 'agentsMd'
-        ? <PersonalityPane onActionsChange={setPaneActions} />
-        : tab === 'context'
-          ? <ContextPane onActionsChange={setPaneActions} />
-          : <AgentEnvironmentPane />
+      : tab === 'context'
+        ? <ContextPane onActionsChange={setPaneActions} />
+        : <AgentEnvironmentPane />
 
   const actionsFooter = (
     paneActions ? (
       <Button size="sm" onClick={paneActions.save} disabled={!paneActions.canSave || paneActions.pending}>{t('settings.save')}</Button>
     ) : null
   )
-  // 编辑器类 tab（人格配置正文、skill 编辑）自带内部滚动，外层改为不滚动防双层滚动条
-  const editorTab = tab === 'agentsMd' || (tab === 'skills' && skillsNav.view === 'edit')
+  // 编辑器类 tab（skill 编辑）自带内部滚动，外层改为不滚动防双层滚动条
+  const editorTab = tab === 'skills' && skillsNav.view === 'edit'
 
   const dialogBody = (
     <div className="flex min-h-0 flex-1">
@@ -317,7 +310,9 @@ function SkillsPane({ nav, onNavigate, onActionsChange }: {
     return (
       <SkillEditor
         name={nav.name}
+        existingNames={skills.map((skill) => skill.name)}
         onBack={() => onNavigate(nav.name ? { view: 'detail', name: nav.name } : { view: 'list' })}
+        onSaved={(name) => onNavigate({ view: 'detail', name })}
         onActionsChange={onActionsChange}
       />
     )
@@ -364,6 +359,10 @@ function SkillsPane({ nav, onNavigate, onActionsChange }: {
                 className="pl-9"
               />
             </div>
+            <Button size="sm" variant="secondary" onClick={() => onNavigate({ view: 'edit', name: null })}>
+              <Plus className="h-3.5 w-3.5" />
+              {t('settings.skillAdd')}
+            </Button>
           </div>
 
           <div className="overflow-hidden rounded-xl border border-[hsl(var(--glass-border))]">
@@ -538,28 +537,56 @@ function DetailRow({ label, value, mono = false }: { label: string; value: strin
   )
 }
 
-/** Skill editor: edits the complete agent-owned SKILL.md. */
-function SkillEditor({ name, onBack, onActionsChange }: { name: string; onBack: () => void; onActionsChange: (actions: SettingsActions | null) => void }) {
+/**
+ * Skill editor: edits the complete agent-owned SKILL.md.
+ * name 为 null 时是新建模式：名称输入实时校验（与后端 validSkillName 一致，重名禁止），
+ * 模板预填并与正文第一个 frontmatter 的 name: 行联动（手动改过该行则断开）。
+ */
+function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: {
+  name: string | null
+  existingNames: string[]
+  onBack: () => void
+  onSaved: (name: string) => void
+  onActionsChange: (actions: SettingsActions | null) => void
+}) {
   const { t } = useTranslation('agent')
   const queryClient = useQueryClient()
-  const [contentDraft, setContentDraft] = useState<string | null>(null)
+  const creating = name === null
+  const [template] = useState(() => buildSkillTemplate('', t('settings.skillTemplateDescription'), t('settings.skillBodyPlaceholder')))
+  const [nameDraft, setNameDraft] = useState('')
+  const [contentDraft, setContentDraft] = useState<string | null>(creating ? template : null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const bodyQuery = useQuery({
-    queryKey: ['agent', 'skill-detail', name],
-    queryFn: () => fetchAgentSkillDetail(name),
+    queryKey: ['agent', 'skill-detail', name ?? ''],
+    queryFn: () => fetchAgentSkillDetail(name as string),
+    enabled: name !== null,
     retry: false,
   })
 
-  const content = contentDraft ?? bodyQuery.data?.content ?? ''
-  const canSave = Boolean(bodyQuery.data?.editable && !bodyQuery.isLoading && contentDraft !== null)
+  const content = creating ? (contentDraft ?? '') : (contentDraft ?? bodyQuery.data?.content ?? '')
+  const nameError = !creating || nameDraft === ''
+    ? null
+    : !isValidSkillName(nameDraft)
+      ? t('settings.skillNameInvalid')
+      : existingNames.includes(nameDraft)
+        ? t('settings.skillNameTaken')
+        : null
+  const canSave = creating
+    ? isValidSkillName(nameDraft) && !existingNames.includes(nameDraft)
+    : Boolean(bodyQuery.data?.editable && !bodyQuery.isLoading && contentDraft !== null)
 
+  const saveTarget = creating ? nameDraft : name
   const save = useMutation({
-    mutationFn: () => updateAgentSkill(name, content),
+    mutationFn: () => updateAgentSkill(saveTarget, content),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: skillsKey })
-      await queryClient.invalidateQueries({ queryKey: ['agent', 'skill-detail', name] })
       toast.success(t('settings.skillSaved'))
+      if (creating) {
+        onSaved(nameDraft)
+        return
+      }
+      await queryClient.invalidateQueries({ queryKey: ['agent', 'skill-detail', name] })
       onBack()
     },
     onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
@@ -567,14 +594,20 @@ function SkillEditor({ name, onBack, onActionsChange }: { name: string; onBack: 
 
   const { mutate: saveMutate, isPending: savePending } = save
   const saveAction = useCallback(() => saveMutate(), [saveMutate])
+  const dirty = creating ? contentDraft !== template : contentDraft !== null
 
   useEffect(() => {
-    onActionsChange({ save: saveAction, canSave, pending: savePending, dirty: contentDraft !== null })
+    onActionsChange({ save: saveAction, canSave, pending: savePending, dirty })
     return () => onActionsChange(null)
-  }, [canSave, contentDraft, onActionsChange, saveAction, savePending])
+  }, [canSave, dirty, onActionsChange, saveAction, savePending])
+
+  function handleNameChange(next: string) {
+    setContentDraft((current) => syncSkillNameInContent(current ?? '', nameDraft, next))
+    setNameDraft(next)
+  }
 
   const remove = useMutation({
-    mutationFn: () => deleteAgentSkill(name),
+    mutationFn: () => deleteAgentSkill(name as string),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: skillsKey })
       queryClient.removeQueries({ queryKey: ['agent', 'skill-detail', name] })
@@ -586,7 +619,25 @@ function SkillEditor({ name, onBack, onActionsChange }: { name: string; onBack: 
 
   return (
     <div className="flex h-full flex-col space-y-4">
-      <p className="text-sm font-semibold text-foreground">{name}</p>
+      <p className="text-sm font-semibold text-foreground">{creating ? t('settings.skillCreate') : name}</p>
+
+      {creating ? (
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium text-muted-soft">{t('settings.skillName')}</span>
+          <Input
+            value={nameDraft}
+            onChange={(event) => handleNameChange(event.target.value)}
+            placeholder="my-skill"
+            inputMode="text"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            className="h-9 font-mono text-sm"
+            aria-label={t('settings.skillName')}
+          />
+          {nameError ? <span className="block text-xs text-red-500">{nameError}</span> : null}
+        </label>
+      ) : null}
 
       <label className="flex min-h-0 flex-1 flex-col space-y-1.5">
         <span className="text-xs font-medium text-muted-soft">{t('settings.skillBody')}</span>
@@ -595,12 +646,12 @@ function SkillEditor({ name, onBack, onActionsChange }: { name: string; onBack: 
           onChange={(event) => setContentDraft(event.target.value)}
           placeholder={t('settings.skillBodyPlaceholder')}
           className="h-0 min-h-0 flex-1 resize-none font-mono text-xs leading-5 focus:ring-inset"
-          disabled={bodyQuery.isLoading || bodyQuery.data?.editable !== true}
+          disabled={!creating && (bodyQuery.isLoading || bodyQuery.data?.editable !== true)}
         />
       </label>
 
       <div className="flex items-center gap-2">
-        {bodyQuery.data?.deletable === true ? (
+        {!creating && bodyQuery.data?.deletable === true ? (
           <Button variant="ghost" className="text-destructive" onClick={() => setConfirmDelete(true)}>
             {t('settings.skillDelete')}
           </Button>
@@ -619,53 +670,6 @@ function SkillEditor({ name, onBack, onActionsChange }: { name: string; onBack: 
           remove.mutate()
         }}
       />
-    </div>
-  )
-}
-
-function PersonalityPane({ onActionsChange }: { onActionsChange: (actions: SettingsActions | null) => void }) {
-  const { t } = useTranslation('agent')
-  const queryClient = useQueryClient()
-  const fileQuery = useQuery({ queryKey: agentsMdKey, queryFn: () => fetchWorkspaceFile('AGENTS.md'), retry: false })
-  const [draft, setDraft] = useState<string | null>(null)
-  const content = draft ?? fileQuery.data ?? ''
-  const bytes = new TextEncoder().encode(content).length
-  const overLimit = bytes > AGENTS_MD_LIMIT
-
-  const save = useMutation({
-    mutationFn: () => putWorkspaceFile('AGENTS.md', content),
-    onSuccess: async () => {
-      setDraft(null)
-      await queryClient.invalidateQueries({ queryKey: agentsMdKey })
-      toast.success(t('settings.agentsMdSaved'))
-    },
-    onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
-  })
-  const { mutate: saveMutate, isPending: savePending } = save
-  const saveAction = useCallback(() => saveMutate(), [saveMutate])
-
-  useEffect(() => {
-    onActionsChange({ save: saveAction, canSave: !overLimit && !fileQuery.isLoading && draft !== null, pending: savePending, dirty: draft !== null })
-    return () => onActionsChange(null)
-  }, [draft, fileQuery.isLoading, onActionsChange, overLimit, saveAction, savePending])
-
-  return (
-    <div className="flex h-full flex-col space-y-4">
-      <div className="flex items-center gap-2">
-        <Button size="sm" variant="secondary">AGENTS.md</Button>
-      </div>
-      <TextArea
-        value={content}
-        onChange={(event) => setDraft(event.target.value)}
-        placeholder={t('settings.agentsMdPlaceholder')}
-        disabled={fileQuery.isLoading}
-        aria-label="AGENTS.md"
-        className="h-0 min-h-0 flex-1 resize-none font-mono text-xs leading-5 focus:ring-inset"
-      />
-      <span className={cn('text-xs', overLimit ? 'text-red-500' : 'text-faint')}>
-        {t('settings.agentsMdBytes', { bytes: bytes.toLocaleString(), limit: AGENTS_MD_LIMIT.toLocaleString() })}
-      </span>
-      <p className="text-xs text-faint">{t('settings.effectiveHint')}</p>
     </div>
   )
 }

@@ -1,26 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { BrandMark } from '@/components/common/brand-mark'
 import { buildModelGlyph, siteTypeIconPath } from '@/components/common/brand-utils'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SiteModelScopePicker, type SiteModelScopePatch, type SiteModelScopePolicy } from '@/features/api-keys/components/site-model-scope-picker'
 import { useSiteModelScope } from '@/features/api-keys/lib/use-site-model-scope'
 import { fetchAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentScopeSettings } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
-import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview } from '@/features/agent/lib/agent-scope-preview'
+import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview, type AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
 import { listCanonicalModels, listSitesWithOAuth, type CanonicalModelItem } from '@/features/sites/api/sites'
 import { formatSiteTypeLabel } from '@/features/sites/lib/site-utils'
 import { canonicalModelIconInfo, modelNameIconInfo } from '@/features/sites/lib/model-icon'
 import { toast } from '@/lib/toast'
-import { cn } from '@/lib/utils'
 
 /**
- * 「范围」tab：站点/模型范围的策略与选择（SiteModelScopePicker，与 API Key 页同款）
- * 直接内联渲染在设置弹窗内容区，下方是「当前 Agent 可用范围」的可折叠预览。
+ * 「可用模型」tab：顶部「当前 Agent 可用模型」概览行（信息徽标 + 「查看」打开平铺弹窗），
+ * 下方是站点/模型访问策略的配置（SiteModelScopePicker，与 API Key 页同款）。
  * 草稿与已保存值分离：修改后 dirty，底部「保存」可点，保存 / 取消（关闭弹窗）都会丢弃草稿。
  */
 export function AgentScopePane({ onActionsChange }: { onActionsChange: (actions: { save: () => void; canSave: boolean; pending: boolean; dirty?: boolean } | null) => void }) {
@@ -34,9 +36,7 @@ export function AgentScopePane({ onActionsChange }: { onActionsChange: (actions:
   const [modelPolicy, setModelPolicy] = useState<SiteModelScopePolicy | null>(null)
   const [siteIDs, setSiteIDs] = useState<string[] | null>(null)
   const [siteModelIDs, setSiteModelIDs] = useState<string[] | null>(null)
-  const [previewExpanded, setPreviewExpanded] = useState(false)
-  const [previewSearch, setPreviewSearch] = useState('')
-  const [openSiteIds, setOpenSiteIds] = useState<Set<string>>(() => new Set())
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   const sites = useMemo(() => sitesQuery.data?.items ?? [], [sitesQuery.data])
   const canonicalModels = useMemo(() => canonicalQuery.data?.items ?? [], [canonicalQuery.data])
@@ -104,135 +104,161 @@ export function AgentScopePane({ onActionsChange }: { onActionsChange: (actions:
     modelPolicy: effectiveModelPolicy,
     siteModelIds: effectiveSiteModelIDs,
   }), [available.data, effectiveModelPolicy, effectiveSitePolicy, selectedSiteIDs, effectiveSiteModelIDs])
-  const previewKeyword = previewSearch.trim()
-  const filteredGroups = useMemo(() => filterAgentScopePreview(previewGroups, previewKeyword), [previewGroups, previewKeyword])
   const summary = summarizeAgentScopePreview(previewGroups)
-  const siteSummary = effectiveSitePolicy === 'allow_all'
-    ? t('agent:settings.scope.allSites')
-    : t('agent:settings.scope.siteCount', { count: summary.sites })
-  const modelSummary = effectiveModelPolicy === 'allow_all'
-    ? t('agent:settings.scope.allModels')
-    : t('agent:settings.scope.modelCount', { count: summary.models })
+  const summaryText = effectiveSitePolicy === 'allow_all' && effectiveModelPolicy === 'allow_all'
+    ? `${t('agent:settings.scope.allSites')} · ${t('agent:settings.scope.allModels')}`
+    : effectiveSitePolicy === 'allow_all'
+      ? `${t('agent:settings.scope.allSites')} · ${t('agent:settings.scope.modelCount', { count: summary.models })}`
+      : effectiveModelPolicy === 'allow_all'
+        ? `${t('agent:settings.scope.siteCount', { count: summary.sites })} · ${t('agent:settings.scope.allModels')}`
+        : `${t('agent:settings.scope.siteCount', { count: summary.sites })} · ${t('agent:settings.scope.modelCount', { count: summary.models })}`
 
-  return (
-    <div className="space-y-5">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">{t('agent:settings.scope.title')}</h3>
-        <p className="mt-1 text-xs leading-5 text-muted-soft">{t('agent:settings.scope.description')}</p>
-      </div>
-
-      {noSitesConfigured ? (
+  if (noSitesConfigured) {
+    return (
+      <div className="space-y-5">
         <p className="rounded-xl border border-[hsl(var(--glass-border))] px-4 py-8 text-center text-xs leading-5 text-muted-soft">
           {t('agent:settings.scope.previewEmpty')}
         </p>
-      ) : (
-        <>
-          <SiteModelScopePicker
-            scope={scope}
-            sitesLoading={sitesQuery.isLoading}
-            canonicalModels={canonicalModels}
-            canonicalModelsLoading={canonicalQuery.isLoading}
-            sitePolicy={effectiveSitePolicy}
-            modelPolicy={modelPolicy ?? runtime.data?.model_policy ?? 'allow_all'}
-            siteIds={selectedSiteIDs}
-            siteModelIds={storedSiteModelIDs}
-            onChange={handleScopeChange}
-          />
+      </div>
+    )
+  }
 
-          <section className="overflow-hidden rounded-xl border border-[hsl(var(--glass-border))]">
-            <button
-              type="button"
-              onClick={() => setPreviewExpanded((expanded) => !expanded)}
-              aria-expanded={previewExpanded}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[hsl(var(--surface-subtle))]"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-foreground">{t('agent:settings.scope.previewTitle')}</span>
-                <span className="mt-0.5 block truncate text-xs text-muted-soft">
-                  {t('agent:settings.scope.availableSites')}: {siteSummary} · {t('agent:settings.scope.availableModels')}: {modelSummary}
-                </span>
-              </span>
-              <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-soft transition-transform', previewExpanded && 'rotate-180')} />
-            </button>
-            {previewExpanded ? (
-              <div className="space-y-3 border-t border-[hsl(var(--glass-divider))] px-4 py-3">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
-                  <Input
-                    value={previewSearch}
-                    onChange={(event) => setPreviewSearch(event.target.value)}
-                    placeholder={t('agent:settings.scope.previewSearch')}
-                    className="h-9 pl-9"
-                  />
-                </div>
-                <div className="max-h-72 overflow-y-auto overscroll-contain rounded-lg border border-[hsl(var(--glass-border))]">
-                  {previewLoading ? (
-                    <div className="space-y-2 p-3">
-                      <Skeleton className="h-9 w-full" />
-                      <Skeleton className="h-9 w-full" />
-                      <Skeleton className="h-9 w-2/3" />
-                    </div>
-                  ) : filteredGroups.length === 0 ? (
-                    <p className="py-8 text-center text-xs text-muted-soft">{t('agent:settings.scope.noModels')}</p>
-                  ) : (
-                    filteredGroups.map((group) => (
-                      <ScopePreviewGroup
-                        key={group.site.site_id}
-                        group={group}
-                        canonicalById={canonicalById}
-                        open={previewKeyword ? true : openSiteIds.has(group.site.site_id)}
-                        onToggle={() => setOpenSiteIds((current) => {
-                          const next = new Set(current)
-                          if (next.has(group.site.site_id)) next.delete(group.site.site_id)
-                          else next.add(group.site.site_id)
-                          return next
-                        })}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </section>
-        </>
-      )}
+  return (
+    <div className="space-y-5">
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-[hsl(var(--glass-border))] px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.previewTitle')}</p>
+          <p className="mt-0.5 text-xs text-muted-soft">
+            {summaryText}
+            {dirty ? ` ${t('agent:settings.scope.includesUnsaved')}` : ''}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Badge variant="neutral">{t('agent:settings.scope.siteCount', { count: summary.sites })}</Badge>
+          <Badge variant="neutral">{t('agent:settings.scope.modelCount', { count: summary.models })}</Badge>
+          <Button size="sm" variant="secondary" onClick={() => setPreviewOpen(true)}>
+            {t('agent:settings.scope.view')}
+          </Button>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-foreground">{t('agent:settings.scope.configTitle')}</h3>
+        <SiteModelScopePicker
+          scope={scope}
+          sitesLoading={sitesQuery.isLoading}
+          canonicalModels={canonicalModels}
+          canonicalModelsLoading={canonicalQuery.isLoading}
+          sitePolicy={effectiveSitePolicy}
+          modelPolicy={modelPolicy ?? runtime.data?.model_policy ?? 'allow_all'}
+          siteIds={selectedSiteIDs}
+          siteModelIds={storedSiteModelIDs}
+          onChange={handleScopeChange}
+        />
+      </section>
+
+      <ScopePreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        groups={previewGroups}
+        loading={previewLoading}
+        canonicalById={canonicalById}
+      />
     </div>
+  )
+}
+
+/** 「查看」弹出的第二个 Dialog：搜索框 + 按站点分组的模型平铺列表，内容区滚动，模型行点击复制 model_key。 */
+function ScopePreviewDialog({
+  open,
+  onOpenChange,
+  groups,
+  loading,
+  canonicalById,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  groups: AgentScopePreviewGroup[]
+  loading: boolean
+  canonicalById: Map<string, CanonicalModelItem>
+}) {
+  const { t } = useTranslation(['agent', 'components'])
+  const [search, setSearch] = useState('')
+  const keyword = search.trim()
+  const filteredGroups = useMemo(() => filterAgentScopePreview(groups, keyword), [groups, keyword])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        size="md"
+        aria-describedby={undefined}
+        overlayClassName="z-[60]"
+        className="z-[60] h-[min(80svh,600px)]"
+      >
+        <DialogHeader>
+          <DialogTitle>{t('agent:settings.scope.previewTitle')}</DialogTitle>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 px-6">
+          <div className="relative shrink-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t('agent:settings.scope.previewSearch')}
+              className="h-9 pl-9"
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-[hsl(var(--glass-border))]">
+            {loading ? (
+              <div className="space-y-2 p-3">
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-2/3" />
+              </div>
+            ) : groups.length === 0 ? (
+              <p className="py-8 text-center text-xs leading-5 text-muted-soft">{t('agent:settings.scope.previewEmpty')}</p>
+            ) : filteredGroups.length === 0 ? (
+              <p className="py-8 text-center text-xs text-muted-soft">{t('agent:settings.scope.noModels')}</p>
+            ) : (
+              filteredGroups.map((group) => (
+                <ScopePreviewGroup
+                  key={group.site.site_id}
+                  group={group}
+                  canonicalById={canonicalById}
+                />
+              ))
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>{t('agent:settings.close')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
 function ScopePreviewGroup({
   group,
   canonicalById,
-  open,
-  onToggle,
 }: {
-  group: ReturnType<typeof groupAgentScopePreview>[number]
+  group: AgentScopePreviewGroup
   canonicalById: Map<string, CanonicalModelItem>
-  open: boolean
-  onToggle: () => void
 }) {
   const { t } = useTranslation(['agent', 'components'])
   const site = group.site
   return (
     <div className="border-t border-[hsl(var(--glass-divider))] first:border-t-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[hsl(var(--surface-subtle))]"
-      >
+      <div className="flex items-center gap-3 px-4 py-2.5">
         <BrandMark iconPath={siteTypeIconPath(site.site_type)} label={formatSiteTypeLabel(site.site_type)} fallback={site.site_name} fallbackText={buildModelGlyph(site.site_name)} size="sm" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={site.site_name}>{site.site_name}</span>
         <span className="shrink-0 text-xs tabular-nums text-faint">{t('agent:settings.scope.modelCount', { count: group.models.length })}</span>
-        <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-soft transition-transform', open && 'rotate-180')} />
-      </button>
-      {open ? (
-        <div className="pb-1.5">
-          {group.models.map((model) => (
-            <ScopePreviewModelRow key={model.id} siteName={site.site_name} model={model} canonicalById={canonicalById} />
-          ))}
-        </div>
-      ) : null}
+      </div>
+      <div className="pb-1.5">
+        {group.models.map((model) => (
+          <ScopePreviewModelRow key={model.id} siteName={site.site_name} model={model} canonicalById={canonicalById} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -243,7 +269,7 @@ function ScopePreviewModelRow({
   canonicalById,
 }: {
   siteName: string
-  model: ReturnType<typeof groupAgentScopePreview>[number]['models'][number]
+  model: AgentScopePreviewGroup['models'][number]
   canonicalById: Map<string, CanonicalModelItem>
 }) {
   const { t } = useTranslation(['agent', 'components'])
