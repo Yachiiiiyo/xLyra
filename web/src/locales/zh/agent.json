@@ -8,7 +8,9 @@
     "deleteConfirm": "删除该对话？",
     "menu": "会话菜单",
     "revokeAccess": "撤销本会话的自动允许（{{tools}}）",
-    "revoked": "已撤销本会话的自动允许"
+    "revoked": "已撤销本会话的自动允许",
+    "copyId": "复制会话 ID",
+    "idCopied": "已复制会话 ID"
   },
   "header": {
     "back": "返回"

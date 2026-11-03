@@ -8,7 +8,9 @@
     "deleteConfirm": "このチャットを削除しますか？",
     "menu": "チャットメニュー",
     "revokeAccess": "このチャットの自動許可を取り消す（{{tools}}）",
-    "revoked": "このチャットの自動許可を取り消しました"
+    "revoked": "このチャットの自動許可を取り消しました",
+    "copyId": "セッション ID をコピー",
+    "idCopied": "セッション ID をコピーしました"
   },
   "header": {
     "back": "戻る"

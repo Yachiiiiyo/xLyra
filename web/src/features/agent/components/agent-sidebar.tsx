@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { useTranslation } from 'react-i18next'
-import { Ellipsis, MoveLeft, Plus, Settings2, ShieldOff, Trash2 } from 'lucide-react'
+import { Copy, Ellipsis, MoveLeft, Plus, Settings2, ShieldOff, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { copyToClipboard } from '@/components/common/copy-to-clipboard'
+import { toast } from '@/lib/toast'
 import { AgentConfirmDialog } from '@/features/agent/components/agent-confirm-dialog'
 import { formatRelativeTime } from '@/features/agent/lib/relative-time'
 import type { AgentSession } from '@/features/agent/api/agent'
@@ -59,6 +61,8 @@ export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, 
               menuLabel={t('sidebar.menu')}
               revokeLabel={revokeAccessLabel(session, t)}
               deleteLabel={t('sidebar.delete')}
+              copyIdLabel={t('sidebar.copyId')}
+              idCopiedLabel={t('sidebar.idCopied')}
               onSelect={onSelect}
               onDelete={setPendingDelete}
               onRevoke={onRevokeAccess}
@@ -113,6 +117,8 @@ function SessionRow({
   menuLabel,
   revokeLabel,
   deleteLabel,
+  copyIdLabel,
+  idCopiedLabel,
   onSelect,
   onDelete,
   onRevoke,
@@ -124,6 +130,8 @@ function SessionRow({
   menuLabel: string
   revokeLabel: string
   deleteLabel: string
+  copyIdLabel: string
+  idCopiedLabel: string
   onSelect: (id: string) => void
   onDelete: (id: string) => void
   onRevoke: (id: string) => void
@@ -172,6 +180,20 @@ function SessionRow({
             onClick={(event) => event.stopPropagation()}
             className="lg-regular z-[120] w-max min-w-36 rounded-card p-1.5"
           >
+            <button
+              type="button"
+              data-agent-copy-id="true"
+              onClick={() => {
+                setMenuOpen(false)
+                void copyToClipboard(session.session_id, null, null).then((ok) => {
+                  if (ok) toast.success(idCopiedLabel)
+                })
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-label-2 transition-colors hover:bg-fill-4 hover:text-label"
+            >
+              <Copy className="h-4 w-4 shrink-0 text-current" />
+              {copyIdLabel}
+            </button>
             {revokeLabel ? (
               <button
                 type="button"

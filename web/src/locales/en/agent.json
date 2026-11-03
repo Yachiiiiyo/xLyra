@@ -8,7 +8,9 @@
     "deleteConfirm": "Delete this chat?",
     "menu": "Chat actions",
     "revokeAccess": "Revoke auto-allow in this chat ({{tools}})",
-    "revoked": "Auto-allow revoked for this chat"
+    "revoked": "Auto-allow revoked for this chat",
+    "copyId": "Copy session ID",
+    "idCopied": "Session ID copied"
   },
   "header": {
     "back": "Back"

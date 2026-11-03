@@ -8,6 +8,7 @@ import { MessageAction } from '@/components/chat/message-actions'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import type { ChatAttachment } from '@/lib/chat-types'
+import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/relative-time'
 import { runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
 
 type AgentTimelineProps = {
@@ -74,6 +75,24 @@ function CopyMessageAction({ text }: { text: string }) {
     <MessageAction label={copied ? t('actions.copied') : t('actions.copy')} onClick={() => void copy()}>
       {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
     </MessageAction>
+  )
+}
+
+/** 回复底部的时间:12 小时内相对时间(每半分钟刷新),之后显示具体时间;悬停显示完整时间。 */
+function MessageTime({ at }: { at?: number }) {
+  const { i18n } = useTranslation()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  if (!at) return null
+  const label = formatMessageTime(at, i18n.language, now)
+  if (!label) return null
+  return (
+    <span className="px-1 text-[11px] text-muted-soft tabular-nums" title={formatAbsoluteTime(at, i18n.language, now)}>
+      {label}
+    </span>
   )
 }
 
@@ -206,6 +225,7 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
             // 桌面端 hover 回复文本时显现，移动端无 hover 保持常显
             <div className="flex items-center gap-2 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
               <CopyMessageAction text={replyText} />
+              <MessageTime at={run.endedAt ?? run.startedAt} />
             </div>
           ) : null}
         </div>
@@ -213,6 +233,7 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
         // 回复文本未能提升为最终输出时（如出错 run 的部分输出在过程区），复制入口单独常显
         <div className="flex items-center gap-2">
           <CopyMessageAction text={replyText} />
+          <MessageTime at={run.endedAt ?? run.startedAt} />
         </div>
       ) : null}
 
