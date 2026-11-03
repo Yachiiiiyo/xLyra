@@ -163,7 +163,7 @@ export function RequestDetailContent({ item }: { item: RequestLogItem }) {
             <InlineItem label={t('detail.totalCost')} value={formatCurrency(totalCost, currency)} tone="badge" strong />
             {costFormula !== '-' ? (
               <div className="w-full min-w-0 max-w-full basis-full pt-1">
-                <div className="w-full max-w-full overflow-x-auto rounded-inner border border-separator bg-elevated-1">
+                <div className="w-full max-w-full overflow-x-auto rounded-inner border border-separator bg-fill-3">
                   <code className="block w-max min-w-full whitespace-nowrap px-3 py-2 font-mono text-footnote leading-6 text-label-3">
                     {costFormula}
                   </code>
@@ -226,7 +226,7 @@ export function RequestDetailContent({ item }: { item: RequestLogItem }) {
 
       {!detail.success ? (
         <DetailRow label={t('detail.failureLabel')}>
-          <pre className="max-h-72 min-w-0 overflow-auto rounded-inner border border-separator bg-elevated-1 px-3 py-2 whitespace-pre-wrap break-all text-footnote leading-6 text-label-3">
+          <pre className="max-h-72 min-w-0 overflow-auto rounded-inner border border-separator bg-fill-3 px-3 py-2 whitespace-pre-wrap break-all text-footnote leading-6 text-label-3">
             {formatFailureResponse(detail.failure_response)}
           </pre>
         </DetailRow>
@@ -369,7 +369,7 @@ function InlineValue({
 
   if (tone === 'code') {
     return (
-      <code className="min-w-0 truncate rounded-inner bg-elevated-1 px-2 py-0.5 font-mono text-footnote text-label">
+      <code className="min-w-0 truncate rounded-inner bg-fill-3 px-2 py-0.5 font-mono text-footnote text-label">
         {children}
       </code>
     )

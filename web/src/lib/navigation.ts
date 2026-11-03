@@ -1,7 +1,6 @@
 import {
   Activity,
   BadgeDollarSign,
-  Bot,
   Cable,
   ChartColumn,
   Cloud,
@@ -13,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   ShieldEllipsis,
+  Sparkles,
   Puzzle,
   Waypoints,
   type LucideIcon,
@@ -50,7 +50,7 @@ export function getAppNavSections(t: TFunction, features: NavFeatures = {}): App
         ...(showAgent ? [{
           to: '/agent',
           label: t('nav.agent'),
-          icon: Bot,
+          icon: Sparkles,
           description: 'Run an agent session with tools, approvals and live events.',
         }] : []),
       ],
