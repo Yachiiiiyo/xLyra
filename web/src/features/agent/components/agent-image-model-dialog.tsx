@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, X } from 'lucide-react'
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -10,10 +10,9 @@ import { AgentConfirmDialog } from '@/features/agent/components/agent-confirm-di
 import { dedupeImageModels, fetchAgentRuntimeSettings, updateAgentImageModels, type AgentImageModelSelection } from '@/features/agent/api/agent'
 import { agentImageModelGroups, agentImageModelGroupViews, isImageModelSiteSelected, moveImageModel, removeImageModel, toggleImageModelSite } from '@/features/agent/lib/agent-image-model'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
-import { listCanonicalModels, listSiteModels, listSitesWithOAuth, sitesQueryKeys } from '@/features/sites/api/sites'
-import { siteModelItems } from '@/features/sites/lib/site-cache'
+import { listAllSiteModels, listCanonicalModels, listSitesLite, sitesQueryKeys } from '@/features/sites/api/sites'
+import { SiteModelTabsSelector } from '@/features/api-keys/components/site-model-scope-picker'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 
 /**
@@ -26,29 +25,23 @@ export function AgentImageModelDialog({ open, onOpenChange }: {
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { t } = useTranslation('agent')
+  const { t } = useTranslation(['agent', 'api-keys'])
   const mobileLayout = useMobileLayout()
   const queryClient = useQueryClient()
   const runtime = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false, enabled: open })
-  const sitesQuery = useQuery({ queryKey: [...agentSettingsKey, 'sites'], queryFn: listSitesWithOAuth, retry: false, enabled: open })
+  const sitesQuery = useQuery({ queryKey: [...agentSettingsKey, 'sites'], queryFn: listSitesLite, retry: false, enabled: open })
   const canonicalQuery = useQuery({ queryKey: [...agentSettingsKey, 'canonical-models'], queryFn: listCanonicalModels, retry: false, enabled: open })
   const [draft, setDraft] = useState<AgentImageModelSelection[] | undefined>(undefined)
   const [activeSiteId, setActiveSiteId] = useState<string | null>(null)
+  const [modelSearch, setModelSearch] = useState('')
   const [confirmClose, setConfirmClose] = useState(false)
   const enabledSites = useMemo(() => (sitesQuery.data?.items ?? []).filter((site) => site.enabled), [sitesQuery.data])
   const canonicalById = useMemo(() => new Map((canonicalQuery.data?.items ?? []).map((model) => [model.id, model])), [canonicalQuery.data])
-  const modelQueries = useQueries({
-    queries: enabledSites.map((site) => ({
-      queryKey: sitesQueryKeys.models(site.id),
-      queryFn: () => listSiteModels(site.id),
-      retry: false,
-      enabled: open,
-    })),
-  })
+  const modelsQuery = useQuery({ queryKey: sitesQueryKeys.allModels(), queryFn: listAllSiteModels, retry: false, staleTime: 0, enabled: open })
   const groups = useMemo(() => {
-    const modelsBySite = new Map(enabledSites.map((site, index) => [site.id, siteModelItems(modelQueries[index]?.data)]))
+    const modelsBySite = new Map(enabledSites.map((site) => [site.id, modelsQuery.data?.[site.id] ?? []]))
     return agentImageModelGroupViews(agentImageModelGroups(enabledSites, modelsBySite, canonicalById), canonicalById)
-  }, [enabledSites, modelQueries, canonicalById])
+  }, [enabledSites, modelsQuery.data, canonicalById])
   const names = useMemo(() => new Map(groups.flatMap((group) => group.models.map(({ model, key }) => [key, model.display_name || key] as const))), [groups])
   const siteNames = useMemo(() => new Map(groups.map((group) => [group.site.id, group.site.name] as const)), [groups])
   // 每个模型 key 实际由哪些站点提供(「不限站点」的旧条目按它展开)
@@ -57,10 +50,26 @@ export function AgentImageModelDialog({ open, onOpenChange }: {
     for (const group of groups) for (const { key } of group.models) map.set(key, [...(map.get(key) ?? []), group.site.id])
     return map
   }, [groups])
-  const loading = sitesQuery.isLoading || modelQueries.some((query) => query.isLoading)
-  const failed = sitesQuery.isError || modelQueries.some((query) => query.isError)
+  const loading = sitesQuery.isLoading || modelsQuery.isLoading
+  const failed = sitesQuery.isError || modelsQuery.isError
   const selected = draft ?? runtime.data?.image_models ?? []
   const activeGroup = groups.find((group) => group.site.id === activeSiteId) ?? groups[0]
+  const modelSearchKeyword = modelSearch.trim().toLowerCase()
+  const filteredModels = activeGroup?.models.filter(({ model, key }) => !modelSearchKeyword || `${model.display_name} ${key}`.toLowerCase().includes(modelSearchKeyword)) ?? []
+  const filteredImageModels = filteredModels.map(({ model }) => model)
+  const selectedOnActiveSite = (key: string) => Boolean(activeGroup && isImageModelSiteSelected(selected, key, activeGroup.site.id))
+  const hasSelectableFilteredModels = filteredModels.some(({ key }) => activeGroup && !isImageModelSiteSelected(selected, key, activeGroup.site.id))
+  const hasClearableFilteredModels = filteredModels.some(({ key }) => activeGroup && isImageModelSiteSelected(selected, key, activeGroup.site.id))
+
+  function toggleFilteredImageModels(select: boolean) {
+    if (!activeGroup) return
+    let next = selected
+    for (const { key } of filteredModels) {
+      const checked = isImageModelSiteSelected(next, key, activeGroup.site.id)
+      if (checked !== select) next = toggleImageModelSite(next, key, activeGroup.site.id, providers.get(key) ?? [])
+    }
+    setDraft(next)
+  }
   // 与已保存的配置逐项比较:改了又改回来不算未保存
   const dirty = draft !== undefined && JSON.stringify(dedupeImageModels(draft)) !== JSON.stringify(dedupeImageModels(runtime.data?.image_models ?? []))
 
@@ -86,22 +95,8 @@ export function AgentImageModelDialog({ open, onOpenChange }: {
     else close()
   }
 
-  return (
+  const content = (
     <>
-      <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) requestClose() }}>
-        <DialogContent
-          size="form"
-          aria-describedby={undefined}
-          overlayClassName="z-[60]"
-          onBack={mobileLayout ? requestClose : undefined}
-          backLabel={t('settings.tabScope')}
-          className={AGENT_CONFIG_DIALOG_CLASS}
-        >
-          <DialogHeader>
-            <DialogTitle>{t('settings.scope.imageDialogTitle')}</DialogTitle>
-            <DialogDescription className="max-lg:sr-only">{t('settings.scope.imageDialogHint')}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-5">
             {loading ? (
               <div className="space-y-2">
                 <Skeleton className="h-9 w-full" />
@@ -117,7 +112,7 @@ export function AgentImageModelDialog({ open, onOpenChange }: {
                   variant="outline"
                   onClick={() => {
                     void sitesQuery.refetch()
-                    for (const query of modelQueries) if (query.isError) void query.refetch()
+                    void modelsQuery.refetch()
                   }}
                 >
                   {t('settings.scope.imageRetry')}
@@ -128,46 +123,36 @@ export function AgentImageModelDialog({ open, onOpenChange }: {
             ) : (
               <>
               <section className="space-y-2">
-              <div className="flex h-80 shrink-0 flex-col overflow-hidden rounded-xl border border-[hsl(var(--glass-border))] md:flex-row">
-                <div className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-[hsl(var(--glass-divider))] md:max-h-none md:w-56 md:border-b-0 md:border-r">
-                  <p className="px-4 py-3 text-xs text-muted-soft">{t('settings.scope.imageSites')}</p>
-                  {groups.map(({ site, models }) => (
-                    <button
-                      key={site.id}
-                      type="button"
-                      onClick={() => setActiveSiteId(site.id)}
-                      className={cn(
-                        'flex items-center justify-between gap-2 px-4 py-2.5 text-left text-sm transition-colors hover:bg-[hsl(var(--surface-subtle))]',
-                        activeGroup?.site.id === site.id && 'nav-item-selected font-medium text-foreground',
-                      )}
-                    >
-                      <span className="min-w-0 truncate" title={site.name}>{site.name}</span>
-                      <span className="shrink-0 text-xs text-muted-soft tabular-nums">
-                        {`${models.filter(({ key }) => isImageModelSiteSelected(selected, key, site.id)).length}/${models.length}`}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                  <p className="border-b border-[hsl(var(--glass-divider))] px-4 py-3 text-xs text-muted-soft">{t('settings.scope.imageModels')}</p>
-                  <div className="min-h-0 flex-1 overflow-y-auto">
-                    {activeGroup?.models.map(({ model, key }) => (
-                      <label key={model.id} className="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-[hsl(var(--surface-subtle))]">
-                        <input
-                          type="checkbox"
-                          checked={isImageModelSiteSelected(selected, key, activeGroup.site.id)}
-                          onChange={() => setDraft(toggleImageModelSite(selected, key, activeGroup.site.id, providers.get(key) ?? []))}
-                          className="h-4 w-4 shrink-0 accent-[hsl(var(--primary))]"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-foreground">{model.display_name || model.upstream_model_name}</span>
-                          <span className="block truncate text-xs text-muted-soft">{key}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              <SiteModelTabsSelector
+                  sites={groups.map(({ site, models }) => ({
+                    id: site.id,
+                    name: site.name,
+                    siteType: site.site_type,
+                    selected: models.filter(({ key }) => isImageModelSiteSelected(selected, key, site.id)).length,
+                    total: models.length,
+                  }))}
+                  focusedSiteId={activeGroup?.site.id ?? null}
+                  onFocusSite={setActiveSiteId}
+                  models={filteredImageModels}
+                  canonicalById={canonicalById}
+                  modelSearch={modelSearch}
+                  onModelSearchChange={setModelSearch}
+                  onSelectAll={() => toggleFilteredImageModels(true)}
+                  onClearAll={() => toggleFilteredImageModels(false)}
+                  selectAllDisabled={!hasSelectableFilteredModels}
+                  clearAllDisabled={!hasClearableFilteredModels}
+                  isSelected={(model) => filteredModels.some(({ model: item, key }) => item.id === model.id && selectedOnActiveSite(key))}
+                  onToggle={(model, checked) => {
+                    const key = filteredModels.find(({ model: item }) => item.id === model.id)?.key ?? model.upstream_model_name
+                    if (checked !== selectedOnActiveSite(key)) {
+                      setDraft(toggleImageModelSite(selected, key, activeGroup!.site.id, providers.get(key) ?? []))
+                    }
+                  }}
+                  primaryFor={(model) => model.display_name || model.upstream_model_name}
+                  secondaryFor={(model) => filteredModels.find(({ model: item }) => item.id === model.id)?.key ?? model.upstream_model_name}
+                  selectedCount={selected.length}
+                  loading={loading}
+                />
               </section>
               <section className="space-y-2">
                 <div className="flex items-start justify-between gap-2">
@@ -213,7 +198,25 @@ export function AgentImageModelDialog({ open, onOpenChange }: {
               </section>
               </>
             )}
-          </DialogBody>
+    </>
+  )
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) requestClose() }}>
+        <DialogContent
+          size="form"
+          aria-describedby={undefined}
+          overlayClassName="z-[60]"
+          onBack={mobileLayout ? requestClose : undefined}
+          backLabel={t('settings.tabScope')}
+          className={AGENT_CONFIG_DIALOG_CLASS}
+        >
+          <DialogHeader>
+            <DialogTitle>{t('settings.scope.imageDialogTitle')}</DialogTitle>
+            <DialogDescription className="max-lg:sr-only">{t('settings.scope.imageDialogHint')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-5">{content}</DialogBody>
           <div className="shrink-0">
             {dirty ? <p className="px-6 pt-3 text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p> : null}
             <DialogFooter

@@ -2,15 +2,18 @@ import * as React from 'react'
 import { act } from 'react'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentImageModelDialog } from './agent-image-model-dialog'
 import { updateAgentImageModels, type AgentImageModelSelection } from '@/features/agent/api/agent'
 import zhAgent from '@/locales/zh/agent.json'
 import zhCommon from '@/locales/zh/common.json'
+import zhApiKeys from '@/locales/zh/api-keys.json'
 
 const queryState = vi.hoisted(() => ({ imageModels: [] as Array<AgentImageModelSelection | string>, failed: false, retry: vi.fn(), empty: false }))
 const mutation = vi.hoisted(() => ({ options: undefined as undefined | { mutationFn: () => Promise<unknown>; onSuccess?: () => Promise<void> | void } }))
 const onOpenChange = vi.hoisted(() => vi.fn())
+const layout = vi.hoisted(() => ({ mobile: false }))
 
 vi.mock('@radix-ui/react-dialog', async () => {
   const React = await import('react')
@@ -30,23 +33,27 @@ vi.mock('@tanstack/react-query', () => ({
         { id: 'text-only', name: 'Text only', enabled: true, site_type: 'openai' },
         { id: 'disabled', name: 'Disabled', enabled: false, site_type: 'openai' },
       ] }, isLoading: false, isError: false, refetch: queryState.retry }
+    if (queryKey.at(-2) === 'models' && key === 'all') {
+      const modelsBySite = {
+        alpha: [
+          { id: 'alpha-shared', site_id: 'alpha', upstream_model_name: 'upstream-shared', display_name: 'Alpha Shared', canonical_model_id: 'canonical-shared', capabilities: { output_modalities: ['image'] }, status: 'active' },
+        ],
+        beta: [
+          { id: 'beta-shared', site_id: 'beta', upstream_model_name: 'upstream-shared', display_name: 'Beta Shared', canonical_model_id: 'canonical-shared', capabilities: { output_modalities: ['image'] }, status: 'active' },
+          { id: 'beta-other', site_id: 'beta', upstream_model_name: 'upstream-other', display_name: 'Other', canonical_model_id: 'canonical-other', capabilities: { supported_endpoint_types: ['openai-image'] }, status: 'active' },
+        ],
+        'text-only': [
+          { id: 'text', site_id: 'text-only', upstream_model_name: 'gpt', display_name: 'GPT', canonical_model_id: '', capabilities: { supported_endpoint_types: ['openai'] }, status: 'active' },
+        ],
+        disabled: [],
+      }
+      return { data: queryState.empty ? {} : modelsBySite, isLoading: false, isError: false, refetch: vi.fn() }
+    }
     return { data: { items: [
       { id: 'canonical-shared', model_key: 'shared', display_name: 'Shared', capabilities: {} },
       { id: 'canonical-other', model_key: 'other', display_name: 'Other', capabilities: {} },
     ] }, isLoading: false, isError: false, refetch: vi.fn() }
   },
-  useQueries: ({ queries }: { queries: Array<{ queryKey: string[] }> }) => queries.map((query) => {
-    const siteId = query.queryKey.at(-1)
-    const models = siteId === 'alpha' ? [
-      { id: 'alpha-shared', site_id: 'alpha', upstream_model_name: 'upstream-shared', display_name: 'Alpha Shared', canonical_model_id: 'canonical-shared', capabilities: { output_modalities: ['image'] }, status: 'active' },
-    ] : siteId === 'beta' ? [
-      { id: 'beta-shared', site_id: 'beta', upstream_model_name: 'upstream-shared', display_name: 'Beta Shared', canonical_model_id: 'canonical-shared', capabilities: { output_modalities: ['image'] }, status: 'active' },
-      { id: 'beta-other', site_id: 'beta', upstream_model_name: 'upstream-other', display_name: 'Other', canonical_model_id: 'canonical-other', capabilities: { supported_endpoint_types: ['openai-image'] }, status: 'active' },
-    ] : siteId === 'text-only' ? [
-      { id: 'text', site_id: 'text-only', upstream_model_name: 'gpt', display_name: 'GPT', canonical_model_id: '', capabilities: { supported_endpoint_types: ['openai'] }, status: 'active' },
-    ] : []
-    return { data: { items: queryState.empty ? [] : models }, isLoading: false, isError: false, refetch: vi.fn() }
-  }),
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useMutation: (options: { mutationFn: () => Promise<unknown>; onSuccess?: () => Promise<void> | void }) => {
     mutation.options = options
@@ -57,12 +64,15 @@ vi.mock('@/features/agent/api/agent', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/features/agent/api/agent')>(),
   updateAgentImageModels: vi.fn(),
 }))
-vi.mock('@/hooks/use-media-query', () => ({ useMobileLayout: () => false }))
+vi.mock('@/hooks/use-media-query', () => ({ useMobileLayout: () => layout.mobile }))
+vi.mock('@/features/appearance/api/appearance', () => ({ useHasAppBackground: () => false }))
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const i18n = createInstance()
 beforeAll(async () => {
-  await i18n.init({ lng: 'zh', defaultNS: 'agent', ns: ['agent', 'common'], resources: { zh: { agent: zhAgent, common: zhCommon } } })
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  vi.stubGlobal('MutationObserver', class { observe() {} disconnect() {} })
+  await i18n.init({ lng: 'zh', defaultNS: 'agent', ns: ['agent', 'common', 'api-keys'], resources: { zh: { agent: zhAgent, common: zhCommon, 'api-keys': zhApiKeys } } })
 })
 beforeEach(() => {
   queryState.imageModels = []
@@ -71,13 +81,14 @@ beforeEach(() => {
   queryState.retry.mockReset()
   mutation.options = undefined
   onOpenChange.mockReset()
+  layout.mobile = false
   vi.mocked(updateAgentImageModels).mockReset().mockResolvedValue(undefined)
 })
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function mountDialog() {
+async function mountDialog(path = '/') {
   const doc = new MiniDocument()
   const container = doc.createElement('div')
   doc.body.appendChild(container)
@@ -92,7 +103,7 @@ async function mountDialog() {
   const root = createRoot(container as unknown as Element)
   try {
     await act(async () => {
-      root.render(<I18nextProvider i18n={i18n}><AgentImageModelDialog open onOpenChange={onOpenChange} /></I18nextProvider>)
+      root.render(<I18nextProvider i18n={i18n}><MemoryRouter initialEntries={[path]}><AgentImageModelDialog open onOpenChange={onOpenChange} /></MemoryRouter></I18nextProvider>)
     })
     await flushUpdates()
   } catch (error) {
@@ -118,20 +129,18 @@ async function flushUpdates() {
 
 async function click(node: MiniNode | null) {
   expect(node).not.toBeNull()
-  await act(async () => { node!.dispatchEvent(inputEvent(node!, 'click')) })
+  const eventType = node!.getAttribute('role') === 'tab' ? 'mousedown' : 'click'
+  await act(async () => { node!.dispatchEvent(inputEvent(node!, eventType)) })
   await flushUpdates()
 }
 
 async function toggle(node: MiniNode | null) {
-  expect(node).not.toBeNull()
-  const input = node as MiniNode & { checked?: boolean }
-  input.checked = !input.checked
-  await act(async () => { input.dispatchEvent(inputEvent(input, 'click')) })
-  await flushUpdates()
+  await click(node)
 }
 
 function findButton(node: MiniNode, label: string): MiniNode | null {
-  return findAll(node, (item) => item.tagName === 'BUTTON' && item.textContent.trim() === label)[0] ?? null
+  const buttons = findAll(node, (item) => item.tagName === 'BUTTON')
+  return buttons.find((item) => item.textContent.trim() === label) ?? null
 }
 
 function findAll(node: MiniNode, predicate: (node: MiniNode) => boolean): MiniNode[] {
@@ -139,7 +148,7 @@ function findAll(node: MiniNode, predicate: (node: MiniNode) => boolean): MiniNo
 }
 
 function checkboxes(container: MiniNode) {
-  return findAll(container, (node) => node.tagName === 'INPUT' && node.type === 'checkbox')
+  return findAll(container, (node) => node.getAttribute('role') === 'checkbox')
 }
 
 function selectedOrder(container: MiniNode) {
@@ -176,7 +185,7 @@ describe('AgentImageModelDialog 多选与顺序', () => {
       expect(siteChips(mounted.container)).toEqual(['Alpha'])
 
       await click(findButton(mounted.container, 'Beta0/2'))
-      expect(checkboxes(mounted.container)[0]?.checked).toBe(false)
+      expect(checkboxes(mounted.container)[0]?.getAttribute('aria-checked')).toBe('false')
       await toggle(checkboxes(mounted.container)[0])
       expect(mounted.container.textContent).toContain('Alpha1/1')
       expect(mounted.container.textContent).toContain('Beta1/2')
@@ -188,7 +197,7 @@ describe('AgentImageModelDialog 多选与顺序', () => {
       await click(findButton(mounted.container, 'Beta1/2'))
       expect(mounted.container.textContent).toContain('Alpha0/1')
       expect(mounted.container.textContent).toContain('Beta1/2')
-      expect(checkboxes(mounted.container)[0]?.checked).toBe(true)
+      expect(checkboxes(mounted.container)[0]?.getAttribute('aria-checked')).toBe('true')
       expect(siteChips(mounted.container)).toEqual(['Beta'])
     } finally { await mounted.unmount() }
   })
@@ -284,12 +293,12 @@ describe('AgentImageModelDialog 多选与顺序', () => {
     queryState.imageModels = imageModels
     const mounted = await mountDialog()
     try {
-      expect(checkboxes(mounted.container)[0]?.checked).toBe(true)
+      expect(checkboxes(mounted.container)[0]?.getAttribute('aria-checked')).toBe('true')
       expect(mounted.container.textContent).toContain('Alpha1/1')
       expect(mounted.container.textContent).toContain('Beta1/2')
       expect(siteChips(mounted.container)).toEqual(['Alpha', 'Beta'])
       await click(findButton(mounted.container, 'Beta1/2'))
-      expect(checkboxes(mounted.container)[0]?.checked).toBe(true)
+      expect(checkboxes(mounted.container)[0]?.getAttribute('aria-checked')).toBe('true')
     } finally { await mounted.unmount() }
   })
 
@@ -367,6 +376,7 @@ interface MiniEvent {
   cancelable: boolean
   defaultPrevented: boolean
   button: number
+  ctrlKey: boolean
   eventPhase: number
   timeStamp: number
   stopped: boolean
@@ -414,6 +424,13 @@ class MiniNode {
   hasAttribute(name: string) { return Object.prototype.hasOwnProperty.call(this.attributes, name) }
   setAttributeNS(_namespace: string, name: string, value: string) { this.setAttribute(name, value) }
   focus() {}
+  scrollIntoView() {}
+  querySelector(selector: string) { return this.querySelectorAll(selector)[0] ?? null }
+  querySelectorAll(selector: string) {
+    if (selector === '[role="tab"]') return findAll(this, (node) => node.getAttribute('role') === 'tab')
+    if (selector === '[role="tab"][data-state="active"]') return findAll(this, (node) => node.getAttribute('role') === 'tab' && node.getAttribute('data-state') === 'active')
+    return []
+  }
   appendChild<T extends MiniNode>(child: T) { return this.insertBefore(child, null) }
   insertBefore<T extends MiniNode>(child: T, before: MiniNode | null) {
     if (child.parentNode) child.parentNode.removeChild(child)
@@ -473,7 +490,7 @@ class MiniDocument {
 function inputEvent(target: MiniNode, type: string): MiniEvent {
   return {
     type, target, currentTarget: target, bubbles: true, cancelable: true, defaultPrevented: false,
-    button: 0, eventPhase: 2, timeStamp: 0, stopped: false,
+    button: 0, ctrlKey: false, eventPhase: 2, timeStamp: 0, stopped: false,
     preventDefault() { this.defaultPrevented = true }, stopPropagation() { this.stopped = true },
   }
 }
