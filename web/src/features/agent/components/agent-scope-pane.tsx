@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SiteModelScopePicker, type SiteModelScopePatch, type SiteModelScopePolicy } from '@/features/api-keys/components/site-model-scope-picker'
 import { useSiteModelScope } from '@/features/api-keys/lib/use-site-model-scope'
+import { useMobileLayout } from '@/hooks/use-media-query'
 import { fetchAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentScopeSettings } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
 import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview, type AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
@@ -166,7 +167,7 @@ export function AgentScopePane({ onActionsChange }: { onActionsChange: (actions:
 }
 
 /** 「查看」弹出的第二个 Dialog：搜索框 + 按站点分组的模型平铺列表，内容区滚动，模型行点击复制 model_key。 */
-function ScopePreviewDialog({
+export function ScopePreviewDialog({
   open,
   onOpenChange,
   groups,
@@ -180,6 +181,7 @@ function ScopePreviewDialog({
   canonicalById: Map<string, CanonicalModelItem>
 }) {
   const { t } = useTranslation(['agent', 'components'])
+  const mobileLayout = useMobileLayout()
   const [search, setSearch] = useState('')
   const keyword = search.trim()
   const filteredGroups = useMemo(() => filterAgentScopePreview(groups, keyword), [groups, keyword])
@@ -190,6 +192,8 @@ function ScopePreviewDialog({
         size="md"
         aria-describedby={undefined}
         overlayClassName="z-[60]"
+        onBack={mobileLayout ? () => onOpenChange(false) : undefined}
+        backLabel={t('agent:settings.tabScope')}
         className="z-[60] h-[min(80svh,600px)]"
       >
         <DialogHeader>
@@ -227,9 +231,11 @@ function ScopePreviewDialog({
             )}
           </div>
         </div>
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>{t('agent:settings.close')}</Button>
-        </DialogFooter>
+        {!mobileLayout ? (
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>{t('agent:settings.close')}</Button>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

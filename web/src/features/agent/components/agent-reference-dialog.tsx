@@ -42,7 +42,7 @@ export function AgentReferenceDialog({ open, onOpenChange, sessions, currentId, 
       <DialogContent size="sm" className="w-[min(92vw,480px)]">
         <DialogHeader>
           <DialogTitle>{t('reference.dialogTitle')}</DialogTitle>
-          <DialogDescription>{t('reference.dialogHint')}</DialogDescription>
+          <DialogDescription className="max-lg:sr-only">{t('reference.dialogHint')}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-3">
           <Input

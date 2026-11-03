@@ -20,14 +20,15 @@ type AgentSidebarProps = {
   onFork: (id: string) => void
   onRevokeAccess: (id: string) => void
   onOpenSettings: () => void
+  hasBackgroundImage?: boolean
 }
 
-export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onFork, onRevokeAccess, onOpenSettings }: AgentSidebarProps) {
+export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, onNew, onDelete, onFork, onRevokeAccess, onOpenSettings, hasBackgroundImage = false }: AgentSidebarProps) {
   const { t, i18n } = useTranslation('agent')
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   return (
-    <div className={cn('flex h-full min-h-0 flex-col p-3', className)}>
+    <div className={cn('flex h-full min-h-0 flex-col p-3 max-lg:p-4', className)}>
       <button
         type="button"
         onClick={onBack}
@@ -46,7 +47,7 @@ export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, 
         {t('sidebar.new')}
       </button>
 
-      <p className="mt-4 max-lg:mt-2 px-3 max-lg:px-2.5 pb-2 max-lg:pb-1.5 text-xs max-lg:text-[0.68rem] font-medium text-faint">{t('sidebar.recent')}</p>
+      <p className={cn('mt-4 max-lg:mt-2 px-3 max-lg:px-2.5 pb-2 max-lg:pb-1.5 text-xs max-lg:text-[0.68rem] font-medium', hasBackgroundImage ? 'text-label-2' : 'text-faint')}>{t('sidebar.recent')}</p>
 
       <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain">
         {sessions.length === 0 ? (
@@ -69,6 +70,7 @@ export function AgentSidebar({ className, sessions, activeId, onBack, onSelect, 
               onDelete={setPendingDelete}
               onFork={onFork}
               onRevoke={onRevokeAccess}
+              hasBackgroundImage={hasBackgroundImage}
             />
           ))
         )}
@@ -127,6 +129,7 @@ function SessionRow({
   onDelete,
   onFork,
   onRevoke,
+  hasBackgroundImage,
 }: {
   session: AgentSession
   active: boolean
@@ -142,6 +145,7 @@ function SessionRow({
   onDelete: (id: string) => void
   onFork: (id: string) => void
   onRevoke: (id: string) => void
+  hasBackgroundImage: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -163,7 +167,7 @@ function SessionRow({
       >
         <span className="block truncate">{session.title || session.preview || untitledLabel}</span>
       </button>
-      <span className="shrink-0 text-[11px] text-faint">{formatRelativeTime(session.updated_at, locale)}</span>
+      <span className={cn('shrink-0 text-[11px]', hasBackgroundImage ? 'text-label-2' : 'text-faint')}>{formatRelativeTime(session.updated_at, locale)}</span>
       <PopoverPrimitive.Root open={menuOpen} onOpenChange={setMenuOpen}>
         <PopoverPrimitive.Trigger asChild>
           <button

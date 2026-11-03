@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { ChevronRight, Layers, LoaderCircle, MonitorCog, MoveLeft, Pencil, Plus, Search, Settings2, Sparkles, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AgentConfirmDialog } from '@/features/agent/components/agent-confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -101,7 +101,7 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
 
   const actionsFooter = (
     paneActions ? (
-      <Button size="sm" onClick={paneActions.save} disabled={!paneActions.canSave || paneActions.pending}>{t('settings.save')}</Button>
+      <Button onClick={paneActions.save} disabled={!paneActions.canSave || paneActions.pending}>{t('settings.save')}</Button>
     ) : null
   )
   // 编辑器类 tab（skill 编辑）自带内部滚动，外层改为不滚动防双层滚动条
@@ -162,12 +162,15 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
         )}>
           {tabContent}
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[hsl(var(--glass-divider))] px-6 py-3">
+        <div className="shrink-0">
           {paneActions?.dirty ? (
-            <p className="mr-auto text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
+            <p className="px-6 pt-3 text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
           ) : null}
-          <Button variant="outline" size="sm" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>
-          {actionsFooter}
+          <DialogFooter
+            className={cn('py-3', paneActions?.dirty && 'border-t-0')}
+            cancel={<Button variant="outline" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>}
+            confirm={actionsFooter}
+          />
         </div>
       </div>
     </div>
@@ -177,7 +180,7 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 主程序的 DialogHeader 在移动端为左上角的圆形关闭/返回按钮留了位置 */}
       <DialogHeader>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-faint">{t('settings.title')}</p>
+        <DialogTitle>{t('settings.title')}</DialogTitle>
       </DialogHeader>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-2">
         {tabs.map((item) => (
@@ -201,7 +204,7 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
   ) : (
     <div className="flex min-h-0 flex-1 flex-col">
       <DialogHeader>
-        <p className="truncate text-[15px] font-semibold text-foreground">{tabs.find((item) => item.key === tab)?.label}</p>
+        <DialogTitle className="truncate">{tabs.find((item) => item.key === tab)?.label}</DialogTitle>
       </DialogHeader>
       <div className={cn(
         'min-h-0 flex-1 overscroll-contain px-4 py-4',
@@ -209,13 +212,18 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
       )}>
         {tabContent}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[hsl(var(--glass-divider))] px-4 py-3">
-        {paneActions?.dirty ? (
-          <p className="mr-auto text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
-        ) : null}
-        <Button variant="outline" size="sm" onClick={closeDialog} disabled={paneActions?.pending}>{t('settings.cancel')}</Button>
-        {actionsFooter}
-      </div>
+      {paneActions ? (
+        <div className="shrink-0">
+          {paneActions.dirty ? (
+            <p className="px-6 pt-3 text-xs text-amber-500">{t('settings.scope.unsavedChanges')}</p>
+          ) : null}
+          <DialogFooter
+            className={paneActions.dirty ? 'border-t-0' : undefined}
+            cancel={<Button variant="outline" onClick={closeDialog} disabled={paneActions.pending}>{t('settings.cancel')}</Button>}
+            confirm={actionsFooter}
+          />
+        </div>
+      ) : null}
     </div>
   )
 
@@ -248,7 +256,7 @@ export function AgentSettingsDialog({ open, onOpenChange }: AgentSettingsDialogP
             : 'h-[min(80svh,620px)] w-[min(94vw,920px)]',
         )}
       >
-        <DialogTitle className="sr-only">{t('settings.title')}</DialogTitle>
+        {!mobileLayout ? <DialogTitle className="sr-only">{t('settings.title')}</DialogTitle> : null}
         {mobileLayout ? mobileDialogBody : dialogBody}
       </DialogContent>
     </Dialog>
@@ -542,7 +550,7 @@ function DetailRow({ label, value, mono = false }: { label: string; value: strin
  * name 为 null 时是新建模式：名称输入实时校验（与后端 validSkillName 一致，重名禁止），
  * 模板预填并与正文第一个 frontmatter 的 name: 行联动（手动改过该行则断开）。
  */
-function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: {
+export function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: {
   name: string | null
   existingNames: string[]
   onBack: () => void
@@ -550,17 +558,20 @@ function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: 
   onActionsChange: (actions: SettingsActions | null) => void
 }) {
   const { t } = useTranslation('agent')
+  const mobileLayout = useMobileLayout()
   const queryClient = useQueryClient()
-  const creating = name === null
+  const [createdName, setCreatedName] = useState<string | null>(null)
+  const editingName = createdName ?? name
+  const creating = editingName === null
   const [template] = useState(() => buildSkillTemplate('', t('settings.skillTemplateDescription'), t('settings.skillBodyPlaceholder')))
   const [nameDraft, setNameDraft] = useState('')
   const [contentDraft, setContentDraft] = useState<string | null>(creating ? template : null)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const bodyQuery = useQuery({
-    queryKey: ['agent', 'skill-detail', name ?? ''],
-    queryFn: () => fetchAgentSkillDetail(name as string),
-    enabled: name !== null,
+    queryKey: ['agent', 'skill-detail', editingName ?? ''],
+    queryFn: () => fetchAgentSkillDetail(editingName as string),
+    enabled: editingName !== null,
     retry: false,
   })
 
@@ -576,18 +587,24 @@ function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: 
     ? isValidSkillName(nameDraft) && !existingNames.includes(nameDraft)
     : Boolean(bodyQuery.data?.editable && !bodyQuery.isLoading && contentDraft !== null)
 
-  const saveTarget = creating ? nameDraft : name
+  const saveTarget = creating ? nameDraft : editingName
   const save = useMutation({
     mutationFn: () => updateAgentSkill(saveTarget, content),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: skillsKey })
       toast.success(t('settings.skillSaved'))
       if (creating) {
-        onSaved(nameDraft)
+        if (mobileLayout) {
+          setCreatedName(nameDraft)
+          setContentDraft(null)
+        } else {
+          onSaved(nameDraft)
+        }
         return
       }
-      await queryClient.invalidateQueries({ queryKey: ['agent', 'skill-detail', name] })
-      onBack()
+      await queryClient.invalidateQueries({ queryKey: ['agent', 'skill-detail', editingName] })
+      if (mobileLayout) setContentDraft(null)
+      else onBack()
     },
     onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
   })
@@ -607,10 +624,10 @@ function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: 
   }
 
   const remove = useMutation({
-    mutationFn: () => deleteAgentSkill(name as string),
+    mutationFn: () => deleteAgentSkill(editingName as string),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: skillsKey })
-      queryClient.removeQueries({ queryKey: ['agent', 'skill-detail', name] })
+      queryClient.removeQueries({ queryKey: ['agent', 'skill-detail', editingName] })
       toast.success(t('settings.skillDeleted'))
       onBack()
     },
@@ -619,7 +636,7 @@ function SkillEditor({ name, existingNames, onBack, onSaved, onActionsChange }: 
 
   return (
     <div className="flex h-full flex-col space-y-4">
-      <p className="text-sm font-semibold text-foreground">{creating ? t('settings.skillCreate') : name}</p>
+      <p className="text-sm font-semibold text-foreground">{creating ? t('settings.skillCreate') : editingName}</p>
 
       {creating ? (
         <label className="block space-y-1.5">

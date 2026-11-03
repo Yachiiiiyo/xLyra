@@ -12,3 +12,19 @@
   background: transparent;
   box-shadow: none;
 }
+
+.agent-composer-on-background textarea::placeholder {
+  color: hsl(var(--label-secondary));
+}
+
+.agent-composer-on-background .text-label-3 {
+  color: hsl(var(--label-secondary));
+}
+
+/* 进入会话时的页面遮罩：高斯模糊 + 半透明压暗，隐约透出底层背景图，正文不被打扰。
+   独立成层，backdrop-filter 只作用于其后的背景图，不模糊上层正文（数值沿用旧版 --dull） */
+.agent-backdrop-dull {
+  -webkit-backdrop-filter: blur(10px) saturate(1) brightness(0.78);
+  backdrop-filter: blur(10px) saturate(1) brightness(0.78);
+  background: rgb(15 15 16 / 0.38);
+}

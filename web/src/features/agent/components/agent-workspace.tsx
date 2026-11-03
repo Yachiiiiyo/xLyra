@@ -25,6 +25,9 @@ import { useMobileLayout } from '@/hooks/use-media-query'
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { LiquidGlass } from '@/components/glass/liquid-glass'
 import { AgentBackdrop } from '@/features/agent/components/agent-backdrop'
+import { AgentLiquidGlassPanel, type AgentLiquidGlassSettings } from '@/features/agent/components/liquid-glass/agent-liquid-glass'
+import { useAppBackgroundImage, useHasAppBackground } from '@/features/appearance/api/appearance'
+import './liquid-glass/agent-liquid-glass.css'
 import './agent-page.css'
 import {
   appendUserMessage,
@@ -72,6 +75,20 @@ const TRANSCRIPT_STALE_TIME = 30_000
 const TRANSCRIPT_PREFETCH_COUNT = 5
 
 const agentTranscriptKey = (sessionId: string) => ['agent', 'transcript', sessionId] as const
+
+const composerGlassSettings: AgentLiquidGlassSettings = {
+  blur: 0.3,
+  refraction: 0.88,
+  chromaticAberration: 0.065,
+  darkTint: 0.18,
+  saturation: 0.06,
+  tintStrength: 0.08,
+  edgeHighlight: 0.16,
+  specular: 0.2,
+  depth: 30,
+  radius: 26,
+  brightness: 0,
+}
 
 type PermissionMode = 'ask' | 'full'
 
@@ -275,8 +292,11 @@ export function AgentWorkspace() {
   }, [sessionsData, queryClient])
   const activeSession = selectedId ? sessions.find((session) => session.session_id === selectedId) : undefined
   const hasMessages = timeline.length > 0
-  // 自定义背景预留：将来由接口层提供背景图 URL；当前恒为 null，页面露出全局星点背景
-  const backdropImage: string | null = null
+  // 背景图由壳层的 AppBackground 负责铺；这里只关心「是否配置了背景图」——
+  // 只有配置了才在进入会话时叠加 dull 遮罩，无背景图时不渲染，避免影响星点背景；
+  // 侧栏随之切换 pane 玻璃，只折射不改色调
+  const hasBackgroundImage = useHasAppBackground()
+  const backgroundImage = useAppBackgroundImage()
 
   const gatewayModels = useMemo<GatewayModel[]>(() => {
     const data = availableModelsQuery.data
@@ -893,7 +913,18 @@ export function AgentWorkspace() {
     </div>
   ) : null
 
-  const composer = (
+  const composer = !hasMessages && hasBackgroundImage ? (
+    <AgentLiquidGlassPanel
+      backgroundImage={backgroundImage}
+      variant="dark"
+      sampleBackground={1}
+      className="agent-liquid-composer agent-composer-on-background"
+      contentClassName="agent-liquid-composer__content"
+      settings={composerGlassSettings}
+    >
+      {composerContent}
+    </AgentLiquidGlassPanel>
+  ) : (
     <LiquidGlass variant="regular" className="agent-composer rounded-[26px]">
       {composerContent}
     </LiquidGlass>
@@ -909,12 +940,13 @@ export function AgentWorkspace() {
     onFork={(id) => void handleFork(id)}
     onRevokeAccess={handleRevokeAccess}
     onOpenSettings={() => setSettingsOpen(true)}
+    hasBackgroundImage={hasBackgroundImage}
   />
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden">
-      {/* 自定义背景预留层：image 为空时什么都不渲染，露出全局星点背景 */}
-      <AgentBackdrop image={backdropImage} />
+      {/* 会话 dull 遮罩：仅配置了背景图且有消息时渲染，铺在背景之上、面板之下 */}
+      {hasMessages && hasBackgroundImage ? <AgentBackdrop /> : null}
       <div className="relative z-10 flex h-full min-h-0 overflow-hidden">
         <AgentMobileHeader
           title={selectedId ? (activeSession?.title || activeSession?.preview || t('sidebar.untitled')) : undefined}
@@ -923,6 +955,7 @@ export function AgentWorkspace() {
         <AgentMobileDrawer
           open={mobileSidebarOpen}
           onClose={() => setMobileSidebarOpen(false)}
+          hasBackgroundImage={hasBackgroundImage}
         >
           <AgentSidebar
             sessions={sessions}
@@ -946,6 +979,7 @@ export function AgentWorkspace() {
               setMobileSidebarOpen(false)
               setSettingsOpen(true)
             }}
+            hasBackgroundImage={hasBackgroundImage}
           />
         </AgentMobileDrawer>
         <FullAccessConfirmDialog
@@ -980,7 +1014,8 @@ export function AgentWorkspace() {
         {/* 侧栏与主程序同款：浮动 Liquid Glass 面板，280 宽、距窗口 16、圆角 24 */}
         <LiquidGlass
           as="aside"
-          className="z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col"
+          variant={hasBackgroundImage ? 'pane' : 'regular'}
+          className={cn('z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col', hasBackgroundImage && 'lg-pane-dim-strong')}
         >
           {sidebarContent}
         </LiquidGlass>
@@ -1013,7 +1048,7 @@ export function AgentWorkspace() {
               <div className="mx-auto max-w-3xl">
                 {healthNotices}
                 {composer}
-                <p className="mt-2 text-center text-xs text-faint">{t('agent:chat.hint')}</p>
+                <p className={cn('mt-2 text-center text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}>{t('agent:chat.hint')}</p>
               </div>
             </div>
           </>
@@ -1021,11 +1056,11 @@ export function AgentWorkspace() {
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4">
             <div className="w-full max-w-2xl">
               <div className="mb-6 flex h-20 items-center justify-center text-center">
-                <h2 className="text-title-1 text-label">{t('agent:chat.emptyTitle')}</h2>
+                <h2 className={cn('text-title-1 text-label', hasBackgroundImage && '[text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]')}>{t('agent:chat.emptyTitle')}</h2>
               </div>
               {healthNotices}
               {composer}
-              <p className="mt-3 text-center text-xs text-faint">{t('agent:chat.hint')}</p>
+              <p className={cn('mt-3 text-center text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}>{t('agent:chat.hint')}</p>
             </div>
           </div>
         )}
@@ -1070,13 +1105,15 @@ function AgentMobileHeader({ title, onOpenMenu }: { title?: string; onOpenMenu: 
   )
 }
 
-function AgentMobileDrawer({
+export function AgentMobileDrawer({
   open,
   onClose,
+  hasBackgroundImage,
   children,
 }: {
   open: boolean
   onClose: () => void
+  hasBackgroundImage: boolean
   children: React.ReactNode
 }) {
   const { t } = useTranslation('agent')
@@ -1100,12 +1137,14 @@ function AgentMobileDrawer({
         className="absolute inset-0 bg-black/45"
         onClick={onClose}
       />
-      <aside
-        className="lg-thick absolute inset-y-0 left-0 w-[min(84vw,320px)] overflow-hidden rounded-r-[24px] pb-[env(safe-area-inset-bottom,0px)] pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] shadow-[18px_0_54px_rgb(0_0_0/0.28)] animate-in slide-in-from-left-full duration-300 ease-out"
+      <LiquidGlass
+        as="aside"
+        variant={hasBackgroundImage ? 'pane' : 'regular'}
+        className={cn('absolute bottom-[calc(env(safe-area-inset-bottom,0px)+8px)] left-2 top-[calc(env(safe-area-inset-top,0px)+8px)] w-[min(84vw,320px)] overflow-hidden rounded-shell animate-in slide-in-from-left-full duration-300 ease-out', hasBackgroundImage && 'lg-pane-dim-strong')}
         aria-label={t('sidebar.recent')}
       >
         {children}
-      </aside>
+      </LiquidGlass>
     </div>
   )
 }
