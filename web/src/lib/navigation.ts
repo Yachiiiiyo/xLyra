@@ -9,7 +9,6 @@ import {
   DatabaseBackup,
   DatabaseZap,
   KeyRound,
-  MessagesSquare,
   Route,
   Settings,
   ShieldCheck,
@@ -48,12 +47,6 @@ export function getAppNavSections(t: TFunction, features: NavFeatures = {}): App
       key: 'workspace',
       label: t('nav.workspace'),
       items: [
-        {
-          to: '/playground',
-          label: t('nav.playground'),
-          icon: MessagesSquare,
-          description: 'Test chat and image models end-to-end through the gateway.',
-        },
         ...(showAgent ? [{
           to: '/agent',
           label: t('nav.agent'),

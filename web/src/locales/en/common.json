@@ -51,7 +51,6 @@
     "routes": "Routes",
     "requests": "Requests",
     "trafficFlow": "Traffic Flow",
-    "playground": "Model Playground",
     "agent": "Agent",
     "audit": "Audit",
     "settings": "Settings",

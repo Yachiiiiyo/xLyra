@@ -31,7 +31,6 @@ const ModelsPriceSettingsPage = lazyNamed(() => import('@/routes/settings/models
 const SystemProxySettingsPage = lazyNamed(() => import('@/routes/settings/global/system-proxy-settings-page'), 'SystemProxySettingsPage')
 const NotFoundPage = lazyNamed(() => import('@/routes/not-found'), 'NotFoundPage')
 const OAuthPage = lazyNamed(() => import('@/routes/oauth'), 'OAuthPage')
-const PlaygroundPage = lazyNamed(() => import('@/routes/playground'), 'PlaygroundPage')
 const PortalPage = lazyNamed(() => import('@/routes/portal'), 'PortalPage')
 const PortalSettingsPage = lazyNamed(() => import('@/routes/settings/global/portal-settings-page'), 'PortalSettingsPage')
 const ProfileSettingsPage = lazyNamed(() => import('@/routes/settings/global/profile-settings-page'), 'ProfileSettingsPage')
@@ -66,7 +65,6 @@ export const appRouter = createBrowserRouter([
     element: <ProtectedLayout />,
     children: [
       { index: true, element: <Navigate to="/dashboard" replace /> },
-      { path: 'playground', element: lazyElement(<PlaygroundPage />) },
       { path: 'agent', element: lazyElement(<AgentPage />) },
       { path: 'dashboard', element: quietElement(<DashboardPage />) },
       { path: 'analytics', element: lazyElement(<AnalyticsPage />) },

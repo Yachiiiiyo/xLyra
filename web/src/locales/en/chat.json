@@ -20,7 +20,10 @@
   "picker": {
     "model": "Model",
     "reasoning": "Reasoning",
-    "noModels": "No models available"
+    "noModels": "No models available",
+    "selectModel": "Select model",
+    "reset": "Reset to default",
+    "back": "Back"
   },
   "effort": {
     "none": "Off",
@@ -31,5 +34,11 @@
     "xhigh": "Extra high",
     "max": "Max",
     "ultra": "Ultra"
+  },
+  "attach": {
+    "menu": "Add",
+    "photo": "Photos",
+    "camera": "Take photo",
+    "file": "Files"
   }
 }

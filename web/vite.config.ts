@@ -102,7 +102,6 @@ export default defineConfig(({ command, mode }) => {
       port: 5173,
       strictPort: false,
       proxy: {
-        '/api/playground': proxyTarget,
         '/api/v1': proxyTarget,
         '/v1': proxyTarget,
         '/healthz': proxyTarget,

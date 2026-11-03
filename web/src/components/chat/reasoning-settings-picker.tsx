@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
-import { ModelSettingsPicker } from '@/features/playground/components/model-settings-picker'
+import { ModelSettingsPicker } from '@/components/chat/model-settings-picker'
 import { normalizeReasoningEffort, reasoningEffortsForModel } from '@/lib/reasoning'
-import type { GatewayModel, ReasoningEffort } from '@/features/playground/lib/types'
+import type { GatewayModel, ReasoningEffort } from '@/lib/chat-types'
 
 type ReasoningSettingsPickerProps = {
   models: GatewayModel[]
@@ -15,7 +15,7 @@ type ReasoningSettingsPickerProps = {
 
 /** 对话模式的模型 + 思考强度：档位取自所选模型（服务端声明或内置规则），切换模型后滑块档位随之替换 */
 export function ReasoningSettingsPicker({ models, model, onModelChange, effort, onEffortChange, disabled, triggerClassName }: ReasoningSettingsPickerProps) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const selectedModel = models.find((item) => item.id === model)
   const availableEfforts = reasoningEffortsForModel(selectedModel)
 

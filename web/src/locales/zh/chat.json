@@ -20,7 +20,10 @@
   "picker": {
     "model": "模型",
     "reasoning": "推理强度",
-    "noModels": "暂无可用模型"
+    "noModels": "暂无可用模型",
+    "selectModel": "选择模型",
+    "reset": "恢复默认",
+    "back": "返回"
   },
   "effort": {
     "none": "关闭",
@@ -31,5 +34,11 @@
     "xhigh": "极高",
     "max": "最高",
     "ultra": "超高"
+  },
+  "attach": {
+    "menu": "添加",
+    "photo": "照片",
+    "camera": "拍照",
+    "file": "文件"
   }
 }

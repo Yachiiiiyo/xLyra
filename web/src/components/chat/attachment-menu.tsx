@@ -27,7 +27,7 @@ function isTouchDevice() {
  * 相册（image/*）、相机（capture="environment"）或文件 App（不限类型）。
  */
 export function AttachmentMenu({ kinds, onFiles, disabled = false, label }: AttachmentMenuProps) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const glassRef = useLiquidGlassRef<HTMLDivElement>('regular')
   const photoRef = useRef<HTMLInputElement>(null)

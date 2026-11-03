@@ -3,9 +3,9 @@ import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react'
 import { useLiquidGlassRef } from '@/components/glass/use-liquid-glass'
-import { EffortSlider } from '@/features/playground/components/effort-slider'
+import { EffortSlider } from '@/components/chat/effort-slider'
 import { ModelIcon } from '@/components/chat/model-icon'
-import type { GatewayModel } from '@/features/playground/lib/types'
+import type { GatewayModel } from '@/lib/chat-types'
 import { cn } from '@/lib/utils'
 
 type ParameterOption<T extends string> = { value: T; label: string }
@@ -47,7 +47,7 @@ const EFFORT_COLORS: Record<string, string> = {
  * 新模型支持的档位会自动替换滑块的档位（外部用 normalizeReasoningEffort 把当前值吸附到新档位）。
  */
 export function ModelSettingsPicker<T extends string>({ models, model, onModelChange, parameter, disabled, triggerClassName }: ModelSettingsPickerProps<T>) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<'settings' | 'models'>('settings')
   const glassRef = useLiquidGlassRef<HTMLDivElement>('regular')
