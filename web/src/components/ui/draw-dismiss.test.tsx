@@ -46,6 +46,15 @@ describe('DrawContent swipe dismissal registration', () => {
     expect(register).toHaveBeenCalledWith(true)
   })
 
+  it('uses a light translucent corner button instead of nested dark glass', () => {
+    const html = renderToStaticMarkup(<DrawContent />)
+    expect(html).toContain('size-10')
+    expect(html).toContain('border-white/10')
+    expect(html).toContain('bg-white/10')
+    expect(html).toContain('backdrop-blur-md')
+    expect(html).not.toContain('lg-regular')
+  })
+
   it('allows dismissal without save actions', () => {
     renderToStaticMarkup(<DrawContent />)
     expect(canDismiss()).toBe(true)

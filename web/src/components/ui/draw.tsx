@@ -44,7 +44,7 @@ DrawOverlay.displayName = DialogPrimitive.Overlay.displayName
 export const DRAW_HEADER_CLASS = 'py-4 pl-[68px] pr-4'
 
 // top 23 = grabber(13) + 标题区上边距(16) + 单行标题半高(14) - 按钮半径(20)，与首行标题垂直居中
-const DRAW_CORNER_BUTTON_CLASS = 'absolute left-4 top-[23px] z-10 size-10 rounded-full'
+const DRAW_CORNER_BUTTON_CLASS = 'absolute left-4 top-[23px] z-10 size-10 rounded-full border border-white/10 bg-white/10 text-label backdrop-blur-md hover:bg-white/[0.14]'
 
 /** 二级页面的返回：左上角按钮改为返回按钮（关闭按钮和返回按钮不会同时出现）。 */
 export type DrawBackProps = {
@@ -92,7 +92,7 @@ const DrawContent = React.forwardRef<
         {onBack ? (
           <Button
             type="button"
-            variant="glass"
+            variant="ghost"
             size="icon"
             className={DRAW_CORNER_BUTTON_CLASS}
             title={backLabel}
@@ -103,7 +103,7 @@ const DrawContent = React.forwardRef<
           </Button>
         ) : (
           <DialogPrimitive.Close asChild>
-            <Button type="button" variant="glass" size="icon" className={DRAW_CORNER_BUTTON_CLASS} aria-label={t('actions.close')}>
+            <Button type="button" variant="ghost" size="icon" className={DRAW_CORNER_BUTTON_CLASS} aria-label={t('actions.close')}>
               <X />
             </Button>
           </DialogPrimitive.Close>

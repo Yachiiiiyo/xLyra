@@ -8,8 +8,8 @@ export type StickyTableHeader = 'container' | 'page'
 export function DataTableHeader({ children, sticky }: { children: ReactNode; sticky?: StickyTableHeader }) {
   return (
     <thead className={cn(
-      // 表头：elevated-2 60% 底；吸顶时改为不透明底 + 一条分隔线，避免行内容从下方透出
-      sticky ? 'sticky z-10 bg-elevated-1 shadow-[0_1px_0_var(--separator)]' : 'bg-elevated-2/60',
+      // 表头：只有一层极淡的填充，保持透明；吸顶时加磨砂 + 一条分隔线，模糊下方滚过的行内容
+      sticky ? 'sticky z-10 bg-fill-4 shadow-[0_1px_0_var(--separator)] backdrop-blur-xl' : 'bg-fill-4',
       sticky === 'container' && 'top-0',
       sticky === 'page' && '-top-6 lg:-top-8',
     )}>
