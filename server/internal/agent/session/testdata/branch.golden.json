@@ -1,0 +1,38 @@
+[
+  {
+    "message": {
+      "content": "主干第一问",
+      "role": "user"
+    },
+    "message_id": "u201",
+    "timestamp": "2026-10-29T07:00:01.000Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "主干回答",
+      "role": "assistant"
+    },
+    "message_id": "a201",
+    "timestamp": "2026-10-29T07:00:02.000Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "改走另一分支的第二问",
+      "role": "user"
+    },
+    "message_id": "u203",
+    "timestamp": "2026-10-29T07:00:05.000Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "新分支回答",
+      "role": "assistant"
+    },
+    "message_id": "a203",
+    "timestamp": "2026-10-29T07:00:06.000Z",
+    "type": "message"
+  }
+]

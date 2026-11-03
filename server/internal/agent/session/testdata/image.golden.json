@@ -1,0 +1,50 @@
+[
+  {
+    "message": {
+      "attachments": [
+        {
+          "data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          "mime_type": "image/png",
+          "name": "截图.png"
+        },
+        {
+          "data_url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD//gA=",
+          "mime_type": "image/jpeg",
+          "name": "image-1"
+        }
+      ],
+      "content": "看这两张图",
+      "role": "user"
+    },
+    "message_id": "m-010",
+    "timestamp": "2026-10-29T09:00:00.010Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "第一张是 1x1 PNG,第二张是 JPEG。",
+      "role": "assistant"
+    },
+    "message_id": "a010",
+    "timestamp": "2026-10-29T09:00:00.020Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "纯文本字符串内容",
+      "role": "user"
+    },
+    "message_id": "u011",
+    "timestamp": "2026-10-29T09:00:00.030Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "收到字符串",
+      "role": "assistant"
+    },
+    "message_id": "a011",
+    "timestamp": "2026-10-29T09:00:00.040Z",
+    "type": "message"
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "message": {
+      "content": "session-marker-h2 第一段",
+      "role": "user"
+    },
+    "message_id": "m-001",
+    "timestamp": "2026-10-29T14:19:40.373Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "reply:session-marker-h2 第一段",
+      "role": "assistant"
+    },
+    "message_id": "be943608",
+    "timestamp": "2026-10-29T14:19:40.400Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "recent-marker 第二段",
+      "role": "user"
+    },
+    "message_id": "m-002",
+    "timestamp": "2026-10-29T14:19:40.402Z",
+    "type": "message"
+  },
+  {
+    "escalation_id": "esc-1",
+    "granted": true,
+    "requested_command": [
+      "write",
+      "/tmp/h2.txt"
+    ],
+    "requested_path": "/tmp/h2.txt",
+    "resolved_path": "/tmp/h2-resolved.txt",
+    "timestamp": "2026-10-29T08:00:00.000Z",
+    "tool_name": "write",
+    "type": "escalation"
+  },
+  {
+    "message": {
+      "content": "reply:recent-marker 第二段",
+      "role": "assistant"
+    },
+    "message_id": "aeb55b97",
+    "timestamp": "2026-10-29T14:19:40.407Z",
+    "type": "message"
+  },
+  {
+    "summary": "SUMMARY-H manual checkpoint about session-marker-h2.\n\n---\n\n**Turn Context (split turn):**\n\nSUMMARY-H manual checkpoint about session-marker-h2.",
+    "timestamp": "2026-10-29T14:19:40.414Z",
+    "tokens_before": 16,
+    "type": "compaction"
+  }
+]
