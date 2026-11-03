@@ -474,7 +474,11 @@ func (s *Service) Plan(ctx context.Context, query CandidateQuery) (SelectionPlan
 		failoverLimit = 3
 	}
 
-	failover := make([]Candidate, 0, failoverLimit)
+	failoverCapacity := failoverLimit
+	if available := len(result.Items) - 1; failoverCapacity > available {
+		failoverCapacity = available
+	}
+	failover := make([]Candidate, 0, failoverCapacity)
 	for _, item := range result.Items[1:] {
 		if len(failover) >= failoverLimit {
 			break
