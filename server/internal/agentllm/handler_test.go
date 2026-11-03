@@ -49,7 +49,9 @@ type fakeAgentRepository struct {
 	supersedeCalls  int
 
 	// tokens 让 FindUsableToken/End/SupersedeTokens 可以在内存里对账。
-	tokens []fakeAgentTokenEntry
+	tokens         []fakeAgentTokenEntry
+	internalAPIKey store.APIKey
+	internalKeyErr error
 }
 
 func (f *fakeAgentRepository) FindRun(context.Context, store.AgentRunInput) (store.AgentRun, error) {
@@ -134,7 +136,7 @@ func (f *fakeAgentRepository) SupersedeTokens(_ context.Context, input store.Age
 }
 
 func (f *fakeAgentRepository) EnsureInternalAPIKey(context.Context) (store.APIKey, error) {
-	return store.APIKey{}, errors.New("not implemented")
+	return f.internalAPIKey, f.internalKeyErr
 }
 
 func (f *fakeAgentRepository) SyncInternalAPIKeyPolicy(context.Context, string, []uuid.UUID, string, []uuid.UUID) (store.APIKey, error) {
@@ -146,7 +148,7 @@ func (f *fakeAgentRepository) ModelMemory(context.Context) (string, map[string]s
 }
 
 func newTestHandler(repo agentRepository) Handler {
-	return Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), repo: repo, now: time.Now}
+	return Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), repo: repo, now: time.Now, imageTracker: newAgentImageTracker()}
 }
 
 func credentialBody(reason string) *strings.Reader {

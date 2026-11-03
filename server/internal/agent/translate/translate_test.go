@@ -89,6 +89,32 @@ func TestFeedRules(t *testing.T) {
 			}}}},
 		},
 		{
+			name: "tool_execution_end 的 result.details.images 只保留白名单元数据",
+			lines: []string{
+				`{"type":"tool_execution_end","toolCallId":"c1","toolName":"image_generation","isError":false,` +
+					`"result":{"content":[{"type":"text","text":"已生成"}],"details":{"images":[` +
+					`{"path":"images/01.png","mime":"image/png","bytes":123,"model":"gpt-image-2","site":"demo","alt":"图"},` +
+					`{"path":"images/../x.png","mime":"image/png"},` +
+					`{"path":"images/02.png","mime":"text/plain","bytes":-1,"model":1,"alt":null}]}}}`,
+			},
+			want: []Event{{Type: "tool_result", Data: map[string]any{"tool_result": map[string]any{
+				"tool_call_id": "c1", "name": "image_generation", "output": "已生成", "is_error": false,
+				"images": []any{
+					map[string]any{"path": "images/01.png", "mime": "image/png", "bytes": float64(123), "model": "gpt-image-2", "site": "demo", "alt": "图"},
+					map[string]any{"path": "images/02.png", "mime": "", "bytes": float64(0), "model": "", "site": "", "alt": ""},
+				},
+			}}}},
+		},
+		{
+			name: "result.details.images 不是数组时忽略图片字段",
+			lines: []string{
+				`{"type":"tool_execution_end","toolCallId":"c1","toolName":"x","result":{"content":[],"details":{"images":"bad"}}}`,
+			},
+			want: []Event{{Type: "tool_result", Data: map[string]any{"tool_result": map[string]any{
+				"tool_call_id": "c1", "name": "x", "output": "", "is_error": false,
+			}}}},
+		},
+		{
 			name: "extension_ui_request 的 message 为 JSON 约定时按约定关联",
 			lines: []string{
 				`{"type":"tool_execution_start","toolCallId":"c1","toolName":"write","args":{"path":"out/a.txt","command":["touch","x"]}}`,

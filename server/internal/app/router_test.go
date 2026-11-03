@@ -664,6 +664,14 @@ func TestAgentRoutesBuiltinEngineReportsUnavailableHealth(t *testing.T) {
 		t.Fatalf("sessions body = %s", rec.Body.String())
 	}
 
+	// 图片读取接口只在 builtin 分支注册;会话不存在时返回 JSON 404。
+	image := httptest.NewRequest(http.MethodGet, "/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/files?path=images/a.png", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, image)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_found") {
+		t.Fatalf("files status/body = %d/%s", rec.Code, rec.Body.String())
+	}
+
 	// runner 专属的 compact-context 在 pi 引擎下不注册。
 	compact := httptest.NewRequest(http.MethodPost, "/api/v1/agent/sessions/11111111-1111-1111-1111-111111111111/compact-context", nil)
 	rec = httptest.NewRecorder()
@@ -689,6 +697,14 @@ func TestAgentRoutesRunnerEngineStillForwardsToProxy(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), "agent_unavailable") {
 			t.Fatalf("%s: body = %s", path, rec.Body.String())
 		}
+	}
+
+	// 取图接口只属于 builtin(pi) 引擎,旧引擎不注册。
+	files := httptest.NewRequest(http.MethodGet, "/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/files?path=images/a.png", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, files)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("files status = %d, want 404", rec.Code)
 	}
 }
 

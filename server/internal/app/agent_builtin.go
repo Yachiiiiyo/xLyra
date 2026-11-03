@@ -518,6 +518,7 @@ func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.C
 		Runs:              runs,
 		Tokens:            tokens,
 		Protocol:          agentProtocolResolver(logger, confFile, routerService),
+		ImageModels:       func() int { return len(agentproxy.ImageModelsFromConfig(confFile)) },
 		GatewayBaseURL:    gatewayBaseURL,
 		Command:           bins.command,
 		Args:              []string{bins.piEntry},

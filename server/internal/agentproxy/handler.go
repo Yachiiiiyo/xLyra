@@ -18,8 +18,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/httpx"
@@ -51,14 +53,40 @@ type RunRegistration struct {
 	Model           string `json:"model"`
 }
 
+type ImageModelSelection struct {
+	Model   string   `json:"model"`
+	SiteIDs []string `json:"site_ids"`
+}
+
+// UnmarshalJSON 同时接受旧版模型名字符串和新版模型、站点选择对象。
+func (s *ImageModelSelection) UnmarshalJSON(data []byte) error {
+	var model string
+	if err := json.Unmarshal(data, &model); err == nil {
+		s.Model = model
+		s.SiteIDs = []string{}
+		return nil
+	}
+	type selection ImageModelSelection
+	var value selection
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*s = ImageModelSelection(value)
+	if s.SiteIDs == nil {
+		s.SiteIDs = []string{}
+	}
+	return nil
+}
+
 type Settings struct {
-	RunnerBaseURL         string             `json:"runner_base_url"`
-	RunnerTokenConfigured bool               `json:"runner_token_configured"`
-	AllowedSiteIDs        []string           `json:"allowed_site_ids"`
-	AllowedSiteModelIDs   []string           `json:"allowed_site_model_ids"`
-	SitePolicy            string             `json:"site_policy"`
-	ModelPolicy           string             `json:"model_policy"`
-	Appearance            AppearanceSettings `json:"appearance"`
+	RunnerBaseURL         string                `json:"runner_base_url"`
+	RunnerTokenConfigured bool                  `json:"runner_token_configured"`
+	AllowedSiteIDs        []string              `json:"allowed_site_ids"`
+	AllowedSiteModelIDs   []string              `json:"allowed_site_model_ids"`
+	ImageModels           []ImageModelSelection `json:"image_models"`
+	SitePolicy            string                `json:"site_policy"`
+	ModelPolicy           string                `json:"model_policy"`
+	Appearance            AppearanceSettings    `json:"appearance"`
 }
 
 type AppearanceSettings struct {
@@ -99,14 +127,15 @@ func defaultAppearanceSettings() AppearanceSettings {
 // settingsInput uses partial-update semantics: absent fields are left unchanged,
 // so runner connection and site/model scope can be saved independently.
 type settingsInput struct {
-	RunnerBaseURL       *string             `json:"runner_base_url"`
-	RunnerToken         *string             `json:"runner_token"`
-	ClearRunner         bool                `json:"clear_runner"`
-	AllowedSiteIDs      *[]string           `json:"allowed_site_ids"`
-	AllowedSiteModelIDs *[]string           `json:"allowed_site_model_ids"`
-	SitePolicy          *string             `json:"site_policy"`
-	ModelPolicy         *string             `json:"model_policy"`
-	Appearance          *AppearanceSettings `json:"appearance"`
+	RunnerBaseURL       *string                `json:"runner_base_url"`
+	RunnerToken         *string                `json:"runner_token"`
+	ClearRunner         bool                   `json:"clear_runner"`
+	AllowedSiteIDs      *[]string              `json:"allowed_site_ids"`
+	AllowedSiteModelIDs *[]string              `json:"allowed_site_model_ids"`
+	ImageModels         *[]ImageModelSelection `json:"image_models"`
+	SitePolicy          *string                `json:"site_policy"`
+	ModelPolicy         *string                `json:"model_policy"`
+	Appearance          *AppearanceSettings    `json:"appearance"`
 }
 
 func NewHandler(baseURL, token string, client *http.Client, logger *slog.Logger, workdirs ...string) *Handler {
@@ -357,7 +386,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request, confFile *
 	if confFile != nil {
 		h.backgroundDir(confFile)
 	}
-	settings := Settings{RunnerBaseURL: h.snapshotBaseURL(), RunnerTokenConfigured: h.snapshotToken() != "", AllowedSiteIDs: []string{}, AllowedSiteModelIDs: []string{}, SitePolicy: "allow_all", ModelPolicy: "allow_all", Appearance: defaultAppearanceSettings()}
+	settings := Settings{RunnerBaseURL: h.snapshotBaseURL(), RunnerTokenConfigured: h.snapshotToken() != "", AllowedSiteIDs: []string{}, AllowedSiteModelIDs: []string{}, ImageModels: []ImageModelSelection{}, SitePolicy: "allow_all", ModelPolicy: "allow_all", Appearance: defaultAppearanceSettings()}
 	if confFile != nil {
 		if value, ok := confFile.Get("agent.runner_base_url"); ok {
 			if baseURL, valid := value.(string); valid && strings.TrimSpace(baseURL) != "" {
@@ -371,6 +400,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request, confFile *
 		}
 		settings.AllowedSiteIDs = readStringList(confFile, "agent.allowed_site_ids")
 		settings.AllowedSiteModelIDs = readStringList(confFile, "agent.allowed_site_model_ids")
+		settings.ImageModels = ImageModelsFromConfig(confFile)
 		if value, ok := confFile.Get("agent.site_policy"); ok {
 			if policy, valid := value.(string); valid && (policy == "allow_all" || policy == "allow_list") {
 				settings.SitePolicy = policy
@@ -443,6 +473,18 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request, confFil
 			return
 		}
 		scopeUpdated = true
+	}
+	if input.ImageModels != nil {
+		for _, selection := range *input.ImageModels {
+			if utf8.RuneCountInString(strings.TrimSpace(selection.Model)) > 200 {
+				httpx.Error(w, r, http.StatusBadRequest, "invalid_image_models", "each image model must not exceed 200 characters")
+				return
+			}
+		}
+		if err := confFile.Set("agent.image_models", normalizeImageModels(*input.ImageModels)); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent image model settings")
+			return
+		}
 	}
 	if input.SitePolicy != nil {
 		sitePolicy := *input.SitePolicy
@@ -775,6 +817,70 @@ func AccessPolicyFromConfig(confFile *config.ConfigFile) (sitePolicy, modelPolic
 		}
 	}
 	return sitePolicy, modelPolicy, siteIDs, siteModelIDs
+}
+
+func ImageModelsFromConfig(confFile *config.ConfigFile) []ImageModelSelection {
+	if confFile == nil {
+		return []ImageModelSelection{}
+	}
+	value, ok := confFile.Get("agent.image_models")
+	if !ok {
+		return []ImageModelSelection{}
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return []ImageModelSelection{}
+	}
+	var models []ImageModelSelection
+	if err := json.Unmarshal(data, &models); err != nil {
+		return []ImageModelSelection{}
+	}
+	return normalizeImageModels(models)
+}
+
+func normalizeImageModels(models []ImageModelSelection) []ImageModelSelection {
+	result := make([]ImageModelSelection, 0, len(models))
+	indexes := make(map[string]int, len(models))
+	for _, selection := range models {
+		selection.Model = strings.TrimSpace(selection.Model)
+		if selection.Model == "" {
+			continue
+		}
+		siteIDs := make([]string, 0, len(selection.SiteIDs))
+		seenSites := make(map[string]struct{}, len(selection.SiteIDs))
+		for _, rawSiteID := range selection.SiteIDs {
+			siteID, err := uuid.Parse(strings.TrimSpace(rawSiteID))
+			if err != nil {
+				continue
+			}
+			text := siteID.String()
+			if _, exists := seenSites[text]; exists {
+				continue
+			}
+			seenSites[text] = struct{}{}
+			siteIDs = append(siteIDs, text)
+		}
+		if index, exists := indexes[selection.Model]; exists {
+			current := &result[index]
+			if len(current.SiteIDs) == 0 || len(siteIDs) == 0 {
+				current.SiteIDs = []string{}
+				continue
+			}
+			seenSites = make(map[string]struct{}, len(current.SiteIDs)+len(siteIDs))
+			for _, siteID := range current.SiteIDs {
+				seenSites[siteID] = struct{}{}
+			}
+			for _, siteID := range siteIDs {
+				if _, exists := seenSites[siteID]; !exists {
+					current.SiteIDs = append(current.SiteIDs, siteID)
+				}
+			}
+			continue
+		}
+		indexes[selection.Model] = len(result)
+		result = append(result, ImageModelSelection{Model: selection.Model, SiteIDs: siteIDs})
+	}
+	return result
 }
 
 func readStringList(confFile *config.ConfigFile, key string) []string {

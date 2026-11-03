@@ -32,6 +32,7 @@ type piMessage struct {
 	ToolCallID string          `json:"toolCallId"`
 	ToolName   string          `json:"toolName"`
 	IsError    bool            `json:"isError"`
+	Details    json.RawMessage `json:"details"`
 }
 
 // piBlock 是 assistant/user/toolResult 的内容块。
@@ -280,6 +281,9 @@ func messageEntry(entry piEntry, meta Meta) map[string]any {
 		message["tool_call_id"] = msg.ToolCallID
 		message["name"] = msg.ToolName
 		message["is_error"] = msg.IsError
+		if images := toolImages(msg.Details); len(images) > 0 {
+			message["images"] = images
+		}
 	default:
 		return nil
 	}

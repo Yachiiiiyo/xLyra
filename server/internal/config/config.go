@@ -49,6 +49,8 @@ type Config struct {
 	AgentMaxConcurrent  int           `env:"AGENT_MAX_CONCURRENT" envDefault:"4"`
 	AgentRunTimeout     time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
 	AgentGatewayBaseURL string        `env:"AGENT_GATEWAY_BASE_URL"`
+	AgentImageMaxCalls  int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
+	AgentImageTimeout   time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
 	// AgentIsolation 决定 uid 隔离的启动策略:auto(默认)按探测与自检
 	// 结果决定;required 在环境不支持时直接关闭 Agent;off 完全不隔离
 	// (仅本地开发)。
@@ -247,6 +249,13 @@ func (c Config) Validate() error {
 	}
 	if c.AgentQueueMax != -1 && c.AgentQueueMax <= 0 {
 		return fmt.Errorf("AGENT_QUEUE_MAX must be greater than 0 or -1 to disable queueing")
+	}
+
+	if c.AgentImageMaxCalls < 1 {
+		return fmt.Errorf("AGENT_IMAGE_MAX_CALLS must be greater than or equal to 1")
+	}
+	if c.AgentImageTimeout <= 0 {
+		return fmt.Errorf("AGENT_IMAGE_TOTAL_TIMEOUT must be greater than 0")
 	}
 
 	return nil

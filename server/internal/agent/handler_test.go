@@ -139,6 +139,8 @@ func agentRouter(h *Handler) http.Handler {
 		g.Get("/sessions/{id}/transcript", h.SessionTranscript)
 		g.Delete("/sessions/{id}", h.DeleteSession)
 		g.Post("/sessions/{id}/fork", h.ForkSession)
+		g.Get("/sessions/{id}/files", h.SessionFile)
+		g.Head("/sessions/{id}/files", h.SessionFile)
 		g.Post("/sessions/{id}/retry", h.RetrySession)
 		g.Post("/sessions/{id}/stop", h.StopSession)
 		g.Post("/sessions/{id}/grant-access", h.GrantAccess)

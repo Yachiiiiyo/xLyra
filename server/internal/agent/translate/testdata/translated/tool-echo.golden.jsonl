@@ -4,7 +4,7 @@
 {"type":"tool_call_delta","data":{"delta":"\"ping\"}","tool_call_id":"call_echo"}}
 {"type":"tool_call","data":{"tool_call":{"id":"call_echo","name":"echo_tool","raw_arguments":"{\"text\":\"ping\"}"}}}
 {"type":"tool_call","data":{"tool_call":{"id":"call_echo","name":"echo_tool","raw_arguments":"{\"text\":\"ping\"}"}}}
-{"type":"tool_result","data":{"tool_result":{"is_error":false,"name":"echo_tool","output":"echo:ping","tool_call_id":"call_echo"}}}
+{"type":"tool_result","data":{"tool_result":{"images":[{"alt":"回声图","bytes":123,"mime":"image/png","model":"gpt-image-2","path":"images/01-20261103-153012.png","site":"demo"}],"is_error":false,"name":"echo_tool","output":"echo:ping","tool_call_id":"call_echo"}}}
 {"type":"text_delta","data":{"delta":"ec"}}
 {"type":"text_delta","data":{"delta":"ho"}}
 {"type":"text_delta","data":{"delta":" 完"}}

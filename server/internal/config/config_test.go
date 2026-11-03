@@ -348,6 +348,8 @@ func validConfig() Config {
 		AgentSessionQuotaBytes:  512 << 20,
 		AgentQueueTimeout:       2 * time.Minute,
 		AgentQueueMax:           32,
+		AgentImageMaxCalls:      3,
+		AgentImageTimeout:       10 * time.Minute,
 	}
 }
 

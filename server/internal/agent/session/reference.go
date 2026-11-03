@@ -138,6 +138,12 @@ func renderReferenceLines(path []piEntry, meta Meta) []string {
 					label = hint
 				}
 				lines = append(lines, fmt.Sprintf("[工具 %s] %s", label, truncateMarked(text, referenceToolRunes)))
+				for i, image := range toolImages(entry.Message.Details) {
+					if i == 4 {
+						break
+					}
+					lines = append(lines, fmt.Sprintf("[图片 %s]", image["path"]))
+				}
 			}
 		}
 	}

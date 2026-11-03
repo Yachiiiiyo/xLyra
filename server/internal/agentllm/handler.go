@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"xlyra/server/internal/agentproxy"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/gateway"
 	"xlyra/server/internal/httpx"
@@ -36,6 +37,12 @@ type Handler struct {
 	repo    agentRepository
 	gateway gateway.Handler
 	now     func() time.Time
+
+	imageModelsSource func() []agentproxy.ImageModelSelection
+	imageGenerate     func(context.Context, gateway.ImageGenerationRequest) gateway.ImageGenerationResult
+	imageMaxCalls     int
+	imageTotalTimeout time.Duration
+	imageTracker      *agentImageTracker
 }
 
 type agentRepository interface {
@@ -73,7 +80,7 @@ type credentialResponse struct {
 }
 
 func NewHandler(logger *slog.Logger, db *store.Store, gatewayHandler gateway.Handler) Handler {
-	return Handler{logger: logger, repo: store.NewAgentRepository(db.DB()), gateway: gatewayHandler, now: time.Now}
+	return Handler{logger: logger, repo: store.NewAgentRepository(db.DB()), gateway: gatewayHandler, now: time.Now, imageTracker: newAgentImageTracker()}
 }
 
 func (h Handler) Credential(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +214,7 @@ func (h Handler) EndRun(ctx context.Context, sessionID, runID, model string) err
 	if !validIdentifiers(BuiltinInstanceID, sessionID, runID, model) {
 		return errors.New("agentllm: session_id, run_id and model are required")
 	}
+	h.clearImageRun(sessionID, runID)
 	return h.repo.End(ctx, store.AgentRunInput{
 		AgentInstanceID: BuiltinInstanceID,
 		SessionID:       sessionID,
@@ -228,6 +236,7 @@ func (h Handler) runMutation(w http.ResponseWriter, r *http.Request, ending bool
 	runInput := store.AgentRunInput{AgentInstanceID: input.AgentInstanceID, SessionID: input.SessionID, RunID: input.RunID, Model: input.Model}
 	var err error
 	if ending {
+		h.clearImageRun(input.SessionID, input.RunID)
 		err = h.repo.End(r.Context(), runInput, h.now())
 	} else {
 		_, err = h.repo.Register(r.Context(), runInput, h.now())

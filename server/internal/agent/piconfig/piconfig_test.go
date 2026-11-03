@@ -32,6 +32,7 @@ type parsedModel struct {
 type parsedCompat struct {
 	ForceAdaptiveThinking bool   `json:"forceAdaptiveThinking"`
 	ThinkingFormat        string `json:"thinkingFormat"`
+	AllowEmptySignature   bool   `json:"allowEmptySignature"`
 }
 
 func buildModels(t *testing.T, modelID, protocol string) (parsedProvider, string) {
@@ -109,23 +110,26 @@ func TestModelsJSONVendorMatrix(t *testing.T) {
 			name: "deepseek", modelID: "deepseek-v4.1-flash", protocol: ProtocolOpenAIChatCompletions,
 			wantBaseURL: testBaseURL + "/internal/agent-llm/v1", wantAPI: "openai-completions",
 			wantReasoning: false, wantInput: []string{"text", "image"},
+			wantCompat: &parsedCompat{AllowEmptySignature: true},
 		},
 		{
 			name: "glm", modelID: "glm-5.3", protocol: ProtocolOpenAIChatCompletions,
 			wantBaseURL: testBaseURL + "/internal/agent-llm/v1", wantAPI: "openai-completions",
 			wantReasoning: true, wantInput: []string{"text"},
-			wantCompat: &parsedCompat{ThinkingFormat: "zai"},
+			wantCompat: &parsedCompat{ThinkingFormat: "zai", AllowEmptySignature: true},
 		},
 		{
 			name: "kimi", modelID: "kimi-k3.1-pro", protocol: ProtocolOpenAIChatCompletions,
 			wantBaseURL: testBaseURL + "/internal/agent-llm/v1", wantAPI: "openai-completions",
-			wantReasoning: false, wantInput: []string{"text"},
+			// 2026-11-03 复测 Kimi 接受推理参数,前端选的强度要传下去;无签名思考块要按空签名回传。
+			wantReasoning: true, wantInput: []string{"text"},
+			wantCompat: &parsedCompat{AllowEmptySignature: true},
 		},
 		{
 			name: "qwen", modelID: "qwen3.8-max", protocol: ProtocolOpenAIChatCompletions,
 			wantBaseURL: testBaseURL + "/internal/agent-llm/v1", wantAPI: "openai-completions",
 			wantReasoning: true, wantInput: []string{"text", "image"},
-			wantCompat: &parsedCompat{ThinkingFormat: "qwen"},
+			wantCompat: &parsedCompat{ThinkingFormat: "qwen", AllowEmptySignature: true},
 		},
 		{
 			// 未知模型走保守默认:可推理、可收图,无 compat / map。
@@ -278,11 +282,21 @@ func TestCapsForVendors(t *testing.T) {
 			t.Fatalf("CapsFor(%s).Vendor = %q, want %q", tc.modelID, got, tc.vendor)
 		}
 	}
-	// DeepSeek / Kimi 只回 none:推理参数会被上游渠道拒绝。
-	for _, modelID := range []string{"deepseek-v4.1-flash", "kimi-k3.1-pro"} {
-		if efforts := CapsFor(modelID).Efforts; !slices.Equal(efforts, []string{EffortNone}) {
-			t.Fatalf("CapsFor(%s).Efforts = %v, want [none]", modelID, efforts)
-		}
+	// DeepSeek 只回 none:推理参数会被上游渠道拒绝。
+	if efforts := CapsFor("deepseek-v4.1-flash").Efforts; !slices.Equal(efforts, []string{EffortNone}) {
+		t.Fatalf("CapsFor(deepseek).Efforts = %v, want [none]", efforts)
+	}
+	// Kimi 经网关接受推理参数,走标准四档;无签名思考块要按空签名回传(allowEmptySignature)。
+	kimi := CapsFor("kimi-k3.1-pro")
+	if !kimi.Reasoning || !kimi.AllowEmptySignature || !slices.Equal(kimi.Efforts, standardEfforts) {
+		t.Fatalf("CapsFor(kimi) = %+v, want Reasoning+AllowEmptySignature+standard efforts", kimi)
+	}
+	if got := ThinkingLevel(EffortHigh, kimi); got != LevelHigh {
+		t.Fatalf("ThinkingLevel(high, kimi) = %q, want %q", got, LevelHigh)
+	}
+	// Claude 的思考块带签名,不应打开 allowEmptySignature。
+	if CapsFor("claude-sonnet-5-5").AllowEmptySignature {
+		t.Fatal("claude must not allow empty signature")
 	}
 }
 

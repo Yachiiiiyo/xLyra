@@ -9,6 +9,7 @@ package translate
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -276,13 +277,17 @@ func (t *Translator) toolExecutionEnd(raw map[string]any) []Event {
 	if call := t.tools[id]; call != nil {
 		call.ended = true
 	}
+	result := map[string]any{
+		"tool_call_id": id,
+		"name":         name,
+		"output":       toolOutput(raw["result"]),
+		"is_error":     isError,
+	}
+	if images := toolResultImages(raw["result"]); len(images) > 0 {
+		result["images"] = images
+	}
 	return []Event{event("tool_result", map[string]any{
-		"tool_result": map[string]any{
-			"tool_call_id": id,
-			"name":         name,
-			"output":       toolOutput(raw["result"]),
-			"is_error":     isError,
-		},
+		"tool_result": result,
 	})}
 }
 
@@ -434,6 +439,52 @@ func stringSlice(value any) []string {
 	default:
 		return nil
 	}
+}
+
+// toolResultImages 与 transcript 使用相同的白名单与截断规则;result/details
+// 形状异常时只省略 images,不影响原有工具输出。
+//
+// 返回 []any 而非 []map[string]any:事件最终以 JSON 传给前端,而 runner 的
+// golden 比对用 reflect.DeepEqual,运行时形态必须与 JSON 反序列化结果一致。
+func toolResultImages(result any) []any {
+	record, _ := result.(map[string]any)
+	details, _ := record["details"].(map[string]any)
+	items, _ := details["images"].([]any)
+	images := make([]any, 0, len(items))
+	for _, value := range items {
+		item, _ := value.(map[string]any)
+		path, _ := item["path"].(string)
+		if path == "" || len(path) > 200 || !strings.HasPrefix(path, "images/") ||
+			strings.Contains(path, "..") || strings.Contains(path, `\`) {
+			continue
+		}
+		mime, _ := item["mime"].(string)
+		switch mime {
+		case "image/png", "image/jpeg", "image/webp":
+		default:
+			mime = ""
+		}
+		size, _ := item["bytes"].(float64)
+		if size < 0 || math.Trunc(size) != size {
+			size = 0
+		}
+		images = append(images, map[string]any{
+			"path": path, "mime": mime, "bytes": size,
+			"model": toolResultImageString(item["model"]),
+			"site":  toolResultImageString(item["site"]),
+			"alt":   toolResultImageString(item["alt"]),
+		})
+	}
+	return images
+}
+
+func toolResultImageString(value any) string {
+	text, _ := value.(string)
+	runes := []rune(text)
+	if len(runes) > 200 {
+		return string(runes[:200])
+	}
+	return text
 }
 
 // toolOutput 把工具结果拼成前端可展示文本:文本块用换行连接,图片块用占位。

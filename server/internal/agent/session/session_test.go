@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 var update = flag.Bool("update", false, "重新生成 testdata/*.golden.json")
@@ -788,6 +789,56 @@ func TestBuildTranscriptTools(t *testing.T) {
 	}
 	if _, has := asst3["thinking"]; has {
 		t.Fatalf("无思考块的 assistant 不应有 thinking: %+v", asst3)
+	}
+	images := asMaps(tool1["images"])
+	if len(images) != 1 {
+		t.Fatalf("tool1.images = %+v, want 仅合法的 1 项", images)
+	}
+	image := asMap(images[0])
+	if image["path"] != "images/01-20261103-153012.png" || image["mime"] != "image/png" ||
+		image["bytes"] != int64(123) || image["model"] != "gpt-image-2" ||
+		image["site"] != "demo" || image["alt"] != "示意图" {
+		t.Fatalf("tool1.images[0] = %+v", image)
+	}
+	if _, has := tool2["images"]; has {
+		t.Fatalf("无 details.images 的旧工具结果不应有 images: %+v", tool2)
+	}
+}
+
+// details.images 的形状与字段都来自 Pi 扩展,非法项丢弃、非法字段归零,
+// 且不能影响同一 toolResult 的文字内容。
+func TestBuildTranscriptToolImageSanitization(t *testing.T) {
+	store := newTestStore(t)
+	meta := mustCreate(t, store)
+	alt := strings.Repeat("说", 201)
+	writeLines(t, store, meta.ID, "toolimgs01",
+		`{"type":"session","version":3,"id":"toolimgs01","timestamp":"2026-10-29T08:00:00.000Z","cwd":"w"}`,
+		`{"type":"message","id":"r1","parentId":null,"timestamp":"2026-10-29T08:00:00.010Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"image_generation","content":"已生成","details":{"images":[{"path":"images/ok.webp","mime":"text/plain","bytes":-1,"model":2,"site":null,"alt":"`+alt+`"},{"path":"images//x.png","mime":"image/png"},{"path":"images/a.png","mime":5,"bytes":1.5}]}}}`,
+	)
+	entries, err := store.BuildTranscript(meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := asMap(entries[0]["message"])
+	images := asMaps(message["images"])
+	if len(images) != 3 {
+		t.Fatalf("images = %+v, want 3 项", images)
+	}
+	first := asMap(images[0])
+	if first["mime"] != "" || first["bytes"] != int64(0) || first["model"] != "" || first["site"] != "" ||
+		utf8.RuneCountInString(first["alt"].(string)) != 200 {
+		t.Fatalf("非法字段未归零/截断: %+v", first)
+	}
+	second := asMap(images[1])
+	if second["path"] != "images//x.png" || second["mime"] != "image/png" {
+		t.Fatalf("合法项被误删或改写: %+v", second)
+	}
+	third := asMap(images[2])
+	if third["mime"] != "" || third["bytes"] != int64(0) {
+		t.Fatalf("非法字段未归零: %+v", third)
+	}
+	if message["content"] != "已生成" || asMap(entries[0])["type"] != "message" {
+		t.Fatalf("工具文字内容被改动: %+v", entries[0])
 	}
 }
 

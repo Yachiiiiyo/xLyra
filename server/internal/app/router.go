@@ -201,6 +201,10 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	playgroundService := playground.NewService(logger.With("thread", "playground"), db, gatewayHandler, playgroundRoot)
 	playgroundHandler := playground.NewHandler(playgroundService)
 	agentLLMHandler := agentllm.NewHandler(logger.With("thread", "agent-llm"), db, gatewayHandler)
+	agentLLMHandler.SetImageModelsSource(func() []agentproxy.ImageModelSelection {
+		return agentproxy.ImageModelsFromConfig(confFile)
+	})
+	agentLLMHandler.SetImageGenerationOptions(cfg.AgentImageMaxCalls, cfg.AgentImageTimeout)
 	agentProxyHandler := agentproxy.NewHandler(cfg.AgentRunnerBaseURL, cfg.AgentRunnerToken, streamingHTTPClient, logger.With("thread", "agent-proxy"), config.ResolveWorkdir())
 	if routerService != nil {
 		agentProxyHandler.SetProtocolResolver(agentProtocolResolver(logger, confFile, routerService))
@@ -590,6 +594,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			runs.With(limitBody).Post("/runs/register", agentLLMHandler.Register)
 			runs.With(limitBody).Post("/runs/end", agentLLMHandler.End)
 		})
+		internal.With(limitBody).Post("/images", agentLLMHandler.Images)
 		internal.With(limitBody).Post("/v1/responses", agentLLMHandler.Responses)
 		internal.With(limitBody).Post("/v1/messages", agentLLMHandler.Messages)
 		internal.With(limitBody).Post("/v1/chat/completions", agentLLMHandler.ChatCompletions)
@@ -722,6 +727,8 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Get("/sessions/{id}/transcript", h.SessionTranscript)
 	agentRouter.Delete("/sessions/{id}", h.DeleteSession)
 	agentRouter.Post("/sessions/{id}/fork", h.ForkSession)
+	agentRouter.Get("/sessions/{id}/files", h.SessionFile)
+	agentRouter.Head("/sessions/{id}/files", h.SessionFile)
 	agentRouter.Post("/sessions/{id}/retry", h.RetrySession)
 	agentRouter.Post("/sessions/{id}/stop", h.StopSession)
 	agentRouter.Post("/sessions/{id}/grant-access", h.GrantAccess)
@@ -817,7 +824,7 @@ func routeAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/internal/agent-llm/v1/") {
+			if r.Method == http.MethodPost && (r.URL.Path == "/internal/agent-llm/images" || strings.HasPrefix(r.URL.Path, "/internal/agent-llm/v1/")) {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -95,10 +95,14 @@ func gatewayConnectPort(raw string) (int, error) {
 	}
 }
 
-// runTools 只在执行器已就绪的普通 run 上追加 bash。
-func (r *Runner) runTools(executorReady bool) string {
+// runTools 按普通 run 已就绪的能力追加 bash 与生图工具;compact 两者都不传。
+func (r *Runner) runTools(executorReady, imageGeneration bool) string {
+	tools := r.tools
 	if executorReady {
-		return r.tools + ",bash"
+		tools += ",bash"
 	}
-	return r.tools
+	if imageGeneration {
+		tools += ",image_generation"
+	}
+	return tools
 }

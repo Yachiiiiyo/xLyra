@@ -14,16 +14,19 @@
 //   seccomp + rlimit 下执行,环境也由执行器构造)。失败即关闭:连不上、协议错误
 //   一律报错,绝不回退到本地执行;未启用时不覆盖、不拦截,内置行为保持原样
 //   (契约:Go 侧此时不把 bash 放进 --tools)。
-// - fail-closed:配置读不到/非法一律按 ask、readRoots 为空、bash 未启用;钩子内任何
+// - fail-closed:配置读不到/非法一律按 ask、readRoots 为空、bash 与生图未启用;钩子内任何
 //   意外错误都阻断工具调用。
 //
-// 只在启用沙箱 bash 时覆盖同名内置工具,不新增工具名、不改系统提示;reason 里只回显
-// 模型的原始输入,不回显 realpath 之后的宿主机真实路径。
+// 沙箱 bash 不新增其他命令工具;生图配置有效时额外注册 image_generation,不触发审批。
+// reason 里只回显模型的原始输入,不回显 realpath 之后的宿主机真实路径。
 import { lstatSync, readFileSync, realpathSync, readlinkSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { Type } from "@earendil-works/pi-ai";
 import {
 	createBashTool,
+	type AgentToolResult,
 	type BashOperations,
 	type BashToolCallEvent,
 	type ExtensionAPI,
@@ -406,10 +409,194 @@ function displayPath(raw: string): string {
 	return raw.length > 200 ? `${raw.slice(0, 200)}...` : raw;
 }
 
+// ---- 生图工具:经本 run 令牌调用网关,图片只落工作区、不回灌模型 ----
+type ImageGenerationConfig = { endpoint: string; tokenFile: string; maxBytes: number; timeoutSeconds: number };
+type ImageGenerationInput = { prompt: string; size?: string; quality?: string };
+
+function loadImageGenerationConfig(): ImageGenerationConfig | null {
+	try {
+		const dir = process.env.PI_CODING_AGENT_DIR;
+		if (!dir) return null;
+		const parsed = JSON.parse(readFileSync(path.join(dir, "xlyra.json"), "utf8"));
+		if (!parsed || typeof parsed !== "object") return null;
+		const image = (parsed as Record<string, unknown>).imageGeneration;
+		if (!image || typeof image !== "object") return null;
+		const record = image as Record<string, unknown>;
+		if (record.enabled !== true || typeof record.endpoint !== "string") return null;
+		const endpoint = new URL(record.endpoint);
+		if ((endpoint.protocol !== "http:" && endpoint.protocol !== "https:") || endpoint.hostname === "") return null;
+		if (typeof record.tokenFile !== "string" || !path.isAbsolute(record.tokenFile)) return null;
+		if (typeof record.maxBytes !== "number" || !Number.isInteger(record.maxBytes) || record.maxBytes <= 0) return null;
+		if (typeof record.timeoutSeconds !== "number" || !Number.isInteger(record.timeoutSeconds) || record.timeoutSeconds <= 0) return null;
+		return { endpoint: endpoint.toString(), tokenFile: record.tokenFile, maxBytes: record.maxBytes, timeoutSeconds: record.timeoutSeconds };
+	} catch {
+		return null;
+	}
+}
+
+function imageError(text: string): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text }], details: undefined, isError: true };
+}
+
+async function readBoundedBody(response: Response, maxBytes: number): Promise<Buffer> {
+	if (!response.body) throw new Error("生图服务响应格式错误");
+	const reader = response.body.getReader();
+	const chunks: Buffer[] = [];
+	let total = 0;
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.byteLength;
+		if (total > maxBytes) throw new Error("生图服务响应超过大小限制");
+		chunks.push(Buffer.from(value));
+	}
+	return Buffer.concat(chunks, total);
+}
+
+function imageType(data: Buffer): { ext: string; mime: string } | null {
+	if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+		return { ext: "png", mime: "image/png" };
+	}
+	if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+		return { ext: "jpg", mime: "image/jpeg" };
+	}
+	if (data.length >= 12 && data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP") {
+		return { ext: "webp", mime: "image/webp" };
+	}
+	return null;
+}
+
+function imageAlt(prompt: string): string {
+	return Array.from(prompt.replace(/[\r\n\[\]()]/g, "")).slice(0, 40).join("") || "生成图片";
+}
+
+function timestamp(date: Date): string {
+	const pad = (n: number) => String(n).padStart(2, "0");
+	return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`;
+}
+
+async function executeImageGeneration(
+	config: ImageGenerationConfig,
+	params: ImageGenerationInput,
+	signal: AbortSignal | undefined,
+	sequence: number,
+): Promise<AgentToolResult<unknown>> {
+	const controller = new AbortController();
+	let cancelled = false;
+	let timedOut = false;
+	const onAbort = () => {
+		cancelled = true;
+		controller.abort();
+	};
+	if (signal?.aborted) return imageError("生图已取消");
+	signal?.addEventListener("abort", onAbort, { once: true });
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, config.timeoutSeconds * 1000);
+	let temporary = "";
+	try {
+		// 令牌会续期轮换,每次调用都现读,不能缓存启动时的值。
+		const token = readFileSync(config.tokenFile, "utf8").trim();
+		if (!token) return imageError("生图令牌不可用");
+		const body: Record<string, string> = { prompt: params.prompt };
+		if (params.size !== undefined) body.size = params.size;
+		if (params.quality !== undefined) body.quality = params.quality;
+		const response = await fetch(config.endpoint, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		const raw = await readBoundedBody(response, config.maxBytes);
+		let payload: any;
+		try {
+			payload = JSON.parse(raw.toString("utf8"));
+		} catch {
+			return imageError("生图服务响应格式错误");
+		}
+		const message = typeof payload?.error?.message === "string" ? payload.error.message : "";
+		if (!response.ok) {
+			if (response.status === 409) return imageError("未配置生图模型,请让用户在 Agent 设置里配置");
+			if (response.status === 429) return imageError("本次对话的生图次数已达上限");
+			if (response.status === 400) return imageError(`生图参数错误:${message || "请求参数无效"}`);
+			if (response.status === 502) return imageError(`生图失败:${message.slice(0, 300) || "上游服务失败"}`);
+			return imageError("生图失败:服务暂时不可用");
+		}
+		const encoded = payload?.data?.b64_json;
+		if (typeof encoded !== "string") return imageError("生图服务响应缺少图片");
+		const data = Buffer.from(encoded, "base64");
+		const type = imageType(data);
+		if (!type) return imageError("生图服务返回了不支持的图片数据");
+		const model = typeof payload.data.model === "string" ? payload.data.model : "未知";
+		const site = typeof payload.data.site === "string" ? payload.data.site : "未知";
+		const alt = imageAlt(params.prompt);
+		const name = `${String(sequence).padStart(2, "0")}-${timestamp(new Date())}.${type.ext}`;
+		const cwd = process.cwd();
+		const realCwd = realpathSync(cwd);
+		const imagesDir = path.join(cwd, "images");
+		await mkdir(imagesDir, { recursive: true });
+		if (!isInside(realCwd, realpathSync(imagesDir))) return imageError("图片目录不在会话工作区内,已拒绝写入");
+		const destination = path.join(imagesDir, name);
+		if (!isInside(realCwd, destination)) return imageError("图片路径不在会话工作区内,已拒绝写入");
+		const relative = path.posix.join("images", name);
+		temporary = `${destination}.tmp-${process.pid}-${sequence}`;
+		await writeFile(temporary, data, { flag: "wx" });
+		if (signal?.aborted) throw new Error("aborted");
+		await rename(temporary, destination);
+		temporary = "";
+		const attempts = Array.isArray(payload.data.attempts) ? payload.data.attempts.length : 0;
+		const fallback = attempts > 0 ? `\n此前有 ${attempts} 次兜底` : "";
+		return {
+			content: [{
+				type: "text",
+				text: `已生成图片:${relative}(模型:${model}@${site})。请在回复中用下面的 Markdown 原样展示该图片(图片内容不会返回给你):\n![${alt}](${relative})${fallback}`,
+			}],
+			details: { images: [{ path: relative, mime: type.mime, bytes: data.length, model, site, alt }] },
+		};
+	} catch (error) {
+		if (cancelled || signal?.aborted) return imageError("生图已取消");
+		if (timedOut) return imageError("生图请求超时");
+		if (error instanceof Error && /^(生图服务响应|图片)/.test(error.message)) return imageError(error.message);
+		return imageError("生图请求失败:网络或服务不可用");
+	} finally {
+		clearTimeout(timer);
+		signal?.removeEventListener("abort", onAbort);
+		if (temporary) await rm(temporary, { force: true }).catch(() => {});
+	}
+}
+
+function registerImageGeneration(pi: ExtensionAPI, config: ImageGenerationConfig) {
+	let sequence = 0;
+	pi.registerTool({
+		name: "image_generation",
+		label: "Generate image",
+		description:
+			"Generate an image from a detailed text prompt. The image is saved in the `images/` folder of the workspace and the tool result gives you a Markdown image reference: include it verbatim in your reply so the user sees the image. You never receive the image data.",
+		parameters: Type.Object({
+			prompt: Type.String({ minLength: 1, maxLength: 4000, description: "Detailed description of the image to generate" }),
+			size: Type.Optional(Type.Union([
+				Type.Literal("1024x1024"), Type.Literal("1536x1024"), Type.Literal("1024x1536"), Type.Literal("auto"),
+			])),
+			quality: Type.Optional(Type.Union([
+				Type.Literal("low"), Type.Literal("medium"), Type.Literal("high"), Type.Literal("auto"),
+			])),
+		}),
+		executionMode: "sequential",
+		execute: async (_toolCallId, params, signal) => {
+			sequence += 1;
+			return executeImageGeneration(config, params, signal, sequence);
+		},
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	const permissionMode = loadPermissionMode();
 	const readRoots = loadReadRoots();
 	const bashConfig = loadBashConfig();
+	const imageGenerationConfig = loadImageGenerationConfig();
+
+	if (imageGenerationConfig !== null) registerImageGeneration(pi, imageGenerationConfig);
 
 	if (bashConfig !== null) {
 		const operations = sandboxOperations(bashConfig);
@@ -421,6 +608,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", async (event, ctx) => {
 		try {
+			if (event.toolName === "image_generation") return; // 生图不需要审批,也不接受路径参数
 			if (event.toolName === "bash") {
 				// 未启用:不做任何审批/拦截(此时由 Go 的 --tools 白名单保证 bash 不可用)
 				if (bashConfig === null) return;

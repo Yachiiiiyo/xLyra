@@ -1354,6 +1354,84 @@ func TestXlyraRunConfigFiles(t *testing.T) {
 	}
 }
 
+// TestImageGenerationRunConfig:生图配置逐 run 现取,白名单、提示与令牌路径同步切换。
+func TestImageGenerationRunConfig(t *testing.T) {
+	modelCount := 0
+	env := newTestEnv(t, "basic", func(cfg *Config, _ *[]string) {
+		cfg.ImageModels = func() int { return modelCount }
+	})
+	first, err := env.runner.Send(context.Background(), SendInput{Content: "未配置生图", Model: "mock-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectRun(t, env.runs, first.SessionID).wait(t)
+	agentDir := filepath.Join(env.store.Dir(first.SessionID), "pi-agent")
+	data, err := os.ReadFile(filepath.Join(agentDir, "xlyra.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "imageGeneration") {
+		t.Fatalf("未配置生图时 xlyra.json = %s", data)
+	}
+	records := readRecords(t, env.record)
+	args := recordArgs(t, records[0])
+	if strings.Contains(flagArg(args, "--tools"), "image_generation") {
+		t.Fatalf("未配置生图时白名单错误: %v", args)
+	}
+	prompt, err := os.ReadFile(filepath.Join(agentDir, "system-prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(prompt), "image_generation") {
+		t.Fatal("未配置生图时系统提示不应包含工具说明")
+	}
+
+	modelCount = 1
+	second, err := env.runner.Send(context.Background(), SendInput{SessionID: first.SessionID, Content: "配置后生图", Model: "mock-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectRun(t, env.runs, second.SessionID).wait(t)
+	data, err = os.ReadFile(filepath.Join(agentDir, "xlyra.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		ImageGeneration struct {
+			Enabled        bool   `json:"enabled"`
+			Endpoint       string `json:"endpoint"`
+			TokenFile      string `json:"tokenFile"`
+			MaxBytes       int    `json:"maxBytes"`
+			TimeoutSeconds int    `json:"timeoutSeconds"`
+		} `json:"imageGeneration"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	image := config.ImageGeneration
+	if !image.Enabled || image.Endpoint != "http://127.0.0.1:18080/internal/agent-llm/images" || image.TokenFile != filepath.Join(agentDir, "token") || image.MaxBytes != 33554432 || image.TimeoutSeconds != 660 {
+		t.Fatalf("第二个 run 生图配置错误: %+v", image)
+	}
+	records = readRecords(t, env.record)
+	var starts []map[string]any
+	for _, record := range records {
+		if record["kind"] == "start" {
+			starts = append(starts, record)
+		}
+	}
+	args = recordArgs(t, starts[len(starts)-1])
+	if !strings.Contains(","+flagArg(args, "--tools")+",", ",image_generation,") {
+		t.Fatalf("配置生图后白名单错误: %v", args)
+	}
+	prompt, err = os.ReadFile(filepath.Join(agentDir, "system-prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(prompt), "image_generation") {
+		t.Fatal("配置生图后系统提示缺少工具说明")
+	}
+}
+
 // TestHealthRequiresExtensionForWriteTools:工具含 write/edit 时扩展缺失即
 // fail-closed;只读工具不受影响。
 func TestHealthRequiresExtensionForWriteTools(t *testing.T) {

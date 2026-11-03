@@ -74,6 +74,8 @@ type Config struct {
 	Args           []string
 	ExtraArgs      []string
 	Tools          []string
+	// ImageModels 每次 run 实时返回生图模型数量;nil 或零不注册生图工具。
+	ImageModels func() int
 	// ExtensionPath 是 xLyra 扩展(xLyra.ts)的绝对路径,经 -e 传给 Pi;
 	// Tools 含 write/edit 时必填且文件必须存在(Health fail-closed)。
 	ExtensionPath string

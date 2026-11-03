@@ -93,6 +93,10 @@ type Caps struct {
 	// Opus 需要:网关对 Opus 非 adaptive 请求的校验不稳定,统一走 adaptive
 	// (07 §九.5)。
 	ForceAdaptiveThinking bool
+	// AllowEmptySignature 对应 compat.allowEmptySignature:非 Claude 模型经 anthropic-messages
+	// 返回的思考块没有签名,Pi 默认会把无签名的历史思考块转成普通 text 回灌,模型就会把
+	// 上一轮的草稿当成可见回复照着再写一遍;打开后按空签名的 thinking 块原样回传。
+	AllowEmptySignature bool
 	// ThinkingFormat 对应 compat.thinkingFormat:GLM 用 zai、Qwen 用 qwen
 	// (07 §九.1)。
 	ThinkingFormat string
@@ -143,13 +147,16 @@ func CapsFor(modelID string) Caps {
 		return Caps{Vendor: "google", Reasoning: true, Image: true, Efforts: slices.Clone(standardEfforts)}
 	case strings.HasPrefix(id, "deepseek-"):
 		// 上游渠道拒绝任何推理参数;图片反而实测可用(07 §九.1、§九.3)。
-		return Caps{Vendor: "deepseek", Reasoning: false, Image: true, Efforts: slices.Clone(offOnlyEfforts)}
+		return Caps{Vendor: "deepseek", Reasoning: false, Image: true, AllowEmptySignature: true, Efforts: slices.Clone(offOnlyEfforts)}
 	case strings.HasPrefix(id, "glm-"):
-		return Caps{Vendor: "glm", Reasoning: true, Image: false, ThinkingFormat: "zai", Efforts: slices.Clone(standardEfforts)}
+		return Caps{Vendor: "glm", Reasoning: true, Image: false, ThinkingFormat: "zai", AllowEmptySignature: true, Efforts: slices.Clone(standardEfforts)}
 	case strings.HasPrefix(id, "kimi-"):
-		return Caps{Vendor: "kimi", Reasoning: false, Image: false, Efforts: slices.Clone(offOnlyEfforts)}
+		// 2026-11-03 复测:Kimi 经网关接受 thinking.enabled / output_config.effort /
+		// reasoning_effort(200,不再是 400),且 high 比 low 平均思考更长,所以前端选的
+		// 推理强度要传下去;旧结论「Kimi 不能传推理参数」(07 §九.1)已过期。
+		return Caps{Vendor: "kimi", Reasoning: true, Image: false, AllowEmptySignature: true, Efforts: slices.Clone(standardEfforts)}
 	case strings.HasPrefix(id, "qwen"):
-		return Caps{Vendor: "qwen", Reasoning: true, Image: true, ThinkingFormat: "qwen", Efforts: slices.Clone(standardEfforts)}
+		return Caps{Vendor: "qwen", Reasoning: true, Image: true, ThinkingFormat: "qwen", AllowEmptySignature: true, Efforts: slices.Clone(standardEfforts)}
 	default:
 		return Caps{Vendor: "unknown", Reasoning: true, Image: true, Efforts: slices.Clone(standardEfforts)}
 	}
@@ -259,6 +266,7 @@ type piCost struct {
 type piCompat struct {
 	ForceAdaptiveThinking bool   `json:"forceAdaptiveThinking,omitempty"`
 	ThinkingFormat        string `json:"thinkingFormat,omitempty"`
+	AllowEmptySignature   bool   `json:"allowEmptySignature,omitempty"`
 }
 
 // 窗口与输出上限:contextWindow 由调用方按能力配置传入(ModelsInput.ContextWindow,
@@ -330,8 +338,8 @@ func newPIModel(modelID string, caps Caps, window int) piModel {
 		ContextWindow:    window,
 		MaxTokens:        defaultMaxTokens,
 	}
-	if caps.ForceAdaptiveThinking || caps.ThinkingFormat != "" {
-		model.Compat = &piCompat{ForceAdaptiveThinking: caps.ForceAdaptiveThinking, ThinkingFormat: caps.ThinkingFormat}
+	if caps.ForceAdaptiveThinking || caps.ThinkingFormat != "" || caps.AllowEmptySignature {
+		model.Compat = &piCompat{ForceAdaptiveThinking: caps.ForceAdaptiveThinking, ThinkingFormat: caps.ThinkingFormat, AllowEmptySignature: caps.AllowEmptySignature}
 	}
 	return model
 }

@@ -33,14 +33,23 @@ const bashSystemPrompt = `
 - 命令结束后所有后台进程都会被清理,不要依赖常驻进程。
 - 需要联网或安装依赖的需求无法完成,应如实告诉用户。`
 
+const imageGenerationSystemPrompt = `
+
+可以使用 image_generation 工具生成图片,图片会保存在工作区 images/ 下,图片内容不会返回给你。
+生成成功后,请在最终回复中用工具结果给出的 Markdown(![说明](images/文件名))原样展示图片,可放在文字说明之间,不要改动路径。
+每个会话轮次的生图调用次数有限,请先想清楚再调用。`
+
 // systemPrompt 返回本次 run 使用的系统提示文本。
-func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration) string {
+func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGeneration bool) string {
 	text := strings.TrimSpace(r.cfg.SystemPrompt)
 	if text == "" {
 		text = defaultSystemPrompt
 	}
 	if bash {
 		text += fmt.Sprintf(bashSystemPrompt, int(defaultTimeout/time.Second))
+	}
+	if imageGeneration {
+		text += imageGenerationSystemPrompt
 	}
 	return text
 }

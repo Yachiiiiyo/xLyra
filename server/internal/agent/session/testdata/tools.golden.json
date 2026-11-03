@@ -28,6 +28,16 @@
   {
     "message": {
       "content": "file-a\nfile-b",
+      "images": [
+        {
+          "alt": "示意图",
+          "bytes": 123,
+          "mime": "image/png",
+          "model": "gpt-image-2",
+          "path": "images/01-20261103-153012.png",
+          "site": "demo"
+        }
+      ],
       "is_error": false,
       "name": "bash",
       "role": "tool",

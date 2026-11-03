@@ -67,6 +67,30 @@ func TestRenderReferenceBasic(t *testing.T) {
 	}
 }
 
+// 工具结果带生图元数据时,在输出行后逐张追加图片路径,最多 4 行;
+// 不渲染 details 里的其他字段,也不得带入图片内容。
+func TestRenderReferenceToolImages(t *testing.T) {
+	store := newTestStore(t)
+	images := `[{"path":"images/01.png"},{"path":"images/02.png"},{"path":"images/03.png"},{"path":"images/04.png"},{"path":"images/05.png"},{"path":"images/../bad.png"}]`
+	meta := refSession(t, store, "refimgs0001", []string{
+		`{"type":"session","version":3,"id":"refimgs0001","timestamp":"2026-10-29T08:00:00.000Z","cwd":"/w"}`,
+		piLine("user", "u1", "", "生成图片"),
+		`{"type":"message","id":"r1","parentId":"u1","timestamp":"2026-10-29T08:00:00.030Z","message":{"role":"toolResult","toolCallId":"c1","toolName":"image_generation","content":[{"type":"text","text":"已生成"}],"details":{"images":` + images + `}}}`,
+	}, func(m *Meta) { m.PiSessionID = "refimgs0001" })
+
+	out, err := store.RenderReference(meta.ID, RenderReferenceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[工具 image_generation] 已生成\n[图片 images/01.png]\n[图片 images/02.png]\n[图片 images/03.png]\n[图片 images/04.png]"
+	if !strings.Contains(out, want) {
+		t.Fatalf("图片行不符:\n%s", out)
+	}
+	if strings.Contains(out, "05.png") || strings.Contains(out, "bad.png") {
+		t.Fatalf("图片行超过 4 条或包含非法路径:\n%s", out)
+	}
+}
+
 // 工具输出与 compaction 摘要超过 400 字时截断并加标记。
 func TestRenderReferenceToolTruncation(t *testing.T) {
 	store := newTestStore(t)

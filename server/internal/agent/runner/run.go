@@ -108,6 +108,8 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	}
 	// 每个 run 重建配置,避免模型、run 请求头或上一个 run 的权限状态残留;
 	// 系统提示与 xlyra.json 同样逐 run 重写(权限模式非 full 一律 ask)。
+	imageGeneration := r.imageGenerationConfig(ar.kind, prep.tokenFile)
+	imageEnabled := imageGeneration != nil
 	execDefaultTimeout := time.Duration(0)
 	if r.cfg.Sandbox != nil {
 		execDefaultTimeout = r.cfg.Sandbox.ExecDefaultTimeout
@@ -115,8 +117,8 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	files := map[string][]byte{
 		"models.json":      modelsJSON,
 		"settings.json":    settingsJSON,
-		"system-prompt.md": []byte(r.systemPrompt(prep.executor != nil, execDefaultTimeout)),
-		"xlyra.json":       xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig),
+		"system-prompt.md": []byte(r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled)),
+		"xlyra.json":       xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration),
 	}
 	for name, data := range files {
 		path := filepath.Join(agentDir, name)
@@ -157,7 +159,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		args = append(args, "-e", extension)
 	}
 	args = append(args, "--system-prompt", filepath.Join(agentDir, "system-prompt.md"))
-	if tools := r.runTools(prep.executor != nil); tools != "" {
+	if tools := r.runTools(prep.executor != nil, imageEnabled); tools != "" {
 		args = append(args, "--tools", tools)
 	}
 	// 技能发现固定关闭,只加载快照里启用的目录(停用 = 不传,不依赖
@@ -441,15 +443,34 @@ type xlyraBashConfig struct {
 	MaxTimeout     int    `json:"maxTimeout"`
 }
 
-func xlyraConfigJSON(mode string, readRoots []string, bash *xlyraBashConfig) []byte {
+type xlyraImageGenerationConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Endpoint       string `json:"endpoint"`
+	TokenFile      string `json:"tokenFile"`
+	MaxBytes       int    `json:"maxBytes"`
+	TimeoutSeconds int    `json:"timeoutSeconds"`
+}
+
+func (r *Runner) imageGenerationConfig(kind, tokenFile string) *xlyraImageGenerationConfig {
+	if kind == "compact" || r.cfg.ImageModels == nil || r.cfg.ImageModels() == 0 {
+		return nil
+	}
+	return &xlyraImageGenerationConfig{
+		Enabled: true, Endpoint: strings.TrimRight(r.cfg.GatewayBaseURL, "/") + "/internal/agent-llm/images",
+		TokenFile: tokenFile, MaxBytes: 32 << 20, TimeoutSeconds: 660,
+	}
+}
+
+func xlyraConfigJSON(mode string, readRoots []string, bash *xlyraBashConfig, imageGeneration *xlyraImageGenerationConfig) []byte {
 	if readRoots == nil {
 		readRoots = []string{}
 	}
 	data, err := json.Marshal(struct {
-		PermissionMode string           `json:"permissionMode"`
-		ReadRoots      []string         `json:"readRoots"`
-		Bash           *xlyraBashConfig `json:"bash,omitempty"`
-	}{PermissionMode: permissionModeValue(mode), ReadRoots: readRoots, Bash: bash})
+		PermissionMode  string                      `json:"permissionMode"`
+		ReadRoots       []string                    `json:"readRoots"`
+		Bash            *xlyraBashConfig            `json:"bash,omitempty"`
+		ImageGeneration *xlyraImageGenerationConfig `json:"imageGeneration,omitempty"`
+	}{PermissionMode: permissionModeValue(mode), ReadRoots: readRoots, Bash: bash, ImageGeneration: imageGeneration})
 	if err != nil {
 		return []byte(`{"permissionMode":"ask","readRoots":[]}`)
 	}
