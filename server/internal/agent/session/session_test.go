@@ -805,6 +805,52 @@ func TestBuildTranscriptTools(t *testing.T) {
 	}
 }
 
+// edit 的 details.patch 只在成功且不超过上限时进入转录。
+func TestBuildTranscriptEditPatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		isError  bool
+		patch    string
+		want     string
+	}{
+		{name: "edit 成功", toolName: "edit", patch: "--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n", want: "--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n"},
+		{name: "edit 失败", toolName: "edit", isError: true, patch: "--- a\n+++ a\n"},
+		{name: "patch 超限", toolName: "edit", patch: strings.Repeat("+", 200<<10+1)},
+		{name: "非 edit", toolName: "write", patch: "--- a\n+++ a\n"},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore(t)
+			meta := mustCreate(t, store)
+			line, err := json.Marshal(map[string]any{
+				"type": "message", "id": "r1", "parentId": nil,
+				"message": map[string]any{
+					"role": "toolResult", "toolCallId": "c1", "toolName": tt.toolName,
+					"isError": tt.isError, "content": "done", "details": map[string]any{"patch": tt.patch},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeLines(t, store, meta.ID, fmt.Sprintf("patch%04d", i), string(line))
+			entries, err := store.BuildTranscript(meta.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			message := asMap(entries[0]["message"])
+			got, has := message["details_patch"]
+			if tt.want == "" {
+				if has {
+					t.Fatalf("details_patch = %v, want 省略", got)
+				}
+			} else if got != tt.want {
+				t.Fatalf("details_patch = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // details.images 的形状与字段都来自 Pi 扩展,非法项丢弃、非法字段归零,
 // 且不能影响同一 toolResult 的文字内容。
 func TestBuildTranscriptToolImageSanitization(t *testing.T) {

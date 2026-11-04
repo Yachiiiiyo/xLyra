@@ -129,6 +129,30 @@
       "bash": "run command"
     }
   },
+  "changes": {
+    "title": "Changes in this turn",
+    "fileCount": "{{count}} files",
+    "kindWrite": "Written",
+    "kindEdit": "Modified",
+    "view": "View",
+    "showAll": "Show all {{count}} files",
+    "collapse": "Collapse",
+    "editIndex": "Edit {{index}}",
+    "addedLine": "Added line",
+    "removedLine": "Removed line"
+  },
+  "preview": {
+    "tabDiff": "Changes",
+    "tabSource": "Source",
+    "copyPath": "Copy path",
+    "copyContent": "Copy content",
+    "close": "Close",
+    "selectFile": "Switch file",
+    "notInRun": "This file is not part of this turn's changes",
+    "noPatch": "No change details were recorded for this edit (legacy session)",
+    "tooLarge": "This file is too large to display",
+    "panelLabel": "File preview"
+  },
   "settings": {
     "entry": "Settings",
     "title": "Agent Settings",

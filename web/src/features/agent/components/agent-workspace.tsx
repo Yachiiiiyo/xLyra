@@ -17,6 +17,8 @@ import { AgentSidebar } from '@/features/agent/components/agent-sidebar'
 import { AgentSettingsDialog } from '@/features/agent/components/agent-settings-dialog'
 import { AgentReferenceDialog } from '@/features/agent/components/agent-reference-dialog'
 import { AgentTimeline } from '@/features/agent/components/agent-timeline'
+import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-panel'
+import { runFileChanges } from '@/features/agent/lib/run-changes'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/components/common/app-logo'
 import { JumpToLatestButton } from '@/components/common/jump-to-latest-button'
@@ -246,6 +248,7 @@ export function AgentWorkspace() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [newSession, setNewSession] = useState(false)
   const [timeline, setTimeline] = useState<AgentTimelineData>([])
+  const [preview, setPreview] = useState<{ runId: string; runOrdinal: number; path: string } | null>(null)
   const [draft, setDraft] = useState('')
   const [editingMessage, setEditingMessage] = useState<{ messageId: string } | null>(null)
   const [editReplayConfirmation, setEditReplayConfirmation] = useState<{ messageId: string; content: string } | null>(null)
@@ -292,6 +295,14 @@ export function AgentWorkspace() {
     }
   }, [sessionsData, queryClient])
   const activeSession = selectedId ? sessions.find((session) => session.session_id === selectedId) : undefined
+  // 终态对账会用转录重建 run(id 随之改变),按 id 找不到时退回与 reconcileTimeline 相同的「第 N 个 run」配对
+  const previewRun = useMemo(() => {
+    if (!preview || !selectedId) return undefined
+    const runs = timeline.filter((item): item is Extract<AgentTimelineData[number], { kind: 'run' }> => item.kind === 'run')
+    return runs.find((item) => item.run.id === preview.runId) ?? runs[preview.runOrdinal]
+  }, [preview, selectedId, timeline])
+  const previewChanges = useMemo(() => previewRun?.kind === 'run' ? runFileChanges(previewRun.run) : [], [previewRun])
+  const activePreview = preview && previewRun?.kind === 'run' ? preview : null
   const hasMessages = timeline.length > 0
   // 背景图由壳层的 AppBackground 负责铺；这里只关心「是否配置了背景图」——
   // 只有配置了才在进入会话时叠加 dull 遮罩，无背景图时不渲染，避免影响星点背景；
@@ -576,6 +587,7 @@ export function AgentWorkspace() {
     setActiveId(null)
     setNewSession(true)
     setTimeline([])
+    setPreview(null)
     setDraft('')
     setEditingMessage(null)
     setEditReplayConfirmation(null)
@@ -599,6 +611,7 @@ export function AgentWorkspace() {
     skipTranscriptLoadFor.current = null
     scrollToBottom()
     setRunning(false)
+    setPreview(null)
     setEditingMessage(null)
     setEditReplayConfirmation(null)
     retryTimelineBeforeEdit.current = null
@@ -1013,7 +1026,7 @@ export function AgentWorkspace() {
         <LiquidGlass
           as="aside"
           variant={hasBackgroundImage ? 'pane' : 'regular'}
-          className={cn('z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex lg:flex-col', hasBackgroundImage && 'lg-pane-dim')}
+          className={cn('z-20 my-4 ml-4 hidden h-[calc(100%-2rem)] w-[280px] shrink-0 overflow-hidden rounded-shell lg:flex-col', activePreview ? 'lg:hidden xl:flex' : 'lg:flex', hasBackgroundImage && 'lg-pane-dim')}
         >
           {sidebarContent}
         </LiquidGlass>
@@ -1037,6 +1050,7 @@ export function AgentWorkspace() {
                     onUserEdit={handleUserEdit}
                     onFork={selectedId ? (messageId) => void handleFork(selectedId, messageId) : undefined}
                     onOpenReference={handleSelect}
+                    onOpenChange={selectedId ? (runId, path) => setPreview({ runId, runOrdinal: timeline.filter((item) => item.kind === 'run').findIndex((item) => item.id === runId), path }) : undefined}
                   />
                   {waitingReply ? <WaitingIndicator state={waitingOrbState} /> : null}
                 </div>
@@ -1064,6 +1078,12 @@ export function AgentWorkspace() {
           </div>
         )}
       </div>
+      {activePreview && !isMobileLayout ? (
+        <AgentPreviewPanel changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile={false} />
+      ) : null}
+      {activePreview && isMobileLayout ? (
+        <AgentPreviewPanel changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile />
+      ) : null}
       </div>
     </div>
   )

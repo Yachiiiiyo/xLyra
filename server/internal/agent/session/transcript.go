@@ -284,6 +284,11 @@ func messageEntry(entry piEntry, meta Meta) map[string]any {
 		if images := toolImages(msg.Details); len(images) > 0 {
 			message["images"] = images
 		}
+		if msg.ToolName == "edit" && !msg.IsError {
+			if patch := toolDetailsPatch(msg.Details); patch != "" {
+				message["details_patch"] = patch
+			}
+		}
 	default:
 		return nil
 	}
@@ -429,6 +434,19 @@ func rawArguments(raw json.RawMessage) string {
 		return "{}"
 	}
 	return string(trimmed)
+}
+
+// toolDetailsPatch 提取 edit 结果的统一 diff,空值与超大 patch 不透传。
+func toolDetailsPatch(details json.RawMessage) string {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(details, &object) != nil {
+		return ""
+	}
+	var patch string
+	if json.Unmarshal(object["patch"], &patch) != nil || patch == "" || len(patch) > 200<<10 {
+		return ""
+	}
+	return patch
 }
 
 // imageAttachments 把 user 消息里的图片块转成 attachments;名字优先用 meta

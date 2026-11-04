@@ -129,6 +129,30 @@
       "bash": "コマンド実行"
     }
   },
+  "changes": {
+    "title": "今回の変更",
+    "fileCount": "{{count}} 個のファイル",
+    "kindWrite": "書き込み",
+    "kindEdit": "変更",
+    "view": "表示",
+    "showAll": "{{count}} 個のファイルをすべて表示",
+    "collapse": "折りたたむ",
+    "editIndex": "{{index}} 回目の変更",
+    "addedLine": "追加行",
+    "removedLine": "削除行"
+  },
+  "preview": {
+    "tabDiff": "変更",
+    "tabSource": "ソース",
+    "copyPath": "パスをコピー",
+    "copyContent": "内容をコピー",
+    "close": "閉じる",
+    "selectFile": "ファイルを切り替え",
+    "notInRun": "このファイルは今回の変更に含まれていません",
+    "noPatch": "この変更の内容は記録されていません（旧セッション）",
+    "tooLarge": "ファイルが大きいため、内容を表示できません",
+    "panelLabel": "ファイルプレビュー"
+  },
   "settings": {
     "entry": "設定",
     "title": "Agent 設定",

@@ -12,6 +12,7 @@ export type AgentWorkStep = {
   title: string
   input?: string
   output?: string
+  patch?: string
   images?: AgentGeneratedImage[]
   argsDone?: boolean
   detail?: string
@@ -454,16 +455,17 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
       const detail = pickDetail(payload, ['output', 'result', 'content', 'detail']) || extractEventText(payload) || undefined
       const isError = /error|fail/i.test(event.type) || payload?.is_error === true || payload?.ok === false
       const images = Array.isArray(payload?.images) && payload.images.length ? payload.images as AgentGeneratedImage[] : undefined
+      const patch = typeof payload?.details_patch === 'string' ? payload.details_patch : undefined
       return updateLastRun(withRun, (run) => {
         const index = stepId
           ? run.steps.findIndex((step) => step.id === stepId)
           : run.steps.map((step, position) => (step.status === 'running' ? position : -1)).filter((position) => position >= 0).pop() ?? -1
         if (index < 0) {
-          const step: AgentWorkStep = { id: stepId || nextId('step'), kind: 'tool', title: pickString(payload, ['name', 'tool', 'tool_name']) || 'tool', output: detail, images, detail, argsDone: true, status: isError ? 'error' : 'done' }
+          const step: AgentWorkStep = { id: stepId || nextId('step'), kind: 'tool', title: pickString(payload, ['name', 'tool', 'tool_name']) || 'tool', output: detail, images, patch, detail, argsDone: true, status: isError ? 'error' : 'done' }
           return { ...run, steps: [...run.steps, step] }
         }
         const steps = run.steps.slice()
-        steps[index] = { ...steps[index], output: detail ?? steps[index].output, images: images ?? steps[index].images, detail: detail ?? steps[index].detail, argsDone: true, status: isError ? 'error' : 'done' }
+        steps[index] = { ...steps[index], output: detail ?? steps[index].output, images: images ?? steps[index].images, patch: patch ?? steps[index].patch, detail: detail ?? steps[index].detail, argsDone: true, status: isError ? 'error' : 'done' }
         return { ...run, steps }
       })
     }
@@ -625,6 +627,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
             content: pausedByEscalation ? AWAITING_SEAL : message.content,
             is_error: pausedByEscalation ? false : message.is_error,
             images: message.images,
+            details_patch: message.details_patch,
           },
         }, entry.timestamp)
         continue

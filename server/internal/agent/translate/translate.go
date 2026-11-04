@@ -286,6 +286,11 @@ func (t *Translator) toolExecutionEnd(raw map[string]any) []Event {
 	if images := toolResultImages(raw["result"]); len(images) > 0 {
 		result["images"] = images
 	}
+	if name == "edit" && !isError {
+		if patch := toolResultPatch(raw["result"]); patch != "" {
+			result["details_patch"] = patch
+		}
+	}
 	return []Event{event("tool_result", map[string]any{
 		"tool_result": result,
 	})}
@@ -476,6 +481,17 @@ func toolResultImages(result any) []any {
 		})
 	}
 	return images
+}
+
+// toolResultPatch 提取 edit 结果的统一 diff,空值与超大 patch 不透传。
+func toolResultPatch(result any) string {
+	record, _ := result.(map[string]any)
+	details, _ := record["details"].(map[string]any)
+	patch, _ := details["patch"].(string)
+	if patch == "" || len(patch) > 200<<10 {
+		return ""
+	}
+	return patch
 }
 
 func toolResultImageString(value any) string {

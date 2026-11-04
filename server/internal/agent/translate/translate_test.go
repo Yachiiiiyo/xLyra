@@ -315,6 +315,45 @@ func TestFeedRules(t *testing.T) {
 }
 
 // TestFeedRobustness:非法 JSON、空行、无映射的 toolcall_delta 都不 panic,按约定返回。
+func TestToolExecutionEditPatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		isError  bool
+		patch    string
+		want     string
+	}{
+		{name: "edit 成功", toolName: "edit", patch: "--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n", want: "--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n"},
+		{name: "edit 失败", toolName: "edit", isError: true, patch: "--- a\n+++ a\n"},
+		{name: "patch 超限", toolName: "edit", patch: strings.Repeat("+", 200<<10+1)},
+		{name: "非 edit", toolName: "write", patch: "--- a\n+++ a\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			line, err := json.Marshal(map[string]any{
+				"type": "tool_execution_end", "toolCallId": "c1", "toolName": tt.toolName,
+				"isError": tt.isError, "result": map[string]any{"details": map[string]any{"patch": tt.patch}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err := New().Feed(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _ := events[0].Data["tool_result"].(map[string]any)
+			got, has := result["details_patch"]
+			if tt.want == "" {
+				if has {
+					t.Fatalf("details_patch = %v, want 省略", got)
+				}
+			} else if got != tt.want {
+				t.Fatalf("details_patch = %v, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFeedRobustness(t *testing.T) {
 	tr := New()
 

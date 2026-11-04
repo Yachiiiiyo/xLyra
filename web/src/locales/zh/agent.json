@@ -129,6 +129,30 @@
       "bash": "执行命令"
     }
   },
+  "changes": {
+    "title": "本轮变更",
+    "fileCount": "{{count}} 个文件",
+    "kindWrite": "写入",
+    "kindEdit": "修改",
+    "view": "查看",
+    "showAll": "展开全部 {{count}} 个文件",
+    "collapse": "收起",
+    "editIndex": "第 {{index}} 次修改",
+    "addedLine": "新增行",
+    "removedLine": "删除行"
+  },
+  "preview": {
+    "tabDiff": "变更",
+    "tabSource": "源码",
+    "copyPath": "复制路径",
+    "copyContent": "复制内容",
+    "close": "关闭",
+    "selectFile": "切换文件",
+    "notInRun": "该文件不在本轮变更中",
+    "noPatch": "这次修改没有记录变更内容（旧会话）",
+    "tooLarge": "文件过大，暂不显示内容",
+    "panelLabel": "文件预览"
+  },
   "settings": {
     "entry": "配置",
     "title": "Agent 设置",

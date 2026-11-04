@@ -404,6 +404,7 @@ export type AgentTranscriptEntry = {
     name?: string
     is_error?: boolean
     images?: AgentGeneratedImage[]
+    details_patch?: string
     thinking?: string
   } | string  /** type === 'compaction' */
   summary?: string

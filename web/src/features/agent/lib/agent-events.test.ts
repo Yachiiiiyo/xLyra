@@ -123,6 +123,19 @@ describe('reduceAgentEvent', () => {
     expect(item.run.status).toBe('done')
   })
 
+  it('maps edit patches on new and backfilled tool steps', () => {
+    const patch = '--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n'
+    const timeline = reduceAll([
+      { type: 'tool_call', data: { tool_call: { id: 'edit-call', name: 'edit', raw_arguments: '{"path":"a"}' } } },
+      { type: 'tool_result', data: { tool_result: { tool_call_id: 'edit-call', name: 'edit', details_patch: patch } } },
+      { type: 'tool_result', data: { tool_result: { tool_call_id: 'orphan-call', name: 'edit', details_patch: patch } } },
+    ])
+    const item = timeline[0]
+    if (item?.kind !== 'run') throw new Error('expected run')
+    expect(item.run.steps[0]?.patch).toBe(patch)
+    expect(item.run.steps[1]?.patch).toBe(patch)
+  })
+
   it('uses user-send → completion wall-clock duration on completed runs', () => {
     // 用户消息在 t=1_000 发出，agent_done 在 t=3_500 收到：用时 = 2_500ms（墙钟间隔，
     // 与 runner 的 elapsed_ms 无关）
@@ -617,6 +630,17 @@ describe('timelineFromTranscript', () => {
     const run = timeline[0]
     if (run?.kind !== 'run') throw new Error('expected run')
     expect(run.run.steps[0]?.images).toEqual([{ path: 'images/a.png', mime: 'image/png', bytes: 12 }])
+  })
+
+  it('restores edit patches from transcript tool messages', () => {
+    const patch = '--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n'
+    const timeline = timelineFromTranscript([
+      { type: 'message', message: { role: 'assistant', tool_calls: [{ id: 'edit-call', name: 'edit', raw_arguments: '{"path":"a"}' }] } },
+      { type: 'message', message: { role: 'tool', tool_call_id: 'edit-call', name: 'edit', content: 'done', details_patch: patch } },
+    ])
+    const run = timeline[0]
+    if (run?.kind !== 'run') throw new Error('expected run')
+    expect(run.run.steps[0]?.patch).toBe(patch)
   })
 
   it('restores text before tool calls within one assistant message', () => {

@@ -14,6 +14,8 @@ import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/rela
 import { canForkFromMessage, runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
 import { AgentGeneratedImage } from '@/features/agent/components/agent-generated-image'
 import { isGeneratedImagePath, runGeneratedImages } from '@/features/agent/lib/generated-images'
+import { runFileChanges } from '@/features/agent/lib/run-changes'
+import { AgentRunChanges } from '@/features/agent/components/agent-run-changes'
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
@@ -26,9 +28,10 @@ type AgentTimelineProps = {
   onUserEdit?: (messageId: string, text: string) => void
   onFork?: (messageId: string) => void
   onOpenReference?: (sessionId: string) => void
+  onOpenChange?: (runId: string, path: string) => void
 }
 
-export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference }: AgentTimelineProps) {
+export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference, onOpenChange }: AgentTimelineProps) {
   const lastUserIndex = items.reduce((index, item, current) => item.kind === 'user' ? current : index, -1)
   const sessionIds = useMemo(() => new Set((sessions ?? []).map((session) => session.session_id)), [sessions])
   // 分叉入口需要「这一轮对应的用户消息 id」：取时间线里紧邻当前 run 之前的 user 项
@@ -65,6 +68,7 @@ export function AgentTimeline({ items, sessionId, running, sessions, onPermissio
               forkMessageId={canForkFromMessage(forkMessageIds[index], Boolean(running)) ? forkMessageIds[index] : undefined}
               onFork={onFork}
               onPermissionDecision={onPermissionDecision}
+              onOpenChange={onOpenChange}
             />
       ))}
     </div>
@@ -217,11 +221,12 @@ function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: 
   )
 }
 
-function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
+function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision, onOpenChange }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision']; onOpenChange?: AgentTimelineProps['onOpenChange'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
   const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
   const flow = buildRunFlow(run)
+  const changes = useMemo(() => sessionId ? runFileChanges(run) : [], [run, sessionId])
   const lastTextIndex = flow.reduce((found, item, index) => (item.kind === 'text' ? index : found), -1)
   // 有最终回复的完成 run 才把工作过程自动折叠进「用时」行；纯状态步骤的 run
   // （如手动压缩）没有回复文本，保持展开让「已压缩上下文」直接可见
@@ -330,6 +335,10 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
           {forkMessageId ? <ForkMessageAction messageId={forkMessageId} onFork={onFork} /> : null}
           <MessageTime at={run.endedAt ?? run.startedAt} />
         </div>
+      ) : null}
+
+      {done && changes.length > 0 && onOpenChange ? (
+        <AgentRunChanges changes={changes} onOpen={(path) => onOpenChange(run.id, path)} />
       ) : null}
 
       {run.status === 'error' ? (
