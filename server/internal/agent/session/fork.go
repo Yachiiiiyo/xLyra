@@ -25,8 +25,9 @@ import (
 // 新会话沿用源的 Model/PermissionMode,标题为「分叉 · <源标题>」,Pi 会话 id
 // 换成新 UUID 并按 Pi 的文件命名习惯写入新会话的 pi/ 目录;文件头复制源头,
 // 只改 id、timestamp 与 cwd(指向新会话的 workspace)。meta 迁移复制 EntryID
-// 落在被复制条目里的用户消息与锚点落在被复制条目里的审批记录;SessionAllow、
-// RunErrors、Slot 不复制。任何一步失败都会删除已创建的新会话目录,不留半成品。
+// 落在被复制条目里的用户消息与锚点落在被复制条目里的审批记录和 RunChanges;
+// SessionAllow、RunErrors、Slot、StateDir 不复制。任何一步失败都会删除已创建的
+// 新会话目录,不留半成品。
 //
 // 并发:全程持源会话的会话锁且只读;新会话是全新 id,与其他会话互不影响。
 // 源会话是否有进行中的 run 由调用方(handler)先行拦截,这里不做检查。
@@ -89,6 +90,11 @@ func (s *Store) Fork(sourceID, messageID string) (Meta, error) {
 		for _, esc := range meta.Escalations {
 			if esc.AfterEntryID != "" && selected[esc.AfterEntryID] {
 				m.Escalations = append(m.Escalations, esc)
+			}
+		}
+		for _, rc := range meta.RunChanges {
+			if rc.AfterEntryID != "" && selected[rc.AfterEntryID] {
+				m.RunChanges = append(m.RunChanges, rc)
 			}
 		}
 		return nil

@@ -118,6 +118,16 @@ func (s *Store) BuildTranscript(id string) ([]map[string]any, error) {
 			tailErr = append(tailErr, runErr)
 		} // 其余:旧分支上的错误,丢弃
 	}
+	afterChange := map[string][]RunChange{}
+	var tailChange []RunChange
+	for _, rc := range meta.RunChanges {
+		switch {
+		case rc.AfterEntryID != "" && onPath[rc.AfterEntryID]:
+			afterChange[rc.AfterEntryID] = append(afterChange[rc.AfterEntryID], rc)
+		case rc.AfterEntryID == "":
+			tailChange = append(tailChange, rc)
+		}
+	}
 	for _, entry := range path {
 		if item := transcriptEntry(entry, meta); item != nil {
 			out = append(out, item)
@@ -128,12 +138,18 @@ func (s *Store) BuildTranscript(id string) ([]map[string]any, error) {
 		for _, runErr := range afterErr[entry.ID] {
 			out = append(out, runErrorEntry(runErr))
 		}
+		for _, rc := range afterChange[entry.ID] {
+			out = append(out, runChangeEntry(rc))
+		}
 	}
 	for _, esc := range tailEsc {
 		out = append(out, escalationEntry(esc))
 	}
 	for _, runErr := range tailErr {
 		out = append(out, runErrorEntry(runErr))
+	}
+	for _, rc := range tailChange {
+		out = append(out, runChangeEntry(rc))
 	}
 	return out, nil
 }
@@ -338,6 +354,33 @@ func runErrorEntry(runErr RunError) map[string]any {
 		"message":   runErr.Message,
 		"timestamp": runErr.At.UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
+}
+
+// runChangeEntry 把一轮文件变更转成前端条目。
+func runChangeEntry(rc RunChange) map[string]any {
+	files := make([]map[string]any, 0, len(rc.Files))
+	for _, file := range rc.Files {
+		item := map[string]any{
+			"path": file.Path, "kind": file.Kind, "size": file.Size,
+			"additions": file.Additions, "deletions": file.Deletions, "has_diff": file.HasDiff,
+		}
+		if file.Binary {
+			item["binary"] = true
+		}
+		if file.Truncated {
+			item["truncated"] = true
+		}
+		files = append(files, item)
+	}
+	out := map[string]any{
+		"type": "run_changes", "turn_id": rc.TurnID, "run_ids": rc.RunIDs,
+		"total": rc.Total, "files": files,
+		"timestamp": rc.At.UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	if rc.Incomplete {
+		out["incomplete"] = true
+	}
+	return out
 }
 
 // bindingFor 按 EntryID 反查 meta 里的用户消息(取最后一条绑定)。

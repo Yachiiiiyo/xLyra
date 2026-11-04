@@ -68,6 +68,54 @@ describe('AgentRunChanges', () => {
     expect(html).not.toContain('file-6.txt')
     expect(render(<AgentRunChanges changes={[]} onOpen={() => {}} />)).toBe('')
   })
+
+  it('后端清单项按 added/modified/deleted 渲染状态与删除线', () => {
+    const server = (path: string, status: 'added' | 'modified' | 'deleted', over: Partial<AgentFileChange> = {}): AgentFileChange => ({
+      path, kind: status === 'added' ? 'write' : 'edit', additions: 1, deletions: 1, patches: [],
+      status, turnId: 'turn-1', size: 10, binary: false, hasDiff: true, truncated: false, source: 'server', ...over,
+    })
+    const html = render(<AgentRunChanges changes={[server('a.txt', 'added'), server('b.txt', 'modified'), server('c.txt', 'deleted')]} onOpen={() => {}} />)
+    expect(html).toContain(zhAgent.changes.kindAdded)
+    expect(html).toContain(zhAgent.changes.kindModified)
+    expect(html).toContain(zhAgent.changes.kindDeleted)
+    expect(html).toContain('line-through')
+  })
+
+  it('二进制文件显示大小而不是 +n −m', () => {
+    const binary: AgentFileChange = {
+      path: 'b.bin', kind: 'edit', additions: 0, deletions: 0, patches: [],
+      status: 'modified', turnId: 'turn-1', size: 4096, binary: true, hasDiff: false, truncated: false, source: 'server',
+    }
+    const html = render(<AgentRunChanges changes={[binary]} onOpen={() => {}} />)
+    const row = html.slice(html.indexOf('<button'))
+    expect(row).toContain('4 KB')
+    expect(row).not.toContain('+')
+  })
+
+  it('total 大于列表长度时提示未列出的文件,incomplete 时提示可能不完整', () => {
+    const one: AgentFileChange = {
+      path: 'a.txt', kind: 'write', additions: 1, deletions: 0, patches: [],
+      status: 'added', turnId: 'turn-1', size: 2, binary: false, hasDiff: true, truncated: false, source: 'server',
+    }
+    const html = render(<AgentRunChanges changes={[one]} total={8} incomplete onOpen={() => {}} />)
+    expect(html).toContain(zhAgent.changes.omitted.replace('{{count}}', '7'))
+    expect(html).toContain(zhAgent.changes.incomplete)
+    const plain = render(<AgentRunChanges changes={[one]} onOpen={() => {}} />)
+    expect(plain).not.toContain(zhAgent.changes.omitted.replace('{{count}}', '0'))
+    expect(plain).not.toContain(zhAgent.changes.incomplete)
+  })
+})
+
+describe('AgentTimeline 后端变更', () => {
+  it('有 run_changes 时渲染后端清单(状态文字来自后端 kind)', () => {
+    const run: AgentRun = {
+      id: 'run-1', status: 'done', finalText: '回复', permissions: [], startedAt: 0, endedAt: 1, steps: [],
+      changes: { turnId: 'turn-1', total: 1, incomplete: false, files: [{ path: 'images/out.png', kind: 'added', size: 8, additions: 0, deletions: 0, has_diff: true }] },
+    }
+    const html = render(<AgentTimeline items={[{ kind: 'run', id: 'run-1', run }]} sessionId="session-1" onOpenChange={() => {}} />)
+    expect(html).toContain(zhAgent.changes.kindAdded)
+    expect(html).toContain('images/out.png')
+  })
 })
 
 describe('AgentDiffView', () => {

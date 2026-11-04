@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { AgentRun, AgentWorkStep } from '@/features/agent/lib/agent-events'
-import { changePatches, parseUnifiedPatch, patchStats, runFileChanges } from '@/features/agent/lib/run-changes'
+import type { AgentRun, AgentRunChanges, AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { changePatches, parseUnifiedPatch, patchStats, runDisplayChanges, runFileChanges, serverFileChanges } from '@/features/agent/lib/run-changes'
 
 const PATCH = '--- a.txt\n+++ a.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n'
 const SECOND_PATCH = '--- a.txt\n+++ a.txt\n@@ -3 +3,2 @@\n delta\n+epsilon\n'
@@ -105,6 +105,33 @@ describe('runFileChanges write 与 edit 混合', () => {
     expect(change?.content).toBe('fresh\n')
     expect(change?.patches).toEqual([])
     expect(change?.additions).toBe(1)
+  })
+})
+
+describe('serverFileChanges / runDisplayChanges', () => {
+  const changes: AgentRunChanges = {
+    turnId: 'turn-1',
+    total: 3,
+    incomplete: false,
+    files: [
+      { path: 'a.txt', kind: 'added', size: 12, additions: 3, deletions: 0, has_diff: true },
+      { path: 'b.bin', kind: 'modified', size: 4096, additions: 0, deletions: 0, binary: true, has_diff: false },
+      { path: 'c.txt', kind: 'deleted', size: 0, additions: 5, deletions: 5, truncated: true, has_diff: true },
+    ],
+  }
+
+  it('serverFileChanges 把后端清单映射为变更区模型', () => {
+    expect(serverFileChanges(changes)).toEqual([
+      { path: 'a.txt', kind: 'write', additions: 3, deletions: 0, patches: [], status: 'added', turnId: 'turn-1', size: 12, binary: false, hasDiff: true, truncated: false, source: 'server' },
+      { path: 'b.bin', kind: 'edit', additions: 0, deletions: 0, patches: [], status: 'modified', turnId: 'turn-1', size: 4096, binary: true, hasDiff: false, truncated: false, source: 'server' },
+      { path: 'c.txt', kind: 'edit', additions: 0, deletions: 5, patches: [], status: 'deleted', turnId: 'turn-1', size: 0, binary: false, hasDiff: true, truncated: true, source: 'server' },
+    ])
+  })
+
+  it('runDisplayChanges 以后端 run_changes 为权威，无则回退工具步骤推导', () => {
+    const local = runWith([toolStep('write', '{"path":"a.txt","content":"one"}')])
+    expect(runDisplayChanges({ ...local, changes })).toEqual(serverFileChanges(changes))
+    expect(runDisplayChanges(local)).toEqual(runFileChanges(local))
   })
 })
 

@@ -14,7 +14,7 @@ import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/rela
 import { canForkFromMessage, runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
 import { AgentGeneratedImage } from '@/features/agent/components/agent-generated-image'
 import { isGeneratedImagePath, runGeneratedImages } from '@/features/agent/lib/generated-images'
-import { runFileChanges } from '@/features/agent/lib/run-changes'
+import { runDisplayChanges } from '@/features/agent/lib/run-changes'
 import { AgentRunChanges } from '@/features/agent/components/agent-run-changes'
 import { previewKindForPath } from '@/features/agent/lib/preview-kind'
 
@@ -47,7 +47,11 @@ export function AgentTimeline({ items, sessionId, running, sessions, onPermissio
   }), [items])
   // 时间线里所有 run 的工具结果产出过的图片路径:回复里引用了不在其中的 images/ 路径,
   // 多半是模型编造的(没调用生图工具也会照着示例写),不显示,免得出一个「文件不存在」的空框
-  const knownImagePaths = useMemo(() => new Set(items.flatMap((item) => item.kind === 'run' ? runGeneratedImages(item.run).map((image) => image.path) : [])), [items])
+  // bash/脚本写出的图片不经过生图工具,从后端 run_changes 里补上
+  const knownImagePaths = useMemo(() => new Set(items.flatMap((item) => item.kind === 'run' ? [
+    ...runGeneratedImages(item.run).map((image) => image.path),
+    ...(item.run.changes?.files ?? []).filter((file) => file.kind !== 'deleted' && /\.(?:png|jpe?g|webp|gif)$/i.test(file.path)).map((file) => file.path),
+  ] : [])), [items])
   return (
     <div className="space-y-6">
       {items.map((item, index) => (
@@ -229,7 +233,7 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
   const done = run.status !== 'running'
   const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
   const flow = buildRunFlow(run)
-  const changes = useMemo(() => sessionId ? runFileChanges(run) : [], [run, sessionId])
+  const changes = useMemo(() => sessionId ? runDisplayChanges(run) : [], [run, sessionId])
   const lastTextIndex = flow.reduce((found, item, index) => (item.kind === 'text' ? index : found), -1)
   // 有最终回复的完成 run 才把工作过程自动折叠进「用时」行；纯状态步骤的 run
   // （如手动压缩）没有回复文本，保持展开让「已压缩上下文」直接可见
@@ -347,7 +351,7 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
       ) : null}
 
       {done && changes.length > 0 && onOpenChange ? (
-        <AgentRunChanges changes={changes} onOpen={(path) => onOpenChange(run.id, path)} />
+        <AgentRunChanges changes={changes} total={run.changes?.total} incomplete={run.changes?.incomplete} onOpen={(path) => onOpenChange(run.id, path)} />
       ) : null}
 
       {run.status === 'error' ? (

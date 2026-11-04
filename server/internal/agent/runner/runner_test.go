@@ -43,31 +43,33 @@ func TestMain(m *testing.M) {
 }
 
 type fakePi struct {
-	recordPath     string
-	fixture        string
-	sessionSrc     string
-	sessionDir     string
-	sessionID      string
-	forkID         string
-	probePath      string
-	delay          time.Duration
-	exitAfter      int
-	flood          bool
-	workspaceBytes int
-	sandboxResult  string
-	sandboxStarted string
-	sandboxSecret  string
-	sandboxOutside string
-	sandboxGateway string
-	sandboxOther   string
-	sandboxCommand string
-	writeMu        sync.Mutex
-	grow           bool // 增量写会话文件:session_append 先落盘再继续(模拟真实 Pi 工具执行前持久化 assistant 条目)
-	growTurn       int  // 当前轮次(懒计算:文件里已有的 u- 条目数 + 1),仅 stream goroutine 访问
-	respMu         sync.Mutex
-	respWait       map[string]chan struct{} // grow 模式下等待审批应答的流
-	abort          chan struct{}
-	abortOnce      sync.Once
+	recordPath       string
+	fixture          string
+	sessionSrc       string
+	sessionDir       string
+	sessionID        string
+	forkID           string
+	probePath        string
+	delay            time.Duration
+	exitAfter        int
+	flood            bool
+	workspaceBytes   int
+	workspacePath    string
+	workspaceContent string
+	sandboxResult    string
+	sandboxStarted   string
+	sandboxSecret    string
+	sandboxOutside   string
+	sandboxGateway   string
+	sandboxOther     string
+	sandboxCommand   string
+	writeMu          sync.Mutex
+	grow             bool // 增量写会话文件:session_append 先落盘再继续(模拟真实 Pi 工具执行前持久化 assistant 条目)
+	growTurn         int  // 当前轮次(懒计算:文件里已有的 u- 条目数 + 1),仅 stream goroutine 访问
+	respMu           sync.Mutex
+	respWait         map[string]chan struct{} // grow 模式下等待审批应答的流
+	abort            chan struct{}
+	abortOnce        sync.Once
 }
 
 func fakePiMain() {
@@ -95,6 +97,8 @@ func fakePiMain() {
 	pi.exitAfter, _ = strconv.Atoi(flagValue("--fake-exit-after"))
 	pi.flood = flagValue("--fake-flood") != ""
 	pi.workspaceBytes, _ = strconv.Atoi(flagValue("--fake-workspace-bytes"))
+	pi.workspacePath = flagValue("--fake-workspace-file")
+	pi.workspaceContent = flagValue("--fake-workspace-content")
 	pi.sandboxResult = flagValue("--fake-sandbox-result")
 	pi.sandboxStarted = flagValue("--fake-sandbox-started")
 	pi.sandboxSecret = flagValue("--fake-sandbox-secret")
@@ -150,6 +154,9 @@ func (p *fakePi) handle(command map[string]any) {
 	case "prompt":
 		if p.workspaceBytes > 0 {
 			p.writeWorkspaceFile()
+		}
+		if p.workspacePath != "" {
+			p.writeNamedWorkspaceFile()
 		}
 		respond(nil)
 		if p.flood {
@@ -284,6 +291,17 @@ func (p *fakePi) floodOutput() {
 func (p *fakePi) writeWorkspaceFile() {
 	data := bytes.Repeat([]byte{'q'}, p.workspaceBytes)
 	if err := os.WriteFile("quota-fill.bin", data, 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func (p *fakePi) writeNamedWorkspaceFile() {
+	path := strings.ReplaceAll(p.workspacePath, "$PID", strconv.Itoa(os.Getpid()))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	if err := os.WriteFile(path, []byte(p.workspaceContent), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 }

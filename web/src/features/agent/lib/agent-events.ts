@@ -1,4 +1,4 @@
-import type { AgentGeneratedImage, AgentTranscriptEntry } from '@/features/agent/api/agent'
+import type { AgentGeneratedImage, AgentRunChangeFile, AgentTranscriptEntry } from '@/features/agent/api/agent'
 import type { ChatAttachment } from '@/lib/chat-types'
 import type { AgentSessionReference } from '@/features/agent/lib/references'
 
@@ -48,7 +48,11 @@ export type AgentRun = {
   pendingSince?: number
   /** 已结束的审批等待累计时长(不计入用时) */
   pausedMs?: number
+  /** 后端清单差得到的本轮变更(终态之后到达),优先于从工具步骤推导的变更 */
+  changes?: AgentRunChanges
 }
+
+export type AgentRunChanges = { turnId: string; files: AgentRunChangeFile[]; total: number; incomplete: boolean }
 
 export type AgentTimelineItem =
   | { kind: 'user'; id: string; text: string; messageId?: string; createdAt: number; attachments?: ChatAttachment[]; references?: AgentSessionReference[] }
@@ -71,6 +75,7 @@ type EventKind =
   | 'done'
   | 'error'
   | 'cancelled'
+  | 'run_changes'
   | 'other'
 
 let fallbackCounter = 0
@@ -172,6 +177,7 @@ export function extractTextChunk(data: unknown): string {
 
 function classifyEvent(type: string, data: unknown): EventKind {
   const normalized = type.toLowerCase()
+  if (normalized === 'run_changes') return 'run_changes'
   // Escalation negotiation events are permission requests (payload nested under data.escalation).
   if (normalized.includes('escalation')) return 'permission'
   // 停滞/预算等软提醒：正文在 notice 字段，渲染为状态步骤而不是正文
@@ -204,6 +210,30 @@ function lastRun(timeline: AgentTimeline): { index: number; run: AgentRun } | nu
   const last = timeline[timeline.length - 1]
   if (last?.kind !== 'run') return null
   return { index: timeline.length - 1, run: last.run }
+}
+
+function parseRunChanges(record: Record<string, unknown> | null): AgentRunChanges | null {
+  if (!record || !Array.isArray(record.files)) return null
+  const files = record.files as AgentRunChangeFile[]
+  return {
+    turnId: typeof record.turn_id === 'string' ? record.turn_id : '',
+    files,
+    total: typeof record.total === 'number' ? Math.max(record.total, files.length) : files.length,
+    incomplete: record.incomplete === true,
+  }
+}
+
+/** run_changes 在终态之后到达:挂到时间线最后一个 run(无论状态),不新开 run、不改状态 */
+function attachRunChanges(timeline: AgentTimeline, changes: AgentRunChanges | null): AgentTimeline {
+  if (!changes) return timeline
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index]
+    if (item?.kind !== 'run') continue
+    const next = timeline.slice()
+    next[index] = { ...item, run: { ...item.run, changes } }
+    return next
+  }
+  return timeline
 }
 
 function ensureRun(timeline: AgentTimeline): AgentTimeline {
@@ -353,10 +383,13 @@ export function reconcileTimeline(current: AgentTimeline, transcript: AgentTimel
     if (!active) return item
     // 旧服务端在转录里不写 run_error：实时 run 已失败而转录丢失了错误时，保留实时的错误状态与文案
     const keepError = active.run.status === 'error' && Boolean(active.run.errorMessage) && item.run.status !== 'error'
-    const liveError = keepError
-      ? { status: active.run.status, errorMessage: active.run.errorMessage }
-      : {}
-    if (active.run.elapsedMs === undefined) return keepError ? { ...item, run: { ...item.run, ...liveError } } : item
+    // 终态时拉到的转录可能还没写入 run_changes:保留实时收到的变更
+    const keepChanges = !item.run.changes && Boolean(active.run.changes)
+    const liveError = {
+      ...(keepError ? { status: active.run.status, errorMessage: active.run.errorMessage } : {}),
+      ...(keepChanges ? { changes: active.run.changes } : {}),
+    }
+    if (active.run.elapsedMs === undefined) return keepError || keepChanges ? { ...item, run: { ...item.run, ...liveError } } : item
     return {
       ...item,
       run: {
@@ -542,6 +575,8 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
       return updateLastRun(timeline, (run) => closeRun(run, 'error', undefined, pickString(record, ['message'])))
     case 'cancelled':
       return updateLastRun(timeline, (run) => closeRun(run, 'cancelled', undefined, pickString(record, ['message'])))
+    case 'run_changes':
+      return attachRunChanges(timeline, parseRunChanges(record))
     default:
       return timeline
   }
@@ -570,6 +605,10 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
       const withRun = markRunEndedAt(ensureRun(timeline), entry.timestamp)
       const errorMessage = typeof entry.message === 'string' ? entry.message : undefined
       timeline = updateLastRun(withRun, (run) => closeRun(run, 'error', undefined, errorMessage))
+      continue
+    }
+    if (entry.type === 'run_changes') {
+      timeline = attachRunChanges(timeline, parseRunChanges(entry as Record<string, unknown>))
       continue
     }
     if (entry.type === 'escalation') {

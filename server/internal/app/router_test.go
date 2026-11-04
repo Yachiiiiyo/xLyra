@@ -672,6 +672,20 @@ func TestAgentRoutesBuiltinEngineReportsUnavailableHealth(t *testing.T) {
 		t.Fatalf("files status/body = %d/%s", rec.Code, rec.Body.String())
 	}
 
+	for _, path := range []string{
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/changes",
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/changes/turn-1/diff?path=a.txt",
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/artifacts",
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/artifacts.zip",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_found") {
+			t.Fatalf("%s status/body = %d/%s", path, rec.Code, rec.Body.String())
+		}
+	}
+
 	// runner 专属的 compact-context 在 pi 引擎下不注册。
 	compact := httptest.NewRequest(http.MethodPost, "/api/v1/agent/sessions/11111111-1111-1111-1111-111111111111/compact-context", nil)
 	rec = httptest.NewRecorder()

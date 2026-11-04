@@ -23,6 +23,7 @@ vi.mock('@/features/agent/api/agent', () => ({
   fetchAgentModelMemory: vi.fn(),
   fetchAgentRuntimeSettings: vi.fn(),
   fetchAgentTranscript: vi.fn(),
+  fetchSessionArtifacts: vi.fn(() => Promise.resolve(null)),
   followAgentEvents: vi.fn(),
   forkAgentSession: vi.fn(),
   grantAgentAccess: vi.fn(),

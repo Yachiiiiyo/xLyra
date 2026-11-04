@@ -47,6 +47,7 @@ type Meta struct {
 	Escalations    []Escalation  `json:"escalations"`   // 审批记录(Pi 不记决定,xLyra 自己存)
 	SessionAllow   []string      `json:"session_allow"` // 会话内允许的工具名(write/edit/bash),空表示逐条审批
 	RunErrors      []RunError    `json:"run_errors"`    // run 失败记录,刷新后由 transcript 回放
+	RunChanges     []RunChange   `json:"run_changes"`   // 每轮文件变更摘要
 }
 
 // UserMessage 记录一条用户消息及其绑定的 Pi 条目。
@@ -101,6 +102,67 @@ type RunError struct {
 	Message      string    `json:"message"`
 	AfterEntryID string    `json:"after_entry_id"`
 	At           time.Time `json:"at"`
+}
+
+// FileChange 是一轮里单个文件的变更摘要。
+type FileChange struct {
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Size      int64  `json:"size"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Binary    bool   `json:"binary,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	HasDiff   bool   `json:"has_diff"`
+}
+
+// RunChange 是一轮(一条用户消息)的文件变更。
+type RunChange struct {
+	TurnID       string       `json:"turn_id"`
+	RunIDs       []string     `json:"run_ids"`
+	AfterEntryID string       `json:"after_entry_id"`
+	Incomplete   bool         `json:"incomplete,omitempty"`
+	Total        int          `json:"total"`
+	Files        []FileChange `json:"files"`
+	At           time.Time    `json:"at"`
+}
+
+const MaxRunChanges = 50
+const MaxRunChangeFiles = 200
+
+// UpsertRunChange 替换同轮记录并合并 run id;只保留最近的轮次。
+func (m *Meta) UpsertRunChange(rc RunChange) {
+	for i := range m.RunChanges {
+		if m.RunChanges[i].TurnID != rc.TurnID {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, id := range m.RunChanges[i].RunIDs {
+			seen[id] = true
+		}
+		for _, id := range rc.RunIDs {
+			if !seen[id] {
+				m.RunChanges[i].RunIDs = append(m.RunChanges[i].RunIDs, id)
+				seen[id] = true
+			}
+		}
+		rc.RunIDs = m.RunChanges[i].RunIDs
+		m.RunChanges[i] = rc
+		return
+	}
+	m.RunChanges = append(m.RunChanges, rc)
+	if len(m.RunChanges) > MaxRunChanges {
+		m.RunChanges = m.RunChanges[len(m.RunChanges)-MaxRunChanges:]
+	}
+}
+
+func (m *Meta) RemoveRunChange(turnID string) {
+	for i := range m.RunChanges {
+		if m.RunChanges[i].TurnID == turnID {
+			m.RunChanges = append(m.RunChanges[:i], m.RunChanges[i+1:]...)
+			return
+		}
+	}
 }
 
 // AppendRunError 追加一条 run 失败记录,只保留最近 MaxRunErrors 条。
@@ -178,6 +240,7 @@ func (s *Store) Create(model, permissionMode string) (Meta, error) {
 		Escalations:    []Escalation{},
 		SessionAllow:   []string{},
 		RunErrors:      []RunError{},
+		RunChanges:     []RunChange{},
 	}
 	if err := s.EnsureDirs(id); err != nil {
 		return Meta{}, err
@@ -414,6 +477,14 @@ func (s *Store) WorkDir(id string) string {
 	return filepath.Join(s.root, id, workDirName)
 }
 
+// StateDir 返回会话私有的 xLyra 状态目录,不主动创建。
+func (s *Store) StateDir(id string) string {
+	if !validID(id) {
+		return ""
+	}
+	return filepath.Join(s.root, id, ".xlyra")
+}
+
 // EnsureDirs 创建会话目录及 pi/、workspace/(权限 0o750),已存在则不动。
 func (s *Store) EnsureDirs(id string) error {
 	if !validID(id) {
@@ -457,7 +528,7 @@ func readMeta(path string) (Meta, error) {
 	// 预置空切片,使旧 meta 缺少集合字段时反序列化仍得到 [] 而非 nil。
 	meta := Meta{
 		Messages: []UserMessage{}, Escalations: []Escalation{},
-		SessionAllow: []string{}, RunErrors: []RunError{},
+		SessionAllow: []string{}, RunErrors: []RunError{}, RunChanges: []RunChange{},
 	}
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return Meta{}, err

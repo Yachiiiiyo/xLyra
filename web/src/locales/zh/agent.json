@@ -139,7 +139,12 @@
     "collapse": "收起",
     "editIndex": "第 {{index}} 次修改",
     "addedLine": "新增行",
-    "removedLine": "删除行"
+    "removedLine": "删除行",
+    "kindAdded": "新增",
+    "kindModified": "修改",
+    "kindDeleted": "删除",
+    "omitted": "其余 {{count}} 个文件未列出",
+    "incomplete": "变更列表可能不完整"
   },
   "preview": {
     "tabPreview": "预览",
@@ -152,7 +157,6 @@
     "retry": "重试",
     "navigated": "预览页面尝试跳转，已停止",
     "reload": "重新加载预览",
-    "stop": "停止预览",
     "csvTruncated": "仅显示前 {{count}} 行",
     "copyPath": "复制路径",
     "copyContent": "复制内容",
@@ -161,7 +165,20 @@
     "notInRun": "该文件不在本轮变更中",
     "noPatch": "这次修改没有记录变更内容（旧会话）",
     "tooLarge": "文件过大，请下载查看",
-    "panelLabel": "文件预览"
+    "panelLabel": "文件预览",
+    "diffGone": "更早轮次的 diff 不再保留",
+    "diffTruncated": "内容过长，已截断",
+    "fileDeleted": "文件已删除",
+    "backToFiles": "返回文件列表"
+  },
+  "files": {
+    "entry": "文件 · {{count}}",
+    "title": "会话文件",
+    "downloadAll": "全部下载 (zip)",
+    "preview": "预览",
+    "download": "下载",
+    "truncated": "文件过多，仅显示部分",
+    "empty": "暂无文件"
   },
   "settings": {
     "entry": "配置",

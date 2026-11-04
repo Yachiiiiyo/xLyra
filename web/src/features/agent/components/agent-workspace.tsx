@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
-import { Folder, Globe, Link2, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
+import { Folder, FolderOpen, Globe, Link2, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { Composer } from '@/components/chat/composer'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
@@ -18,7 +18,8 @@ import { AgentSettingsDialog } from '@/features/agent/components/agent-settings-
 import { AgentReferenceDialog } from '@/features/agent/components/agent-reference-dialog'
 import { AgentTimeline } from '@/features/agent/components/agent-timeline'
 import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-panel'
-import { runFileChanges } from '@/features/agent/lib/run-changes'
+import { AgentArtifactFiles } from '@/features/agent/components/agent-artifact-files'
+import { runDisplayChanges } from '@/features/agent/lib/run-changes'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/components/common/app-logo'
 import { JumpToLatestButton } from '@/components/common/jump-to-latest-button'
@@ -53,6 +54,7 @@ import {
   fetchAgentModelMemory,
   fetchAgentRuntimeSettings,
   fetchAgentTranscript,
+  fetchSessionArtifacts,
   followAgentEvents,
   forkAgentSession,
   grantAgentAccess,
@@ -62,6 +64,8 @@ import {
   stopAgentSession,
 } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
+import { agentGeneratedFileCount } from '@/features/agent/lib/artifacts'
+import { BUSY_RETRY_DELAY_MS, shouldRetryBusySend } from '@/features/agent/lib/busy-retry'
 import { MAX_SESSION_REFERENCES, referenceChipLabel, type AgentSessionReference } from '@/features/agent/lib/references'
 import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
 import { toast } from '@/lib/toast'
@@ -102,6 +106,11 @@ type EditReplaySnapshot = {
   references: AgentSessionReference[]
   editingMessage: { messageId: string } | null
 }
+
+type PreviewState =
+  | { mode: 'run'; runId: string; runOrdinal: number; path: string; fromFiles?: boolean }
+  | { mode: 'files' }
+  | null
 
 function loadPermissionMode(): PermissionMode {
   try {
@@ -248,7 +257,7 @@ export function AgentWorkspace() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [newSession, setNewSession] = useState(false)
   const [timeline, setTimeline] = useState<AgentTimelineData>([])
-  const [preview, setPreview] = useState<{ runId: string; runOrdinal: number; path: string } | null>(null)
+  const [preview, setPreview] = useState<PreviewState>(null)
   const [draft, setDraft] = useState('')
   const [editingMessage, setEditingMessage] = useState<{ messageId: string } | null>(null)
   const [editReplayConfirmation, setEditReplayConfirmation] = useState<{ messageId: string; content: string } | null>(null)
@@ -266,6 +275,8 @@ export function AgentWorkspace() {
   const [capabilityNoticeDismissed, setCapabilityNoticeDismissed] = useState(loadCapabilityNoticeDismissed)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const eventAbort = useRef<AbortController | null>(null)
+  // 上一次终态事件的时间戳：终态后几秒内后端可能还没释放会话互斥，发送撞 409 时凭它判定可重试
+  const lastTerminalAtRef = useRef<number | null>(null)
   const retryTimelineBeforeEdit = useRef<EditReplaySnapshot | null>(null)
   // A just-created session usually has no transcript persisted on the runner yet;
   // skip the reload that follows so the optimistically appended timeline survives.
@@ -295,14 +306,22 @@ export function AgentWorkspace() {
     }
   }, [sessionsData, queryClient])
   const activeSession = selectedId ? sessions.find((session) => session.session_id === selectedId) : undefined
+  // 会话工作区文件清单：代理引擎不提供该接口(404/405)时结果为 null，「文件 · N」入口隐藏
+  const artifactsQuery = useQuery({
+    queryKey: ['agent', 'artifacts', selectedId],
+    queryFn: () => fetchSessionArtifacts(selectedId as string),
+    retry: false,
+    enabled: Boolean(selectedId),
+  })
+  const artifactCount = agentGeneratedFileCount(artifactsQuery.data)
   // 终态对账会用转录重建 run(id 随之改变),按 id 找不到时退回与 reconcileTimeline 相同的「第 N 个 run」配对
   const previewRun = useMemo(() => {
-    if (!preview || !selectedId) return undefined
+    if (!preview || preview.mode !== 'run' || !selectedId) return undefined
     const runs = timeline.filter((item): item is Extract<AgentTimelineData[number], { kind: 'run' }> => item.kind === 'run')
     return runs.find((item) => item.run.id === preview.runId) ?? runs[preview.runOrdinal]
   }, [preview, selectedId, timeline])
-  const previewChanges = useMemo(() => preview?.runId === '' ? [] : previewRun?.kind === 'run' ? runFileChanges(previewRun.run) : [], [preview, previewRun])
-  const activePreview = preview && (preview.runId === '' || previewRun?.kind === 'run') ? preview : null
+  const previewChanges = useMemo(() => preview && preview.mode === 'run' && preview.runId !== '' ? previewRun?.kind === 'run' ? runDisplayChanges(previewRun.run) : [] : [], [preview, previewRun])
+  const activePreview = preview && (preview.mode === 'files' || preview.runId === '' || previewRun?.kind === 'run') ? preview : null
   const hasMessages = timeline.length > 0
   // 背景图由壳层的 AppBackground 负责铺；这里只关心「是否配置了背景图」——
   // 只有配置了才在进入会话时叠加 dull 遮罩，无背景图时不渲染，避免影响星点背景；
@@ -387,7 +406,9 @@ export function AgentWorkspace() {
         enqueue(event, terminal)
         if (terminal) {
           setRunning(false)
+          lastTerminalAtRef.current = Date.now()
           void queryClient.invalidateQueries({ queryKey: ['agent', 'sessions'] })
+          void queryClient.invalidateQueries({ queryKey: ['agent', 'artifacts', sessionId] })
           // On terminal status, reconcile the timeline against the authoritative
           // transcript (covers events missed before the SSE connection); keep the
           // current timeline when the transcript lags behind.
@@ -399,6 +420,10 @@ export function AgentWorkspace() {
               return reconcileTimeline(current, fromTranscript)
             })
           }).catch(() => undefined)
+        }
+        // run_changes 在终态之后到达：本轮工作区已定，刷新文件清单
+        if (event.type === 'run_changes') {
+          void queryClient.invalidateQueries({ queryKey: ['agent', 'artifacts', sessionId] })
         }
       })
     } catch {
@@ -476,17 +501,29 @@ export function AgentWorkspace() {
   })
 
   const sendMutation = useMutation({
-    mutationFn: (input: { content: string; files: ChatAttachment[]; references: string[] }) => createAgentSession({
-      content: input.content,
-      model: effectiveModel ?? undefined,
-      session_id: selectedId ?? undefined,
-      reasoning_effort: normalizeReasoningEffort(gatewayModels.find((item) => item.id === effectiveModel) ?? null, effort),
-      permission_mode: permissionMode,
-      attachments: input.files.length
-        ? input.files.map((file) => ({ name: file.name, mime_type: file.mimeType, data_url: file.dataURL }))
-        : undefined,
-      references: input.references.length ? input.references : undefined,
-    }),
+    mutationFn: async (input: { content: string; files: ChatAttachment[]; references: string[] }) => {
+      const request = () => createAgentSession({
+        content: input.content,
+        model: effectiveModel ?? undefined,
+        session_id: selectedId ?? undefined,
+        reasoning_effort: normalizeReasoningEffort(gatewayModels.find((item) => item.id === effectiveModel) ?? null, effort),
+        permission_mode: permissionMode,
+        attachments: input.files.length
+          ? input.files.map((file) => ({ name: file.name, mime_type: file.mimeType, data_url: file.dataURL }))
+          : undefined,
+        references: input.references.length ? input.references : undefined,
+      })
+      // 终态后几秒内后端可能还没释放会话互斥，撞上「会话已有进行中的 run」时静默重试
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await request()
+        } catch (error) {
+          const sinceTerminal = lastTerminalAtRef.current === null ? null : Date.now() - lastTerminalAtRef.current
+          if (!shouldRetryBusySend(error, sinceTerminal, attempt)) throw error
+          await new Promise((resolve) => setTimeout(resolve, BUSY_RETRY_DELAY_MS))
+        }
+      }
+    },
     onSuccess: async ({ session_id, message_id }) => {
       skipTranscriptLoadFor.current = session_id
       saveLastSessionId(session_id)
@@ -583,6 +620,7 @@ export function AgentWorkspace() {
   function createNew() {
     eventAbort.current?.abort()
     skipTranscriptLoadFor.current = null
+    lastTerminalAtRef.current = null
     saveLastSessionId(null)
     setActiveId(null)
     setNewSession(true)
@@ -609,6 +647,7 @@ export function AgentWorkspace() {
     saveLastSessionId(sessionId)
     eventAbort.current?.abort()
     skipTranscriptLoadFor.current = null
+    lastTerminalAtRef.current = null
     scrollToBottom()
     setRunning(false)
     setPreview(null)
@@ -924,6 +963,19 @@ export function AgentWorkspace() {
     </div>
   ) : null
 
+  const filesEntry = selectedId && artifactCount > 0 ? (
+    <div className="mb-2 flex">
+      <button
+        type="button"
+        onClick={() => setPreview({ mode: 'files' })}
+        className="flex h-7 items-center gap-1.5 rounded-full border border-separator bg-fill-3 px-2.5 text-footnote text-label-2 transition-colors hover:bg-fill-2 hover:text-label"
+      >
+        <FolderOpen className="h-3.5 w-3.5" />
+        {t('agent:files.entry', { count: artifactCount })}
+      </button>
+    </div>
+  ) : null
+
   const composer = !hasMessages && hasBackgroundImage ? (
     <AgentLiquidGlassPanel
       backgroundImage={backgroundImage}
@@ -940,6 +992,20 @@ export function AgentWorkspace() {
       {composerContent}
     </LiquidGlass>
   )
+
+  // 文件列表模式的面板内容：只在 artifacts 接口可用且处于该模式时构造
+  const previewFilesList = activePreview?.mode === 'files' && selectedId && artifactsQuery.data
+    ? {
+        title: t('agent:files.title'),
+        children: (
+          <AgentArtifactFiles
+            sessionId={selectedId}
+            artifacts={artifactsQuery.data}
+            onPreview={(path) => setPreview({ mode: 'run', runId: '', runOrdinal: -1, path, fromFiles: true })}
+          />
+        ),
+      }
+    : null
 
   const sidebarContent = <AgentSidebar
     sessions={sessions}
@@ -1050,8 +1116,8 @@ export function AgentWorkspace() {
                     onUserEdit={handleUserEdit}
                     onFork={selectedId ? (messageId) => void handleFork(selectedId, messageId) : undefined}
                     onOpenReference={handleSelect}
-                    onOpenChange={selectedId ? (runId, path) => setPreview({ runId, runOrdinal: timeline.filter((item) => item.kind === 'run').findIndex((item) => item.id === runId), path }) : undefined}
-                    onOpenFile={(path) => setPreview({ runId: '', runOrdinal: -1, path })}
+                    onOpenChange={selectedId ? (runId, path) => setPreview({ mode: 'run', runId, runOrdinal: timeline.filter((item) => item.kind === 'run').findIndex((item) => item.id === runId), path }) : undefined}
+                    onOpenFile={(path) => setPreview({ mode: 'run', runId: '', runOrdinal: -1, path })}
                   />
                   {waitingReply ? <WaitingIndicator state={waitingOrbState} /> : null}
                 </div>
@@ -1061,6 +1127,7 @@ export function AgentWorkspace() {
             <div className="shrink-0 px-4 pb-4">
               <div className="mx-auto max-w-3xl">
                 {healthNotices}
+                {filesEntry}
                 {composer}
                 <p className={cn('mt-2 text-center text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}>{t('agent:chat.hint')}</p>
               </div>
@@ -1073,17 +1140,19 @@ export function AgentWorkspace() {
                 <h2 className={cn('text-title-1 text-label', hasBackgroundImage && '[text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]')}>{t('agent:chat.emptyTitle')}</h2>
               </div>
               {healthNotices}
+              {filesEntry}
               {composer}
               <p className={cn('mt-3 text-center text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}>{t('agent:chat.hint')}</p>
             </div>
           </div>
         )}
       </div>
-      {activePreview && !isMobileLayout ? (
-        <AgentPreviewPanel sessionId={selectedId ?? undefined} changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile={false} />
-      ) : null}
-      {activePreview && isMobileLayout ? (
-        <AgentPreviewPanel sessionId={selectedId ?? undefined} changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile />
+      {activePreview ? (
+        isMobileLayout ? (
+          <AgentPreviewPanel sessionId={selectedId ?? undefined} changes={previewChanges} path={activePreview.mode === 'files' ? '' : activePreview.path} onSelectPath={(path) => setPreview((current) => current && current.mode === 'run' ? { ...current, path } : null)} onClose={() => setPreview(null)} onBackToFiles={activePreview.mode === 'run' && activePreview.fromFiles ? () => setPreview({ mode: 'files' }) : undefined} filesList={previewFilesList} mobile />
+        ) : (
+          <AgentPreviewPanel sessionId={selectedId ?? undefined} changes={previewChanges} path={activePreview.mode === 'files' ? '' : activePreview.path} onSelectPath={(path) => setPreview((current) => current && current.mode === 'run' ? { ...current, path } : null)} onClose={() => setPreview(null)} onBackToFiles={activePreview.mode === 'run' && activePreview.fromFiles ? () => setPreview({ mode: 'files' }) : undefined} filesList={previewFilesList} mobile={false} />
+        )
       ) : null}
       </div>
     </div>

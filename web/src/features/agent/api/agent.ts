@@ -387,6 +387,49 @@ export async function downloadSessionFile(sessionId: string, path: string) {
   URL.revokeObjectURL(url)
 }
 
+export async function fetchSessionDiff(sessionId: string, turnId: string, path: string): Promise<string> {
+  const { blob } = await apiFetchBlob(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(turnId)}/diff?path=${encodeURIComponent(path)}`)
+  return blob.text()
+}
+
+export function sessionDiffErrorKind(error: unknown): 'gone' | 'missing' | 'failed' {
+  if (!(error instanceof APIError)) return 'failed'
+  if (error.status === 410) return 'gone'
+  if (error.status === 404) return 'missing'
+  return 'failed'
+}
+
+export type AgentArtifactFile = {
+  path: string
+  size: number
+  mtime: string
+  kind: 'text' | 'image' | 'binary'
+  agent_generated: boolean
+}
+
+export type AgentArtifacts = { files: AgentArtifactFile[]; truncated: boolean }
+
+/** 会话工作区文件清单;代理引擎不提供该接口(404/405)时返回 null */
+export async function fetchSessionArtifacts(sessionId: string): Promise<AgentArtifacts | null> {
+  try {
+    const response = await apiFetch<{ data?: Partial<AgentArtifacts> }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/artifacts`)
+    return { files: response.data?.files ?? [], truncated: response.data?.truncated === true }
+  } catch (error) {
+    if (error instanceof APIError && (error.status === 404 || error.status === 405)) return null
+    throw error
+  }
+}
+
+export async function downloadSessionArtifactsZip(sessionId: string) {
+  const { blob } = await apiFetchBlob(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/artifacts.zip`)
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `workspace-${sessionId.slice(0, 8)}.zip`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 export async function fetchAgentTranscript(sessionId: string) {
   const response = await apiFetch<{ data?: { entries?: AgentTranscriptEntry[] } }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/transcript`)
   return response.data?.entries ?? []
@@ -399,6 +442,17 @@ export type AgentGeneratedImage = {
   model?: string
   site?: string
   alt?: string
+}
+
+export type AgentRunChangeFile = {
+  path: string
+  kind: 'added' | 'modified' | 'deleted'
+  size: number
+  additions: number
+  deletions: number
+  binary?: boolean
+  truncated?: boolean
+  has_diff: boolean
 }
 
 export type AgentTranscriptReference = {
@@ -446,6 +500,12 @@ export type AgentTranscriptEntry = {
   scope?: 'once' | 'session'
   /** type === 'escalation'：会话内允许自动放行 */
   auto?: boolean
+  /** type === 'run_changes'：本轮(一条用户消息)的工作区变更,由后端清单差得出 */
+  turn_id?: string
+  run_ids?: string[]
+  incomplete?: boolean
+  total?: number
+  files?: AgentRunChangeFile[]
 }
 
 export type AgentForkedSession = {

@@ -1,11 +1,18 @@
 import * as React from 'react'
 import { act } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-panel'
 import type { AgentFileChange } from '@/features/agent/lib/run-changes'
 import zhAgent from '@/locales/zh/agent.json'
+
+const fetchSessionDiffMock = vi.hoisted(() => vi.fn())
+vi.mock('@/features/agent/api/agent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/agent/api/agent')>()),
+  fetchSessionDiff: fetchSessionDiffMock,
+}))
 
 vi.mock('@/features/agent/components/agent-file-preview', () => ({
   AgentFilePreview: ({ path }: { path: string }) => <div data-file-preview={path} />,
@@ -26,6 +33,13 @@ const i18n = createInstance()
 beforeAll(async () => {
   await i18n.init({ lng: 'zh', defaultNS: 'agent', resources: { zh: { agent: zhAgent } } })
 })
+
+/** react-query 的取数与重渲染需要几个微任务/定时器周期才落定 */
+async function flush() {
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+  }
+}
 
 const patch = '--- edit.txt\n+++ edit.txt\n@@ -1 +1 @@\n-old\n+new\n'
 const changes: AgentFileChange[] = [
@@ -66,6 +80,161 @@ describe('AgentPreviewPanel 桌面版', () => {
   })
 })
 
+describe('AgentPreviewPanel 后端变更项', () => {
+  const serverChange = (over: Partial<AgentFileChange> = {}): AgentFileChange => ({
+    path: 'src/a.txt', kind: 'edit', additions: 1, deletions: 1, patches: [],
+    status: 'modified', turnId: 'turn-1', size: 10, binary: false, hasDiff: true, truncated: false, source: 'server', ...over,
+  })
+  const patchText = '--- a.txt\n+++ a.txt\n@@ -1 +1 @@\n-old\n+new\n'
+
+  it('added 且可预览时默认「预览」，切换到「变更」后取后端 diff', async () => {
+    fetchSessionDiffMock.mockReset().mockResolvedValue(patchText)
+    const added = serverChange({ status: 'added', path: 'src/a.txt', kind: 'write' })
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [added] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(fetchSessionDiffMock).toHaveBeenCalledWith('session-1', 'turn-1', 'src/a.txt')
+      expect(mounted.container.textContent).toContain('@@ -1 +1 @@')
+      expect(mounted.container.textContent).toContain('+new')
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('deleted 默认「变更」，空 diff 显示「文件已删除」，无「源码」标签', async () => {
+    fetchSessionDiffMock.mockReset().mockResolvedValue('')
+    const deleted = serverChange({ status: 'deleted', path: 'gone.txt' })
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'gone.txt', changes: [deleted] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabDiff)
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.fileDeleted)
+      expect(findAll(mounted.container, (node) => node.getAttribute('role') === 'tab').map((node) => node.textContent)).toEqual([zhAgent.preview.tabDiff])
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('有 sessionId 且能预览的变更文件默认显示预览,删除的文件默认显示变更', async () => {
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'write.txt' })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+    } finally {
+      await mounted.unmount()
+    }
+    const removed = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [serverChange({ path: 'src/a.txt', status: 'deleted' })] })
+    try {
+      expect(selectedTab(removed.container)).toBe(zhAgent.preview.tabDiff)
+    } finally {
+      await removed.unmount()
+    }
+  })
+  it('410 显示「更早轮次的 diff 不再保留」，404 显示文件不存在', async () => {
+    const { APIError } = await import('@/lib/http')
+    fetchSessionDiffMock.mockReset().mockRejectedValueOnce(new APIError('gone', 410))
+    const modified = serverChange({ path: 'src/a.txt' })
+    let mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [modified] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.diffGone)
+    } finally {
+      await mounted.unmount()
+    }
+    fetchSessionDiffMock.mockReset().mockRejectedValueOnce(new APIError('missing', 404))
+    mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [modified] })
+    try {
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.missing)
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('truncated 的 diff 底部提示已截断', async () => {
+    fetchSessionDiffMock.mockReset().mockResolvedValue(patchText)
+    const truncated = serverChange({ path: 'src/a.txt', truncated: true })
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [truncated] })
+    try {
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.diffTruncated)
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('文件列表模式使用自定义标题与内容，返回按钮只在从列表进入的预览上显示', async () => {
+    fetchSessionDiffMock.mockReset()
+    const { AgentPreviewPanel } = await import('@/features/agent/components/agent-preview-panel')
+    const { createRoot } = await import('react-dom/client')
+    const doc = new MiniDocument()
+    const container = doc.createElement('div')
+    doc.body.appendChild(container)
+    const globals = globalThis as unknown as { window: unknown; document: unknown; IS_REACT_ACT_ENVIRONMENT?: boolean }
+    const previous = { window: globals.window, document: globals.document }
+    globals.window = {
+      document: doc,
+      HTMLIFrameElement: class {},
+      addEventListener() {},
+      removeEventListener() {},
+    }
+    doc.defaultView = globals.window
+    globals.document = doc
+    globals.IS_REACT_ACT_ENVIRONMENT = true
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const root = createRoot(container as unknown as Element)
+    try {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <I18nextProvider i18n={i18n}>
+              <AgentPreviewPanel
+                sessionId="session-1"
+                changes={[]}
+                path=""
+                onSelectPath={() => {}}
+                onClose={() => {}}
+                mobile={false}
+                filesList={{ title: zhAgent.files.title, children: <div>列表内容</div> }}
+              />
+            </I18nextProvider>
+          </QueryClientProvider>,
+        )
+      })
+      expect(container.textContent).toContain(zhAgent.files.title)
+      expect(container.textContent).toContain('列表内容')
+      expect(findAll(container, (node) => node.getAttribute('title') === zhAgent.preview.backToFiles)).toHaveLength(0)
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <I18nextProvider i18n={i18n}>
+              <AgentPreviewPanel
+                sessionId="session-1"
+                changes={[]}
+                path="images/a.png"
+                onSelectPath={() => {}}
+                onClose={() => {}}
+                mobile={false}
+                onBackToFiles={() => {}}
+              />
+            </I18nextProvider>
+          </QueryClientProvider>,
+        )
+      })
+      expect(findAll(container, (node) => node.getAttribute('title') === zhAgent.preview.backToFiles)).toHaveLength(1)
+    } finally {
+      await act(async () => { root.unmount() })
+      globals.window = previous.window
+      globals.document = previous.document
+    }
+  })
+})
+
 function selectedTab(container: MiniNode) {
   return findAll(container, (node) => node.getAttribute('role') === 'tab' && node.getAttribute('aria-selected') === 'true')[0]?.textContent
 }
@@ -92,12 +261,15 @@ async function mountPanel(options: { sessionId?: string; path?: string; changes?
   globals.IS_REACT_ACT_ENVIRONMENT = true
   const onClose = vi.fn()
   let path = options.path ?? 'write.txt'
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const { createRoot } = await import('react-dom/client')
   const root = createRoot(container as unknown as Element)
   const render = () => root.render(
-    <I18nextProvider i18n={i18n}>
-      <AgentPreviewPanel sessionId={options.sessionId} changes={options.changes ?? changes} path={path} onSelectPath={(next) => { path = next; render() }} onClose={onClose} mobile={false} />
-    </I18nextProvider>,
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <AgentPreviewPanel sessionId={options.sessionId} changes={options.changes ?? changes} path={path} onSelectPath={(next) => { path = next; render() }} onClose={onClose} mobile={false} />
+      </I18nextProvider>
+    </QueryClientProvider>,
   )
   await act(async () => { render() })
   return {
@@ -105,6 +277,7 @@ async function mountPanel(options: { sessionId?: string; path?: string; changes?
     onClose,
     get path() { return path },
     get keydown() { return keydown },
+    async rerender() { await act(async () => { render() }) },
     async unmount() {
       await act(async () => { root.unmount() })
       globals.window = previous.window

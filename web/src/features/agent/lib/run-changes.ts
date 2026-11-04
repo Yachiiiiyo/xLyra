@@ -1,4 +1,4 @@
-import type { AgentRun } from '@/features/agent/lib/agent-events'
+import type { AgentRun, AgentRunChanges } from '@/features/agent/lib/agent-events'
 
 export type AgentFileChangeKind = 'write' | 'edit'
 export type AgentFileChange = {
@@ -9,6 +9,36 @@ export type AgentFileChange = {
   patches: string[]
   content?: string
   contentTruncated?: boolean
+  /** 以下字段只在后端清单差(source === 'server')的变更项上出现 */
+  status?: 'added' | 'modified' | 'deleted'
+  turnId?: string
+  size?: number
+  binary?: boolean
+  hasDiff?: boolean
+  truncated?: boolean
+  source?: 'server'
+}
+
+export function serverFileChanges(changes: AgentRunChanges): AgentFileChange[] {
+  return changes.files.map((file) => ({
+    path: file.path,
+    kind: file.kind === 'added' ? 'write' : 'edit',
+    additions: file.kind === 'deleted' ? 0 : file.additions,
+    deletions: file.deletions,
+    patches: [],
+    status: file.kind,
+    turnId: changes.turnId,
+    size: file.size,
+    binary: file.binary === true,
+    hasDiff: file.has_diff,
+    truncated: file.truncated === true,
+    source: 'server',
+  }))
+}
+
+/** 变更区展示用:有后端 run_changes 时以它为准,否则回退到从 write/edit 步骤推导 */
+export function runDisplayChanges(run: AgentRun): AgentFileChange[] {
+  return run.changes ? serverFileChanges(run.changes) : runFileChanges(run)
 }
 
 type FileChangeState = {

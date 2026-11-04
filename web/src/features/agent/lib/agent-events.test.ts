@@ -1051,3 +1051,90 @@ describe('run_error 转录条目', () => {
     expect(run.run.elapsedMs).toBe(2_000)
   })
 })
+
+describe('run_changes(后端清单差)', () => {
+  const changesPayload = {
+    turn_id: 'turn-1',
+    run_ids: ['run-1'],
+    total: 1,
+    files: [{ path: 'images/out.png', kind: 'added' as const, size: 2048, additions: 0, deletions: 0, has_diff: true }],
+  }
+
+  it('终态之后到达的 run_changes 挂到最后一个 run:不新开 run、不改状态', () => {
+    const timeline = reduceAll([
+      { type: 'text_delta', data: { delta: '回复' } },
+      { type: 'agent_done', data: {} },
+      { type: 'run_changes', data: changesPayload },
+    ])
+    expect(timeline).toHaveLength(1)
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.status).toBe('done')
+    expect(item.run.changes).toMatchObject({ turnId: 'turn-1', total: 1, incomplete: false })
+    expect(item.run.changes?.files[0]?.path).toBe('images/out.png')
+  })
+
+  it('挂在已取消/出错的 run 上也生效,后到的 run_changes 替换旧值', () => {
+    const timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'agent_error', data: { message: '出错' } },
+      { type: 'run_changes', data: changesPayload },
+      { type: 'run_changes', data: { ...changesPayload, turn_id: 'turn-2' } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.status).toBe('error')
+    expect(item.run.changes?.turnId).toBe('turn-2')
+  })
+
+  it('时间线里没有任何 run 时忽略', () => {
+    expect(reduceAll([{ type: 'run_changes', data: changesPayload }])).toEqual([])
+  })
+
+  it('total 小于 files.length 时以 files.length 为准,incomplete 透传', () => {
+    const timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'agent_done', data: {} },
+      { type: 'run_changes', data: { ...changesPayload, total: 0, incomplete: true } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.changes?.total).toBe(1)
+    expect(item.run.changes?.incomplete).toBe(true)
+  })
+
+  it('timelineFromTranscript 把 run_changes 条目挂到当前最后一个 run', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', message_id: 'message-1', timestamp: '1970-01-01T00:00:00.000Z', message: { role: 'user', content: '第一问' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:02.000Z', message: { role: 'assistant', content: '第一答' } },
+      { type: 'run_changes', timestamp: '1970-01-01T00:00:02.500Z', ...changesPayload },
+      { type: 'message', message_id: 'message-2', timestamp: '1970-01-01T00:01:00.000Z', message: { role: 'user', content: '第二问' } },
+      { type: 'message', timestamp: '1970-01-01T00:01:02.000Z', message: { role: 'assistant', content: '第二答' } },
+    ])
+    expect(timeline).toHaveLength(4)
+    const first = timeline[1]
+    const second = timeline[3]
+    if (first.kind !== 'run' || second.kind !== 'run') throw new Error('expected runs')
+    expect(first.run.changes?.turnId).toBe('turn-1')
+    expect(second.run.changes).toBeUndefined()
+  })
+
+  it('reconcileTimeline 保留实时收到的 changes(转录尚未写入)', () => {
+    vi.setSystemTime(0)
+    let current = reduceAll([{ type: 'agent_start', data: {} }], appendUserMessage([], '问题', 'message-1', 0))
+    vi.setSystemTime(2_000)
+    current = reduceAll([
+      { type: 'agent_done', data: {} },
+      { type: 'run_changes', data: changesPayload },
+    ], current)
+    // 终态瞬间拉到的转录还没写入 run_changes 条目
+    const transcript = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:00.000Z', message_id: 'message-1', message: { role: 'user', content: '问题' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:02.000Z', message: { role: 'assistant', content: '回答' } },
+    ])
+    const reconciled = reconcileTimeline(current, transcript)
+    const run = reconciled[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.changes?.turnId).toBe('turn-1')
+  })
+})

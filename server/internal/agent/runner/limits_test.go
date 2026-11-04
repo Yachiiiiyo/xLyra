@@ -92,10 +92,19 @@ func TestSessionQuotaDuringRun(t *testing.T) {
 	})
 	result := sendModel(t, env, "", "quota-during")
 	events := collectRun(t, env.runs, result.SessionID).wait(t)
-	if countTerminals(events) != 1 || events[len(events)-1].Type != "agent_error" {
+	if countTerminals(events) != 1 {
 		t.Fatalf("终态不符: %v", eventTypes(events))
 	}
-	if message := events[len(events)-1].Data["message"]; message != "工作区超过磁盘配额,已中止" {
+	var terminal translate.Event
+	for _, event := range events {
+		if event.Type == "agent_error" {
+			terminal = event
+		}
+	}
+	if terminal.Type != "agent_error" {
+		t.Fatalf("缺少 agent_error: %v", eventTypes(events))
+	}
+	if message := terminal.Data["message"]; message != "工作区超过磁盘配额,已中止" {
 		t.Fatalf("错误消息 = %v", message)
 	}
 	if !hasCommand(recordedCommands(t, env.record), "abort") {

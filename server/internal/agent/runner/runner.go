@@ -130,6 +130,7 @@ type activeRun struct {
 	runID     string
 	model     string
 	kind      string
+	turnID    string
 	run       *runlog.Run // stateMu 保护;admit 后即可被 Grant/清理并发访问
 	tr        *translate.Translator
 	proc      atomic.Pointer[pirpc.Process]
@@ -424,6 +425,7 @@ func (r *Runner) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	}
 	ar.setRun(ar.run)
 	messageID := uuid.NewString()
+	ar.turnID = messageID
 	if err := r.appendUserMessage(meta.ID, messageID, in.Content, spec, metaAttachments, len(meta.Messages) == 0); err != nil {
 		r.cleanup(ar, nil)
 		return fail(err)
@@ -500,6 +502,7 @@ func (r *Runner) Retry(ctx context.Context, in RetryInput) (SendResult, error) {
 	}
 	ar.setRun(ar.run)
 	messageID := uuid.NewString()
+	ar.turnID = messageID
 	// fork 与消息改写必须等取得名额后再做;排队期间不启动 Pi、不签发令牌。
 	spec.retry = &retrySpec{
 		messageID: messageID, index: index, original: original,
@@ -769,6 +772,7 @@ func (r *Runner) start(ar *activeRun, spec runSpec) {
 			}
 			return
 		}
+		r.beginTurn(ar, prep)
 		r.drive(ar, spec, prep)
 	}()
 }
@@ -797,6 +801,7 @@ func (r *Runner) cleanup(ar *activeRun, prep *prepared) {
 				}
 			}
 		}
+		r.finishTurn(ar, prep)
 		if prep != nil && prep.tokenIssued {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if err := r.cfg.Tokens.EndRun(ctx, ar.sessionID, ar.runID, ar.model); err != nil {

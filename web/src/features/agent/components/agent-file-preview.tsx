@@ -83,22 +83,19 @@ function DelimitedPreview({ text, delimiter }: { text: string; delimiter: string
 function HtmlPreview({ text, path }: { text: string; path: string }) {
   const { t } = useTranslation('agent')
   const [generation, setGeneration] = useState(0)
-  const [stopped, setStopped] = useState(false)
   const [navigated, setNavigated] = useState(false)
   const loads = useRef(0)
   const reload = () => {
     loads.current = 0
     setGeneration((value) => value + 1)
-    setStopped(false)
     setNavigated(false)
   }
   if (new TextEncoder().encode(text).byteLength > HTML_PREVIEW_MAX_BYTES) return <SourceView content={text} />
-  if (stopped || navigated) {
-    return <EmptyPreview message={navigated ? t('preview.navigated') : ''}><Button variant="outline" size="sm" onClick={reload}>{t('preview.reload')}</Button></EmptyPreview>
+  if (navigated) {
+    return <EmptyPreview message={t('preview.navigated')}><Button variant="outline" size="sm" onClick={reload}>{t('preview.reload')}</Button></EmptyPreview>
   }
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 justify-end border-b border-separator px-2 py-1"><Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setStopped(true)}>{t('preview.stop')}</Button></div>
       <iframe
         key={generation}
         sandbox={PREVIEW_SANDBOX}
