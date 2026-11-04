@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Copy, FileCode2, X } from 'lucide-react'
+import { Copy, Download, FileCode2, X } from 'lucide-react'
 import { LiquidGlass } from '@/components/glass/liquid-glass'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
 import { Button } from '@/components/ui/button'
 import { Draw, DrawBody, DrawContent, DrawHeader, DrawTitle } from '@/components/ui/draw'
 import { AgentDiffView } from '@/features/agent/components/agent-diff-view'
+import { AgentFilePreview } from '@/features/agent/components/agent-file-preview'
+import { SourceView } from '@/features/agent/components/agent-source-view'
+import { downloadSessionFile } from '@/features/agent/api/agent'
+import { previewKindForPath } from '@/features/agent/lib/preview-kind'
 import { changePatches, type AgentFileChange } from '@/features/agent/lib/run-changes'
 import { cn } from '@/lib/utils'
 
@@ -15,14 +19,20 @@ type AgentPreviewPanelProps = {
   onSelectPath: (path: string) => void
   onClose: () => void
   mobile: boolean
+  sessionId?: string
 }
 
-export function AgentPreviewPanel({ changes, path, onSelectPath, onClose, mobile }: AgentPreviewPanelProps) {
+type PreviewTabName = 'preview' | 'diff' | 'source'
+
+export function AgentPreviewPanel({ changes, path, onSelectPath, onClose, mobile, sessionId }: AgentPreviewPanelProps) {
   const { t } = useTranslation('agent')
   const current = changes.find((change) => change.path === path)
   const patches = current ? changePatches(current) : []
-  const defaultTab = current?.kind === 'write' && current.content !== undefined ? 'source' : 'diff'
-  const [tabSelection, setTabSelection] = useState<{ path: string; tab: 'diff' | 'source' } | null>(null)
+  const canPreview = Boolean(sessionId) && previewKindForPath(path) !== 'binary'
+  const defaultTab: PreviewTabName = current?.kind === 'write' && current.content !== undefined
+    ? 'source'
+    : sessionId && (!current || (patches.length === 0 && current.content === undefined)) ? 'preview' : 'diff'
+  const [tabSelection, setTabSelection] = useState<{ path: string; tab: PreviewTabName } | null>(null)
   const tab = tabSelection?.path === path ? tabSelection.tab : defaultTab
   const [width, setWidth] = useState<number | null>(null)
   const asideRef = useRef<HTMLElement | null>(null)
@@ -51,12 +61,17 @@ export function AgentPreviewPanel({ changes, path, onSelectPath, onClose, mobile
   }
 
   const fileName = path.split('/').pop() || path
-  const actions = current ? (
+  const actions = current || sessionId ? (
     <div className="flex shrink-0 items-center gap-1">
-      <Button variant="ghost" size="icon" className="h-8 w-8" title={t('preview.copyPath')} aria-label={t('preview.copyPath')} onClick={() => void copyToClipboard(current.path, null)}>
+      {sessionId ? (
+        <Button variant="ghost" size="icon" className="h-8 w-8" title={t('preview.download')} aria-label={t('preview.download')} onClick={() => void downloadSessionFile(sessionId, path)}>
+          <Download className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
+      <Button variant="ghost" size="icon" className="h-8 w-8" title={t('preview.copyPath')} aria-label={t('preview.copyPath')} onClick={() => void copyToClipboard(path, null)}>
         <Copy className="h-3.5 w-3.5" />
       </Button>
-      {current.content !== undefined ? (
+      {current?.content !== undefined ? (
         <Button variant="ghost" size="icon" className="h-8 w-8" title={t('preview.copyContent')} aria-label={t('preview.copyContent')} onClick={() => void copyToClipboard(current.content!, null)}>
           <FileCode2 className="h-3.5 w-3.5" />
         </Button>
@@ -78,19 +93,21 @@ export function AgentPreviewPanel({ changes, path, onSelectPath, onClose, mobile
           </select>
         </div>
       ) : null}
-      {current ? (
+      {current || sessionId ? (
         <>
-          {patches.length > 0 || current.content !== undefined ? (
+          {canPreview || patches.length > 0 || current?.content !== undefined ? (
             <div role="tablist" className="flex shrink-0 gap-1 border-b border-separator px-4 py-2">
+              {canPreview ? <PreviewTab active={tab === 'preview'} onClick={() => setTabSelection({ path, tab: 'preview' })}>{t('preview.tabPreview')}</PreviewTab> : null}
               {patches.length > 0 ? <PreviewTab active={tab === 'diff'} onClick={() => setTabSelection({ path, tab: 'diff' })}>{t('preview.tabDiff')}</PreviewTab> : null}
-              {current.content !== undefined ? <PreviewTab active={tab === 'source'} onClick={() => setTabSelection({ path, tab: 'source' })}>{t('preview.tabSource')}</PreviewTab> : null}
+              {current?.content !== undefined ? <PreviewTab active={tab === 'source'} onClick={() => setTabSelection({ path, tab: 'source' })}>{t('preview.tabSource')}</PreviewTab> : null}
             </div>
           ) : null}
           <div className="min-h-0 flex-1 overflow-auto">
+            {tab === 'preview' && sessionId ? <AgentFilePreview sessionId={sessionId} path={path} /> : null}
             {tab === 'diff' && patches.length > 0 ? <AgentDiffView patches={patches} /> : null}
-            {tab === 'source' && current.content !== undefined ? <SourceView content={current.content} /> : null}
-            {patches.length === 0 && current.kind === 'edit' ? <p className="p-4 text-xs text-muted-soft">{t('preview.noPatch')}</p> : null}
-            {current.contentTruncated ? <p className="p-4 text-xs text-muted-soft">{t('preview.tooLarge')}</p> : null}
+            {tab === 'source' && current?.content !== undefined ? <SourceView content={current.content} /> : null}
+            {tab !== 'preview' && patches.length === 0 && current?.kind === 'edit' ? <p className="p-4 text-xs text-muted-soft">{t('preview.noPatch')}</p> : null}
+            {current?.contentTruncated ? <p className="p-4 text-xs text-muted-soft">{t('preview.tooLarge')}</p> : null}
           </div>
         </>
       ) : <p className="p-4 text-xs text-muted-soft">{t('preview.notInRun')}</p>}
@@ -141,16 +158,5 @@ function PreviewTab({ active, onClick, children }: { active: boolean; onClick: (
     <button type="button" role="tab" aria-selected={active} onClick={onClick} className={cn('rounded-lg px-3 py-1.5 text-xs transition-colors', active ? 'bg-fill-1 text-label' : 'text-label-3 hover:text-label')}>
       {children}
     </button>
-  )
-}
-
-function SourceView({ content }: { content: string }) {
-  return (
-    <pre className="min-w-max p-3 font-mono text-[12px] leading-5"><code>{content.split('\n').map((line, index) => (
-      <span key={index} className="flex">
-        <span className="w-10 shrink-0 select-none pr-3 text-right tabular-nums text-faint">{index + 1}</span>
-        <span className="whitespace-pre">{line || ' '}</span>
-      </span>
-    ))}</code></pre>
   )
 }

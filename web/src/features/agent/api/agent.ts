@@ -1,4 +1,4 @@
-import { apiFetch, apiFetchResponse, apiURL, APIError } from '@/lib/http'
+import { apiFetch, apiFetchBlob, apiFetchResponse, apiURL, APIError } from '@/lib/http'
 import { listAllSiteModels, listCanonicalModels, listSitesLite, type CanonicalModelItem, type Site, type SiteModel } from '@/features/sites/api/sites'
 
 export type AgentSession = {
@@ -361,6 +361,30 @@ export async function retryAgentSession(sessionId: string, input: { message_id: 
     body: input,
   })
   return response.data
+}
+
+export async function fetchSessionFile(sessionId: string, path: string): Promise<{ kind: 'text'; text: string } | { kind: 'image'; blob: Blob }> {
+  const { blob } = await apiFetchBlob(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/files?path=${encodeURIComponent(path)}`)
+  if (blob.type.startsWith('image/')) return { kind: 'image', blob }
+  return { kind: 'text', text: await blob.text() }
+}
+
+export function sessionFileErrorKind(error: unknown): 'missing' | 'tooLarge' | 'unsupported' | 'failed' {
+  if (!(error instanceof APIError)) return 'failed'
+  if (error.status === 404) return 'missing'
+  if (error.status === 413) return 'tooLarge'
+  if (error.status === 415) return 'unsupported'
+  return 'failed'
+}
+
+export async function downloadSessionFile(sessionId: string, path: string) {
+  const { blob } = await apiFetchBlob(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/files?path=${encodeURIComponent(path)}&download=1`)
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = path.slice(path.lastIndexOf('/') + 1)
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 
 export async function fetchAgentTranscript(sessionId: string) {

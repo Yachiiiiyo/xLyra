@@ -95,6 +95,15 @@ describe('AgentTimeline 生图结果', () => {
   })
 })
 
+describe('AgentTimeline 工作区链接', () => {
+  it('相对文件链接打开预览，外链保留安全属性', () => {
+    const html = renderToStaticMarkup(<I18nextProvider i18n={i18n}><AgentTimeline items={timeline('[说明](docs/a.md) [站点](https://example.com)')} sessionId="session-1" /></I18nextProvider>)
+    expect(html).toContain('<button type="button"')
+    expect(html).toContain('说明')
+    expect(html).toContain('<a href="https://example.com" target="_blank" rel="noopener noreferrer">站点</a>')
+  })
+})
+
 describe('AgentTimeline 权限卡片', () => {
   function permissionTimeline(): AgentTimelineItem[] {
     return [{

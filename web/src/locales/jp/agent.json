@@ -142,15 +142,25 @@
     "removedLine": "削除行"
   },
   "preview": {
+    "tabPreview": "プレビュー",
     "tabDiff": "変更",
     "tabSource": "ソース",
+    "download": "ダウンロード",
+    "unsupported": "このファイル形式はプレビューできません",
+    "missing": "ファイルが見つかりません（フォーク時にコピーされていない可能性があります）",
+    "loadFailed": "読み込みに失敗しました",
+    "retry": "再試行",
+    "navigated": "プレビューが移動しようとしたため停止しました",
+    "reload": "プレビューを再読み込み",
+    "stop": "プレビューを停止",
+    "csvTruncated": "先頭 {{count}} 行のみ表示しています",
     "copyPath": "パスをコピー",
     "copyContent": "内容をコピー",
     "close": "閉じる",
     "selectFile": "ファイルを切り替え",
     "notInRun": "このファイルは今回の変更に含まれていません",
     "noPatch": "この変更の内容は記録されていません（旧セッション）",
-    "tooLarge": "ファイルが大きいため、内容を表示できません",
+    "tooLarge": "ファイルが大きいため、ダウンロードして確認してください",
     "panelLabel": "ファイルプレビュー"
   },
   "settings": {

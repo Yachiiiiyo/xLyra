@@ -142,15 +142,25 @@
     "removedLine": "删除行"
   },
   "preview": {
+    "tabPreview": "预览",
     "tabDiff": "变更",
     "tabSource": "源码",
+    "download": "下载",
+    "unsupported": "该文件类型不支持预览",
+    "missing": "文件不存在（可能未随分叉复制）",
+    "loadFailed": "读取失败",
+    "retry": "重试",
+    "navigated": "预览页面尝试跳转，已停止",
+    "reload": "重新加载预览",
+    "stop": "停止预览",
+    "csvTruncated": "仅显示前 {{count}} 行",
     "copyPath": "复制路径",
     "copyContent": "复制内容",
     "close": "关闭",
     "selectFile": "切换文件",
     "notInRun": "该文件不在本轮变更中",
     "noPatch": "这次修改没有记录变更内容（旧会话）",
-    "tooLarge": "文件过大，暂不显示内容",
+    "tooLarge": "文件过大，请下载查看",
     "panelLabel": "文件预览"
   },
   "settings": {

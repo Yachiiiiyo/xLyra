@@ -13,6 +13,7 @@ type MarkdownMessageProps = {
   content: string
   className?: string
   renderImage?: (props: { src?: string; alt?: string }) => ReactNode
+  renderLink?: (props: { href?: string; children: ReactNode }) => ReactNode
 }
 
 function reactNodeText(node: ReactNode): string {
@@ -48,10 +49,10 @@ function normalizeMathDelimiters(content: string): string {
     .replace(/\\\(([^\n]*?)\\\)/g, (_, expression: string) => `$${expression}$`)
 }
 
-function MarkdownMessageImpl({ content, className, renderImage }: MarkdownMessageProps) {
+function MarkdownMessageImpl({ content, className, renderImage, renderLink }: MarkdownMessageProps) {
   return (
     <div className={cn('chat-markdown text-body leading-6 text-label', className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ pre: MarkdownCodeBlock, ...(renderImage ? { img: ({ src, alt }) => renderImage({ src, alt }) } : {}) }}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ pre: MarkdownCodeBlock, ...(renderImage ? { img: ({ src, alt }) => renderImage({ src, alt }) } : {}), ...(renderLink ? { a: ({ href, children }) => renderLink({ href, children }) } : {}) }}>
         {normalizeMathDelimiters(content)}
       </ReactMarkdown>
     </div>

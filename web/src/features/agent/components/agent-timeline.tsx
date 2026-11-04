@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Copy, FilePenLine, FileText, GitBranch, Globe, Info, LoaderCircle, Pencil, Search, ShieldAlert, TerminalSquare, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -16,6 +16,7 @@ import { AgentGeneratedImage } from '@/features/agent/components/agent-generated
 import { isGeneratedImagePath, runGeneratedImages } from '@/features/agent/lib/generated-images'
 import { runFileChanges } from '@/features/agent/lib/run-changes'
 import { AgentRunChanges } from '@/features/agent/components/agent-run-changes'
+import { previewKindForPath } from '@/features/agent/lib/preview-kind'
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
@@ -29,9 +30,10 @@ type AgentTimelineProps = {
   onFork?: (messageId: string) => void
   onOpenReference?: (sessionId: string) => void
   onOpenChange?: (runId: string, path: string) => void
+  onOpenFile?: (path: string) => void
 }
 
-export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference, onOpenChange }: AgentTimelineProps) {
+export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference, onOpenChange, onOpenFile }: AgentTimelineProps) {
   const lastUserIndex = items.reduce((index, item, current) => item.kind === 'user' ? current : index, -1)
   const sessionIds = useMemo(() => new Set((sessions ?? []).map((session) => session.session_id)), [sessions])
   // 分叉入口需要「这一轮对应的用户消息 id」：取时间线里紧邻当前 run 之前的 user 项
@@ -69,6 +71,7 @@ export function AgentTimeline({ items, sessionId, running, sessions, onPermissio
               onFork={onFork}
               onPermissionDecision={onPermissionDecision}
               onOpenChange={onOpenChange}
+              onOpenFile={onOpenFile}
             />
       ))}
     </div>
@@ -221,7 +224,7 @@ function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: 
   )
 }
 
-function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision, onOpenChange }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision']; onOpenChange?: AgentTimelineProps['onOpenChange'] }) {
+function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision, onOpenChange, onOpenFile }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision']; onOpenChange?: AgentTimelineProps['onOpenChange']; onOpenFile?: AgentTimelineProps['onOpenFile'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
   const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
@@ -251,6 +254,12 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
         return knownImagePaths?.has(src) ? <AgentGeneratedImage sessionId={sessionId} path={src} alt={alt} /> : null
       }
     : undefined
+  const renderLink = ({ href, children }: { href?: string; children: ReactNode }) => {
+    const workspacePath = href && !/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith('/') && !href.startsWith('#') && !href.includes('..') && previewKindForPath(href) !== 'binary' ? href : null
+    return workspacePath ? (
+      <button type="button" className="inline text-label underline decoration-label-3 underline-offset-2 hover:text-label-2" onClick={() => onOpenFile?.(workspacePath)}>{children}</button>
+    ) : <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+  }
   const [override, setOverride] = useState<boolean | null>(null)
   const processExpanded = override ?? !settled
   const now = useTickingNow(!done)
@@ -293,7 +302,7 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
           <div className="mt-1.5 space-y-3 border-l-2 border-[hsl(var(--glass-divider))] pl-3">
             {processItems.map((item, index) => {
               if (item.kind === 'text') {
-                return <MarkdownMessage key={item.id} content={item.text} className="text-[15px] leading-7" renderImage={renderImage} />
+                return <MarkdownMessage key={item.id} content={item.text} className="text-[15px] leading-7" renderImage={renderImage} renderLink={renderLink} />
               }
               if (item.kind === 'permission') {
                 return <PermissionCard key={item.id} request={item.request} onDecision={onPermissionDecision} />
@@ -317,7 +326,7 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
 
       {finalItem?.kind === 'text' ? (
         <div className="group space-y-1">
-          <MarkdownMessage content={finalItem.text} className="text-[15px] leading-7" renderImage={renderImage} />
+          <MarkdownMessage content={finalItem.text} className="text-[15px] leading-7" renderImage={renderImage} renderLink={renderLink} />
           {done && !pausedForPermission && replyText ? (
             // 复制入口常驻布局（opacity 切换，不占位消失），避免 hover 时下方内容跳动；
             // 桌面端 hover 回复文本时显现，移动端无 hover 保持常显

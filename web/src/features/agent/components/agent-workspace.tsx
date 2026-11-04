@@ -301,8 +301,8 @@ export function AgentWorkspace() {
     const runs = timeline.filter((item): item is Extract<AgentTimelineData[number], { kind: 'run' }> => item.kind === 'run')
     return runs.find((item) => item.run.id === preview.runId) ?? runs[preview.runOrdinal]
   }, [preview, selectedId, timeline])
-  const previewChanges = useMemo(() => previewRun?.kind === 'run' ? runFileChanges(previewRun.run) : [], [previewRun])
-  const activePreview = preview && previewRun?.kind === 'run' ? preview : null
+  const previewChanges = useMemo(() => preview?.runId === '' ? [] : previewRun?.kind === 'run' ? runFileChanges(previewRun.run) : [], [preview, previewRun])
+  const activePreview = preview && (preview.runId === '' || previewRun?.kind === 'run') ? preview : null
   const hasMessages = timeline.length > 0
   // 背景图由壳层的 AppBackground 负责铺；这里只关心「是否配置了背景图」——
   // 只有配置了才在进入会话时叠加 dull 遮罩，无背景图时不渲染，避免影响星点背景；
@@ -1051,6 +1051,7 @@ export function AgentWorkspace() {
                     onFork={selectedId ? (messageId) => void handleFork(selectedId, messageId) : undefined}
                     onOpenReference={handleSelect}
                     onOpenChange={selectedId ? (runId, path) => setPreview({ runId, runOrdinal: timeline.filter((item) => item.kind === 'run').findIndex((item) => item.id === runId), path }) : undefined}
+                    onOpenFile={(path) => setPreview({ runId: '', runOrdinal: -1, path })}
                   />
                   {waitingReply ? <WaitingIndicator state={waitingOrbState} /> : null}
                 </div>
@@ -1079,10 +1080,10 @@ export function AgentWorkspace() {
         )}
       </div>
       {activePreview && !isMobileLayout ? (
-        <AgentPreviewPanel changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile={false} />
+        <AgentPreviewPanel sessionId={selectedId ?? undefined} changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile={false} />
       ) : null}
       {activePreview && isMobileLayout ? (
-        <AgentPreviewPanel changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile />
+        <AgentPreviewPanel sessionId={selectedId ?? undefined} changes={previewChanges} path={activePreview.path} onSelectPath={(path) => setPreview((current) => current ? { ...current, path } : null)} onClose={() => setPreview(null)} mobile />
       ) : null}
       </div>
     </div>

@@ -7,6 +7,9 @@ import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-pan
 import type { AgentFileChange } from '@/features/agent/lib/run-changes'
 import zhAgent from '@/locales/zh/agent.json'
 
+vi.mock('@/features/agent/components/agent-file-preview', () => ({
+  AgentFilePreview: ({ path }: { path: string }) => <div data-file-preview={path} />,
+}))
 vi.mock('@/components/glass/liquid-glass', () => ({
   LiquidGlass: ({ as: Tag = 'div', variant: _variant, children, ...props }: React.ComponentPropsWithoutRef<'div'> & { as?: 'div' | 'aside'; variant?: string }) => {
     void _variant
@@ -51,6 +54,16 @@ describe('AgentPreviewPanel 桌面版', () => {
       await mounted.unmount()
     }
   })
+  it('无 patches/content 但有 sessionId 时显示预览标签', async () => {
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'notes.md', changes: [] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+      expect(findAll(mounted.container, (node) => node.getAttribute('data-file-preview') === 'notes.md')).toHaveLength(1)
+      expect(mounted.container.textContent).not.toContain(zhAgent.preview.notInRun)
+    } finally {
+      await mounted.unmount()
+    }
+  })
 })
 
 function selectedTab(container: MiniNode) {
@@ -61,7 +74,7 @@ function tab(container: MiniNode, label: string) {
   return findAll(container, (node) => node.getAttribute('role') === 'tab' && node.textContent === label)[0]!
 }
 
-async function mountPanel() {
+async function mountPanel(options: { sessionId?: string; path?: string; changes?: AgentFileChange[] } = {}) {
   const doc = new MiniDocument()
   const container = doc.createElement('div')
   doc.body.appendChild(container)
@@ -78,12 +91,12 @@ async function mountPanel() {
   globals.document = doc
   globals.IS_REACT_ACT_ENVIRONMENT = true
   const onClose = vi.fn()
-  let path = 'write.txt'
+  let path = options.path ?? 'write.txt'
   const { createRoot } = await import('react-dom/client')
   const root = createRoot(container as unknown as Element)
   const render = () => root.render(
     <I18nextProvider i18n={i18n}>
-      <AgentPreviewPanel changes={changes} path={path} onSelectPath={(next) => { path = next; render() }} onClose={onClose} mobile={false} />
+      <AgentPreviewPanel sessionId={options.sessionId} changes={options.changes ?? changes} path={path} onSelectPath={(next) => { path = next; render() }} onClose={onClose} mobile={false} />
     </I18nextProvider>,
   )
   await act(async () => { render() })

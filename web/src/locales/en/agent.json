@@ -142,15 +142,25 @@
     "removedLine": "Removed line"
   },
   "preview": {
+    "tabPreview": "Preview",
     "tabDiff": "Changes",
     "tabSource": "Source",
+    "download": "Download",
+    "unsupported": "This file type cannot be previewed",
+    "missing": "File not found (it may not have been copied with the fork)",
+    "loadFailed": "Failed to load file",
+    "retry": "Retry",
+    "navigated": "The preview tried to navigate and was stopped",
+    "reload": "Reload preview",
+    "stop": "Stop preview",
+    "csvTruncated": "Showing only the first {{count}} rows",
     "copyPath": "Copy path",
     "copyContent": "Copy content",
     "close": "Close",
     "selectFile": "Switch file",
     "notInRun": "This file is not part of this turn's changes",
     "noPatch": "No change details were recorded for this edit (legacy session)",
-    "tooLarge": "This file is too large to display",
+    "tooLarge": "This file is too large; download it to view",
     "panelLabel": "File preview"
   },
   "settings": {
