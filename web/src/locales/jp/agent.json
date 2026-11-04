@@ -7,7 +7,7 @@
     "delete": "チャットを削除",
     "deleteConfirm": "このチャットを削除しますか？",
     "menu": "チャットメニュー",
-    "revokeAccess": "このチャットの自動許可を取り消す（{{tools}}）",
+    "revokeAccess": "自動許可を取り消す",
     "revoked": "このチャットの自動許可を取り消しました",
     "copyId": "セッション ID をコピー",
     "idCopied": "セッション ID をコピーしました",

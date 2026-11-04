@@ -155,6 +155,14 @@ func TestSandboxSystemPrompt(t *testing.T) {
 			t.Errorf("生图系统提示缺少 %q", text)
 		}
 	}
+	// 提示里不能出现可照抄的图片 Markdown 示例:弱一点的模型没调用工具也会照着写进回复(线上出现过
+	// 没生图却在结尾写 ![说明](images/xxx.png)),提示要明确「没调用工具就别写图片引用」。
+	if strings.Contains(image, "![") {
+		t.Error("生图系统提示不应包含可照抄的图片 Markdown 示例")
+	}
+	if !strings.Contains(image, "不要在回复里写任何图片引用") {
+		t.Error("生图系统提示应明确没调用工具时不要写图片引用")
+	}
 	if strings.Contains(got, "image_generation") {
 		t.Fatal("未启用生图时系统提示不应出现工具说明")
 	}

@@ -7,7 +7,7 @@
     "delete": "Delete chat",
     "deleteConfirm": "Delete this chat?",
     "menu": "Chat actions",
-    "revokeAccess": "Revoke auto-allow in this chat ({{tools}})",
+    "revokeAccess": "Revoke auto-allow",
     "revoked": "Auto-allow revoked for this chat",
     "copyId": "Copy session ID",
     "idCopied": "Session ID copied",

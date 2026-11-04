@@ -36,7 +36,8 @@ const bashSystemPrompt = `
 const imageGenerationSystemPrompt = `
 
 可以使用 image_generation 工具生成图片,图片会保存在工作区 images/ 下,图片内容不会返回给你。
-生成成功后,请在最终回复中用工具结果给出的 Markdown(![说明](images/文件名))原样展示图片,可放在文字说明之间,不要改动路径。
+只有调用该工具并成功后,工具结果里才会给出可直接使用的 Markdown 图片引用,请把它原样放进最终回复,位置自定,不要改动路径。
+没有调用该工具时,不要在回复里写任何图片引用,也不要自己编造图片路径。
 每个会话轮次的生图调用次数有限,请先想清楚再调用。`
 
 // systemPrompt 返回本次 run 使用的系统提示文本。

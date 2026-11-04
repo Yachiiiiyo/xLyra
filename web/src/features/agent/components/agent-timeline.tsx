@@ -40,6 +40,9 @@ export function AgentTimeline({ items, sessionId, running, sessions, onPermissio
     }
     return undefined
   }), [items])
+  // 时间线里所有 run 的工具结果产出过的图片路径:回复里引用了不在其中的 images/ 路径,
+  // 多半是模型编造的(没调用生图工具也会照着示例写),不显示,免得出一个「文件不存在」的空框
+  const knownImagePaths = useMemo(() => new Set(items.flatMap((item) => item.kind === 'run' ? runGeneratedImages(item.run).map((image) => image.path) : [])), [items])
   return (
     <div className="space-y-6">
       {items.map((item, index) => (
@@ -58,6 +61,7 @@ export function AgentTimeline({ items, sessionId, running, sessions, onPermissio
               key={item.id}
               run={item.run}
               sessionId={sessionId}
+              knownImagePaths={knownImagePaths}
               forkMessageId={canForkFromMessage(forkMessageIds[index], Boolean(running)) ? forkMessageIds[index] : undefined}
               onFork={onFork}
               onPermissionDecision={onPermissionDecision}
@@ -213,7 +217,7 @@ function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: 
   )
 }
 
-function RunBlock({ run, sessionId, forkMessageId, onFork, onPermissionDecision }: { run: AgentRun; sessionId?: string; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
+function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
   const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
@@ -237,9 +241,10 @@ function RunBlock({ run, sessionId, forkMessageId, onFork, onPermissionDecision 
     ? runGeneratedImages(run).filter((image) => !replyText.includes(image.path))
     : []
   const renderImage = sessionId
-    ? ({ src, alt }: { src?: string; alt?: string }) => isGeneratedImagePath(src) && src
-      ? <AgentGeneratedImage sessionId={sessionId} path={src} alt={alt} />
-      : <img src={src} alt={alt} />
+    ? ({ src, alt }: { src?: string; alt?: string }) => {
+        if (!isGeneratedImagePath(src) || !src) return <img src={src} alt={alt} />
+        return knownImagePaths?.has(src) ? <AgentGeneratedImage sessionId={sessionId} path={src} alt={alt} /> : null
+      }
     : undefined
   const [override, setOverride] = useState<boolean | null>(null)
   const processExpanded = override ?? !settled
@@ -667,6 +672,22 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
         ? t('permission.allowedSession')
         : t('permission.allowed')
 
+  // 已处理(允许/拒绝)的请求收成一行:工具名 + 命令/路径首行 + 结果;完整内容放在悬停提示里
+  if (request.decision) {
+    const summary = (request.detail ?? '').split('\n').find((line) => line.trim()) ?? ''
+    return (
+      <div
+        className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs"
+        title={[request.detail, request.note].filter(Boolean).join('\n')}
+      >
+        <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <span className="shrink-0 font-medium text-foreground">{toolDisplayName(request.tool, t)}</span>
+        {summary ? <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-soft">{summary}</code> : <span className="flex-1" />}
+        <span className={cn('shrink-0 font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>{decisionLabel}</span>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
       <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -684,21 +705,15 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
       {request.note ? (
         <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-soft">{request.note}</p>
       ) : null}
-      {request.decision ? (
-        <p className={cn('mt-2 text-xs font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>
-          {decisionLabel}
-        </p>
-      ) : (
-        <div className="mt-3 flex gap-2">
-          <Button size="sm" onClick={() => onDecision?.(request, 'allow')}>{t('permission.allow')}</Button>
-          {allowSession ? (
-            <Button size="sm" variant="outline" title={t('permission.allowSessionHint', { tool: toolDisplayName(request.tool, t) })} onClick={() => onDecision?.(request, 'allow_session')}>
-              {t('permission.allowSession')}
-            </Button>
-          ) : null}
-          <Button size="sm" variant="outline" onClick={() => onDecision?.(request, 'deny')}>{t('permission.deny')}</Button>
-        </div>
-      )}
+      <div className="mt-3 flex gap-2">
+        <Button size="sm" onClick={() => onDecision?.(request, 'allow')}>{t('permission.allow')}</Button>
+        {allowSession ? (
+          <Button size="sm" variant="outline" title={t('permission.allowSessionHint', { tool: toolDisplayName(request.tool, t) })} onClick={() => onDecision?.(request, 'allow_session')}>
+            {t('permission.allowSession')}
+          </Button>
+        ) : null}
+        <Button size="sm" variant="outline" onClick={() => onDecision?.(request, 'deny')}>{t('permission.deny')}</Button>
+      </div>
     </div>
   )
 }
