@@ -13,14 +13,13 @@ type DragStartInput = {
   state: DrawSnap
   dy: number
   scrollTop: number
-  scrollable: boolean
   fromHandle: boolean
   canDismiss: boolean
 }
 
-export function resolveDragStart({ state, dy, scrollTop, scrollable, fromHandle, canDismiss }: DragStartInput): DrawDragMode {
+export function resolveDragStart({ state, dy, scrollTop, fromHandle, canDismiss }: DragStartInput): DrawDragMode {
   if (dy < 0) {
-    if (state === 'medium' && scrollable) return 'expand'
+    if (state === 'medium') return 'expand'
     return 'native'
   }
   if (dy === 0) return 'native'

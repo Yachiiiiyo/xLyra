@@ -5,7 +5,6 @@ const start = (overrides: Partial<Parameters<typeof resolveDragStart>[0]> = {}) 
   state: 'medium',
   dy: -10,
   scrollTop: 0,
-  scrollable: true,
   fromHandle: false,
   canDismiss: true,
   ...overrides,
@@ -20,11 +19,7 @@ const release = (overrides: Partial<Parameters<typeof resolveRelease>[0]> = {}) 
 })
 
 describe('draw gesture', () => {
-  it('does not expand a non-scrollable body', () => {
-    expect(start({ scrollable: false })).toBe('native')
-  })
-
-  it('expands a scrollable medium sheet and snaps by progress or velocity', () => {
+  it('expands a medium sheet regardless of whether the body scrolls, and snaps by progress or velocity', () => {
     expect(start()).toBe('expand')
     expect(release({ progress: 0.26 })).toBe('snap-full')
     expect(release({ progress: 0.1, velocity: -0.51 })).toBe('snap-full')
@@ -58,7 +53,7 @@ describe('draw gesture', () => {
   it('treats handle gestures independently of scroll position', () => {
     expect(start({ state: 'full', dy: 10, scrollTop: 200, fromHandle: true })).toBe('shrink')
     expect(start({ state: 'medium', dy: 10, scrollTop: 200, fromHandle: true })).toBe('dismiss')
-    expect(start({ dy: -10, scrollTop: 200, scrollable: false, fromHandle: true })).toBe('native')
-    expect(start({ dy: -10, scrollTop: 200, scrollable: true, fromHandle: true })).toBe('expand')
+    expect(start({ dy: -10, scrollTop: 200, fromHandle: true })).toBe('expand')
+    expect(start({ state: 'full', dy: -10, scrollTop: 200, fromHandle: true })).toBe('native')
   })
 })
