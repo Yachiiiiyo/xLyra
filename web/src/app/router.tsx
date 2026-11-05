@@ -4,6 +4,7 @@ import { ProtectedLayout } from '@/app/protected-layout'
 import { PublicOnlyRoute } from '@/components/auth/auth-guard'
 import { LoginPage } from '@/routes/login'
 import { RegisterPage } from '@/routes/register'
+import { HomeRedirect } from '@/app/home-redirect'
 
 function lazyNamed<T extends ComponentType>(
   loader: () => Promise<Record<string, T>>,
@@ -65,7 +66,7 @@ export const appRouter = createBrowserRouter([
     path: '/',
     element: <ProtectedLayout />,
     children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
+      { index: true, element: <HomeRedirect /> },
       { path: 'agent', element: lazyElement(<AgentPage />) },
       { path: 'dashboard', element: quietElement(<DashboardPage />) },
       { path: 'analytics', element: lazyElement(<AnalyticsPage />) },

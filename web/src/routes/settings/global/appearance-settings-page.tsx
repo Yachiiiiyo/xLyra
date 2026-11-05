@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Check, ImagePlus, LoaderCircle, RotateCcw, Save, X } from 'lucide-react'
+import { ChartNoAxesCombined, Check, ImagePlus, LoaderCircle, RotateCcw, Save, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   appearanceKey,
   defaultAppearanceConfig,
   updateAppearance,
   useAppearanceQuery,
   type AppearanceConfig,
+  type HomePage,
 } from '@/features/appearance/api/appearance'
+import { getAppNavSections, isNavItemHideable } from '@/lib/navigation'
 import { drawStarfield } from '@/lib/draw-starfield'
+import { useAgentAvailability } from '@/features/agent/lib/use-agent-availability'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
@@ -18,8 +23,10 @@ const MAX_BACKGROUND_IMAGE_BYTES = 8 * 1024 * 1024
 
 export function AppearanceSettingsPage() {
   const { t } = useTranslation('settings')
+  const { t: tCommon } = useTranslation('common')
   const queryClient = useQueryClient()
   const appearanceQuery = useAppearanceQuery()
+  const agentAvailable = useAgentAvailability()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const saveMutation = useMutation({
     mutationFn: updateAppearance,
@@ -42,13 +49,27 @@ export function AppearanceSettingsPage() {
 
   const customImages = draft.custom_background_images
   const selectedImage = draft.background_image
+  const menuSections = getAppNavSections(tCommon, { agent: agentAvailable })
 
   function selectBackground(value: string) {
     setDraft((current) => ({ ...current, background_image: value }))
   }
 
+  function selectHomePage(value: string) {
+    const homePage: HomePage = value === 'agent' ? 'agent' : 'dashboard'
+    setDraft((current) => ({ ...current, home_page: homePage }))
+  }
+
+  function toggleMenuItem(to: string, visible: boolean) {
+    setDraft((current) => {
+      const rest = current.hidden_menu_items.filter((item) => item !== to)
+      return { ...current, hidden_menu_items: visible ? rest : [...rest, to] }
+    })
+  }
+
   function removeCustomBackground(image: string) {
     setDraft((current) => ({
+      ...current,
       background_image: current.background_image === image ? '' : current.background_image,
       custom_background_images: current.custom_background_images.filter((item) => item !== image),
     }))
@@ -63,6 +84,7 @@ export function AppearanceSettingsPage() {
     try {
       const dataURL = await readFileAsDataURL(file)
       setDraft((current) => ({
+        ...current,
         background_image: dataURL,
         custom_background_images: [...current.custom_background_images.filter((item) => item !== dataURL), dataURL],
       }))
@@ -90,6 +112,12 @@ export function AppearanceSettingsPage() {
         <p className="text-label-2 text-body">{t('appearance.description')}</p>
       </div>
 
+      <Tabs defaultValue="background">
+        <TabsList className="max-w-xs">
+          <TabsTrigger value="background">{t('appearance.tabs.background')}</TabsTrigger>
+          <TabsTrigger value="menu">{t('appearance.tabs.menu')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="background" className="mt-4">
       <section className="space-y-4">
         <h4 className="text-headline text-label">{t('appearance.background.title')}</h4>
         <p className="text-label-2 text-body">{t('appearance.background.hint')}</p>
@@ -174,6 +202,70 @@ export function AppearanceSettingsPage() {
           />
         </div>
       </section>
+        </TabsContent>
+        <TabsContent value="menu" className="mt-4 space-y-8">
+          <section className="space-y-4">
+            <h4 className="text-headline text-label">{t('appearance.menu.homeTitle')}</h4>
+            <p className="text-label-2 text-body">{t('appearance.menu.homeHint')}</p>
+            <div className="grid max-w-md grid-cols-2 gap-3">
+              {[
+                { value: 'dashboard', label: t('appearance.menu.homeDashboard'), icon: ChartNoAxesCombined },
+                ...(agentAvailable ? [{ value: 'agent', label: t('appearance.menu.homeAgent'), icon: Sparkles }] : []),
+              ].map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => selectHomePage(value)}
+                  className={cn(
+                    'relative flex flex-col items-center gap-2 rounded-inner border px-4 py-5 text-footnote transition-colors',
+                    draft.home_page === value ? 'border-tint text-label' : 'border-separator text-label-2 hover:border-label-3',
+                  )}
+                >
+                  <Icon className="h-6 w-6" />
+                  <span>{label}</span>
+                  {draft.home_page === value ? <SelectedMark /> : null}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-4 border-t border-separator pt-8">
+            <h4 className="text-headline text-label">{t('appearance.menu.itemsTitle')}</h4>
+            <p className="text-label-2 text-body">{t('appearance.menu.itemsHint')}</p>
+            {menuSections.map((section) => (
+              <div key={section.key} className="space-y-2">
+                <p className="text-footnote font-semibold text-label-3">{section.label}</p>
+                <div className="grid gap-2">
+                  {section.items.map((item) => {
+                    const hideable = isNavItemHideable(item.to)
+                    const children = item.children ?? []
+                    return (
+                      <div key={item.to} className="space-y-2">
+                        <Switch
+                          label={item.label}
+                          checked={!draft.hidden_menu_items.includes(item.to)}
+                          disabled={!hideable}
+                          onCheckedChange={(visible) => toggleMenuItem(item.to, visible)}
+                        />
+                        {children.map((child) => (
+                          <Switch
+                            key={child.to}
+                            label={child.label}
+                            className="ml-6"
+                            checked={!draft.hidden_menu_items.includes(child.to)}
+                            disabled={!isNavItemHideable(child.to)}
+                            onCheckedChange={(visible) => toggleMenuItem(child.to, visible)}
+                          />
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </section>
+        </TabsContent>
+      </Tabs>
 
       <div className="flex items-center gap-3 border-t border-separator pt-6">
         <Button onClick={handleSave} disabled={saveMutation.isPending}>

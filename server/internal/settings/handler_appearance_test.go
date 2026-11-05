@@ -32,6 +32,12 @@ func TestGetAppearance_Defaults(t *testing.T) {
 	if len(appearance.CustomBackgroundImages) != 0 {
 		t.Fatalf("custom_background_images = %#v, want empty", appearance.CustomBackgroundImages)
 	}
+	if len(appearance.HiddenMenuItems) != 0 {
+		t.Fatalf("hidden_menu_items = %#v, want empty", appearance.HiddenMenuItems)
+	}
+	if appearance.HomePage != "dashboard" {
+		t.Fatalf("home_page = %q, want dashboard", appearance.HomePage)
+	}
 }
 
 func TestUpdateAppearance_PersistsDataURLAndServesFile(t *testing.T) {
@@ -96,6 +102,9 @@ func TestUpdateAppearance_RejectsInvalidInput(t *testing.T) {
 		{"background not in gallery", `{"background_image":"/api/v1/appearance/backgrounds/appearance-bg-ffffffff.png","custom_background_images":[]}`},
 		{"not a stored path", `{"background_image":"","custom_background_images":["/etc/passwd"]}`},
 		{"too many images", `{"background_image":"","custom_background_images":[` + strings.Repeat(`"data:image/png;base64,AA==",`, maxAppearanceGallerySize) + `"data:image/png;base64,AA=="]}`},
+		{"invalid home page", `{"home_page":"portal"}`},
+		{"hidden item not a path", `{"hidden_menu_items":["dashboard"]}`},
+		{"too many hidden items", `{"hidden_menu_items":[` + strings.Repeat(`"/x",`, maxHiddenMenuItems) + `"/x"]}`},
 	}
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
@@ -151,4 +160,38 @@ func TestServeAppearanceBackground_RejectsTraversal(t *testing.T) {
 func TestUpdateAppearance_WithoutConfigIsUnavailable(t *testing.T) {
 	rec := settingsPerform(settingsHandlerWithoutConfig().UpdateAppearance, settingsRawJSONRequest(http.MethodPut, "/settings/appearance", `{}`))
 	assertSettingsErrorCode(t, rec, http.StatusServiceUnavailable, "config_unavailable")
+}
+
+func TestUpdateAppearance_MenuSettingsRoundTrip(t *testing.T) {
+	h, _ := settingsHandlerWithConfig(t)
+
+	body := `{"background_image":"","custom_background_images":[],"hidden_menu_items":["/dashboard","/dashboard","/sites"],"home_page":"agent"}`
+	rec := settingsPerform(h.UpdateAppearance, settingsRawJSONRequest(http.MethodPut, "/settings/appearance", body))
+	settingsAssertStatus(t, rec, http.StatusOK)
+
+	appearance := settingsDecodeJSON[AppearanceConfig](t, rec)
+	if len(appearance.HiddenMenuItems) != 2 || appearance.HiddenMenuItems[0] != "/dashboard" || appearance.HiddenMenuItems[1] != "/sites" {
+		t.Fatalf("hidden_menu_items = %#v, want deduplicated [/dashboard /sites]", appearance.HiddenMenuItems)
+	}
+	if appearance.HomePage != "agent" {
+		t.Fatalf("home_page = %q, want agent", appearance.HomePage)
+	}
+
+	rec = settingsPerform(h.GetAppearance, settingsTestRequest(http.MethodGet, "/settings/appearance", ""))
+	settingsAssertStatus(t, rec, http.StatusOK)
+	persisted := settingsDecodeJSON[AppearanceConfig](t, rec)
+	if len(persisted.HiddenMenuItems) != 2 || persisted.HomePage != "agent" {
+		t.Fatalf("persisted menu settings = %#v", persisted)
+	}
+
+	// 旧配置兼容：空串 home_page 归一为 dashboard，nil hidden 为空切片
+	rec = settingsPerform(h.UpdateAppearance, settingsRawJSONRequest(http.MethodPut, "/settings/appearance", `{"background_image":"","custom_background_images":[]}`))
+	settingsAssertStatus(t, rec, http.StatusOK)
+	fallback := settingsDecodeJSON[AppearanceConfig](t, rec)
+	if fallback.HomePage != "dashboard" {
+		t.Fatalf("home_page = %q, want dashboard", fallback.HomePage)
+	}
+	if fallback.HiddenMenuItems == nil || len(fallback.HiddenMenuItems) != 0 {
+		t.Fatalf("hidden_menu_items = %#v, want empty non-nil", fallback.HiddenMenuItems)
+	}
 }

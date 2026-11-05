@@ -1,7 +1,7 @@
 {
   "appearance": {
     "title": "外观设置",
-    "description": "为整个实例配置全局背景图，应用于主程序所有页面。",
+    "description": "为整个实例配置全局背景图与导航菜单，应用于主程序所有页面。",
     "loading": "正在读取设置...",
     "saved": "外观设置已保存",
     "saveFailed": "保存失败",
@@ -14,6 +14,18 @@
       "remove": "删除自定义 {{index}}",
       "imageTooLarge": "图片不能超过 8MB",
       "imageReadFailed": "图片读取失败"
+    },
+    "tabs": {
+      "background": "背景图",
+      "menu": "菜单设置"
+    },
+    "menu": {
+      "homeTitle": "首页",
+      "homeHint": "打开程序时默认进入的页面",
+      "homeDashboard": "仪表盘",
+      "homeAgent": "Agent",
+      "itemsTitle": "菜单项",
+      "itemsHint": "关闭后该菜单从侧边栏、移动端菜单和命令面板中隐藏；设置菜单不可隐藏"
     }
   },
   "general": {

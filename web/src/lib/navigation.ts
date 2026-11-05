@@ -40,6 +40,29 @@ export type NavFeatures = {
   agent?: boolean
 }
 
+/** 设置页及其子页不可隐藏，防止把用户自己锁在外面 */
+const unhideableNavPrefix = '/settings'
+
+export function isNavItemHideable(to: string): boolean {
+  return !to.startsWith(unhideableNavPrefix)
+}
+
+/** 按隐藏列表过滤导航分组：某分组过滤后无 item 则整组去掉 */
+export function filterHiddenNavSections(sections: AppNavSection[], hidden: readonly string[]): AppNavSection[] {
+  if (!hidden.length) return sections
+  const hiddenSet = new Set(hidden)
+  const filterItem = (item: AppNavItem): AppNavItem | null => {
+    if (hiddenSet.has(item.to)) return null
+    if (item.children?.length) {
+      return { ...item, children: item.children.filter((child) => !hiddenSet.has(child.to)) }
+    }
+    return item
+  }
+  return sections
+    .map((section) => ({ ...section, items: section.items.map(filterItem).filter((item): item is AppNavItem => item !== null) }))
+    .filter((section) => section.items.length > 0)
+}
+
 export function getAppNavSections(t: TFunction, features: NavFeatures = {}): AppNavSection[] {
   const showAgent = features.agent ?? true
   return [

@@ -1,7 +1,7 @@
 {
   "appearance": {
     "title": "Appearance",
-    "description": "Configure a global background image for the whole instance, applied to every page.",
+    "description": "Configure the global background image and navigation menu for the whole instance, applied to every page.",
     "loading": "Loading settings...",
     "saved": "Appearance settings saved",
     "saveFailed": "Failed to save",
@@ -14,6 +14,18 @@
       "remove": "Remove custom {{index}}",
       "imageTooLarge": "Image must be 8MB or smaller",
       "imageReadFailed": "Failed to read image"
+    },
+    "tabs": {
+      "background": "Background",
+      "menu": "Menu"
+    },
+    "menu": {
+      "homeTitle": "Home Page",
+      "homeHint": "The page opened by default when the app starts",
+      "homeDashboard": "Dashboard",
+      "homeAgent": "Agent",
+      "itemsTitle": "Menu Items",
+      "itemsHint": "Turned-off entries are hidden from the sidebar, mobile menu and command palette; the settings menu cannot be hidden"
     }
   },
   "general": {

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createInstance } from 'i18next'
-import { act } from 'react'
+import { act, createElement, type ReactNode } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from '@/lib/toast'
@@ -21,6 +21,27 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
 
+// 假 DOM 下 Radix Tabs 的内容挂载不可靠，这里换成同时渲染所有面板的简化实现
+vi.mock('@/components/ui/tabs', () => {
+  const passthrough = (tag: string) => ({ children }: { children?: ReactNode }) => createElement(tag, null, children)
+  return {
+    Tabs: passthrough('div'),
+    TabsList: passthrough('div'),
+    TabsTrigger: passthrough('button'),
+    TabsContent: passthrough('div'),
+  }
+})
+
+// Radix Switch 依赖真实 DOM 的 HTMLInputElement，假 DOM 下换成简化按钮
+vi.mock('@/components/ui/switch', () => ({
+  Switch: ({ label, checked, disabled, onCheckedChange }: {
+    label?: string
+    checked?: boolean
+    disabled?: boolean
+    onCheckedChange?: (checked: boolean) => void
+  }) => createElement('button', { type: 'button', disabled, onClick: () => onCheckedChange?.(!checked) }, label),
+}))
+
 vi.mock('@/lib/draw-starfield', () => ({
   drawStarfield: vi.fn(),
 }))
@@ -33,8 +54,17 @@ beforeAll(async () => {
     unobserve() {}
     disconnect() {}
   }
+  class NoopMutationObserver {
+    observe() {}
+    disconnect() {}
+    takeRecords() { return [] }
+  }
   vi.stubGlobal('ResizeObserver', NoopObserver)
   vi.stubGlobal('IntersectionObserver', NoopObserver)
+  vi.stubGlobal('MutationObserver', NoopMutationObserver)
+  vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '', ...{} }))
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number)
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
   await i18n.init({
     lng: 'zh',
     defaultNS: 'settings',
@@ -61,7 +91,7 @@ afterEach(() => {
 })
 
 function defaultConfig(): AppearanceConfig {
-  return { background_image: '', custom_background_images: [] }
+  return { background_image: '', custom_background_images: [], hidden_menu_items: [], home_page: 'dashboard' as const }
 }
 
 const storedImage = '/api/v1/appearance/backgrounds/appearance-bg-0123456789abcdef.png'
@@ -69,11 +99,11 @@ const storedImage = '/api/v1/appearance/backgrounds/appearance-bg-0123456789abcd
 describe('appearance settings page', () => {
   it('切换选中项后保存调用 PUT，成功后刷新并 toast', async () => {
     useAppearanceQuery.mockReturnValue({
-      data: { background_image: storedImage, custom_background_images: [storedImage] },
+      data: { background_image: storedImage, custom_background_images: [storedImage], hidden_menu_items: [], home_page: 'dashboard' },
       isLoading: false,
       isFetching: false,
     })
-    updateAppearance.mockResolvedValue({ background_image: '', custom_background_images: [storedImage] })
+    updateAppearance.mockResolvedValue(defaultConfig())
     const mounted = await mountPage()
     try {
       // 初始：自定义图选中
@@ -89,7 +119,7 @@ describe('appearance settings page', () => {
       // 保存：PUT 带上切换后的草稿
       await click(findButton(mounted.container, '保存'))
       expect(updateAppearance).toHaveBeenCalledOnce()
-      expect(updateAppearance.mock.calls[0][0]).toEqual({ background_image: '', custom_background_images: [storedImage] })
+      expect(updateAppearance.mock.calls[0][0]).toEqual({ background_image: '', custom_background_images: [storedImage], hidden_menu_items: [], home_page: 'dashboard' })
       expect(toast.success).toHaveBeenCalledWith('外观设置已保存')
     } finally {
       await mounted.unmount()
@@ -115,7 +145,7 @@ describe('appearance settings page', () => {
 
   it('重置丢弃草稿，恢复为已保存的配置', async () => {
     useAppearanceQuery.mockReturnValue({
-      data: { background_image: storedImage, custom_background_images: [storedImage] },
+      data: { background_image: storedImage, custom_background_images: [storedImage], hidden_menu_items: [], home_page: 'dashboard' },
       isLoading: false,
       isFetching: false,
     })
@@ -126,6 +156,48 @@ describe('appearance settings page', () => {
       await click(findButton(mounted.container, '重置'))
       expect(findByClass(mounted.container, 'border-tint')?.textContent).toContain('自定义 1')
       expect(updateAppearance).not.toHaveBeenCalled()
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('切换到菜单设置 tab，关闭开关后保存包含 hidden_menu_items', async () => {
+    updateAppearance.mockResolvedValue(defaultConfig())
+    const mounted = await mountPage()
+    try {
+      // 切到菜单设置 tab（Radix Tabs 由 mousedown 触发）
+      await click(findButton(mounted.container, '菜单设置'))
+      expect(mounted.container.textContent).toContain('打开程序时默认进入的页面')
+
+      // 设置菜单不可隐藏：开关被禁用
+      const disabledSwitch = findSwitchByLabel(mounted.container, '设置')
+      expect(disabledSwitch?.hasAttribute('disabled')).toBe(true)
+
+      // 关掉「用量分析」开关
+      await click(findSwitchByLabel(mounted.container, '用量分析'))
+      await click(findButton(mounted.container, '保存'))
+      expect(updateAppearance).toHaveBeenCalledOnce()
+      expect(updateAppearance.mock.calls[0][0]).toMatchObject({
+        hidden_menu_items: ['/analytics'],
+        home_page: 'dashboard',
+      })
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('选择首页为 Agent 后保存包含 home_page', async () => {
+    updateAppearance.mockResolvedValue(defaultConfig())
+    const mounted = await mountPage()
+    try {
+      await click(findButton(mounted.container, '菜单设置'))
+      await click(findRadioByLabel(mounted.container, 'Agent'))
+      await click(findButton(mounted.container, '保存'))
+      expect(updateAppearance).toHaveBeenCalledOnce()
+      expect(updateAppearance.mock.calls[0][0]).toMatchObject({
+        hidden_menu_items: [],
+        home_page: 'agent',
+      })
     } finally {
       await mounted.unmount()
     }
@@ -264,6 +336,40 @@ class MiniNode {
         return true
       },
     }) as MiniNode['style']
+  }
+
+  querySelector(selector: string): MiniNode | null {
+    return this.querySelectorAll(selector)[0] ?? null
+  }
+
+  querySelectorAll(selector: string): MiniNode[] {
+    const [attr, value] = /^\[([^=]+)="?([^"\]]+)"?\]$/.exec(selector)?.slice(1) ?? []
+    if (!attr) return []
+    return this.collectByAttr(attr, value)
+  }
+
+  collectByAttr(attr: string, value: string): MiniNode[] {
+    const found: MiniNode[] = []
+    const walk = (node: MiniNode) => {
+      for (const child of node.childNodes) {
+        if (child.nodeType !== 1) continue
+        const attrValue = attr === 'role' ? (child as MiniNode & { role?: string }).role ?? child.getAttribute('role') : child.getAttribute(attr)
+        if (attrValue === value) found.push(child)
+        walk(child)
+      }
+    }
+    walk(this)
+    return found
+  }
+
+  contains(node: MiniNode | null): boolean {
+    if (!node) return false
+    let current: MiniNode | null = node
+    while (current) {
+      if (current === this) return true
+      current = current.parentNode
+    }
+    return false
   }
 
   get nextSibling(): MiniNode | null {
@@ -450,6 +556,24 @@ function findByClass(node: MiniNode | null, className: string): MiniNode | null 
   if (node.attributes.class?.split(/\s+/).includes(className)) return node
   for (const child of node.childNodes) {
     const found = findByClass(child, className)
+    if (found) return found
+  }
+  return null
+}
+
+function findSwitchByLabel(node: MiniNode, label: string): MiniNode | null {
+  return findButtonByLabelAndTag(node, label, 'BUTTON')
+}
+
+function findRadioByLabel(node: MiniNode, label: string): MiniNode | null {
+  return findButtonByLabelAndTag(node, label, 'BUTTON')
+}
+
+function findButtonByLabelAndTag(node: MiniNode | null, label: string, tag: string): MiniNode | null {
+  if (!node) return null
+  if (node.tagName === tag && node.textContent.trim() === label) return node
+  for (const child of node.childNodes) {
+    const found = findButtonByLabelAndTag(child, label, tag)
     if (found) return found
   }
   return null

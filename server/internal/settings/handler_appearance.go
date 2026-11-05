@@ -23,19 +23,29 @@ import (
 type AppearanceConfig struct {
 	BackgroundImage        string   `json:"background_image"`
 	CustomBackgroundImages []string `json:"custom_background_images"`
+	HiddenMenuItems        []string `json:"hidden_menu_items"`
+	HomePage               string   `json:"home_page"`
 }
 
 const (
-	appearanceConfigPath     = "appearance"
-	maxAppearanceImageBytes  = 8 * 1024 * 1024
-	maxAppearanceGallerySize = 20
-	appearanceFilePrefix     = "appearance-bg-"
+	appearanceConfigPath        = "appearance"
+	maxAppearanceImageBytes     = 8 * 1024 * 1024
+	maxAppearanceGallerySize    = 20
+	maxHiddenMenuItems          = 50
+	appearanceHomePageDashboard = "dashboard"
+	appearanceHomePageAgent     = "agent"
+	appearanceFilePrefix        = "appearance-bg-"
 )
 
 const appearanceBackgroundURLPrefix = "/api/v1/appearance/backgrounds/"
 
 func defaultAppearanceConfig() AppearanceConfig {
-	return AppearanceConfig{BackgroundImage: "", CustomBackgroundImages: []string{}}
+	return AppearanceConfig{
+		BackgroundImage:        "",
+		CustomBackgroundImages: []string{},
+		HiddenMenuItems:        []string{},
+		HomePage:               appearanceHomePageDashboard,
+	}
 }
 
 func (h Handler) GetAppearance(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +76,8 @@ func (h Handler) UpdateAppearance(w http.ResponseWriter, r *http.Request) {
 	if err := h.confFile.Set(appearanceConfigPath, map[string]any{
 		"background_image":         next.BackgroundImage,
 		"custom_background_images": next.CustomBackgroundImages,
+		"hidden_menu_items":        next.HiddenMenuItems,
+		"home_page":                next.HomePage,
 	}); err != nil {
 		h.logError("update appearance config", "error", err)
 		httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save config")
@@ -143,7 +155,39 @@ func normalizeAppearanceConfig(value AppearanceConfig) (AppearanceConfig, error)
 			return AppearanceConfig{}, errors.New("background image must be empty or one of the custom background images")
 		}
 	}
+	if err := normalizeHiddenMenuItems(&value); err != nil {
+		return AppearanceConfig{}, err
+	}
+	if value.HomePage == "" {
+		value.HomePage = appearanceHomePageDashboard
+	} else if value.HomePage != appearanceHomePageDashboard && value.HomePage != appearanceHomePageAgent {
+		return AppearanceConfig{}, errors.New("home_page must be empty, dashboard or agent")
+	}
 	return value, nil
+}
+
+func normalizeHiddenMenuItems(value *AppearanceConfig) error {
+	if value.HiddenMenuItems == nil {
+		value.HiddenMenuItems = []string{}
+		return nil
+	}
+	if len(value.HiddenMenuItems) > maxHiddenMenuItems {
+		return errors.New("too many hidden menu items")
+	}
+	seen := make(map[string]struct{}, len(value.HiddenMenuItems))
+	deduped := value.HiddenMenuItems[:0]
+	for _, item := range value.HiddenMenuItems {
+		if !strings.HasPrefix(item, "/") {
+			return errors.New("hidden menu item must start with /")
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		deduped = append(deduped, item)
+	}
+	value.HiddenMenuItems = deduped
+	return nil
 }
 
 func isAppearanceDataURLTooLarge(value string) bool {
