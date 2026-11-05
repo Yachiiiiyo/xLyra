@@ -4,6 +4,7 @@ import { I18nextProvider } from 'react-i18next'
 import type { ColumnDef } from '@tanstack/react-table'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { DataTable } from '@/components/common/data-table'
+import { DataTableHeader } from '@/components/common/data-table-header'
 import translations from '@/locales/zh/common.json'
 
 const i18n = createInstance()
@@ -27,6 +28,20 @@ function render(props: Partial<React.ComponentProps<typeof DataTable<{ name: str
     </I18nextProvider>,
   )
 }
+
+describe('DataTableHeader', () => {
+  it('merges className and applies top-0 for container sticky', () => {
+    const html = renderToStaticMarkup(
+      <DataTableHeader sticky="container" className="text-label-2">
+        <tr><th>名称</th></tr>
+      </DataTableHeader>,
+    )
+    expect(html).toContain('bg-fill-4')
+    expect(html).toContain('text-label-2')
+    expect(html).toContain('top-0')
+    expect(html).toContain('backdrop-blur-xl')
+  })
+})
 
 describe('DataTable shared column sizing and header', () => {
   it('renders persisted widths and accessible resize handles on each boundary', () => {

@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { BrandMark } from '@/components/common/brand-mark'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
+import { DataTableHeader, dataTableHeadTextClass } from '@/components/common/data-table-header'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { cn } from '@/lib/utils'
 
@@ -99,10 +100,6 @@ export function ModelsDraw({
     'rounded-inner border border-separator',
     desktopShell ? 'min-h-0 flex-1 overflow-y-auto' : 'scrollbar-hidden overflow-auto',
   )
-  const tableHeadClassName = cn(
-    'bg-fill-3 text-footnote font-semibold text-label-2',
-    desktopShell && 'sticky top-0 z-10 shadow-[0_1px_0_var(--separator)]',
-  )
 
   const header = (
     <div className="flex items-center gap-2">
@@ -146,12 +143,12 @@ export function ModelsDraw({
       {children}
       <div className={scrollContainerClassName}>
         <table className="w-full table-fixed border-collapse text-left text-body">
-          <thead className={tableHeadClassName}>
+          <DataTableHeader sticky={desktopShell ? 'container' : undefined} className={dataTableHeadTextClass}>
             <tr>
               <th className="w-[65%] px-4 py-3 font-medium">{t('modelsDraw.headers.model')}</th>
               <th className="w-[35%] px-4 py-3 font-medium text-right">{t('modelsDraw.headers.enabled')}</th>
             </tr>
-          </thead>
+          </DataTableHeader>
           <tbody>
             {loading ? (
               <tr><td colSpan={2} className="px-4 py-10 text-center text-body text-label-2">{t('modelsDraw.loading')}</td></tr>
