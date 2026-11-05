@@ -34,6 +34,10 @@ var (
 	ErrBusy        = errors.New("runner: 会话已有进行中的 run")
 	ErrCapacity    = errors.New("runner: 并发已满")
 	ErrUnavailable = errors.New("runner: Agent 不可用")
+	// ErrNotRunning 表示会话存在但没有进行中的 run(handler 映射 409)。
+	ErrNotRunning = errors.New("runner: 会话没有进行中的 run")
+	// ErrInvalidAnswer 表示提问回答不合法(handler 映射 400)。
+	ErrInvalidAnswer = errors.New("runner: 回答不合法")
 )
 
 // TokenIssuer 由 agentllm.Handler 实现。
@@ -88,6 +92,8 @@ type Config struct {
 	MaxConcurrent int
 	// RunTimeout 是单个 run 的时长上限;令牌已改文件轮换,不再受 TTL 约束。
 	RunTimeout time.Duration
+	// QuestionTimeout 是提问无人回答时自动跳过的等待时长;0 表示不超时。
+	QuestionTimeout time.Duration
 	// MaxOutputBytes 是单个 run 内 Pi stdout 事件的总字节上限。
 	MaxOutputBytes int64
 	// SessionQuotaBytes 是会话 workspace/ 与 pi/ 的总字节配额。
@@ -149,15 +155,18 @@ type activeRun struct {
 	cleanOnce sync.Once
 	renewWG   sync.WaitGroup // 续期与配额 goroutine,cleanup 里 cancel 后 Wait
 
-	stateMu        sync.Mutex
-	terminal       string
-	singleTerminal bool
-	endReason      string
-	pending        map[string]session.Escalation
-	resolved       map[string]resolveOptions // 已回写的审批决定:决定先于落盘到达时由 recordEscalation 补写
-	startedAt      time.Time
-	lastEntryID    string // 事件循环里最后见到的 Pi 条目 id,作 run 失败记录的锚点
-	lastError      string // 最近发布的 agent_error message,cleanup 按最终终态决定是否落盘
+	stateMu          sync.Mutex
+	terminal         string
+	singleTerminal   bool
+	endReason        string
+	pending          map[string]session.Escalation
+	resolved         map[string]resolveOptions   // 已回写的审批决定:决定先于落盘到达时由 recordEscalation 补写
+	pendingQuestions map[string]session.Question // 未回答的提问,id 即 extension_ui_request 的 id
+	questionTimers   map[string]*time.Timer      // 提问超时自动跳过的计时器,与 pendingQuestions 同生命周期
+	waitChanged      chan struct{}               // 未决审批/提问集合变化的信号(容量 1),事件循环据此暂停/恢复运行总时限
+	startedAt        time.Time
+	lastEntryID      string // 事件循环里最后见到的 Pi 条目 id,作 run 失败记录的锚点
+	lastError        string // 最近发布的 agent_error message,cleanup 按最终终态决定是否落盘
 }
 
 type runSpec struct {
@@ -682,6 +691,8 @@ func (r *Runner) admit(sessionID, model, kind string) (*activeRun, error) {
 		sessionID: sessionID, runID: uuid.NewString(), model: model, kind: kind,
 		tr: translate.New(), ctx: ctx, cancel: cancel, done: make(chan struct{}), grant: make(chan struct{}),
 		pending: map[string]session.Escalation{}, resolved: map[string]resolveOptions{}, startedAt: time.Now(),
+		pendingQuestions: map[string]session.Question{}, questionTimers: map[string]*time.Timer{},
+		waitChanged: make(chan struct{}, 1),
 	}
 	if immediate {
 		r.running++
@@ -780,6 +791,8 @@ func (r *Runner) start(ar *activeRun, spec runSpec) {
 func (r *Runner) cleanup(ar *activeRun, prep *prepared) {
 	ar.cleanOnce.Do(func() {
 		defer r.wg.Done()
+		// 进程异常退出等路径下仍未回答的提问在关闭进程、结束 run 之前标记取消。
+		r.cancelPendingQuestions(ar)
 		exitCode := 0
 		if prep != nil && prep.proc != nil {
 			_ = prep.proc.Close()
@@ -926,6 +939,7 @@ func (r *Runner) stopRun(ar *activeRun) {
 	for _, id := range ids {
 		r.resolveEscalation(ar, id, resolveOptions{granted: false})
 	}
+	r.cancelPendingQuestions(ar)
 	ar.cancel()
 }
 
@@ -1020,4 +1034,19 @@ func (r *Runner) recordRunError(ar *activeRun) {
 	}); err != nil {
 		r.logger.Error("记录 run 失败信息失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", err)
 	}
+}
+
+// notifyWaitChanged 通知事件循环未决审批/提问集合已变化。
+func (ar *activeRun) notifyWaitChanged() {
+	select {
+	case ar.waitChanged <- struct{}{}:
+	default:
+	}
+}
+
+// waiting 报告是否存在未决审批或提问:此时等的是用户,运行总时限暂停计时。
+func (ar *activeRun) waiting() bool {
+	ar.stateMu.Lock()
+	defer ar.stateMu.Unlock()
+	return len(ar.pending) > 0 || len(ar.pendingQuestions) > 0
 }

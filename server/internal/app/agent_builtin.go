@@ -528,6 +528,7 @@ func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.C
 		PathEnv:           filepath.Dir(bins.command) + ":/usr/bin:/bin",
 		MaxConcurrent:     cfg.AgentMaxConcurrent,
 		RunTimeout:        cfg.AgentRunTimeout,
+		QuestionTimeout:   cfg.AgentQuestionTimeout,
 		MaxOutputBytes:    cfg.AgentMaxOutputBytes,
 		SessionQuotaBytes: cfg.AgentSessionQuotaBytes,
 		QueueTimeout:      cfg.AgentQueueTimeout,
@@ -608,6 +609,10 @@ func (u unavailableRunner) Stop(context.Context, string) error {
 }
 
 func (u unavailableRunner) Grant(context.Context, string, runner.GrantInput) error {
+	return fmt.Errorf("%w: %s", runner.ErrUnavailable, u.reason)
+}
+
+func (u unavailableRunner) AnswerQuestion(context.Context, runner.AnswerQuestionInput) error {
 	return fmt.Errorf("%w: %s", runner.ErrUnavailable, u.reason)
 }
 

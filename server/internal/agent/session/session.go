@@ -48,6 +48,7 @@ type Meta struct {
 	SessionAllow   []string      `json:"session_allow"` // 会话内允许的工具名(write/edit/bash),空表示逐条审批
 	RunErrors      []RunError    `json:"run_errors"`    // run 失败记录,刷新后由 transcript 回放
 	RunChanges     []RunChange   `json:"run_changes"`   // 每轮文件变更摘要
+	Questions      []Question    `json:"questions"`     // question 工具的提问记录(含未回答)
 }
 
 // UserMessage 记录一条用户消息及其绑定的 Pi 条目。
@@ -529,6 +530,7 @@ func readMeta(path string) (Meta, error) {
 	meta := Meta{
 		Messages: []UserMessage{}, Escalations: []Escalation{},
 		SessionAllow: []string{}, RunErrors: []RunError{}, RunChanges: []RunChange{},
+		Questions: []Question{},
 	}
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return Meta{}, err

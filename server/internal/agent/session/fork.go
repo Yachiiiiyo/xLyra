@@ -97,6 +97,13 @@ func (s *Store) Fork(sourceID, messageID string) (Meta, error) {
 				m.RunChanges = append(m.RunChanges, rc)
 			}
 		}
+		// 提问只保留已回答(含跳过/取消)且锚点落在被复制条目里的;
+		// 未回答的没有进程可承接,直接丢弃。
+		for _, q := range meta.Questions {
+			if q.AnsweredAt != nil && q.AfterEntryID != "" && selected[q.AfterEntryID] {
+				m.Questions = append(m.Questions, q)
+			}
+		}
 		return nil
 	})
 	if err != nil {

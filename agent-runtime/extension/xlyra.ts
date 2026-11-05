@@ -18,6 +18,8 @@
 //   意外错误都阻断工具调用。
 //
 // 沙箱 bash 不新增其他命令工具;生图配置有效时额外注册 image_generation,不触发审批。
+// question 工具无条件注册:通过 editor 对话向用户提多选题,结果回给模型;不触发审批、
+// 不受路径约束,每个进程最多 5 次调用,取消/异常一律返回「用户取消了提问」。
 // reason 里只回显模型的原始输入,不回显 realpath 之后的宿主机真实路径。
 import { lstatSync, readFileSync, realpathSync, readlinkSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
@@ -31,6 +33,7 @@ import {
 	type BashToolCallEvent,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type ExtensionToolContext,
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
@@ -590,6 +593,156 @@ function registerImageGeneration(pi: ExtensionAPI, config: ImageGenerationConfig
 	});
 }
 
+// ---- question 工具:经 editor 对话向用户提问,回答作为工具结果回给模型 ----
+type QuestionOption = { label: string; description?: string };
+type QuestionItem = { header: string; question: string; multiSelect: boolean; options: QuestionOption[] };
+type QuestionAnswer = { selected: string[]; other?: string };
+
+const QUESTION_MAX_CALLS = 5;
+// 「其他」由前端固定追加,模型不得提供同名选项;selected 里用 __other__ 标记选中
+const OTHER_MARKER = "__other__";
+const RESERVED_LABELS = new Set(["其他", "other", OTHER_MARKER]);
+
+function questionError(text: string): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text }], details: undefined, isError: true };
+}
+
+function validateQuestionInput(questions: QuestionItem[]): string | null {
+	if (!Array.isArray(questions) || questions.length < 1 || questions.length > 4) return "questions 必须是 1–4 个问题的数组";
+	for (const q of questions) {
+		if (!q || typeof q !== "object") return "每个问题必须是对象";
+		if (typeof q.header !== "string" || q.header.length < 1 || q.header.length > 12) return "header 必须是 1–12 字的字符串";
+		if (typeof q.question !== "string" || q.question.length < 1 || q.question.length > 300) return "question 必须是 1–300 字的字符串";
+		if (typeof q.multiSelect !== "boolean") return "multiSelect 必须是布尔值";
+		if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 6) return "options 必须是 2–6 个选项的数组";
+		const labels = new Set<string>();
+		for (const option of q.options) {
+			if (!option || typeof option !== "object") return "每个选项必须是对象";
+			if (typeof option.label !== "string" || option.label.length < 1 || option.label.length > 60) return "选项 label 必须是 1–60 字的字符串";
+			if (RESERVED_LABELS.has(option.label.trim().toLowerCase())) return "选项不得命名为「其他」或 Other,前端会固定追加";
+			if (labels.has(option.label)) return `同一问题内选项 label 重复:${option.label}`;
+			labels.add(option.label);
+			if (option.description !== undefined && (typeof option.description !== "string" || option.description.length > 200)) {
+				return "选项 description 必须是不超过 200 字的字符串";
+			}
+		}
+	}
+	return null;
+}
+
+// value 解析失败、结构非法、答案与题数不符等一律返回 null,按取消处理
+function parseQuestionValue(value: string, questions: QuestionItem[]): { answers: QuestionAnswer[]; skipped: boolean } | null {
+	let payload: unknown;
+	try {
+		payload = JSON.parse(value);
+	} catch {
+		return null;
+	}
+	if (!payload || typeof payload !== "object") return null;
+	const record = payload as Record<string, unknown>;
+	if (record.skipped === true) return { answers: [], skipped: true };
+	if (!Array.isArray(record.answers) || record.answers.length !== questions.length) return null;
+	const answers: QuestionAnswer[] = [];
+	for (const [index, raw] of record.answers.entries()) {
+		if (!raw || typeof raw !== "object") return null;
+		const answer = raw as Record<string, unknown>;
+		if (!Array.isArray(answer.selected)) return null;
+		const selected: string[] = [];
+		for (const label of answer.selected) {
+			if (typeof label !== "string") return null;
+			if (label !== OTHER_MARKER && !questions[index].options.some((option) => option.label === label)) return null;
+			selected.push(label);
+		}
+		const hasOther = selected.includes(OTHER_MARKER);
+		if (hasOther && (typeof answer.other !== "string" || answer.other.trim() === "")) return null;
+		const parsed: QuestionAnswer = { selected };
+		if (typeof answer.other === "string") parsed.other = answer.other;
+		answers.push(parsed);
+	}
+	return { answers, skipped: false };
+}
+
+function formatQuestionAnswers(questions: QuestionItem[], answers: QuestionAnswer[]): string {
+	const lines = questions.map((q, index) => {
+		const answer = answers[index];
+		const labels = answer.selected.filter((label) => label !== OTHER_MARKER);
+		const parts: string[] = [];
+		if (labels.length > 0) parts.push(labels.join("、"));
+		if (answer.selected.includes(OTHER_MARKER)) parts.push(`其他:${answer.other ?? ""}`);
+		return `${index + 1}. [${q.header}] ${q.question} → 选择:${parts.join(";")}`;
+	});
+	return `用户回答:\n${lines.join("\n")}`;
+}
+
+// Pi 1.4.0 的 RPC editor 忽略 signal,abort 时不会自动收口;扩展自行监听 signal
+// 并 resolve undefined(按取消处理)。abort 后再到的迟到响应因 pending 请求已被
+// Pi 清掉会被丢弃,不会误投给下一次 editor。
+function editorWithAbort(
+	ctx: ExtensionToolContext,
+	toolCallId: string,
+	questions: QuestionItem[],
+	signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+	if (signal?.aborted) return Promise.resolve(undefined);
+	return new Promise((resolve) => {
+		const onAbort = () => resolve(undefined);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		ctx.ui
+			.editor(`xlyra:question:${toolCallId}`, JSON.stringify({ toolCallId, questions }), { signal })
+			.then(resolve, () => resolve(undefined))
+			.finally(() => signal?.removeEventListener("abort", onAbort));
+	});
+}
+
+function registerQuestion(pi: ExtensionAPI) {
+	let calls = 0;
+	pi.registerTool({
+		name: "question",
+		label: "Ask question",
+		description:
+			'Ask the user one or more multiple-choice questions when you need a decision or missing information. Use it only when you cannot reasonably decide yourself. Up to 4 questions; 2–6 options each; the user can always pick "Other" and type text. Do not ask unnecessary questions.',
+		parameters: Type.Object({
+			questions: Type.Array(
+				Type.Object({
+					header: Type.String({ minLength: 1, maxLength: 12 }),
+					question: Type.String({ minLength: 1, maxLength: 300 }),
+					multiSelect: Type.Boolean(),
+					options: Type.Array(
+						Type.Object({
+							label: Type.String({ minLength: 1, maxLength: 60 }),
+							description: Type.Optional(Type.String({ maxLength: 200 })),
+						}),
+						{ minItems: 2, maxItems: 6 },
+					),
+				}),
+				{ minItems: 1, maxItems: 4 },
+			),
+		}),
+		executionMode: "sequential",
+		execute: async (toolCallId, params, signal, _onUpdate, ctx) => {
+			const invalid = validateQuestionInput(params.questions);
+			if (invalid !== null) return questionError(`提问参数非法:${invalid}`);
+			calls += 1;
+			if (calls > QUESTION_MAX_CALLS) return questionError("本轮提问次数已达上限,请自行判断");
+			if (signal?.aborted) return questionError("用户取消了提问");
+			const value = await editorWithAbort(ctx, toolCallId, params.questions, signal);
+			if (typeof value !== "string") return questionError("用户取消了提问");
+			const parsed = parseQuestionValue(value, params.questions);
+			if (parsed === null) return questionError("用户取消了提问");
+			if (parsed.skipped) {
+				return {
+					content: [{ type: "text", text: "用户选择不回答这些问题,请自行做合理假设并说明,或换个方式继续。" }],
+					details: { questions: params.questions, answers: [], skipped: true },
+				};
+			}
+			return {
+				content: [{ type: "text", text: formatQuestionAnswers(params.questions, parsed.answers) }],
+				details: { questions: params.questions, answers: parsed.answers, skipped: false },
+			};
+		},
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	const permissionMode = loadPermissionMode();
 	const readRoots = loadReadRoots();
@@ -597,6 +750,7 @@ export default function (pi: ExtensionAPI) {
 	const imageGenerationConfig = loadImageGenerationConfig();
 
 	if (imageGenerationConfig !== null) registerImageGeneration(pi, imageGenerationConfig);
+	registerQuestion(pi);
 
 	if (bashConfig !== null) {
 		const operations = sandboxOperations(bashConfig);
@@ -608,7 +762,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_call", async (event, ctx) => {
 		try {
-			if (event.toolName === "image_generation") return; // 生图不需要审批,也不接受路径参数
+			if (event.toolName === "image_generation" || event.toolName === "question") return; // 生图/提问不需要审批,也不接受路径参数
 			if (event.toolName === "bash") {
 				// 未启用:不做任何审批/拦截(此时由 Go 的 --tools 白名单保证 bash 不可用)
 				if (bashConfig === null) return;

@@ -95,14 +95,18 @@ func gatewayConnectPort(raw string) (int, error) {
 	}
 }
 
-// runTools 按普通 run 已就绪的能力追加 bash 与生图工具;compact 两者都不传。
-func (r *Runner) runTools(executorReady, imageGeneration bool) string {
+// runTools 按普通 run 已就绪的能力追加 bash、生图与提问工具;compact 都不传,
+// question 对话类 run 都传(含 retry),compact 不传。
+func (r *Runner) runTools(executorReady, imageGeneration, question bool) string {
 	tools := r.tools
 	if executorReady {
 		tools += ",bash"
 	}
 	if imageGeneration {
 		tools += ",image_generation"
+	}
+	if question {
+		tools += ",question"
 	}
 	return tools
 }

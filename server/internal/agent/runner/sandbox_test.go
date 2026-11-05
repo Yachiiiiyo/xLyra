@@ -113,16 +113,22 @@ func TestPIReadOnlyPaths(t *testing.T) {
 
 func TestRunTools(t *testing.T) {
 	r := &Runner{tools: "read,write"}
-	if got := r.runTools(false, false); got != "read,write" {
+	if got := r.runTools(false, false, false); got != "read,write" {
 		t.Fatal(got)
 	}
-	if got := r.runTools(true, false); got != "read,write,bash" {
+	if got := r.runTools(true, false, false); got != "read,write,bash" {
 		t.Fatal(got)
 	}
-	if got := r.runTools(false, true); got != "read,write,image_generation" {
+	if got := r.runTools(false, true, false); got != "read,write,image_generation" {
 		t.Fatal(got)
 	}
-	if got := r.runTools(true, true); got != "read,write,bash,image_generation" {
+	if got := r.runTools(true, true, false); got != "read,write,bash,image_generation" {
+		t.Fatal(got)
+	}
+	if got := r.runTools(true, true, true); got != "read,write,bash,image_generation,question" {
+		t.Fatal(got)
+	}
+	if got := r.runTools(false, false, true); got != "read,write,question" {
 		t.Fatal(got)
 	}
 }
@@ -140,16 +146,16 @@ func TestXlyraConfigBash(t *testing.T) {
 
 func TestSandboxSystemPrompt(t *testing.T) {
 	r := &Runner{}
-	if got := r.systemPrompt(false, 120*time.Second, false); got != defaultSystemPrompt {
+	if got := r.systemPrompt(false, 120*time.Second, false, false); got != defaultSystemPrompt {
 		t.Fatal("未开启 bash 时系统提示发生变化")
 	}
-	got := r.systemPrompt(true, 120*time.Second, false)
+	got := r.systemPrompt(true, 120*time.Second, false, false)
 	for _, text := range []string{"没有网络", "默认 120 秒", "后台进程都会被清理", "安装依赖"} {
 		if !strings.Contains(got, text) {
 			t.Errorf("系统提示缺少 %q", text)
 		}
 	}
-	image := r.systemPrompt(false, 120*time.Second, true)
+	image := r.systemPrompt(false, 120*time.Second, true, false)
 	for _, text := range []string{"image_generation", "images/", "图片内容不会返回给你", "Markdown", "调用次数有限"} {
 		if !strings.Contains(image, text) {
 			t.Errorf("生图系统提示缺少 %q", text)
@@ -165,6 +171,18 @@ func TestSandboxSystemPrompt(t *testing.T) {
 	}
 	if strings.Contains(got, "image_generation") {
 		t.Fatal("未启用生图时系统提示不应出现工具说明")
+	}
+	if strings.Contains(got, "question") || strings.Contains(image, "question") {
+		t.Fatal("未启用提问时系统提示不应出现 question 说明")
+	}
+	question := r.systemPrompt(false, 120*time.Second, true, true)
+	for _, text := range []string{"question 工具", "不要猜测", "最多 4 个问题", "2–6 个选项", "「其他」", "次数有限", "image_generation"} {
+		if !strings.Contains(question, text) {
+			t.Errorf("提问系统提示缺少 %q", text)
+		}
+	}
+	if strings.ContainsAny(questionSystemPrompt, "{}") {
+		t.Error("提问系统提示不应包含可照抄的 JSON 示例")
 	}
 }
 

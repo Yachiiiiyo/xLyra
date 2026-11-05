@@ -296,5 +296,27 @@
       "enabled": "已启用",
       "disabled": "已关闭"
     }
+  },
+  "question": {
+    "title": "需要你选择",
+    "progress": "第 {{current}} / {{total}} 题",
+    "next": "下一步",
+    "back": "上一步",
+    "confirmTitle": "确认你的回答",
+    "edit": "修改",
+    "submit": "提交",
+    "skip": "跳过",
+    "otherLabel": "其他",
+    "otherPlaceholder": "请补充…",
+    "remaining": "还可输入 {{count}} 字",
+    "required": "每个问题至少选择一项",
+    "otherRequired": "选择「其他」时请补充说明",
+    "otherTooLong": "补充内容不能超过 2000 字",
+    "skippedLabel": "已跳过",
+    "cancelledLabel": "已中断",
+    "timedOutSkipped": "已超时自动跳过",
+    "submitFailed": "提交回答失败",
+    "ariaCard": "Agent 提问卡片",
+    "summaryJoin": "、"
   }
 }

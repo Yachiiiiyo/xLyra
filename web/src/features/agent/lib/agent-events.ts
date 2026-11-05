@@ -1,4 +1,6 @@
-import type { AgentGeneratedImage, AgentRunChangeFile, AgentTranscriptEntry } from '@/features/agent/api/agent'
+import type { AgentGeneratedImage, AgentQuestionAnswer, AgentQuestionItem, AgentQuestionOption, AgentRunChangeFile, AgentTranscriptEntry } from '@/features/agent/api/agent'
+
+export type { AgentQuestionAnswer }
 import type { ChatAttachment } from '@/lib/chat-types'
 import type { AgentSessionReference } from '@/features/agent/lib/references'
 
@@ -40,6 +42,8 @@ export type AgentRun = {
   steps: AgentWorkStep[]
   finalText: string
   permissions: AgentPermissionRequest[]
+  /** question 工具的提问（pending 卡片与已回答摘要都由这里驱动） */
+  questions?: AgentQuestion[]
   startedAt: number
   endedAt?: number
   elapsedMs?: number
@@ -50,6 +54,19 @@ export type AgentRun = {
   pausedMs?: number
   /** 后端清单差得到的本轮变更(终态之后到达),优先于从工具步骤推导的变更 */
   changes?: AgentRunChanges
+}
+
+/** question 工具的一次提问：status 为 pending 时渲染可交互卡片 */
+export type AgentQuestion = {
+  id: string
+  toolCallId: string
+  items: AgentQuestionItem[]
+  answers?: AgentQuestionAnswer[]
+  status: 'pending' | 'answered' | 'skipped' | 'cancelled'
+  /** 超时自动跳过（后端 AGENT_QUESTION_TIMEOUT 兜底） */
+  auto?: boolean
+  /** 提问到达时 run.steps 的长度，与审批的 position 概念一致 */
+  position?: number
 }
 
 export type AgentRunChanges = { turnId: string; files: AgentRunChangeFile[]; total: number; incomplete: boolean }
@@ -72,6 +89,8 @@ type EventKind =
   | 'compaction'
   | 'permission'
   | 'permission_result'
+  | 'question'
+  | 'question_result'
   | 'done'
   | 'error'
   | 'cancelled'
@@ -178,6 +197,9 @@ export function extractTextChunk(data: unknown): string {
 function classifyEvent(type: string, data: unknown): EventKind {
   const normalized = type.toLowerCase()
   if (normalized === 'run_changes') return 'run_changes'
+  // question 工具的请求/应答事件（在 escalation/permission 判定之前，避免被吞）
+  if (normalized === 'question_request') return 'question'
+  if (normalized === 'question_answered') return 'question_result'
   // Escalation negotiation events are permission requests (payload nested under data.escalation).
   if (normalized.includes('escalation')) return 'permission'
   // 停滞/预算等软提醒：正文在 notice 字段，渲染为状态步骤而不是正文
@@ -212,6 +234,51 @@ function lastRun(timeline: AgentTimeline): { index: number; run: AgentRun } | nu
   return { index: timeline.length - 1, run: last.run }
 }
 
+/** question 的 questions 数组解析（SSE 事件与转录条目共用）：非法条目丢弃 */
+function parseQuestionItems(raw: unknown): AgentQuestionItem[] {
+  const list = Array.isArray(raw) ? raw : []
+  return list.flatMap((entry): AgentQuestionItem[] => {
+    const item = asRecord(entry as Record<string, unknown>)
+    if (!item) return []
+    const question = typeof item.question === 'string' ? item.question : ''
+    if (!question) return []
+    const options = Array.isArray(item.options)
+      ? (item.options as unknown[]).flatMap((optionRaw): AgentQuestionOption[] => {
+          const option = asRecord(optionRaw as Record<string, unknown>)
+          const label = option && typeof option.label === 'string' ? option.label : ''
+          return label ? [{ label, description: option && typeof option.description === 'string' ? option.description : undefined }] : []
+        })
+      : []
+    if (options.length === 0) return []
+    return [{ header: typeof item.header === 'string' ? item.header : '', question, multiSelect: item.multiSelect === true, options }]
+  })
+}
+
+/** question_request 事件：载荷嵌在 data.question 下 */
+function parseQuestionRequest(record: Record<string, unknown> | null): AgentQuestion | null {
+  const payload = asRecord(record?.question) ?? record
+  if (!payload) return null
+  const items = parseQuestionItems(payload.questions)
+  if (items.length === 0) return null
+  return {
+    id: pickId(payload, ['question_id', 'request_id', 'id']) || nextId('question'),
+    toolCallId: pickId(payload, ['tool_call_id', 'call_id']) || '',
+    items,
+    status: 'pending',
+  }
+}
+
+/** question_answered 事件的载荷：{ question_id, answers?, skipped?, cancelled?, auto? } */
+function parseQuestionAnswers(data: unknown): AgentQuestionAnswer[] {
+  const record = asRecord(data)
+  if (!record || !Array.isArray(record.answers)) return []
+  return (record.answers as unknown[]).map((raw) => {
+    const answer = asRecord(raw as Record<string, unknown>)
+    const selected = Array.isArray(answer?.selected) ? answer.selected.filter((item): item is string => typeof item === 'string') : []
+    return { selected, other: typeof answer?.other === 'string' && answer.other.trim() ? answer.other : undefined }
+  })
+}
+
 function parseRunChanges(record: Record<string, unknown> | null): AgentRunChanges | null {
   if (!record || !Array.isArray(record.files)) return null
   const files = record.files as AgentRunChangeFile[]
@@ -239,9 +306,10 @@ function attachRunChanges(timeline: AgentTimeline, changes: AgentRunChanges | nu
 function ensureRun(timeline: AgentTimeline): AgentTimeline {
   const current = lastRun(timeline)
   if (current && current.run.status === 'running') return timeline
-  const resumedAfterEscalation = current?.run.status === 'cancelled'
-    && current.run.permissions.length > 0
-    && current.run.permissions.every((request) => request.decision !== undefined)
+  const runSettled = (run: AgentRun) => run.permissions.every((request) => request.decision !== undefined)
+    && (run.questions ?? []).every((question) => question.status !== 'pending')
+  const resumedAfterEscalation = current?.run.status === 'cancelled' && runSettled(current.run)
+    && (current.run.permissions.length > 0 || (current.run.questions ?? []).length > 0)
   if (resumedAfterEscalation) {
     return updateLastRun(timeline, (run) => ({
       ...run,
@@ -295,7 +363,7 @@ function finishRunAt(timeline: AgentTimeline, timestamp?: string): AgentTimeline
     : run)
 }
 
-function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number, errorMessage?: string): AgentRun {
+function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number, errorMessage?: string, keepPendingQuestions?: boolean): AgentRun {
   const endedAt = run.endedAt ?? Date.now()
   // 审批等待(含收尾时仍未决的那段)不计入用时
   const pausedMs = (run.pausedMs ?? 0) + (run.pendingSince !== undefined ? Math.max(0, endedAt - run.pendingSince) : 0)
@@ -311,6 +379,9 @@ function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number, err
     permissions: status === 'error' || status === 'cancelled'
       ? run.permissions.map((request) => request.decision ? request : { ...request, decision: 'denied' as const })
       : run.permissions,
+    questions: !keepPendingQuestions && (status === 'error' || status === 'cancelled')
+      ? (run.questions ?? []).map((question) => (question.status === 'pending' ? { ...question, status: 'cancelled' as const } : question))
+      : run.questions,
     steps: run.steps.map((step) => (step.status === 'running' ? { ...step, status: status === 'error' ? 'error' : 'done' } : step)),
   }
 }
@@ -334,10 +405,38 @@ export function decidePermission(timeline: AgentTimeline, requestId: string, dec
   return timeline.map((item) => (item.kind === 'run' ? { ...item, run: applyPermissionDecision(item.run, requestId, decision, options) } : item))
 }
 
-/** 运行中的「用时」:等待审批期间冻结,审批完成后继续累加。 */
+/** 用户在提问卡片上提交/跳过：乐观更新本地时间线（与服务端的 question_answered 幂等）。 */
+export function decideQuestion(timeline: AgentTimeline, questionId: string, answers: AgentQuestionAnswer[], skipped?: boolean): AgentTimeline {
+  const status = skipped ? 'skipped' : 'answered'
+  return timeline.map((item) => (item.kind === 'run' ? { ...item, run: applyQuestionAnswer(item.run, questionId, status, answers) } : item))
+}
+
+/** 记录一条提问回答：最后一个未决请求处理完后结束等待，恢复计时（与审批同机制）。 */
+function applyQuestionAnswer(run: AgentRun, questionId: string, status: 'answered' | 'skipped' | 'cancelled', answers?: AgentQuestionAnswer[], auto?: boolean): AgentRun {
+  const questions = (run.questions ?? []).map((question) => (question.id === questionId
+    ? { ...question, status, ...(answers && answers.length ? { answers } : {}), ...(auto ? { auto: true } : {}) }
+    : question))
+  if (run.pendingSince === undefined || questions.some((question) => question.status === 'pending')) {
+    return { ...run, questions }
+  }
+  return {
+    ...run,
+    questions,
+    pausedMs: (run.pausedMs ?? 0) + Math.max(0, Date.now() - run.pendingSince),
+    pendingSince: undefined,
+  }
+}
+
+/** 运行中的「用时」:等待审批/提问期间冻结，处理后继续累加。 */
 export function runElapsedMs(run: AgentRun, now: number): number {
   const paused = (run.pausedMs ?? 0) + (run.pendingSince !== undefined ? Math.max(0, now - run.pendingSince) : 0)
   return (run.elapsedMs ?? 0) + Math.max(0, now - run.startedAt - paused)
+}
+
+/** run 是否存在未决的审批或提问（「已暂停等待」判定共用） */
+export function pausedForUser(run: AgentRun): boolean {
+  return run.permissions.some((request) => request.decision === undefined)
+    || (run.questions ?? []).some((question) => question.status === 'pending')
 }
 
 export function appendUserMessage(timeline: AgentTimeline, text: string, messageId?: string, createdAt = Date.now(), attachments?: ChatAttachment[], references?: AgentSessionReference[]): AgentTimeline {
@@ -560,6 +659,32 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
         return { ...run, permissions: [...run.permissions, request], pendingSince: run.pendingSince ?? Date.now() }
       })
     }
+    case 'question': {
+      const question = parseQuestionRequest(record)
+      if (!question) return timeline
+      const withRun = ensureRun(timeline)
+      return updateLastRun(withRun, (run) => {
+        // 按 question_id 去重：SSE 重放会再推一次已有的 pending 提问
+        if (run.questions?.some((existing) => existing.id === question.id)) return run
+        return {
+          ...run,
+          questions: [...(run.questions ?? []), { ...question, position: run.steps.length }],
+          pendingSince: run.pendingSince ?? Date.now(),
+        }
+      })
+    }
+    case 'question_result': {
+      const questionId = pickId(record, ['question_id', 'request_id', 'id'])
+      if (!questionId) return timeline
+      const answers = parseQuestionAnswers(record)
+      const status = record?.cancelled === true
+        ? 'cancelled'
+        : record?.skipped === true
+          ? 'skipped'
+          : 'answered'
+      const auto = record?.auto === true
+      return updateLastRun(timeline, (run) => applyQuestionAnswer(run, questionId, status, answers, auto))
+    }
     case 'permission_result': {
       const requestId = pickId(record, ['request_id', 'permission_id', 'id'])
       const decision = record?.allowed === true || record?.decision === 'allow' || record?.decision === 'allowed' ? 'allowed' : 'denied'
@@ -634,6 +759,34 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
       escalationInTurn = true
       continue
     }
+    if (entry.type === 'question') {
+      // 转录里的 question 条目：未回答(无 answers/skipped/cancelled) → pending，仍可交互
+      const items = parseQuestionItems(entry.questions)
+      if (items.length === 0) continue
+      const withRun = ensureRun(timeline)
+      const answered = entry.answers !== undefined || entry.skipped === true || entry.cancelled === true
+      const status: AgentQuestion['status'] = entry.cancelled === true
+        ? 'cancelled'
+        : entry.skipped === true
+          ? 'skipped'
+          : answered
+            ? 'answered'
+            : 'pending'
+      timeline = markRunEndedAt(updateLastRun(withRun, (run) => ({
+        ...run,
+        questions: [...(run.questions ?? []), {
+          id: entry.question_id || nextId('question'),
+          toolCallId: entry.tool_call_id ?? '',
+          items,
+          ...(Array.isArray(entry.answers) ? { answers: entry.answers } : {}),
+          status,
+          ...(entry.auto === true ? { auto: true } : {}),
+          position: run.steps.length,
+        }],
+        ...(status === 'pending' && run.pendingSince === undefined ? { pendingSince: parseTimestamp(entry.timestamp) } : {}),
+      })), entry.timestamp)
+      continue
+    }
     const message = entry.message
     if (message && typeof message === 'object') {
       // The runner's transcript format: { type: 'message', message: ChatMessage, ... }
@@ -703,8 +856,9 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
   }
   return timeline.map((item) => {
     if (item.kind !== 'run' || item.run.status !== 'running') return item
-    const status = item.run.permissions.some((request) => !request.decision) ? 'cancelled' : 'done'
-    return { ...item, run: closeRun(item.run, status) }
+    // 转录里未回答的提问仍可交互（刷新恢复），不能因收尾被标成 cancelled
+    const status = item.run.permissions.some((request) => request.decision === undefined) ? 'cancelled' : 'done'
+    return { ...item, run: closeRun(item.run, status, undefined, undefined, true) }
   })
 }
 

@@ -173,7 +173,7 @@ func TestFeedRules(t *testing.T) {
 			},
 		},
 		{
-			name:  "method 不是 confirm/select 的 extension_ui_request 被忽略",
+			name:  "method 不是 confirm/select/editor 的 extension_ui_request 被忽略",
 			lines: []string{`{"type":"extension_ui_request","id":"esc1","method":"input","title":"t","message":"m"}`},
 			want:  nil,
 		},

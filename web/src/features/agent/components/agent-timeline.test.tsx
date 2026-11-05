@@ -131,3 +131,45 @@ describe('AgentTimeline 权限卡片', () => {
     expect(html).not.toMatch(/>const a = 1;</)
   })
 })
+
+describe('AgentTimeline 提问', () => {
+  const items = { header: '风格', question: '选哪种风格?', multiSelect: false, options: [{ label: '简约' }, { label: '复古' }] }
+  function questionTimeline(status: AgentRun['status'], question: NonNullable<AgentRun['questions']>[number]): AgentTimelineItem[] {
+    return [{
+      kind: 'run', id: 'run', run: {
+        id: 'run', status, finalText: '我会按你的选择继续', permissions: [], startedAt: 0, endedAt: status === 'running' ? undefined : 1, elapsedMs: 1,
+        questions: [question],
+        steps: [
+          { id: 'q', kind: 'tool', title: 'question', status: 'done' },
+          { id: 'text', kind: 'text', title: 'text', status: 'done', detail: '我会按你的选择继续' },
+        ],
+      },
+    }]
+  }
+  const renderQuestion = (list: AgentTimelineItem[]) => renderToStaticMarkup(<I18nextProvider i18n={i18n}><AgentTimeline items={list} sessionId="session-1" /></I18nextProvider>)
+
+  it('待回答的提问卡片在回复文字之前,question 工具步骤不显示', () => {
+    const html = renderQuestion(questionTimeline('running', { id: 'q1', toolCallId: 'c1', items: [items], status: 'pending' }))
+    expect(html).toContain(zhAgent.question.title)
+    expect(html).toContain('选哪种风格?')
+    expect(html.indexOf(zhAgent.question.title)).toBeLessThan(html.indexOf('我会按你的选择继续'))
+    expect(html).not.toContain('>question<')
+  })
+
+  it('已回答的摘要在回复区、回复文字之前,不再显示卡片', () => {
+    const html = renderQuestion(questionTimeline('done', { id: 'q1', toolCallId: 'c1', items: [items], status: 'answered', answers: [{ selected: ['复古'] }] }))
+    expect(html).toContain('选哪种风格?')
+    expect(html).toContain('复古')
+    expect(html).not.toContain(zhAgent.question.title)
+    expect(html.indexOf('复古')).toBeLessThan(html.indexOf('我会按你的选择继续'))
+  })
+
+  it('选了「其他」时摘要显示补充文字;跳过与取消各有固定文案', () => {
+    const other = renderQuestion(questionTimeline('done', { id: 'q1', toolCallId: 'c1', items: [items], status: 'answered', answers: [{ selected: ['__other__'], other: '再来点复古' }] }))
+    expect(other).toContain('再来点复古')
+    const skipped = renderQuestion(questionTimeline('done', { id: 'q1', toolCallId: 'c1', items: [items], status: 'skipped' }))
+    expect(skipped).toContain(zhAgent.question.skippedLabel)
+    const cancelled = renderQuestion(questionTimeline('done', { id: 'q1', toolCallId: 'c1', items: [items], status: 'cancelled' }))
+    expect(cancelled).toContain(zhAgent.question.cancelledLabel)
+  })
+})

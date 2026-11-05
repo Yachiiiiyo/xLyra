@@ -92,6 +92,22 @@ func (s *Store) RenderReferences(ids []string) (string, error) {
 func renderReferenceLines(path []piEntry, meta Meta) []string {
 	var lines []string
 	toolHints := map[string]string{} // toolCallID → "工具名 参数提示"
+	// 提问记录按锚点插入对应位置,与 transcript 同规则:分支上插入、空锚点末尾、旧分支丢弃。
+	onPath := onPathIDs(path)
+	questionLines := map[string][]string{}
+	var tailQuestions []string
+	for _, q := range meta.Questions {
+		if q.AnsweredAt == nil {
+			continue // 未回答的提问对引用参考没有信息量
+		}
+		rendered := renderQuestionLines(q)
+		switch {
+		case q.AfterEntryID != "" && onPath[q.AfterEntryID]:
+			questionLines[q.AfterEntryID] = append(questionLines[q.AfterEntryID], rendered...)
+		case q.AfterEntryID == "":
+			tailQuestions = append(tailQuestions, rendered...)
+		}
+	}
 	for _, entry := range path {
 		switch entry.Type {
 		case "compaction":
@@ -145,10 +161,69 @@ func renderReferenceLines(path []piEntry, meta Meta) []string {
 					lines = append(lines, fmt.Sprintf("[图片 %s]", image["path"]))
 				}
 			}
+			for _, line := range questionLines[entry.ID] {
+				lines = append(lines, line)
+			}
 		}
+	}
+	lines = append(lines, tailQuestions...)
+	return lines
+}
+
+// onPathIDs 汇总分支上条目 id 的集合。
+func onPathIDs(path []piEntry) map[string]bool {
+	ids := make(map[string]bool, len(path))
+	for _, entry := range path {
+		ids[entry.ID] = true
+	}
+	return ids
+}
+
+// renderQuestionLines 渲染一次提问:每题一行 [提问] header:question → 摘要;
+// 摘要规则:选中标签顿号连接、「其他」写 其他:<文本>、已跳过/已取消/未回答。
+func renderQuestionLines(q Question) []string {
+	lines := make([]string, 0, len(q.Questions))
+	for i, item := range q.Questions {
+		summary := "未回答"
+		switch {
+		case q.Skipped:
+			summary = "已跳过"
+		case q.Cancelled:
+			summary = "已取消"
+		case i < len(q.Answers):
+			summary = questionAnswerSummary(q.Answers[i])
+		}
+		lines = append(lines, fmt.Sprintf("[提问] %s:%s → %s", item.Header, item.Question, summary))
 	}
 	return lines
 }
+
+// questionAnswerSummary 把单题回答渲染成短摘要;受单行上限约束,避免引用块
+// 被长回答撑爆(与工具输出截断同思路,不破坏既有总预算逻辑)。
+func questionAnswerSummary(answer QuestionAnswer) string {
+	var labels []string
+	for _, selected := range answer.Selected {
+		if selected == OtherOptionMarker {
+			labels = append(labels, "其他"+otherSummaryText(answer.Other))
+		} else {
+			labels = append(labels, selected)
+		}
+	}
+	if len(labels) == 0 {
+		return "未回答"
+	}
+	return truncateMarked(strings.Join(labels, "、"), referenceQuestionRunes)
+}
+
+func otherSummaryText(other string) string {
+	if strings.TrimSpace(other) == "" {
+		return ""
+	}
+	return ":" + strings.Join(strings.Fields(other), " ")
+}
+
+// referenceQuestionRunes 是单条提问摘要行的上限。
+const referenceQuestionRunes = 200
 
 // referenceArgHint 从工具调用参数里取一个短提示(path/command 等常见字段),
 // 便于在 [工具 …] 行里辨认调用对象。

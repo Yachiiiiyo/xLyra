@@ -8,10 +8,11 @@ import { MessageAction } from '@/components/chat/message-actions'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
 import { MarkdownMessage } from '@/components/chat/markdown-message'
 import type { ChatAttachment } from '@/lib/chat-types'
-import type { AgentSession } from '@/features/agent/api/agent'
+import type { AgentQuestionAnswer, AgentSession } from '@/features/agent/api/agent'
 import { shortSessionId, type AgentSessionReference } from '@/features/agent/lib/references'
 import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/relative-time'
-import { canForkFromMessage, runElapsedMs, type AgentPermissionRequest, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { canForkFromMessage, pausedForUser, runElapsedMs, type AgentPermissionRequest, type AgentQuestion, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { AgentQuestionCard, AgentQuestionSummary } from '@/features/agent/components/agent-question-card'
 import { AgentGeneratedImage } from '@/features/agent/components/agent-generated-image'
 import { isGeneratedImagePath, runGeneratedImages } from '@/features/agent/lib/generated-images'
 import { runDisplayChanges } from '@/features/agent/lib/run-changes'
@@ -26,6 +27,9 @@ type AgentTimelineProps = {
   /** 会话列表：判断被引用的会话是否还存在（存在才可点击跳转） */
   sessions?: AgentSession[]
   onPermissionDecision?: (request: AgentPermissionRequest, decision: 'allow' | 'deny' | 'allow_session') => void
+  /** 提交/跳过提问：由 workspace 调 answerAgentQuestion */
+  onQuestionAnswer?: (question: AgentQuestion, answers: AgentQuestionAnswer[]) => void
+  onQuestionSkip?: (question: AgentQuestion) => void
   onUserEdit?: (messageId: string, text: string) => void
   onFork?: (messageId: string) => void
   onOpenReference?: (sessionId: string) => void
@@ -33,7 +37,7 @@ type AgentTimelineProps = {
   onOpenFile?: (path: string) => void
 }
 
-export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onUserEdit, onFork, onOpenReference, onOpenChange, onOpenFile }: AgentTimelineProps) {
+export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onQuestionAnswer, onQuestionSkip, onUserEdit, onFork, onOpenReference, onOpenChange, onOpenFile }: AgentTimelineProps) {
   const lastUserIndex = items.reduce((index, item, current) => item.kind === 'user' ? current : index, -1)
   const sessionIds = useMemo(() => new Set((sessions ?? []).map((session) => session.session_id)), [sessions])
   // 分叉入口需要「这一轮对应的用户消息 id」：取时间线里紧邻当前 run 之前的 user 项
@@ -74,6 +78,8 @@ export function AgentTimeline({ items, sessionId, running, sessions, onPermissio
               forkMessageId={canForkFromMessage(forkMessageIds[index], Boolean(running)) ? forkMessageIds[index] : undefined}
               onFork={onFork}
               onPermissionDecision={onPermissionDecision}
+              onQuestionAnswer={onQuestionAnswer}
+              onQuestionSkip={onQuestionSkip}
               onOpenChange={onOpenChange}
               onOpenFile={onOpenFile}
             />
@@ -199,7 +205,8 @@ function buildRunFlow(run: AgentRun): RunFlowItem[] {
     }
     pendingPermissions.delete(position)
   }
-  run.steps.forEach((step, index) => {
+  const steps = run.steps.filter((step) => !(step.kind === 'tool' && step.title.toLowerCase() === 'question'))
+  steps.forEach((step, index) => {
     // position === 到达时已有的步骤数，即排在第 index 步之前的请求先出列
     flushPermissions(index)
     if (step.kind === 'text') {
@@ -228,10 +235,13 @@ function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: 
   )
 }
 
-function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision, onOpenChange, onOpenFile }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision']; onOpenChange?: AgentTimelineProps['onOpenChange']; onOpenFile?: AgentTimelineProps['onOpenFile'] }) {
+function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision, onQuestionAnswer, onQuestionSkip, onOpenChange, onOpenFile }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision']; onQuestionAnswer?: AgentTimelineProps['onQuestionAnswer']; onQuestionSkip?: AgentTimelineProps['onQuestionSkip']; onOpenChange?: AgentTimelineProps['onOpenChange']; onOpenFile?: AgentTimelineProps['onOpenFile'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
-  const pausedForPermission = run.status === 'cancelled' && run.permissions.some((request) => !request.decision)
+  // 等待用户（审批或提问）的取消是暂停而非停止：隐藏「已取消」误导文案
+  const pausedForPermission = run.status === 'cancelled' && pausedForUser(run)
+  const questions = run.questions ?? []
+  const [questionSubmitting, setQuestionSubmitting] = useState(false)
   const flow = buildRunFlow(run)
   const changes = useMemo(() => sessionId ? runDisplayChanges(run) : [], [run, sessionId])
   const lastTextIndex = flow.reduce((found, item, index) => (item.kind === 'text' ? index : found), -1)
@@ -321,6 +331,19 @@ function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPe
           </div>
         ) : null}
       </div>
+
+      {/* 问答卡片与摘要：过程区之后、画廊之前、最终回复文字之前 */}
+      {questions.map((question) => (
+        question.status === 'pending'
+          ? <AgentQuestionCard
+              key={question.id}
+              question={question}
+              submitting={questionSubmitting}
+              onSubmit={(answers) => { setQuestionSubmitting(true); onQuestionAnswer?.(question, answers) }}
+              onSkip={() => { setQuestionSubmitting(true); onQuestionSkip?.(question) }}
+            />
+          : <AgentQuestionSummary key={question.id} question={question} />
+      ))}
 
       {galleryImages.length ? (
         <div data-generated-gallery className={cn('grid gap-3', galleryImages.length > 1 && 'sm:grid-cols-2')}>

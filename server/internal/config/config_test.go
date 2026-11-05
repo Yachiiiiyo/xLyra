@@ -466,3 +466,15 @@ func TestValidateRejectsInvalidAgentIsolationRanges(t *testing.T) {
 		t.Fatalf("uid 池越界应报错,得到 %v", err)
 	}
 }
+
+func TestValidateAgentQuestionTimeout(t *testing.T) {
+	cfg := validConfig()
+	cfg.AgentQuestionTimeout = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("0 表示不超时: %v", err)
+	}
+	cfg.AgentQuestionTimeout = -time.Minute
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "AGENT_QUESTION_TIMEOUT") {
+		t.Fatalf("负数应报错: %v", err)
+	}
+}

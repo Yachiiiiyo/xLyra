@@ -98,8 +98,8 @@ export async function startCase({ name, permissionMode, xlyraJson, readRoots, ba
 		writeFileSync(join(agentDir, "xlyra.json"), JSON.stringify(config));
 	}
 
-	// bash 传入(配置或仅 true)时把 bash 加进白名单,否则沿用改动前的六项
-	const tools = ["read", "ls", "grep", "find", "write", "edit"];
+	// question 无条件注册且不进生产白名单,这里统一放开供测试调用
+	const tools = ["read", "ls", "grep", "find", "write", "edit", "question"];
 	if (bash !== undefined) tools.push("bash");
 	if (imageGeneration !== undefined) tools.push("image_generation");
 

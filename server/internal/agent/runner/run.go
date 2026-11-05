@@ -110,6 +110,8 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	// 系统提示与 xlyra.json 同样逐 run 重写(权限模式非 full 一律 ask)。
 	imageGeneration := r.imageGenerationConfig(ar.kind, prep.tokenFile)
 	imageEnabled := imageGeneration != nil
+	// question 对话类 run 都开放(含编辑重发的 retry),与 bash/生图一致;只有 compact 不开放。
+	questionEnabled := ar.kind != "compact"
 	execDefaultTimeout := time.Duration(0)
 	if r.cfg.Sandbox != nil {
 		execDefaultTimeout = r.cfg.Sandbox.ExecDefaultTimeout
@@ -117,7 +119,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	files := map[string][]byte{
 		"models.json":      modelsJSON,
 		"settings.json":    settingsJSON,
-		"system-prompt.md": []byte(r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled)),
+		"system-prompt.md": []byte(r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled)),
 		"xlyra.json":       xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration),
 	}
 	for name, data := range files {
@@ -159,7 +161,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		args = append(args, "-e", extension)
 	}
 	args = append(args, "--system-prompt", filepath.Join(agentDir, "system-prompt.md"))
-	if tools := r.runTools(prep.executor != nil, imageEnabled); tools != "" {
+	if tools := r.runTools(prep.executor != nil, imageEnabled, questionEnabled); tools != "" {
 		args = append(args, "--tools", tools)
 	}
 	// 技能发现固定关闭,只加载快照里启用的目录(停用 = 不传,不依赖
@@ -512,6 +514,10 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 
 	timer := time.NewTimer(r.cfg.RunTimeout)
 	defer timer.Stop()
+	// 等待审批/提问期间暂停总时限:记下剩余时间并停表,全部解决后按剩余时间重启。
+	var paused bool
+	var remaining time.Duration
+	var timerStart = time.Now()
 	close(commandReady)
 	lastEntryID := ""
 	var outputBytes int64
@@ -566,6 +572,14 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 				continue
 			}
 			for _, event := range events {
+				// 提问先登记再发布:事件一到前端就可能回答,pending 与 meta 必须已就位;
+				// 被忽略的(已有未决提问)不发布,避免出现无法回答的卡片。
+				if event.Type == "question_request" {
+					if r.recordQuestion(ar, event, lastEntryID) {
+						r.publish(ar, event)
+					}
+					continue
+				}
 				// 先发布事件再记录审批:自动放行会在记录后立即补发
 				// permission_result,不能跑到对应的 escalation_request 前面。
 				r.publish(ar, event)
@@ -573,6 +587,8 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 					r.recordEscalation(ar, event, lastEntryID)
 				}
 			}
+			// 翻译层丢弃的 UI 请求必须回写取消,否则 Pi 会一直等待。
+			r.drainCancelUIRequests(ar)
 			if eventType(raw) == "agent_settled" {
 				r.settleMeta(ar, r.currentPiSessionID(prep.proc))
 				return
@@ -589,6 +605,21 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 			}
 			// prompt 被拒绝时不会有 agent_settled,直接收尾,由 cleanup 关闭进程。
 			return
+		case <-ar.waitChanged:
+			if waiting := ar.waiting(); waiting && !paused {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				remaining = max(r.cfg.RunTimeout-time.Since(timerStart), time.Millisecond)
+				paused = true
+			} else if !waiting && paused {
+				timer.Reset(remaining)
+				timerStart = time.Now().Add(-(r.cfg.RunTimeout - remaining))
+				paused = false
+			}
 		case <-timer.C:
 			ar.stateMu.Lock()
 			terminal := ar.terminal
@@ -640,6 +671,7 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 	ar.stateMu.Lock()
 	ar.pending[id] = escalation
 	ar.stateMu.Unlock()
+	ar.notifyWaitChanged()
 	if escalation.AfterEntryID == "" {
 		// Pi 1.4.0 的 entry_appended 不覆盖普通消息条目,事件循环里常拿
 		// 不到 id:审批请求到达时,带 toolCall 的 assistant 条目已在工具
@@ -728,6 +760,7 @@ func (r *Runner) resolveEscalation(ar *activeRun, id string, opts resolveOptions
 	// 那里的补写逻辑靠它把决定带回 meta,避免刷新后回到未决。
 	ar.resolved[id] = opts
 	ar.stateMu.Unlock()
+	ar.notifyWaitChanged()
 	if !ok {
 		return false
 	}

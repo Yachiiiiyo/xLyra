@@ -296,5 +296,27 @@
       "enabled": "Enabled",
       "disabled": "Disabled"
     }
+  },
+  "question": {
+    "title": "Need your choice",
+    "progress": "Question {{current}} of {{total}}",
+    "next": "Next",
+    "back": "Back",
+    "confirmTitle": "Confirm your answers",
+    "edit": "Edit",
+    "submit": "Submit",
+    "skip": "Skip",
+    "otherLabel": "Other",
+    "otherPlaceholder": "Add details…",
+    "remaining": "{{count}} characters left",
+    "required": "Pick at least one option for each question",
+    "otherRequired": "Add some text for “Other”",
+    "otherTooLong": "Text must be at most 2000 characters",
+    "skippedLabel": "Skipped",
+    "cancelledLabel": "Interrupted",
+    "timedOutSkipped": "Skipped (timed out)",
+    "submitFailed": "Failed to submit answer",
+    "ariaCard": "Agent question card",
+    "summaryJoin": ", "
   }
 }

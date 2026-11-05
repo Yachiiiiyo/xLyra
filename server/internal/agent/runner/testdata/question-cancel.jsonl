@@ -1,0 +1,6 @@
+{"type":"agent_start"}
+{"type":"extension_ui_request","id":"bad-$N","method":"editor","title":"xlyra:question:call-x","prefill":"{bad json"}
+{"type":"extension_ui_request","id":"ed-$N","method":"editor","title":"编辑一段文字","prefill":"hello"}
+{"type":"extension_ui_request","id":"in-$N","method":"input","title":"输入点什么"}
+{"type":"extension_ui_request","id":"nt-$N","method":"notify","message":"通知"}
+{"type":"agent_settled","aborted":false}

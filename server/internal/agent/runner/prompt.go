@@ -40,8 +40,13 @@ const imageGenerationSystemPrompt = `
 没有调用该工具时,不要在回复里写任何图片引用,也不要自己编造图片路径。
 每个会话轮次的生图调用次数有限,请先想清楚再调用。`
 
+// questionSystemPrompt 不写 JSON 示例,避免模型照抄进回复而不调用工具。
+const questionSystemPrompt = `
+
+需要用户在几个方案里做选择、或缺少无法自行判断的关键信息时,调用 question 工具提问,不要猜测。一次最多 4 个问题、每题 2–6 个选项;用户总能选择「其他」并输入文字,所以不必自己加「其他」。能自己合理判断的事不要问;每轮提问次数有限。收到回答后继续完成任务。`
+
 // systemPrompt 返回本次 run 使用的系统提示文本。
-func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGeneration bool) string {
+func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGeneration, question bool) string {
 	text := strings.TrimSpace(r.cfg.SystemPrompt)
 	if text == "" {
 		text = defaultSystemPrompt
@@ -51,6 +56,9 @@ func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGene
 	}
 	if imageGeneration {
 		text += imageGenerationSystemPrompt
+	}
+	if question {
+		text += questionSystemPrompt
 	}
 	return text
 }

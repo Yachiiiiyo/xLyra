@@ -128,6 +128,18 @@ func (s *Store) BuildTranscript(id string) ([]map[string]any, error) {
 			tailChange = append(tailChange, rc)
 		}
 	}
+	// 提问记录与审批同规则:锚点在当前分支上按位置插入,空锚点补末尾,
+	// 旧分支丢弃。
+	afterQ := map[string][]Question{}
+	var tailQ []Question
+	for _, q := range meta.Questions {
+		switch {
+		case q.AfterEntryID != "" && onPath[q.AfterEntryID]:
+			afterQ[q.AfterEntryID] = append(afterQ[q.AfterEntryID], q)
+		case q.AfterEntryID == "":
+			tailQ = append(tailQ, q)
+		}
+	}
 	for _, entry := range path {
 		if item := transcriptEntry(entry, meta); item != nil {
 			out = append(out, item)
@@ -141,6 +153,9 @@ func (s *Store) BuildTranscript(id string) ([]map[string]any, error) {
 		for _, rc := range afterChange[entry.ID] {
 			out = append(out, runChangeEntry(rc))
 		}
+		for _, q := range afterQ[entry.ID] {
+			out = append(out, questionEntry(q))
+		}
 	}
 	for _, esc := range tailEsc {
 		out = append(out, escalationEntry(esc))
@@ -150,6 +165,9 @@ func (s *Store) BuildTranscript(id string) ([]map[string]any, error) {
 	}
 	for _, rc := range tailChange {
 		out = append(out, runChangeEntry(rc))
+	}
+	for _, q := range tailQ {
+		out = append(out, questionEntry(q))
 	}
 	return out, nil
 }
@@ -379,6 +397,62 @@ func runChangeEntry(rc RunChange) map[string]any {
 	}
 	if rc.Incomplete {
 		out["incomplete"] = true
+	}
+	return out
+}
+
+// questionEntry 把提问记录转成前端条目;未回答时没有 answers 与各标记,
+// 布尔字段仅为真时输出。
+func questionEntry(q Question) map[string]any {
+	out := map[string]any{
+		"type":         "question",
+		"question_id":  q.QuestionID,
+		"tool_call_id": q.ToolCallID,
+		"questions":    questionItems(q.Questions),
+		"timestamp":    q.AskedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	if q.AnsweredAt != nil {
+		out["answers"] = questionAnswers(q.Answers)
+		if q.Skipped {
+			out["skipped"] = true
+		}
+		if q.Cancelled {
+			out["cancelled"] = true
+		}
+		if q.Auto {
+			out["auto"] = true
+		}
+	}
+	return out
+}
+
+func questionItems(items []QuestionItem) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		options := make([]map[string]any, 0, len(item.Options))
+		for _, opt := range item.Options {
+			option := map[string]any{"label": opt.Label}
+			if opt.Description != "" {
+				option["description"] = opt.Description
+			}
+			options = append(options, option)
+		}
+		out = append(out, map[string]any{
+			"header": item.Header, "question": item.Question,
+			"multiSelect": item.MultiSelect, "options": options,
+		})
+	}
+	return out
+}
+
+func questionAnswers(answers []QuestionAnswer) []map[string]any {
+	out := make([]map[string]any, 0, len(answers))
+	for _, answer := range answers {
+		item := map[string]any{"selected": answer.Selected}
+		if answer.Other != "" {
+			item["other"] = answer.Other
+		}
+		out = append(out, item)
 	}
 	return out
 }

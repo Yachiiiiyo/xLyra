@@ -34,18 +34,22 @@ import './liquid-glass/agent-liquid-glass.css'
 import './agent-page.css'
 import {
   appendUserMessage,
+  decidePermission,
+  decideQuestion,
   reconcileTimeline,
   replaceFromUserMessage,
   reduceAgentEvent,
-  decidePermission,
   settleRunningRuns,
   timelineFromTranscript,
   type AgentPermissionRequest,
+  type AgentQuestion,
+  type AgentQuestionAnswer,
   type AgentRun,
   type AgentTimeline as AgentTimelineData,
 } from '@/features/agent/lib/agent-events'
 import {
   AGENT_COMPACT_COMMAND,
+  answerAgentQuestion,
   compactAgentSession,
   createAgentSession,
   deleteAgentSession,
@@ -776,6 +780,17 @@ export function AgentWorkspace() {
     })
   }
 
+  function handleQuestionAnswer(question: AgentQuestion, answers?: AgentQuestionAnswer[]) {
+    if (!selectedId) return
+    setTimeline((current) => decideQuestion(current, question.id, answers ?? [], answers === undefined))
+    void answerAgentQuestion(selectedId, {
+      question_id: question.id,
+      ...(answers === undefined ? { skipped: true } : { answers }),
+    }).catch((error: unknown) => {
+      toast.error(t('agent:question.submitFailed'), { description: error instanceof Error ? error.message : String(error) })
+    })
+  }
+
   function applyPermissionMode(next: PermissionMode) {
     setPermissionMode(next)
     try {
@@ -1113,6 +1128,8 @@ export function AgentWorkspace() {
                     running={running}
                     sessions={sessions}
                     onPermissionDecision={handlePermissionDecision}
+                    onQuestionAnswer={(question, answers) => handleQuestionAnswer(question, answers)}
+                    onQuestionSkip={(question) => handleQuestionAnswer(question, undefined)}
                     onUserEdit={handleUserEdit}
                     onFork={selectedId ? (messageId) => void handleFork(selectedId, messageId) : undefined}
                     onOpenReference={handleSelect}

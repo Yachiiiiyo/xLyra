@@ -50,6 +50,9 @@ type fakeRunner struct {
 
 	grantErr  error
 	grantInfo []grantCall
+
+	answerErr error
+	answered  []runner.AnswerQuestionInput
 }
 
 type compactCall struct {
@@ -82,6 +85,11 @@ func (f *fakeRunner) Compact(_ context.Context, sessionID, model string) (runner
 func (f *fakeRunner) Stop(_ context.Context, sessionID string) error {
 	f.stoppedIDs = append(f.stoppedIDs, sessionID)
 	return f.stopErr
+}
+
+func (f *fakeRunner) AnswerQuestion(_ context.Context, in runner.AnswerQuestionInput) error {
+	f.answered = append(f.answered, in)
+	return f.answerErr
 }
 
 func (f *fakeRunner) Grant(_ context.Context, sessionID string, in runner.GrantInput) error {
@@ -148,6 +156,7 @@ func agentRouter(h *Handler) http.Handler {
 		g.Post("/sessions/{id}/retry", h.RetrySession)
 		g.Post("/sessions/{id}/stop", h.StopSession)
 		g.Post("/sessions/{id}/grant-access", h.GrantAccess)
+		g.Post("/sessions/{id}/answer-question", h.AnswerQuestion)
 		g.Post("/sessions/{id}/revoke-access", h.RevokeAccess)
 		g.Get("/sessions/{id}/events", h.SessionEvents)
 	})
@@ -541,6 +550,72 @@ func TestGrantAccess(t *testing.T) {
 	rec = doJSONAgent(t, handler, http.MethodPost, path, `{"escalation_id":"esc-x","granted":false}`)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown escalation status = %d", rec.Code)
+	}
+}
+
+func TestAnswerQuestion(t *testing.T) {
+	fake := &fakeRunner{}
+	handler, _, _ := newTestHandler(t, fake)
+	sessionID := "55555555-5555-5555-5555-555555555555"
+	path := "/api/v1/agent/sessions/" + sessionID + "/answer-question"
+
+	rec := doJSONAgent(t, handler, http.MethodPost, path, `{"question_id":"q-1","answers":[{"selected":["A","__other__"],"other":"补充"},{"selected":["B"]}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+	}
+	decodeBody(t, rec, &payload)
+	if !payload.Success || len(fake.answered) != 1 {
+		t.Fatalf("body = %s, answered = %+v", rec.Body.String(), fake.answered)
+	}
+	got := fake.answered[0]
+	if got.SessionID != sessionID || got.QuestionID != "q-1" || got.Skipped || len(got.Answers) != 2 ||
+		got.Answers[0].Other != "补充" || got.Answers[0].Selected[1] != "__other__" || got.Answers[1].Selected[0] != "B" {
+		t.Fatalf("answer input = %+v", got)
+	}
+
+	rec = doJSONAgent(t, handler, http.MethodPost, path, `{"question_id":"q-2","skipped":true}`)
+	if rec.Code != http.StatusOK || !fake.answered[1].Skipped {
+		t.Fatalf("skip status = %d, answered = %+v", rec.Code, fake.answered)
+	}
+
+	// 请求体校验:question_id 必填、题数与选项数的粗略上限
+	for name, body := range map[string]string{
+		"缺 question_id": `{"answers":[]}`,
+		"空 question_id": `{"question_id":"  "}`,
+		"题数过多":          `{"question_id":"q","answers":[{"selected":["a"]},{"selected":["a"]},{"selected":["a"]},{"selected":["a"]},{"selected":["a"]}]}`,
+		"选项过多":          `{"question_id":"q","answers":[{"selected":["1","2","3","4","5","6","7","8"]}]}`,
+	} {
+		if rec := doJSONAgent(t, handler, http.MethodPost, path, body); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", name, rec.Code)
+		}
+	}
+	if len(fake.answered) != 2 {
+		t.Fatalf("非法请求不应到达 runner: %+v", fake.answered)
+	}
+
+	// runner 错误映射:不合法 400、无此问题/会话 404、没有进行中的 run 409
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{fmt.Errorf("%w: 第 1 题是单选题,最多选 1 个", runner.ErrInvalidAnswer), http.StatusBadRequest},
+		{fmt.Errorf("%w: 提问 q-x", runner.ErrNotFound), http.StatusNotFound},
+		{fmt.Errorf("%w: %s", runner.ErrNotRunning, sessionID), http.StatusConflict},
+	}
+	for _, tc := range cases {
+		fake.answerErr = tc.err
+		rec := doJSONAgent(t, handler, http.MethodPost, path, `{"question_id":"q-3","skipped":true}`)
+		if rec.Code != tc.want {
+			t.Errorf("%v: status = %d, want %d", tc.err, rec.Code, tc.want)
+		}
+	}
+	fake.answerErr = fmt.Errorf("%w: 第 1 题是单选题,最多选 1 个", runner.ErrInvalidAnswer)
+	rec = doJSONAgent(t, handler, http.MethodPost, path, `{"question_id":"q-3","skipped":true}`)
+	if !strings.Contains(rec.Body.String(), "单选题") {
+		t.Errorf("400 应带可读 message: %s", rec.Body.String())
 	}
 }
 

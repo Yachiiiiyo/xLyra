@@ -296,5 +296,27 @@
       "enabled": "有効",
       "disabled": "無効"
     }
+  },
+  "question": {
+    "title": "選択が必要です",
+    "progress": "{{current}} / {{total}} 問目",
+    "next": "次へ",
+    "back": "戻る",
+    "confirmTitle": "回答を確認",
+    "edit": "変更",
+    "submit": "送信",
+    "skip": "スキップ",
+    "otherLabel": "その他",
+    "otherPlaceholder": "補足を入力…",
+    "remaining": "残り{{count}}字",
+    "required": "各質問で1つ以上選択してください",
+    "otherRequired": "「その他」を選んだ場合は入力してください",
+    "otherTooLong": "補足は2000字以内で入力してください",
+    "skippedLabel": "スキップされました",
+    "cancelledLabel": "中断されました",
+    "timedOutSkipped": "タイムアウトで自動スキップ",
+    "submitFailed": "回答の送信に失敗しました",
+    "ariaCard": "エージェントの質問カード",
+    "summaryJoin": "、"
   }
 }

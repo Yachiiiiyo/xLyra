@@ -48,7 +48,7 @@ type GeneralConfig struct {
 	Log         GeneralLogConfig         `json:"log"`
 	Data        GeneralDataConfig        `json:"data"`
 	Cache       GeneralCacheConfig       `json:"cache"`
-	Security GeneralSecurityConfig `json:"security"`
+	Security    GeneralSecurityConfig    `json:"security"`
 }
 
 func DefaultGeneralConfig() GeneralConfig {

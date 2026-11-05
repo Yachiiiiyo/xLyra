@@ -500,6 +500,13 @@ export type AgentTranscriptEntry = {
   scope?: 'once' | 'session'
   /** type === 'escalation'：会话内允许自动放行 */
   auto?: boolean
+  /** type === 'question'：question 工具的提问（items/answers/status 见 agent-events 的映射） */
+  question_id?: string
+  tool_call_id?: string
+  questions?: AgentQuestionItem[]
+  answers?: AgentQuestionAnswer[]
+  skipped?: boolean
+  cancelled?: boolean
   /** type === 'run_changes'：本轮(一条用户消息)的工作区变更,由后端清单差得出 */
   turn_id?: string
   run_ids?: string[]
@@ -543,8 +550,36 @@ export async function deleteAgentSession(sessionId: string) {
   return apiFetch<Record<string, unknown>>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
 }
 
+/** 选「其他」时 answers.selected 里的约定标记，避免与选项标签冲突 */
+export const QUESTION_OTHER = '__other__'
+
+export type AgentQuestionOption = {
+  label: string
+  description?: string
+}
+
+export type AgentQuestionItem = {
+  header: string
+  question: string
+  multiSelect: boolean
+  options: AgentQuestionOption[]
+}
+
+export type AgentQuestionAnswer = {
+  selected: string[]
+  other?: string
+}
+
 export async function grantAgentAccess(sessionId: string, input: { escalation_id: string; granted: boolean; resolved_path: string; scope?: 'once' | 'session' }) {
   return apiFetch<Record<string, unknown>>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/grant-access`, {
+    method: 'POST',
+    body: input,
+  })
+}
+
+/** 回答 Agent 提问：answers 与 skipped 二选一（skipped 表示跳过不答） */
+export async function answerAgentQuestion(sessionId: string, input: { question_id: string; answers?: AgentQuestionAnswer[]; skipped?: boolean }) {
+  return apiFetch<{ success?: boolean }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/answer-question`, {
     method: 'POST',
     body: input,
   })

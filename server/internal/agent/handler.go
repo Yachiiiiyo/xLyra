@@ -23,11 +23,13 @@ import (
 // 错误映射用的 sentinel:与 runner/session 的导出错误同源,errors.Is 既命中
 // 本包别名也命中原始包装链。
 var (
-	ErrInvalid     = runner.ErrInvalid
-	ErrNotFound    = runner.ErrNotFound
-	ErrBusy        = runner.ErrBusy
-	ErrCapacity    = runner.ErrCapacity
-	ErrUnavailable = runner.ErrUnavailable
+	ErrInvalid       = runner.ErrInvalid
+	ErrNotFound      = runner.ErrNotFound
+	ErrBusy          = runner.ErrBusy
+	ErrNotRunning    = runner.ErrNotRunning
+	ErrInvalidAnswer = runner.ErrInvalidAnswer
+	ErrCapacity      = runner.ErrCapacity
+	ErrUnavailable   = runner.ErrUnavailable
 )
 
 // Runner 是 handler 依赖的 runner 能力子集;生产实现是 *runner.Runner,
@@ -38,6 +40,7 @@ type Runner interface {
 	Compact(ctx context.Context, sessionID, model string) (runner.CompactResult, error)
 	Stop(ctx context.Context, sessionID string) error
 	Grant(ctx context.Context, sessionID string, in runner.GrantInput) error
+	AnswerQuestion(ctx context.Context, in runner.AnswerQuestionInput) error
 	Health() runner.Health
 }
 
@@ -372,6 +375,57 @@ func (h *Handler) GrantAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"success": true})
 }
+
+// AnswerQuestion POST /sessions/{id}/answer-question:回答模型通过 question 工具发出的提问。
+// answers 为每题的选择(选「其他」时 selected 含 "__other__" 并带 other 文本);
+// skipped=true 表示跳过,忽略 answers。具体校验在 runner(400/404/409 由 fail 映射)。
+func (h *Handler) AnswerQuestion(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.sessionID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		QuestionID string `json:"question_id"`
+		Answers    []struct {
+			Selected []string `json:"selected"`
+			Other    string   `json:"other"`
+		} `json:"answers"`
+		Skipped bool `json:"skipped"`
+	}
+	if !h.decodeBody(w, r, &body) {
+		return
+	}
+	questionID := strings.TrimSpace(body.QuestionID)
+	if questionID == "" {
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "question_id 不能为空")
+		return
+	}
+	if len(body.Answers) > maxQuestionAnswers {
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "回答的题数过多")
+		return
+	}
+	answers := make([]session.QuestionAnswer, 0, len(body.Answers))
+	for _, item := range body.Answers {
+		if len(item.Selected) > maxQuestionOptions+1 {
+			httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "选择的选项过多")
+			return
+		}
+		answers = append(answers, session.QuestionAnswer{Selected: item.Selected, Other: item.Other})
+	}
+	if err := h.runner.AnswerQuestion(r.Context(), runner.AnswerQuestionInput{
+		SessionID: id, QuestionID: questionID, Answers: answers, Skipped: body.Skipped,
+	}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// 回答体的粗略上限(防滥用);题数与选项数的精确校验在 runner。
+const (
+	maxQuestionAnswers = 4
+	maxQuestionOptions = 6
+)
 
 // RevokeAccess POST /sessions/{id}/revoke-access:从会话内允许列表移除工具;
 // body {"tool":"write"},tool 为空表示清空全部。会话不存在返回 404。
@@ -825,6 +879,10 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, ErrNotFound), errors.Is(err, session.ErrNotFound), errors.Is(err, session.ErrInvalidID):
 		httpx.Error(w, r, http.StatusNotFound, "not_found", err.Error())
+	case errors.Is(err, ErrInvalidAnswer):
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_answer", err.Error())
+	case errors.Is(err, ErrNotRunning):
+		httpx.Error(w, r, http.StatusConflict, "agent_not_running", err.Error())
 	case errors.Is(err, ErrBusy):
 		httpx.Error(w, r, http.StatusConflict, "agent_busy", err.Error())
 	case errors.Is(err, ErrCapacity):

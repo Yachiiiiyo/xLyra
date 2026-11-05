@@ -12,6 +12,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"xlyra/server/internal/agent/session"
 )
 
 // Event 是前端事件。Data 恒为非 nil map(没有载荷时为空 map),
@@ -31,6 +33,14 @@ type Approval struct {
 	Command    []string `json:"command"`
 	Note       string   `json:"note"`
 }
+
+// OtherOptionMarker 是回答 JSON 里表示选中「其他」的约定标记:前端固定
+// 追加「其他」选项,不占模型的标签空间,用哨兵值避免与真实标签冲突。
+const OtherOptionMarker = "__other__"
+
+// questionTitlePrefix 是 question 工具经 ctx.ui.editor 发起请求的 title
+// 前缀,翻译层据此把它与其他 editor 请求区分开。
+const questionTitlePrefix = "xlyra:question:"
 
 // toolCall 记录一次已见的 tool_execution_start,供审批请求关联与兜底。
 type toolCall struct {
@@ -53,6 +63,9 @@ type Translator struct {
 	// 重试中的失败不是终态,不能提前发 agent_error。
 	pendingError    bool
 	pendingErrorMsg string
+	// 其他 UI 请求(cancel/select 之外)不产出事件,但 Pi 会一直等待对应的
+	// extension_ui_response;id 记在这里供 runner 按取消回写,避免 Pi 永久阻塞。
+	cancelUIRequestIDs []string
 }
 
 func New() *Translator {
@@ -105,6 +118,18 @@ func (t *Translator) Feed(line []byte) ([]Event, error) {
 		// agent_end、message_start、tool_execution_update)与未知类型,见 07 §十.2。
 		return nil, nil
 	}
+}
+
+// CancelUIRequestIDs 返回自上次调用以来累积的「需要按取消回写」的 UI 请求
+// id,并清空队列。这些 id 来自不认识的 extension_ui_request(input/editor 等)
+// 或非法的 question prefill:翻译层不发事件,调用方(runner)应向 Pi 回写
+// {cancelled:true} 的 extension_ui_response,否则 Pi 会永久阻塞。
+// 注意:method 为 input 的请求 Pi 端可能有其他处理路径,是否回写由调用方
+// 决定;目前仅在需要时消费。
+func (t *Translator) CancelUIRequestIDs() []string {
+	ids := t.cancelUIRequestIDs
+	t.cancelUIRequestIDs = nil
+	return ids
 }
 
 // Decision 在收到前端 grant-access 决定时生成 permission_result。
@@ -301,10 +326,24 @@ func (t *Translator) toolExecutionEnd(raw map[string]any) []Event {
 // (审批正卡着的工具大概率就是它),取不到时 tool_name 留空。
 func (t *Translator) extensionUIRequest(raw map[string]any) []Event {
 	method, _ := raw["method"].(string)
-	if method != "confirm" && method != "select" {
+	id, _ := raw["id"].(string)
+	title, _ := raw["title"].(string)
+	if method == "editor" {
+		// question 工具用 editor 承载;其余 editor 请求(与本工具无关)
+		// 无法在 xLyra 前端交互,只能丢弃并交由 runner 按取消回写,
+		// 否则 Pi 会一直等待回答。
+		if strings.HasPrefix(title, questionTitlePrefix) {
+			return t.questionRequest(raw, id, title)
+		}
+		t.noteCancelUIRequest(id)
 		return nil
 	}
-	id, _ := raw["id"].(string)
+	if method != "confirm" && method != "select" {
+		// input/notify 等方法同样丢弃;notify 无需回写但多记无害,
+		// 是否回写由 runner 决定。
+		t.noteCancelUIRequest(id)
+		return nil
+	}
 	message, _ := raw["message"].(string)
 
 	approval, isJSON := ParseApprovalMessage(message)
@@ -353,6 +392,108 @@ func (t *Translator) latestUnfinishedTool() *toolCall {
 		}
 	}
 	return nil
+}
+
+func (t *Translator) noteCancelUIRequest(id string) {
+	if id != "" {
+		t.cancelUIRequestIDs = append(t.cancelUIRequestIDs, id)
+	}
+}
+
+// questionPrefill 是 editor 请求 prefill 里携带的问题 JSON(扩展 xlyra.ts
+// 组装):{"toolCallId","questions":[{header,question,multiSelect,options}]},
+// 多余字段忽略。问数、字段与选项数的合法性见 questionPrefillValid。
+type questionPrefill struct {
+	ToolCallID string                 `json:"toolCallId"`
+	Questions  []session.QuestionItem `json:"questions"`
+}
+
+// questionPrefillValid 校验 prefill:题数 1–4;每题 header/question 非空;
+// 选项 2–6 且 label 非空。字段长度与重复性由扩展先行校验,这里只做结构约束,
+// 保证发出的 question_request 可被前端安全渲染。
+func questionPrefillValid(prefill *questionPrefill) bool {
+	if len(prefill.Questions) < 1 || len(prefill.Questions) > 4 {
+		return false
+	}
+	for _, item := range prefill.Questions {
+		if item.Header == "" || item.Question == "" {
+			return false
+		}
+		if len(item.Options) < 2 || len(item.Options) > 6 {
+			return false
+		}
+		for _, opt := range item.Options {
+			if opt.Label == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// questionRequest 解析并翻译 question 工具的 editor 请求:prefill 合法时发
+// question_request 事件(问题形态与 session.QuestionItem 一致,description
+// 缺省省略);tool_call_id 优先取 prefill 里带的,title 后缀作为兑底。
+// 非法时不发事件,请求 id 记入取消队列供 runner 回写取消。
+func (t *Translator) questionRequest(raw map[string]any, id, title string) []Event {
+	prefillJSON, _ := raw["prefill"].(string)
+	var prefill questionPrefill
+	if prefillJSON == "" || json.Unmarshal([]byte(prefillJSON), &prefill) != nil ||
+		!questionPrefillValid(&prefill) {
+		t.noteCancelUIRequest(id)
+		return nil
+	}
+	toolCallID := prefill.ToolCallID
+	if toolCallID == "" {
+		toolCallID = strings.TrimPrefix(title, questionTitlePrefix)
+	}
+	questions := make([]map[string]any, 0, len(prefill.Questions))
+	for _, item := range prefill.Questions {
+		options := make([]map[string]any, 0, len(item.Options))
+		for _, opt := range item.Options {
+			option := map[string]any{"label": opt.Label}
+			if opt.Description != "" {
+				option["description"] = opt.Description
+			}
+			options = append(options, option)
+		}
+		questions = append(questions, map[string]any{
+			"header": item.Header, "question": item.Question,
+			"multiSelect": item.MultiSelect, "options": options,
+		})
+	}
+	return []Event{event("question_request", map[string]any{
+		"question": map[string]any{
+			"question_id":  id,
+			"tool_call_id": toolCallID,
+			"questions":    questions,
+		},
+	})}
+}
+
+// QuestionAnswered 在问题被回答(提交/跳过)或收口(停止取消、超时兑底)
+// 时生成 question_answered 事件。布尔字段仅为真时输出,与 AutoDecision 的
+// auto 标记风格一致;answers 为空时输出空数组(skipped/cancelled 时常见)。
+func (t *Translator) QuestionAnswered(id string, answers []session.QuestionAnswer, skipped, cancelled, auto bool) []Event {
+	items := make([]map[string]any, 0, len(answers))
+	for _, answer := range answers {
+		item := map[string]any{"selected": answer.Selected}
+		if answer.Other != "" {
+			item["other"] = answer.Other
+		}
+		items = append(items, item)
+	}
+	data := map[string]any{"question_id": id, "answers": items}
+	if skipped {
+		data["skipped"] = true
+	}
+	if cancelled {
+		data["cancelled"] = true
+	}
+	if auto {
+		data["auto"] = true
+	}
+	return []Event{event("question_answered", data)}
 }
 
 // compactionEnd 带 result 时除透传原字段外,补 tokens_before/tokens_after:

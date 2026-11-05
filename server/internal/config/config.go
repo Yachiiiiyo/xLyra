@@ -48,9 +48,11 @@ type Config struct {
 	AgentDataDir        string        `env:"AGENT_DATA_DIR"`
 	AgentMaxConcurrent  int           `env:"AGENT_MAX_CONCURRENT" envDefault:"4"`
 	AgentRunTimeout     time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
-	AgentGatewayBaseURL string        `env:"AGENT_GATEWAY_BASE_URL"`
-	AgentImageMaxCalls  int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
-	AgentImageTimeout   time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
+	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长,0 表示不超时。
+	AgentQuestionTimeout time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"30m"`
+	AgentGatewayBaseURL  string        `env:"AGENT_GATEWAY_BASE_URL"`
+	AgentImageMaxCalls   int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
+	AgentImageTimeout    time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
 	// AgentIsolation 决定 uid 隔离的启动策略:auto(默认)按探测与自检
 	// 结果决定;required 在环境不支持时直接关闭 Agent;off 完全不隔离
 	// (仅本地开发)。
@@ -200,6 +202,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("AGENT_MAX_CONCURRENT must be greater than 0")
 	}
 
+	if c.AgentQuestionTimeout < 0 {
+		return fmt.Errorf("AGENT_QUESTION_TIMEOUT must not be negative")
+	}
 	if c.AgentRunTimeout <= 0 || c.AgentRunTimeout > agentRunTimeoutMax {
 		return fmt.Errorf("AGENT_RUN_TIMEOUT must be greater than 0 and at most %s", agentRunTimeoutMax)
 	}
