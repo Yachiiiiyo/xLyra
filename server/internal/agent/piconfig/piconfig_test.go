@@ -463,10 +463,10 @@ func TestModelsJSONContextWindow(t *testing.T) {
 
 func TestEnvIsClosed(t *testing.T) {
 	t.Setenv("SECRET_X", "1")
-	in := EnvInput{Home: "/home/agent", AgentDir: "/agent", SessionDir: "/sessions", Path: "/usr/local/bin:/usr/bin:/bin", Token: "tok-1"}
+	in := EnvInput{Home: "/home/agent", AgentDir: "/agent", SessionDir: "/sessions", Path: "/usr/local/bin:/usr/bin:/bin", Token: "tok-1", RunConfig: `{"runtime":{"permissionMode":"ask"}}`}
 	env := Env(in)
 
-	wantKeys := []string{"PATH", "HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "PI_OFFLINE", "PI_SKIP_VERSION_CHECK", "PI_TELEMETRY", TokenEnvName}
+	wantKeys := []string{"PATH", "HOME", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "PI_OFFLINE", "PI_SKIP_VERSION_CHECK", "PI_TELEMETRY", TokenEnvName, RunConfigEnvName}
 	keys := make([]string, 0, len(env))
 	values := map[string]string{}
 	for _, entry := range env {
@@ -481,7 +481,7 @@ func TestEnvIsClosed(t *testing.T) {
 		"PATH": in.Path, "HOME": in.Home,
 		"PI_CODING_AGENT_DIR": in.AgentDir, "PI_CODING_AGENT_SESSION_DIR": in.SessionDir,
 		"PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
-		TokenEnvName: in.Token,
+		TokenEnvName: in.Token, RunConfigEnvName: in.RunConfig,
 	}
 	if !maps.Equal(values, wantValues) {
 		t.Fatalf("env values = %v, want %v", values, wantValues)
@@ -498,16 +498,32 @@ func TestEnvIsClosed(t *testing.T) {
 	}
 }
 
-// TestEnvOmitsTokenWhenEmpty:令牌改走文件轮换时 Token 留空,子进程环境只有
-// 7 个键且不含 XLYRA_TOKEN(令牌明文不进入环境)。
-func TestEnvOmitsTokenWhenEmpty(t *testing.T) {
+// TestEnvOmitsEmptyOptionalValues:Token / RunConfig 留空时都不输出,子进程环境
+// 只有 7 个固定键;令牌明文不进入环境。
+func TestEnvOmitsEmptyOptionalValues(t *testing.T) {
 	env := Env(EnvInput{Home: "/home/agent", AgentDir: "/agent", SessionDir: "/sessions", Path: "/usr/bin:/bin"})
 	if len(env) != 7 {
 		t.Fatalf("env 键数 = %d, want 7: %v", len(env), env)
 	}
 	for _, entry := range env {
+		if strings.HasPrefix(entry, TokenEnvName+"=") || strings.HasPrefix(entry, RunConfigEnvName+"=") {
+			t.Fatalf("Token / RunConfig 为空时不应输出可选项: %v", env)
+		}
+	}
+}
+
+func TestEnvIncludesRunConfigWithoutToken(t *testing.T) {
+	const runConfig = `{"runtime":{"permissionMode":"full"},"provider":{"apiKey":"!cat /run/token"}}`
+	env := Env(EnvInput{Home: "/home/agent", AgentDir: "/agent", SessionDir: "/sessions", Path: "/usr/bin:/bin", RunConfig: runConfig})
+	if len(env) != 8 {
+		t.Fatalf("env 键数 = %d, want 8: %v", len(env), env)
+	}
+	if got := env[len(env)-1]; got != RunConfigEnvName+"="+runConfig {
+		t.Fatalf("运行配置环境项 = %q", got)
+	}
+	for _, entry := range env {
 		if strings.HasPrefix(entry, TokenEnvName+"=") {
-			t.Fatalf("Token 为空时不应输出 %s: %v", TokenEnvName, env)
+			t.Fatalf("Token 为空时不应输出 %s", TokenEnvName)
 		}
 	}
 }

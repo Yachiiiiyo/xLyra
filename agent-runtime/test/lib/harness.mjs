@@ -15,52 +15,52 @@ export const PI_ENTRY = join(
 export const EXT_PATH = join(RUNTIME_DIR, "extension/xlyra.ts");
 export const SECRET = "TOP-SECRET-CONTENT-9f3d";
 
-function modelsConfig(baseUrl) {
+function providerConfig(baseUrl) {
 	return {
-		providers: {
-			xlyra: {
-				baseUrl,
-				api: "openai-completions",
-				// 明文 key,避免引入额外的环境变量
-				apiKey: "test-key",
-				models: [
-					{
-						id: "mock-1",
-						name: "mock-1",
-						reasoning: false,
-						input: ["text"],
-						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-						contextWindow: 128000,
-						maxTokens: 2048,
-					},
-				],
+		baseUrl,
+		api: "openai-completions",
+		// 明文 key,避免引入额外的环境变量
+		apiKey: "test-key",
+		models: [
+			{
+				id: "mock-1",
+				name: "mock-1",
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 2048,
 			},
-		},
+		],
 	};
 }
 
 /**
  * 拉起一个完整的测试用例:独立临时目录 + 本机 mock LLM + 真实 Pi 进程。
+ * provider 与运行配置统一经 XLYRA_RUN_CONFIG 传入,agentDir 里不写任何配置文件。
  *
  * options:
  *   name           用例名(临时目录前缀)
- *   permissionMode "ask" | "full"(写入 xlyra.json)
- *   xlyraJson      直接指定 xlyra.json 的原始内容(优先于 permissionMode/readRoots;
- *                  undefined 且未给 permissionMode 时不写该文件,测“配置缺失”)
- *   readRoots      (caseDirs) => string[],在 prepare 之后求值并写入 xlyra.json 的
+ *   permissionMode "ask" | "full"(写入 XLYRA_RUN_CONFIG.runtime)
+ *   runtimeJson    直接指定 runtime 的原始 JSON 文本(优先于 permissionMode/readRoots;
+ *                  不是合法 JSON 时原样作为字符串放进 runtime,测“配置非法”;
+ *                  undefined 且未给 permissionMode 时不带 runtime,测“配置缺失”)
+ *   readRoots      (caseDirs) => string[],在 prepare 之后求值并写入 runtime 的
  *                  readRoots 字段(目录需先落盘,扩展启动时才会 realpath)
  *   bash           沙箱 bash 配置,二选一:
- *                  - (caseDirs) => { socket, defaultTimeout?, maxTimeout? }:写入 xlyra.json
+ *                  - (caseDirs) => { socket, defaultTimeout?, maxTimeout? }:写入 runtime
  *                    的 bash 字段(自动补 enabled:true),并把 bash 加进 --tools
  *                  - true:只把 bash 加进 --tools,不写 bash 配置(测“未启用”行为)
  *                  socket 一般用 caseDirs.root 下的路径(套接字由假执行器监听)
  *   imageGeneration 生图配置对象或 (caseDirs) => 对象,自动补 enabled:true 与白名单
+ *   agentsMd       写入 XLYRA_RUN_CONFIG.agentsMd 的 AGENTS.md 文本
+ *   systemPrompt   非空时以 --system-prompt <文本> 传给 Pi
  *   prepare        ({root, home, agentDir, sessionDir, cwd, outside}) => 额外布置
  *   script         mock LLM 脚本 (req, n) => step
  *
  * 目录布局:root/{home,agent,sessions,cwd,outside};outside/secret.txt 是工作目录外的诱饵文件。
  */
-export async function startCase({ name, permissionMode, xlyraJson, readRoots, bash, imageGeneration, prepare, script }) {
+export async function startCase({ name, permissionMode, runtimeJson, readRoots, bash, imageGeneration, agentsMd, systemPrompt, prepare, script }) {
 	const root = mkdtempSync(join(tmpdir(), `xlyra-ext-${name}-`));
 	const home = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -70,7 +70,8 @@ export async function startCase({ name, permissionMode, xlyraJson, readRoots, ba
 	for (const dir of [home, agentDir, sessionDir, cwd, outside]) mkdirSync(dir, { recursive: true });
 
 	const mock = await startMock({ script: script || (() => ({ text: "ok" })) });
-	writeFileSync(join(agentDir, "models.json"), JSON.stringify(modelsConfig(`${mock.url}/v1`)));
+	const runConfig = { provider: providerConfig(`${mock.url}/v1`) };
+	if (agentsMd !== undefined) runConfig.agentsMd = agentsMd;
 	writeFileSync(join(outside, "secret.txt"), SECRET);
 	if (prepare) prepare({ root, home, agentDir, sessionDir, cwd, outside });
 	// readRoots 在 prepare 之后求值:引用的技能目录要先落盘
@@ -85,8 +86,13 @@ export async function startCase({ name, permissionMode, xlyraJson, readRoots, ba
 		typeof imageGeneration === "function"
 			? imageGeneration({ root, home, agentDir, sessionDir, cwd, outside })
 			: imageGeneration;
-	if (xlyraJson !== undefined) {
-		writeFileSync(join(agentDir, "xlyra.json"), xlyraJson);
+	let runtimeConfig;
+	if (runtimeJson !== undefined) {
+		try {
+			runtimeConfig = JSON.parse(runtimeJson);
+		} catch {
+			runtimeConfig = runtimeJson; // 非法 JSON 原样作为字符串,扩展应按缺失处理
+		}
 	} else if (permissionMode !== undefined || roots !== undefined || bashOptions !== undefined || imageOptions !== undefined) {
 		const config = { permissionMode: permissionMode !== undefined ? permissionMode : "ask" };
 		if (roots !== undefined) config.readRoots = roots;
@@ -95,8 +101,9 @@ export async function startCase({ name, permissionMode, xlyraJson, readRoots, ba
 			config.bash = { enabled: true, ...bashOptions };
 		}
 		if (imageOptions !== undefined) config.imageGeneration = { enabled: true, ...imageOptions };
-		writeFileSync(join(agentDir, "xlyra.json"), JSON.stringify(config));
+		runtimeConfig = config;
 	}
+	if (runtimeConfig !== undefined) runConfig.runtime = runtimeConfig;
 
 	// question 无条件注册且不进生产白名单,这里统一放开供测试调用
 	const tools = ["read", "ls", "grep", "find", "write", "edit", "question"];
@@ -123,10 +130,11 @@ export async function startCase({ name, permissionMode, xlyraJson, readRoots, ba
 			"--no-context-files",
 			"--no-mcp",
 			"--no-extensions",
+			...(systemPrompt ? ["--system-prompt", systemPrompt] : []),
 		],
 		// 环境变量按任务要求清空重建,只含 PATH/HOME/PI_CODING_AGENT_DIR/
-		// PI_CODING_AGENT_SESSION_DIR/PI_OFFLINE/PI_SKIP_VERSION_CHECK/PI_TELEMETRY
-		env: cleanEnv({ home, agentDir, sessionDir }),
+		// PI_CODING_AGENT_SESSION_DIR/PI_OFFLINE/PI_SKIP_VERSION_CHECK/PI_TELEMETRY/XLYRA_RUN_CONFIG
+		env: cleanEnv({ home, agentDir, sessionDir, extra: { XLYRA_RUN_CONFIG: JSON.stringify(runConfig) } }),
 		cwd,
 		stderrFile: join(root, "pi.stderr"),
 		commandTimeoutMs: 20000,

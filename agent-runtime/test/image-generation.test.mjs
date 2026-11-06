@@ -100,7 +100,7 @@ test("仅在配置有效时注册 image_generation,参数使用约束 schema", T
 
 	const invalid = await startCase({
 		name: "image-invalid-config",
-		xlyraJson: JSON.stringify({ permissionMode: "full", imageGeneration: { enabled: true, endpoint: "file:///tmp/x", tokenFile: "relative", maxBytes: 1, timeoutSeconds: 1 } }),
+		runtimeJson: JSON.stringify({ permissionMode: "full", imageGeneration: { enabled: true, endpoint: "file:///tmp/x", tokenFile: "relative", maxBytes: 1, timeoutSeconds: 1 } }),
 		imageGeneration: {},
 	});
 	try {

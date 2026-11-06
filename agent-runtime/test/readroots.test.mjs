@@ -114,7 +114,7 @@ test("readRoots 非法项全部忽略:/、深度 1、相对路径、非字符串
 			: { text: "done" };
 	const c = await startCase({
 		name: "readroots-invalid",
-		xlyraJson: JSON.stringify({
+		runtimeJson: JSON.stringify({
 			permissionMode: "ask",
 			readRoots: ["/", "/etc", "relative/skills", 42, true, "/no/such/deep/dir-xyz"],
 		}),

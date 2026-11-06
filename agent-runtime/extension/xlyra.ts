@@ -8,7 +8,7 @@
 // - 审批:permissionMode=ask 时 write/edit/bash 执行前必须经用户确认(bash 逐条命令
 //   审批,卡片展示完整命令);full 时跳过 write/edit 审批,bash 仅在命中高危模式时
 //   要求确认。路径约束照常生效,工具白名单由 Go 侧 --tools 控制。
-// - 沙箱 bash:xlyra.json 的 bash 配置启用时,用 createBashTool 以同名工具覆盖内置
+// - 沙箱 bash:运行配置 runtime.bash 启用时,用 createBashTool 以同名工具覆盖内置
 //   bash(描述、参数 schema、输出截断全部不变),模型与用户的 bash 命令(! 前缀与
 //   RPC 的 bash)一律发给 xLyra 主进程的 Unix 套接字执行器(专用 uid + Landlock +
 //   seccomp + rlimit 下执行,环境也由执行器构造)。失败即关闭:连不上、协议错误
@@ -16,6 +16,8 @@
 //   (契约:Go 侧此时不把 bash 放进 --tools)。
 // - fail-closed:配置读不到/非法一律按 ask、readRoots 为空、bash 与生图未启用;钩子内任何
 //   意外错误都阻断工具调用。
+// - 运行配置:Go 经环境变量 XLYRA_RUN_CONFIG 传入单个 JSON:runtime(权限/只读根/
+//   bash/生图)、provider(原样注册为 xlyra provider)、agentsMd(经 context files 注入)。
 //
 // 沙箱 bash 不新增其他命令工具;生图配置有效时额外注册 image_generation,不触发审批。
 // question 工具无条件注册:通过 editor 对话向用户提多选题,结果回给模型;不触发审批、
@@ -34,6 +36,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	type ExtensionToolContext,
+	type ProviderConfig,
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
@@ -66,16 +69,40 @@ const MAX_RESPONSE_LINE_BYTES = 4 * 1024 * 1024;
 // 审批卡片必须展示完整命令,但超过 8 KiB 的命令直接拒绝
 const MAX_APPROVAL_COMMAND_BYTES = 8 * 1024;
 
-// 启动时读一次即可:Go 每次 run 都会重写 xlyra.json 并拉起新的 Pi 进程。
+// 启动时读一次即可:Go 每次 run 都会重建 XLYRA_RUN_CONFIG 并拉起新的 Pi 进程。
+// 变量缺失或解析失败返回 null;各字段的合法性由各自的 load* 函数校验。
+type RunConfig = { runtime?: unknown; provider?: unknown; agentsMd?: unknown };
+let runConfigLoaded = false;
+let runConfig: RunConfig | null = null;
+
+function loadRunConfig(): RunConfig | null {
+	if (runConfigLoaded) return runConfig;
+	runConfigLoaded = true;
+	try {
+		const raw = process.env.XLYRA_RUN_CONFIG;
+		if (!raw) return null;
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) runConfig = parsed as RunConfig;
+	} catch {
+		runConfig = null;
+	}
+	return runConfig;
+}
+
+// 原 xlyra.json 的内容;不是对象时返回 null(各配置按未启用/ask 处理)。
+function loadRuntimeConfig(): Record<string, unknown> | null {
+	const runtime = loadRunConfig()?.runtime;
+	if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) return null;
+	return runtime as Record<string, unknown>;
+}
+
 // 读不到、解析失败、字段非法 → 一律按未启用(fail-closed:宁可工具不可用,也不本地执行)。
 // enabled 必须严格为 true,socket 必须是绝对路径,超时必须是正整数(缺省 120/600)。
 function loadBashConfig(): BashSandboxConfig | null {
 	try {
-		const dir = process.env.PI_CODING_AGENT_DIR;
-		if (!dir) return null;
-		const parsed = JSON.parse(readFileSync(path.join(dir, "xlyra.json"), "utf8"));
-		if (!parsed || typeof parsed !== "object") return null;
-		const bash = (parsed as Record<string, unknown>).bash;
+		const parsed = loadRuntimeConfig();
+		if (!parsed) return null;
+		const bash = parsed.bash;
 		if (!bash || typeof bash !== "object") return null;
 		const record = bash as Record<string, unknown>;
 		if (record.enabled !== true) return null;
@@ -290,17 +317,9 @@ async function approveBashCall(
 	return; // 放行
 }
 
-// 启动时读一次即可:Go 每次 run 都会重写 xlyra.json 并拉起新的 Pi 进程。
 // 读不到、解析失败、值非法 → 一律按 ask(fail-closed)。
 function loadPermissionMode(): PermissionMode {
-	try {
-		const dir = process.env.PI_CODING_AGENT_DIR;
-		if (!dir) return "ask";
-		const parsed = JSON.parse(readFileSync(path.join(dir, "xlyra.json"), "utf8"));
-		return parsed && typeof parsed === "object" && parsed.permissionMode === "full" ? "full" : "ask";
-	} catch {
-		return "ask";
-	}
+	return loadRuntimeConfig()?.permissionMode === "full" ? "full" : "ask";
 }
 
 // 读取并校验只读根(readRoots,启用技能的目录):只放开 read/ls/grep/find,
@@ -308,10 +327,8 @@ function loadPermissionMode(): PermissionMode {
 // 非法项逐个忽略,不影响其余项。
 function loadReadRoots(): string[] {
 	try {
-		const dir = process.env.PI_CODING_AGENT_DIR;
-		if (!dir) return [];
-		const parsed = JSON.parse(readFileSync(path.join(dir, "xlyra.json"), "utf8"));
-		if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.readRoots)) return [];
+		const parsed = loadRuntimeConfig();
+		if (!parsed || !Array.isArray(parsed.readRoots)) return [];
 		const roots: string[] = [];
 		for (const item of parsed.readRoots) {
 			const root = validReadRoot(item);
@@ -418,11 +435,9 @@ type ImageGenerationInput = { prompt: string; size?: string; quality?: string };
 
 function loadImageGenerationConfig(): ImageGenerationConfig | null {
 	try {
-		const dir = process.env.PI_CODING_AGENT_DIR;
-		if (!dir) return null;
-		const parsed = JSON.parse(readFileSync(path.join(dir, "xlyra.json"), "utf8"));
-		if (!parsed || typeof parsed !== "object") return null;
-		const image = (parsed as Record<string, unknown>).imageGeneration;
+		const parsed = loadRuntimeConfig();
+		if (!parsed) return null;
+		const image = parsed.imageGeneration;
 		if (!image || typeof image !== "object") return null;
 		const record = image as Record<string, unknown>;
 		if (record.enabled !== true || typeof record.endpoint !== "string") return null;
@@ -744,6 +759,22 @@ function registerQuestion(pi: ExtensionAPI) {
 }
 
 export default function (pi: ExtensionAPI) {
+	const config = loadRunConfig();
+	// provider 即原 models.json 的 providers.xlyra,字段名与 ProviderConfig 一致,原样注册;
+	// 变量缺失时不注册(启动选模会报找不到模型)。
+	if (config?.provider && typeof config.provider === "object") {
+		pi.registerProvider("xlyra", config.provider as ProviderConfig);
+	}
+	// AGENTS.md 不再落盘:以 context file 注入,路径沿用原先 Pi 读取的
+	// <PI_CODING_AGENT_DIR>/AGENTS.md,呈现格式与之前一致。Go 侧关闭时 agentsMd 为空。
+	const agentsMd = config?.agentsMd;
+	if (typeof agentsMd === "string" && agentsMd !== "") {
+		const agentsPath = path.join(process.env.PI_CODING_AGENT_DIR || "", "AGENTS.md");
+		pi.on("before_agent_start", (event) => {
+			event.systemPromptOptions.contextFiles.push({ path: agentsPath, content: agentsMd });
+		});
+	}
+
 	const permissionMode = loadPermissionMode();
 	const readRoots = loadReadRoots();
 	const bashConfig = loadBashConfig();

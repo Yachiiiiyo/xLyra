@@ -198,7 +198,7 @@ func TestXlyraImageGenerationConfig(t *testing.T) {
 	data := string(xlyraConfigJSON("ask", nil, nil, config))
 	for _, text := range []string{`"imageGeneration":{"enabled":true`, `"tokenFile":"/tmp/run/token"`, `"maxBytes":33554432`, `"timeoutSeconds":660`} {
 		if !strings.Contains(data, text) {
-			t.Errorf("xlyra.json 缺少 %s: %s", text, data)
+			t.Errorf("runtime 配置缺少 %s: %s", text, data)
 		}
 	}
 	if got := r.imageGenerationConfig("compact", "/tmp/run/token"); got != nil {

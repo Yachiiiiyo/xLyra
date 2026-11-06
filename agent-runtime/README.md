@@ -35,11 +35,11 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 
 `extension/xlyra.ts` 是随镜像发布的小型 Pi 扩展,由 Go 以 `pi -e <扩展路径>` 加载,承担三件事:
 
-1. **路径约束**(第二层防线):`read/ls/grep/find` 只能访问会话工作目录(Pi 进程 cwd)之内、或 `readRoots`(启用技能的目录,Go 侧随 `xlyra.json` 传入)之内的路径;`write/edit` 仍只允许工作目录之内,即使目标位于 `readRoots` 内也拒绝。绝对路径、`~` 前缀、`..` 逃逸、指向允许范围外的符号链接(含悬空链接)一律拒绝;`full` 模式也不放宽。路径约束对 bash 不适用(沙箱边界由执行器的 Landlock 负责)。
+1. **路径约束**(第二层防线):`read/ls/grep/find` 只能访问会话工作目录(Pi 进程 cwd)之内、或 `readRoots`(启用技能的目录,Go 侧随 `XLYRA_RUN_CONFIG` 的 `runtime` 字段传入)之内的路径;`write/edit` 仍只允许工作目录之内,即使目标位于 `readRoots` 内也拒绝。绝对路径、`~` 前缀、`..` 逃逸、指向允许范围外的符号链接(含悬空链接)一律拒绝;`full` 模式也不放宽。路径约束对 bash 不适用(沙箱边界由执行器的 Landlock 负责)。
 2. **审批**:`write`/`edit`/`bash` 执行前经 `extension_ui_request(confirm)` 向用户确认;拒绝/取消/超时都不执行。bash 在 `ask` 模式下逐条命令审批,`full` 模式仅高危命令审批(见下节)。
 3. **沙箱 bash**:配置启用时覆盖内置 `bash`,命令一律经主进程的执行器在专用 uid + Landlock + seccomp + rlimit 下执行,失败即关闭、绝不回退本地(见下节)。
 
-配置文件为 `${PI_CODING_AGENT_DIR}/xlyra.json`:
+运行配置由 Go 经环境变量 `XLYRA_RUN_CONFIG` 传入(单个 JSON,不再落盘),顶层字段:`runtime`(权限与工具配置,见下)、`provider`(原样注册为 `xlyra` provider,即原 models.json 的 `providers.xlyra`)、`agentsMd`(AGENTS.md 文本,以 context file 注入)。`runtime` 的内容:
 
 ```json
 {
@@ -54,11 +54,11 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 - `readRoots`:只读根(启用技能的目录绝对路径),只放宽 `read/ls/grep/find`;每项须是存在的绝对路径且深度 ≥ 2 段,非法项忽略,缺省为 `[]`;
 - `bash`:沙箱执行器配置,见下节。
 
-读不到、解析失败、值非法一律按 `ask` 处理(fail-closed);Go 每次 run 重写该文件并拉起新进程,扩展只在启动时读一次。除启用沙箱 bash 时用同名工具覆盖内置 bash 外不注册新工具、不改系统提示,工具白名单仍由 Go 的 `--tools` 控制。
+读不到、解析失败、值非法一律按 `ask` 处理(fail-closed);Go 每次 run 重建该变量并拉起新进程,扩展只在启动时读一次。除启用沙箱 bash 时用同名工具覆盖内置 bash 外不注册新工具、不改系统提示,工具白名单仍由 Go 的 `--tools` 控制。
 
 ### bash 与沙箱执行器协议
 
-`xlyra.json` 的 `bash` 字段启用后,扩展用 `createBashTool(cwd, { operations })` 以同名工具覆盖内置 bash:工具名、描述、参数 schema、输出截断全部沿用 Pi 内置实现,只把执行方式换成 xLyra 主进程的 Unix 套接字执行器(专用 uid + Landlock + seccomp + rlimit 下执行);用户的 `!` 前缀命令与 RPC 的 `bash` 命令(`user_bash` 钩子)同样只走执行器。
+`runtime.bash` 启用后,扩展用 `createBashTool(cwd, { operations })` 以同名工具覆盖内置 bash:工具名、描述、参数 schema、输出截断全部沿用 Pi 内置实现,只把执行方式换成 xLyra 主进程的 Unix 套接字执行器(专用 uid + Landlock + seccomp + rlimit 下执行);用户的 `!` 前缀命令与 RPC 的 `bash` 命令(`user_bash` 钩子)同样只走执行器。
 
 配置字段(`"bash": { "enabled": true, "socket": "/abs/path/exec.sock", "defaultTimeout": 120, "maxTimeout": 600 }`):
 

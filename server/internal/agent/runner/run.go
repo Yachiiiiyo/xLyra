@@ -47,7 +47,14 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	if err := os.MkdirAll(agentDir, 0o700); err != nil {
 		return nil, fmt.Errorf("runner: 创建 Pi 配置目录: %w", err)
 	}
-	// 令牌先签发再落盘:models.json 的 apiKey 用 "!cat <文件>" 命令引用,
+	// 旧版本会把这些配置落盘,Pi 仍会自动读取;每次 run 先清掉历史残留。
+	// 隔离模式下文件属会话身份,root 仍可删除。
+	for _, name := range []string{"models.json", "system-prompt.md", "xlyra.json", "AGENTS.md"} {
+		if err := os.Remove(filepath.Join(agentDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("runner: 清理 %s: %w", name, err)
+		}
+	}
+	// 令牌先签发再落盘:provider 的 apiKey 用 "!cat <文件>" 命令引用,
 	// Pi 每次请求都重新执行,后续轮换只需原子重写该文件。
 	level := ""
 	if spec.effort != "" {
@@ -97,7 +104,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		TokenFile: prep.tokenFile, ContextWindow: snap.ContextWindow,
 	})
 	if err != nil {
-		return prep, fmt.Errorf("runner: 生成 models.json: %w", err)
+		return prep, fmt.Errorf("runner: 生成 provider 配置: %w", err)
 	}
 	settingsJSON, err := piconfig.SettingsJSON(piconfig.SettingsInput{
 		ModelID: spec.model, ThinkingLevel: prep.level,
@@ -107,7 +114,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		return prep, fmt.Errorf("runner: 生成 settings.json: %w", err)
 	}
 	// 每个 run 重建配置,避免模型、run 请求头或上一个 run 的权限状态残留;
-	// 系统提示与 xlyra.json 同样逐 run 重写(权限模式非 full 一律 ask)。
+	// 系统提示与运行配置同样逐 run 重建(权限模式非 full 一律 ask)。
 	imageGeneration := r.imageGenerationConfig(ar.kind, prep.tokenFile)
 	imageEnabled := imageGeneration != nil
 	// question 对话类 run 都开放(含编辑重发的 retry),与 bash/生图一致;只有 compact 不开放。
@@ -116,11 +123,9 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	if r.cfg.Sandbox != nil {
 		execDefaultTimeout = r.cfg.Sandbox.ExecDefaultTimeout
 	}
+	systemPrompt := r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled)
 	files := map[string][]byte{
-		"models.json":      modelsJSON,
-		"settings.json":    settingsJSON,
-		"system-prompt.md": []byte(r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled)),
-		"xlyra.json":       xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration),
+		"settings.json": settingsJSON,
 	}
 	for name, data := range files {
 		path := filepath.Join(agentDir, name)
@@ -137,15 +142,24 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 			return prep, fmt.Errorf("runner: 收紧 %s 权限: %w", name, err)
 		}
 	}
-	// AGENTS.md 只认 PI_CODING_AGENT_DIR 下这一份;为空时删除,防止上一次 run
-	// 的残留继续生效。隔离模式下文件属会话身份,root 仍可删除。
-	agentsPath := filepath.Join(agentDir, "AGENTS.md")
-	if snap.AgentsMD != "" {
-		if err := writeAtomicFile(agentsPath, []byte(snap.AgentsMD), identity); err != nil {
-			return prep, fmt.Errorf("runner: 写入 AGENTS.md: %w", err)
-		}
-	} else if err := os.Remove(agentsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return prep, fmt.Errorf("runner: 清理 AGENTS.md: %w", err)
+	// 运行配置只经环境传递;apiKey 仍是令牌文件命令引用,令牌明文不进环境。
+	var modelsFile struct {
+		Providers map[string]json.RawMessage `json:"providers"`
+	}
+	if err := json.Unmarshal(modelsJSON, &modelsFile); err != nil {
+		return prep, fmt.Errorf("runner: 解析 provider 配置: %w", err)
+	}
+	runConfigJSON, err := json.Marshal(struct {
+		Runtime  json.RawMessage `json:"runtime"`
+		Provider json.RawMessage `json:"provider"`
+		AgentsMD string          `json:"agentsMd"`
+	}{
+		Runtime:  xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration),
+		Provider: modelsFile.Providers[piconfig.ProviderName],
+		AgentsMD: snap.AgentsMD,
+	})
+	if err != nil {
+		return prep, fmt.Errorf("runner: 生成运行配置: %w", err)
 	}
 
 	piDir := r.cfg.Store.PiDir(ar.sessionID)
@@ -160,7 +174,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	if extension := strings.TrimSpace(r.cfg.ExtensionPath); extension != "" {
 		args = append(args, "-e", extension)
 	}
-	args = append(args, "--system-prompt", filepath.Join(agentDir, "system-prompt.md"))
+	args = append(args, "--system-prompt", systemPrompt)
 	if tools := r.runTools(prep.executor != nil, imageEnabled, questionEnabled); tools != "" {
 		args = append(args, "--tools", tools)
 	}
@@ -181,7 +195,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	}
 	env := piconfig.Env(piconfig.EnvInput{
 		Home: home, AgentDir: agentDir, SessionDir: piDir,
-		Path: r.cfg.PathEnv,
+		Path: r.cfg.PathEnv, RunConfig: string(runConfigJSON),
 	})
 	// 进程生命周期不由停止信号直接取消:Stop 要先 Abort 等待 agent_settled,
 	// 提前 Kill 会把取消变成 agent_error;收尾统一走 cleanup 的 Close。

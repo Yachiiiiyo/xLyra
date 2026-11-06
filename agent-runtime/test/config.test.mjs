@@ -6,19 +6,19 @@ import { readFileOrNull, resultText, startCase, steps, toolEnd, uiRequest, waitF
 
 const TIMEOUT = { timeout: 30000 };
 
-// 配置读不到 / 解析失败 / 值非法,都要按 ask 行为执行(write 触发审批)
+// 运行配置 runtime 缺失 / 不是对象 / 值非法,都要按 ask 行为执行(write 触发审批)
 const cases = [
-	{ name: "config-missing", title: "配置缺失", xlyraJson: undefined, permissionMode: undefined },
-	{ name: "config-invalid", title: "配置内容非法", xlyraJson: "{not-valid-json", permissionMode: "not-written" },
-	{ name: "config-yolo", title: "permissionMode 非法值 yolo", xlyraJson: '{"permissionMode":"yolo"}', permissionMode: "not-written" },
+	{ name: "config-missing", title: "配置缺失", runtimeJson: undefined, permissionMode: undefined },
+	{ name: "config-invalid", title: "配置内容非法", runtimeJson: "{not-valid-json", permissionMode: "not-written" },
+	{ name: "config-yolo", title: "permissionMode 非法值 yolo", runtimeJson: '{"permissionMode":"yolo"}', permissionMode: "not-written" },
 ];
 
-for (const { name, title, xlyraJson, permissionMode } of cases) {
+for (const { name, title, runtimeJson, permissionMode } of cases) {
 	test(`配置(${title})按 ask 处理:write 触发审批,拒绝后不写入`, TIMEOUT, async () => {
 		const c = await startCase({
 			name,
 			permissionMode,
-			xlyraJson,
+			runtimeJson,
 			script: steps([
 				{ toolCalls: [{ id: "call_c1", name: "write", args: { path: "out/cfg.txt", content: "CFG" } }] },
 			]),

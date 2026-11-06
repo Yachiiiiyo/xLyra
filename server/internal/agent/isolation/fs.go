@@ -27,7 +27,7 @@ const (
 //
 //	<sessionDir>/            root:root   0711
 //	<sessionDir>/pi          PiUID:GID   0700
-//	<sessionDir>/pi-agent    PiUID:GID   0700(令牌、models.json;ExecUID 不可读)
+//	<sessionDir>/pi-agent    PiUID:GID   0700(令牌、settings.json;ExecUID 不可读)
 //	<sessionDir>/workspace   PiUID:GID   02770(setgid,组可读写)
 //	<sessionDir>/meta.json   root:root   0600(存在时修正)
 //
@@ -85,8 +85,8 @@ func PrepareDataDir(dataDir string) error {
 	return ensureRootDir(filepath.Join(dataDir, "sessions"))
 }
 
-// ChownFile 把 runner 以 root 写出的文件(models.json、令牌、xlyra.json、
-// 系统提示等)移交给会话身份:PiUID:GID、0600。Lchown 不跟随符号链接;
+// ChownFile 把 runner 以 root 写出的文件(令牌、settings.json 等)移交给会话身份:
+// PiUID:GID、0600。Lchown 不跟随符号链接;
 // 符号链接本身不改权限位(chmod 会作用于链接目标)。
 func ChownFile(path string, id Identity) error {
 	if os.Geteuid() != 0 {

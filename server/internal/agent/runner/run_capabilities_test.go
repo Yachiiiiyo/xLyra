@@ -64,6 +64,31 @@ func lastStartArgs(t *testing.T, record string) []string {
 	return args
 }
 
+// lastRunConfigJSON 返回最近一次 Pi 启动环境里的 XLYRA_RUN_CONFIG。
+func lastRunConfigJSON(t *testing.T, record string) string {
+	t.Helper()
+	var raw string
+	for _, item := range readRecords(t, record) {
+		if item["kind"] != "start" {
+			continue
+		}
+		envValues, ok := item["env"].([]any)
+		if !ok {
+			t.Fatalf("环境记录类型 = %T", item["env"])
+		}
+		for _, value := range envValues {
+			entry, _ := value.(string)
+			if key, val, ok := strings.Cut(entry, "="); ok && key == "XLYRA_RUN_CONFIG" {
+				raw = val
+			}
+		}
+	}
+	if raw == "" {
+		t.Fatal("启动环境缺少 XLYRA_RUN_CONFIG")
+	}
+	return raw
+}
+
 // skillArgs 收集启动参数里全部 --skill 的值。
 func skillArgs(args []string) []string {
 	var result []string
@@ -156,8 +181,9 @@ func TestPrepareSkillsArgs(t *testing.T) {
 	})
 }
 
-// TestPrepareAgentsMD:非空写入 PI_CODING_AGENT_DIR/AGENTS.md(0600);清空后
-// 文件被删除;enable_agents_md=false 时加 --no-context-files 且文件同样清掉。
+// TestPrepareAgentsMD:非空内容经 XLYRA_RUN_CONFIG.agentsMd 传递,不再写文件;
+// 清空与 enable_agents_md=false 时传空串,后者仍加 --no-context-files。
+// 同一会话的下一轮还会清理旧版本留下的四个配置文件。
 func TestPrepareAgentsMD(t *testing.T) {
 	store := capabilities.NewStore(filepath.Join(t.TempDir(), "caps"))
 	if err := store.PutAgentsMD("# 全局人格\n保持简洁。"); err != nil {
@@ -167,21 +193,32 @@ func TestPrepareAgentsMD(t *testing.T) {
 	result := sendBasic(t, env)
 	collectRun(t, env.runs, result.SessionID).wait(t)
 
-	content, exists := piAgentFile(t, env, result.SessionID, "AGENTS.md")
-	if !exists || content != "# 全局人格\n保持简洁。" {
-		t.Fatalf("AGENTS.md = %q exists=%v", content, exists)
+	var runConfig struct {
+		AgentsMD string `json:"agentsMd"`
 	}
-	info, err := os.Stat(filepath.Join(env.store.Dir(result.SessionID), "pi-agent", "AGENTS.md"))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("AGENTS.md 权限异常: %v %v", info.Mode().Perm(), err)
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+		t.Fatal(err)
+	}
+	if runConfig.AgentsMD != "# 全局人格\n保持简洁。" {
+		t.Fatalf("agentsMd = %q", runConfig.AgentsMD)
+	}
+	if _, exists := piAgentFile(t, env, result.SessionID, "AGENTS.md"); exists {
+		t.Fatal("AGENTS.md 不应再落盘")
 	}
 	if slices.Contains(lastStartArgs(t, env.record), "--no-context-files") {
 		t.Fatal("启用 AGENTS.md 时不应带 --no-context-files")
 	}
 
-	// 清空人格:同会话下一次 run 应删除上一次的残留文件。
+	// 清空人格并预置旧版本残留:下一次 run 应传空串并清掉全部旧文件。
 	if err := store.DeleteAgentsMD(); err != nil {
 		t.Fatal(err)
+	}
+	agentDir := filepath.Join(env.store.Dir(result.SessionID), "pi-agent")
+	legacyFiles := []string{"models.json", "system-prompt.md", "xlyra.json", "AGENTS.md"}
+	for _, name := range legacyFiles {
+		if err := os.WriteFile(filepath.Join(agentDir, name), []byte("legacy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	second, err := env.runner.Send(context.Background(), SendInput{
 		SessionID: result.SessionID, Content: "第二轮", Model: "mock-1",
@@ -190,11 +227,19 @@ func TestPrepareAgentsMD(t *testing.T) {
 		t.Fatal(err)
 	}
 	collectRun(t, env.runs, second.SessionID).wait(t)
-	if _, exists := piAgentFile(t, env, result.SessionID, "AGENTS.md"); exists {
-		t.Fatal("清空后 AGENTS.md 应被删除")
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+		t.Fatal(err)
+	}
+	if runConfig.AgentsMD != "" {
+		t.Fatalf("清空后 agentsMd = %q", runConfig.AgentsMD)
+	}
+	for _, name := range legacyFiles {
+		if _, exists := piAgentFile(t, env, result.SessionID, name); exists {
+			t.Errorf("旧文件 %s 应被清理", name)
+		}
 	}
 
-	// 总开关关闭:即使磁盘上有 AGENTS.md 也不加载,并显式禁用上下文文件发现。
+	// 总开关关闭:即使能力存储里有 AGENTS.md 也不加载,并显式禁用上下文文件发现。
 	if err := store.PutAgentsMD("# 又写了"); err != nil {
 		t.Fatal(err)
 	}
@@ -213,13 +258,19 @@ func TestPrepareAgentsMD(t *testing.T) {
 	if !slices.Contains(lastStartArgs(t, env.record), "--no-context-files") {
 		t.Fatal("关闭 AGENTS.md 时应带 --no-context-files")
 	}
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+		t.Fatal(err)
+	}
+	if runConfig.AgentsMD != "" {
+		t.Fatalf("关闭后 agentsMd = %q", runConfig.AgentsMD)
+	}
 	if _, exists := piAgentFile(t, env, result.SessionID, "AGENTS.md"); exists {
 		t.Fatal("关闭 AGENTS.md 时 pi-agent 下不应有该文件")
 	}
 }
 
 // TestPrepareContextSettings:水位线与窗口换算进 settings.json 的
-// compaction.reserveTokens 与 models.json 的 contextWindow。
+// compaction.reserveTokens 与运行配置 provider 的 contextWindow。
 func TestPrepareContextSettings(t *testing.T) {
 	store := capabilities.NewStore(t.TempDir())
 	if _, err := store.PutConfig(capabilities.Config{
@@ -250,19 +301,21 @@ func TestPrepareContextSettings(t *testing.T) {
 		t.Fatalf("compaction = %+v, want enabled+20000", settingsFile.Compaction)
 	}
 
-	models, _ := piAgentFile(t, env, result.SessionID, "models.json")
-	var modelsFile struct {
-		Providers map[string]struct {
+	var runConfig struct {
+		Provider struct {
 			Models []struct {
 				ContextWindow int `json:"contextWindow"`
 				MaxTokens     int `json:"maxTokens"`
 			} `json:"models"`
-		} `json:"providers"`
+		} `json:"provider"`
 	}
-	if err := json.Unmarshal([]byte(models), &modelsFile); err != nil {
-		t.Fatalf("解析 models.json: %v\n%s", err, models)
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+		t.Fatalf("解析运行配置: %v", err)
 	}
-	entry := modelsFile.Providers["xlyra"].Models[0]
+	if len(runConfig.Provider.Models) != 1 {
+		t.Fatalf("provider 模型数 = %d, want 1", len(runConfig.Provider.Models))
+	}
+	entry := runConfig.Provider.Models[0]
 	if entry.ContextWindow != 100000 {
 		t.Fatalf("contextWindow = %d, want 100000", entry.ContextWindow)
 	}
@@ -306,30 +359,41 @@ func TestPrepareDefaultsWithoutCapabilities(t *testing.T) {
 		t.Fatalf("reserveTokens = %d, want 20000", settingsFile.Compaction.ReserveTokens)
 	}
 
-	models, _ := piAgentFile(t, env, result.SessionID, "models.json")
-	if !strings.Contains(models, `"contextWindow": 200000`) {
-		t.Fatalf("models.json 缺少默认窗口 200000:\n%s", models)
+	var runConfig struct {
+		Provider struct {
+			Models []struct {
+				ContextWindow int `json:"contextWindow"`
+			} `json:"models"`
+		} `json:"provider"`
+		AgentsMD string `json:"agentsMd"`
+	}
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+		t.Fatal(err)
+	}
+	if len(runConfig.Provider.Models) != 1 || runConfig.Provider.Models[0].ContextWindow != 200000 {
+		t.Fatalf("provider 缺少默认窗口 200000: %+v", runConfig.Provider.Models)
+	}
+	if runConfig.AgentsMD != "" {
+		t.Fatalf("默认 agentsMd = %q, want 空", runConfig.AgentsMD)
 	}
 }
 
-// readRootsFromXlyra 解析指定会话 pi-agent/xlyra.json 的 readRoots 与权限模式。
-func readRootsFromXlyra(t *testing.T, env *testEnv, sessionID string) (string, []string) {
+// readRootsFromRunConfig 解析最近一次启动环境的 runtime.readRoots 与权限模式。
+func readRootsFromRunConfig(t *testing.T, env *testEnv) (string, []string) {
 	t.Helper()
-	data, exists := piAgentFile(t, env, sessionID, "xlyra.json")
-	if !exists {
-		t.Fatal("xlyra.json 不存在")
-	}
 	var parsed struct {
-		PermissionMode string   `json:"permissionMode"`
-		ReadRoots      []string `json:"readRoots"`
+		Runtime struct {
+			PermissionMode string   `json:"permissionMode"`
+			ReadRoots      []string `json:"readRoots"`
+		} `json:"runtime"`
 	}
-	if err := json.Unmarshal([]byte(data), &parsed); err != nil {
-		t.Fatalf("解析 xlyra.json: %v\n%s", err, data)
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &parsed); err != nil {
+		t.Fatalf("解析运行配置: %v", err)
 	}
-	return parsed.PermissionMode, parsed.ReadRoots
+	return parsed.Runtime.PermissionMode, parsed.Runtime.ReadRoots
 }
 
-// TestXlyraReadRoots:xlyra.json 的 readRoots 与快照 SkillDirs 同步:有技能时含
+// TestXlyraReadRoots:runtime.readRoots 与快照 SkillDirs 同步:有技能时含
 // 全部启用目录(按名排序),停用/总开关关闭后不再含;未装配能力源或快照失败时
 // 为空数组(而非 null),权限模式断言不受影响。
 func TestXlyraReadRoots(t *testing.T) {
@@ -343,7 +407,7 @@ func TestXlyraReadRoots(t *testing.T) {
 	collectRun(t, env.runs, result.SessionID).wait(t)
 
 	// 有技能:readRoots 含两个启用目录,权限模式仍是默认 ask
-	mode, got := readRootsFromXlyra(t, env, result.SessionID)
+	mode, got := readRootsFromRunConfig(t, env)
 	want := []string{
 		filepath.Join(capsRoot, "skills", "alpha"),
 		filepath.Join(capsRoot, "skills", "beta"),
@@ -364,7 +428,7 @@ func TestXlyraReadRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	collectRun(t, env.runs, second.SessionID).wait(t)
-	mode, got = readRootsFromXlyra(t, env, result.SessionID)
+	mode, got = readRootsFromRunConfig(t, env)
 	if mode != "ask" || !slices.Equal(got, want[:1]) {
 		t.Fatalf("停用 beta 后 readRoots = (%q, %v), want (%q, %v)", mode, got, "ask", want[:1])
 	}
@@ -380,7 +444,7 @@ func TestXlyraReadRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	collectRun(t, env.runs, third.SessionID).wait(t)
-	if _, got = readRootsFromXlyra(t, env, result.SessionID); len(got) != 0 {
+	if _, got = readRootsFromRunConfig(t, env); len(got) != 0 {
 		t.Fatalf("总开关关闭后 readRoots 应为空: %v", got)
 	}
 
@@ -388,7 +452,7 @@ func TestXlyraReadRoots(t *testing.T) {
 	bareEnv := newTestEnv(t, "basic")
 	bare := sendBasic(t, bareEnv)
 	collectRun(t, bareEnv.runs, bare.SessionID).wait(t)
-	if _, got = readRootsFromXlyra(t, bareEnv, bare.SessionID); len(got) != 0 {
+	if _, got = readRootsFromRunConfig(t, bareEnv); len(got) != 0 {
 		t.Fatalf("未装配能力源时 readRoots 应为空: %v", got)
 	}
 
@@ -399,7 +463,7 @@ func TestXlyraReadRoots(t *testing.T) {
 	if events[len(events)-1].Type != "agent_done" {
 		t.Fatalf("快照失败不应阻断 run,终态 = %s", events[len(events)-1].Type)
 	}
-	if _, got = readRootsFromXlyra(t, failEnv, failed.SessionID); len(got) != 0 {
+	if _, got = readRootsFromRunConfig(t, failEnv); len(got) != 0 {
 		t.Fatalf("快照失败时 readRoots 应为空: %v", got)
 	}
 }

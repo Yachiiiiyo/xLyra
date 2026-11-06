@@ -462,21 +462,21 @@ test("协议错误: 非法 JSON/提前断开/error/超大单行 均为错误结�
 // 契约:未启用时 Go 侧不会把 bash 放进 --tools。为了验证“扩展对 bash 什么都没做”,
 // 这里故意把 bash 放进 --tools,让 Pi 内置的本地 bash 执行。
 const DISABLED_VARIANTS = [
-	{ name: "bash-config-missing", title: "bash 配置缺失", xlyraJson: '{"permissionMode":"full"}' },
+	{ name: "bash-config-missing", title: "bash 配置缺失", runtimeJson: '{"permissionMode":"full"}' },
 	{
 		name: "bash-disabled-false",
 		title: "enabled:false",
-		xlyraJson: '{"permissionMode":"full","bash":{"enabled":false,"socket":"/tmp/xlyra-exec.sock"}}',
+		runtimeJson: '{"permissionMode":"full","bash":{"enabled":false,"socket":"/tmp/xlyra-exec.sock"}}',
 	},
 	{
 		name: "bash-enabled-string",
 		title: "enabled 为字符串 \"true\"",
-		xlyraJson: '{"permissionMode":"full","bash":{"enabled":"true","socket":"/tmp/xlyra-exec.sock"}}',
+		runtimeJson: '{"permissionMode":"full","bash":{"enabled":"true","socket":"/tmp/xlyra-exec.sock"}}',
 	},
 	{
 		name: "bash-socket-relative",
 		title: "socket 为相对路径",
-		xlyraJson: '{"permissionMode":"full","bash":{"enabled":true,"socket":"rel/exec.sock"}}',
+		runtimeJson: '{"permissionMode":"full","bash":{"enabled":true,"socket":"rel/exec.sock"}}',
 	},
 ];
 
@@ -484,7 +484,7 @@ for (const variant of DISABLED_VARIANTS) {
 	test(`配置未启用(${variant.title}):bash 不审批不拦截,内置本地 bash 行为不变`, TIMEOUT, async () => {
 		const c = await startCase({
 			name: variant.name,
-			xlyraJson: variant.xlyraJson,
+			runtimeJson: variant.runtimeJson,
 			bash: true, // 仅把 bash 放进 --tools,不写 bash 配置
 			script: steps([
 				{ toolCalls: [{ id: "call_u1", name: "bash", args: { command: "echo UNCONFIGURED-OK > unconfigured.txt" } }] },

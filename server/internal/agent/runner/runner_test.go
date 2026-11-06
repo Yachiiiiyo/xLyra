@@ -1149,10 +1149,10 @@ func TestEnvironmentAndLogSafety(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	// 令牌改走文件轮换:环境只有 7 个键,不含 XLYRA_TOKEN。
+	// 令牌改走文件轮换:环境有 8 个键,不含 XLYRA_TOKEN;运行配置单独注入。
 	want := []string{
 		"HOME", "PATH", "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR",
-		"PI_OFFLINE", "PI_SKIP_VERSION_CHECK", "PI_TELEMETRY",
+		"PI_OFFLINE", "PI_SKIP_VERSION_CHECK", "PI_TELEMETRY", "XLYRA_RUN_CONFIG",
 	}
 	sort.Strings(want)
 	if !reflect.DeepEqual(keys, want) {
@@ -1171,6 +1171,17 @@ func TestEnvironmentAndLogSafety(t *testing.T) {
 	if len(tokens) < 2 || string(data) != tokens[len(tokens)-1] {
 		t.Errorf("令牌文件内容 = %q, want 最近签发令牌 %q(共签发 %d 次)", string(data), tokens[len(tokens)-1], len(tokens))
 	}
+	var runConfig struct {
+		Provider struct {
+			APIKey string `json:"apiKey"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+		t.Fatalf("解析运行配置: %v", err)
+	}
+	if want := "!cat '" + tokenPath + "'"; runConfig.Provider.APIKey != want {
+		t.Errorf("provider.apiKey = %q, want %q", runConfig.Provider.APIKey, want)
+	}
 	if info, err := os.Stat(tokenPath); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("令牌文件权限异常: %v %v", info.Mode().Perm(), err)
 	}
@@ -1179,6 +1190,9 @@ func TestEnvironmentAndLogSafety(t *testing.T) {
 	for _, token := range tokens {
 		if strings.Contains(logText, token) {
 			t.Fatalf("日志包含令牌 %q", token)
+		}
+		if strings.Contains(lastRunConfigJSON(t, env.record), token) {
+			t.Fatalf("运行配置包含令牌 %q", token)
 		}
 	}
 	args := recordArgs(t, start)
@@ -1190,14 +1204,9 @@ func TestEnvironmentAndLogSafety(t *testing.T) {
 	if value := flagArg(args, "-e"); value != env.extension {
 		t.Errorf("-e 参数 = %q, want %q", value, env.extension)
 	}
-	promptPath := flagArg(args, "--system-prompt")
-	if promptPath == "" {
-		t.Fatalf("--system-prompt 缺少值: %v", args)
-	}
-	if prompt, err := os.ReadFile(promptPath); err != nil || len(prompt) == 0 {
-		t.Errorf("系统提示文件异常: %q %v", string(prompt), err)
-	} else if info, statErr := os.Stat(promptPath); statErr != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("系统提示文件权限异常: %v %v", info.Mode().Perm(), statErr)
+	prompt := flagArg(args, "--system-prompt")
+	if prompt == "" || !strings.Contains(prompt, defaultSystemPrompt) {
+		t.Fatalf("--system-prompt 应直接携带系统提示文本: %q", prompt)
 	}
 	tools := flagArg(args, "--tools")
 	for _, expected := range []string{"write", "edit"} {
@@ -1307,39 +1316,37 @@ func TestTokenRenewal(t *testing.T) {
 	}
 }
 
-// TestXlyraRunConfigFiles:xlyra.json 的权限模式取自会话 meta,非 full 一律 ask。
-func TestXlyraRunConfigFiles(t *testing.T) {
+// TestXlyraRunConfigEnv:runtime 权限模式取自会话 meta,经环境传递,非 full 一律 ask。
+func TestXlyraRunConfigEnv(t *testing.T) {
 	env := newTestEnv(t, "basic")
+	runtimeJSON := func() string {
+		t.Helper()
+		var runConfig struct {
+			Runtime json.RawMessage `json:"runtime"`
+		}
+		if err := json.Unmarshal([]byte(lastRunConfigJSON(t, env.record)), &runConfig); err != nil {
+			t.Fatal(err)
+		}
+		return string(runConfig.Runtime)
+	}
 
 	full, err := env.runner.Send(context.Background(), SendInput{Content: "full 模式", Model: "mock-1", PermissionMode: "full"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	collectRun(t, env.runs, full.SessionID).wait(t)
-	path := filepath.Join(env.store.Dir(full.SessionID), "pi-agent", "xlyra.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != `{"permissionMode":"full","readRoots":[]}` {
-		t.Fatalf("full 模式 xlyra.json = %s", data)
-	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("xlyra.json 权限异常: %v %v", info.Mode().Perm(), err)
+	if got := runtimeJSON(); got != `{"permissionMode":"full","readRoots":[]}` {
+		t.Fatalf("full 模式 runtime = %s", got)
 	}
 
-	// 默认(未传 PermissionMode)写 ask。
+	// 默认(未传 PermissionMode)传 ask。
 	ask, err := env.runner.Send(context.Background(), SendInput{Content: "默认模式", Model: "mock-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	collectRun(t, env.runs, ask.SessionID).wait(t)
-	data, err = os.ReadFile(filepath.Join(env.store.Dir(ask.SessionID), "pi-agent", "xlyra.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != `{"permissionMode":"ask","readRoots":[]}` {
-		t.Fatalf("默认模式 xlyra.json = %s", data)
+	if got := runtimeJSON(); got != `{"permissionMode":"ask","readRoots":[]}` {
+		t.Fatalf("默认模式 runtime = %s", got)
 	}
 
 	// meta 里的非法值也归一到 ask:Compact 直接用 meta.PermissionMode。
@@ -1356,12 +1363,8 @@ func TestXlyraRunConfigFiles(t *testing.T) {
 	if _, err := env.runner.Compact(context.Background(), meta.ID, "mock-1"); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(filepath.Join(env.store.Dir(meta.ID), "pi-agent", "xlyra.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != `{"permissionMode":"ask","readRoots":[]}` {
-		t.Fatalf("非法模式 xlyra.json = %s", data)
+	if got := runtimeJSON(); got != `{"permissionMode":"ask","readRoots":[]}` {
+		t.Fatalf("非法模式 runtime = %s", got)
 	}
 
 	// 归一化函数的边界:大小写敏感,非 full 一律 ask。
@@ -1384,23 +1387,16 @@ func TestImageGenerationRunConfig(t *testing.T) {
 	}
 	collectRun(t, env.runs, first.SessionID).wait(t)
 	agentDir := filepath.Join(env.store.Dir(first.SessionID), "pi-agent")
-	data, err := os.ReadFile(filepath.Join(agentDir, "xlyra.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), "imageGeneration") {
-		t.Fatalf("未配置生图时 xlyra.json = %s", data)
+	data := lastRunConfigJSON(t, env.record)
+	if strings.Contains(data, "imageGeneration") {
+		t.Fatalf("未配置生图时运行配置 = %s", data)
 	}
 	records := readRecords(t, env.record)
 	args := recordArgs(t, records[0])
 	if strings.Contains(flagArg(args, "--tools"), "image_generation") {
 		t.Fatalf("未配置生图时白名单错误: %v", args)
 	}
-	prompt, err := os.ReadFile(filepath.Join(agentDir, "system-prompt.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(prompt), "image_generation") {
+	if strings.Contains(flagArg(args, "--system-prompt"), "image_generation") {
 		t.Fatal("未配置生图时系统提示不应包含工具说明")
 	}
 
@@ -1410,23 +1406,22 @@ func TestImageGenerationRunConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	collectRun(t, env.runs, second.SessionID).wait(t)
-	data, err = os.ReadFile(filepath.Join(agentDir, "xlyra.json"))
-	if err != nil {
+	data = lastRunConfigJSON(t, env.record)
+	var runConfig struct {
+		Runtime struct {
+			ImageGeneration struct {
+				Enabled        bool   `json:"enabled"`
+				Endpoint       string `json:"endpoint"`
+				TokenFile      string `json:"tokenFile"`
+				MaxBytes       int    `json:"maxBytes"`
+				TimeoutSeconds int    `json:"timeoutSeconds"`
+			} `json:"imageGeneration"`
+		} `json:"runtime"`
+	}
+	if err := json.Unmarshal([]byte(data), &runConfig); err != nil {
 		t.Fatal(err)
 	}
-	var config struct {
-		ImageGeneration struct {
-			Enabled        bool   `json:"enabled"`
-			Endpoint       string `json:"endpoint"`
-			TokenFile      string `json:"tokenFile"`
-			MaxBytes       int    `json:"maxBytes"`
-			TimeoutSeconds int    `json:"timeoutSeconds"`
-		} `json:"imageGeneration"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		t.Fatal(err)
-	}
-	image := config.ImageGeneration
+	image := runConfig.Runtime.ImageGeneration
 	if !image.Enabled || image.Endpoint != "http://127.0.0.1:18080/internal/agent-llm/images" || image.TokenFile != filepath.Join(agentDir, "token") || image.MaxBytes != 33554432 || image.TimeoutSeconds != 660 {
 		t.Fatalf("第二个 run 生图配置错误: %+v", image)
 	}
@@ -1441,11 +1436,7 @@ func TestImageGenerationRunConfig(t *testing.T) {
 	if !strings.Contains(","+flagArg(args, "--tools")+",", ",image_generation,") {
 		t.Fatalf("配置生图后白名单错误: %v", args)
 	}
-	prompt, err = os.ReadFile(filepath.Join(agentDir, "system-prompt.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(prompt), "image_generation") {
+	if !strings.Contains(flagArg(args, "--system-prompt"), "image_generation") {
 		t.Fatal("配置生图后系统提示缺少工具说明")
 	}
 }

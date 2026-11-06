@@ -300,14 +300,19 @@ func TestRunnerIsolationIntegration(t *testing.T) {
 			t.Fatalf("%s 应为 %d:%d %o,得到 %d:%d %o", name, identityA.PiUID, identityA.GID, wantPerm, uid, gid, perm)
 		}
 	}
-	// runner 写出的文件归会话身份;令牌 0600;meta.json 仍归 root。
-	for _, name := range []string{"token", "models.json", "settings.json", "xlyra.json", "system-prompt.md", "record.jsonl"} {
+	// runner 写出的文件归会话身份;令牌与 settings.json 0600;meta.json 仍归 root。
+	for _, name := range []string{"token", "settings.json", "record.jsonl"} {
 		uid, gid, perm := statOwner(t, filepath.Join(agentDir, name))
 		if uid != identityA.PiUID || gid != identityA.GID {
 			t.Fatalf("pi-agent/%s 应归 %d:%d,得到 %d:%d", name, identityA.PiUID, identityA.GID, uid, gid)
 		}
 		if name == "token" && perm != 0o600 {
 			t.Fatalf("token 权限 = %o, want 600", perm)
+		}
+	}
+	for _, name := range []string{"models.json", "system-prompt.md", "xlyra.json", "AGENTS.md"} {
+		if _, err := os.Stat(filepath.Join(agentDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("pi-agent/%s 不应存在: %v", name, err)
 		}
 	}
 	uid, _, perm := statOwner(t, filepath.Join(env.store.Dir(sessionA), "meta.json"))

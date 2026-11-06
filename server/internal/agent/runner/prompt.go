@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// defaultSystemPrompt 是 xLyra Agent 的默认系统提示,经 --system-prompt <文件>
+// defaultSystemPrompt 是 xLyra Agent 的默认系统提示,经 --system-prompt <文本>
 // 传给 Pi。07 §二 B 实测它只替换默认前缀(身份句、工具说明),技能列表与 AGENTS.md
 // 仍会保留,这正是我们要的(不用扩展的 before_agent_start 整段替换)。
 // Config.SystemPrompt 可整体覆盖,为空时用本默认(P4 接设置)。
@@ -63,7 +63,7 @@ func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGene
 	return text
 }
 
-// permissionModeValue 归一化写进 xlyra.json 的权限模式:只有 full 视为放行,
+// permissionModeValue 归一化写进运行配置 runtime 的权限模式:只有 full 视为放行,
 // 其余(含空、非法值)一律 ask,由扩展按 ask 走审批。
 func permissionModeValue(mode string) string {
 	if mode == "full" {

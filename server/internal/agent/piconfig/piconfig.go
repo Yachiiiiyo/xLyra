@@ -1,4 +1,4 @@
-// Package piconfig 生成内置 Pi 子进程的运行配置:models.json、settings.json 与一份
+// Package piconfig 生成内置 Pi 子进程的运行配置:provider、settings.json 与一份
 // 清空重建的环境变量。全部是纯函数:不做 IO、不读取 os.Environ、不依赖 Pi 进程。
 // 字段写法的权威来源:Pi docs(models.md / settings.md / environment-variables.md)
 // 与 docs/pi-agent-integration/07-poc-results.md §三.2(baseUrl)、§八(真实网关)、
@@ -15,13 +15,17 @@ import (
 	"strings"
 )
 
-// ProviderName 是 models.json 里唯一 provider 的名字,settings.json 的
+// ProviderName 是运行配置里唯一 provider 的名字,settings.json 的
 // defaultProvider 与之对应。
 const ProviderName = "xlyra"
 
-// TokenEnvName 承载绑定 run 的短期令牌。models.json 的 apiKey 通过
+// TokenEnvName 承载绑定 run 的短期令牌。provider 的 apiKey 可通过
 // "$XLYRA_TOKEN" 引用它:令牌明文只出现在子进程环境里,绝不写进配置文件。
 const TokenEnvName = "XLYRA_TOKEN"
+
+// RunConfigEnvName 承载单次 run 的 provider、运行时权限配置与 AGENTS.md 文本。
+// 其中的 apiKey 只引用令牌文件,不包含令牌明文。
+const RunConfigEnvName = "XLYRA_RUN_CONFIG"
 
 // RunIDHeader 随每个 LLM 请求发往网关,供按 run 归属用量(07 §八.3.5)。
 const RunIDHeader = "x-xlyra-run-id"
@@ -78,7 +82,7 @@ var (
 	piThinkingLevels    = []string{LevelOff, LevelMinimal, LevelLow, LevelMedium, LevelHigh, LevelXHigh, LevelMax}
 )
 
-// Caps 描述一个模型经 xLyra 网关的实测能力(07 §九),驱动 models.json 的
+// Caps 描述一个模型经 xLyra 网关的实测能力(07 §九),驱动 provider 模型的
 // reasoning / input / compat / thinkingLevelMap 与可回传前端的推理等级。
 type Caps struct {
 	// Vendor: anthropic/openai/xai/google/deepseek/glm/kimi/qwen/unknown。
@@ -100,7 +104,7 @@ type Caps struct {
 	// ThinkingFormat 对应 compat.thinkingFormat:GLM 用 zai、Qwen 用 qwen
 	// (07 §九.1)。
 	ThinkingFormat string
-	// ThinkingLevelMap 非空时写入 models.json,声明 xhigh/max 的真实取值。
+	// ThinkingLevelMap 非空时写入 provider 模型,声明 xhigh/max 的真实取值。
 	ThinkingLevelMap map[string]string
 }
 
@@ -208,7 +212,7 @@ func clampThinkingLevel(preferred string, caps Caps) string {
 	return LevelHigh
 }
 
-// ModelsInput 描述一次 run 需要的 models.json 输入。
+// ModelsInput 描述一次 run 需要的 provider 模型配置输入。
 type ModelsInput struct {
 	ModelID string
 	// Protocol 见 SetProtocolResolver 的返回值。
@@ -226,7 +230,7 @@ type ModelsInput struct {
 	ContextWindow int
 }
 
-// models.json 的落地结构。字段名与 Pi 源码的 ModelDefinitionSchema /
+// 原 models.json 的结构。字段名与 Pi 源码的 ModelDefinitionSchema /
 // ProviderConfigSchema(dist/core/model-config.d.ts)一致;compat 与
 // thinkingLevelMap 未出现在官方 .md 里,以该 schema 与 PoC 实测为准。
 type modelsFile struct {
@@ -278,11 +282,11 @@ const (
 	defaultMaxTokens      = 8192
 )
 
-// ModelsJSON 生成 models.json:单 provider("xlyra")、单模型。baseUrl 按
-// 07 §三.2/§八:openai-* 两种协议带 /v1,anthropic-messages 不带;apiKey 按
-// TokenFile 取 "!cat <文件>" 命令或环境变量引用;按 CapsFor 写入 reasoning:false /
-// input 不含 image / compat / thinkingLevelMap。文件落在 PI_CODING_AGENT_DIR 下,
-// 由调用方写盘。
+// ModelsJSON 生成原 models.json 形态的 JSON:单 provider("xlyra")、单模型。
+// 调用方提取 providers.xlyra 放进 XLYRA_RUN_CONFIG,不再写 models.json。
+// baseUrl 按 07 §三.2/§八:openai-* 两种协议带 /v1,anthropic-messages 不带;
+// apiKey 按 TokenFile 取 "!cat <文件>" 命令或环境变量引用;按 CapsFor 写入
+// reasoning:false / input 不含 image / compat / thinkingLevelMap。
 func ModelsJSON(in ModelsInput) ([]byte, error) {
 	modelID := strings.TrimSpace(in.ModelID)
 	if modelID == "" {
@@ -420,7 +424,7 @@ func SettingsJSON(in SettingsInput) ([]byte, error) {
 type EnvInput struct {
 	// Home 是会话目录(HOME)。
 	Home string
-	// AgentDir 是 PI_CODING_AGENT_DIR,models.json / settings.json 从这里读。
+	// AgentDir 是 PI_CODING_AGENT_DIR,settings.json 从这里读。
 	AgentDir string
 	// SessionDir 是 PI_CODING_AGENT_SESSION_DIR。
 	SessionDir string
@@ -429,12 +433,15 @@ type EnvInput struct {
 	// Token 是绑定该 run 的短期令牌;非空时经 XLYRA_TOKEN 传入(旧模式,
 	// 令牌随进程启动固定)。令牌改走文件轮换时应留空,Env 即不含 XLYRA_TOKEN。
 	Token string
+	// RunConfig 是单次 run 的 JSON 配置;非空时经 XLYRA_RUN_CONFIG 传入。
+	RunConfig string
 }
 
 // Env 构造 Pi 子进程的完整环境:PATH、HOME、PI_CODING_AGENT_DIR、
 // PI_CODING_AGENT_SESSION_DIR、PI_OFFLINE=1、PI_SKIP_VERSION_CHECK=1、
-// PI_TELEMETRY=0,Token 非空时再加 XLYRA_TOKEN(共 8 个键);宿主进程的其余
-// 环境(含密钥)一律不继承(07 §二 T1:这样启动实测零出站连接)。
+// PI_TELEMETRY=0,Token / RunConfig 非空时分别再加 XLYRA_TOKEN /
+// XLYRA_RUN_CONFIG(最多共 9 个键);宿主进程的其余环境(含密钥)一律不继承
+// (07 §二 T1:这样启动实测零出站连接)。
 func Env(in EnvInput) []string {
 	env := []string{
 		"PATH=" + in.Path,
@@ -447,6 +454,9 @@ func Env(in EnvInput) []string {
 	}
 	if in.Token != "" {
 		env = append(env, TokenEnvName+"="+in.Token)
+	}
+	if in.RunConfig != "" {
+		env = append(env, RunConfigEnvName+"="+in.RunConfig)
 	}
 	return env
 }

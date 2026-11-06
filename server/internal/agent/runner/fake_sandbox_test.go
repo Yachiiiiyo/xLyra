@@ -30,15 +30,21 @@ func (p *fakePi) runSandboxProbes() {
 	if p.sandboxStarted != "" {
 		_ = os.WriteFile(p.sandboxStarted, []byte("started"), 0o600)
 	}
-	config, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), "xlyra.json"))
-	if err == nil {
+	rawConfig := os.Getenv("XLYRA_RUN_CONFIG")
+	if rawConfig == "" {
+		result["config_error"] = "XLYRA_RUN_CONFIG is empty"
+	} else {
 		var parsed struct {
-			Bash struct {
-				Socket string `json:"socket"`
-			} `json:"bash"`
+			Runtime struct {
+				Bash struct {
+					Socket string `json:"socket"`
+				} `json:"bash"`
+			} `json:"runtime"`
 		}
-		if json.Unmarshal(config, &parsed) == nil {
-			stdout, stderr, code, err := fakeExecRequest(parsed.Bash.Socket, p.sandboxCommand)
+		if err := json.Unmarshal([]byte(rawConfig), &parsed); err != nil {
+			result["config_error"] = err.Error()
+		} else {
+			stdout, stderr, code, err := fakeExecRequest(parsed.Runtime.Bash.Socket, p.sandboxCommand)
 			result["exec_stdout"] = stdout
 			result["exec_stderr"] = stderr
 			result["exec_code"] = code
@@ -47,8 +53,6 @@ func (p *fakePi) runSandboxProbes() {
 				result["exec_uid"] = uid
 			}
 		}
-	} else {
-		result["config_error"] = err.Error()
 	}
 	encoded, _ := json.Marshal(result)
 	_ = os.WriteFile(p.sandboxResult, encoded, 0o600)

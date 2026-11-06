@@ -5,8 +5,6 @@ package runner
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -297,26 +295,21 @@ func TestQuestionCleanupCancelsPending(t *testing.T) {
 // --tools 与系统提示含 question;只有 compact 不含。
 func TestQuestionToolAndPromptForConversationRuns(t *testing.T) {
 	env := newTestEnv(t, "basic")
-	promptPath := func(sessionID string) string {
-		return filepath.Join(env.store.Dir(sessionID), "pi-agent", "system-prompt.md")
-	}
-	check := func(stage, sessionID string, want bool) {
+	check := func(stage string, want bool) {
 		t.Helper()
-		tools := strings.Split(flagArg(lastStartArgs(t, env.record), "--tools"), ",")
+		args := lastStartArgs(t, env.record)
+		tools := strings.Split(flagArg(args, "--tools"), ",")
 		if slices.Contains(tools, "question") != want {
 			t.Errorf("%s: --tools = %v, want question=%v", stage, tools, want)
 		}
-		prompt, err := os.ReadFile(promptPath(sessionID))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(prompt), "question 工具") != want {
+		prompt := flagArg(args, "--system-prompt")
+		if strings.Contains(prompt, "question 工具") != want {
 			t.Errorf("%s: 系统提示 question 说明 = %v, want %v", stage, !want, want)
 		}
 	}
 	first := sendBasic(t, env)
 	collectRun(t, env.runs, first.SessionID).wait(t)
-	check("send", first.SessionID, true)
+	check("send", true)
 
 	if _, err := env.runner.Retry(context.Background(), RetryInput{
 		SessionID: first.SessionID, MessageID: first.MessageID, Content: "重发", Model: "mock-1",
@@ -324,14 +317,14 @@ func TestQuestionToolAndPromptForConversationRuns(t *testing.T) {
 		t.Fatalf("Retry: %v", err)
 	}
 	collectRun(t, env.runs, first.SessionID).wait(t)
-	check("retry", first.SessionID, true)
+	check("retry", true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := env.runner.Compact(ctx, first.SessionID, "mock-1"); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
-	check("compact", first.SessionID, false)
+	check("compact", false)
 }
 
 func withQuestionTimeout(timeout time.Duration) envOption {
