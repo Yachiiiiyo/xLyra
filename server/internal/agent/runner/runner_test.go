@@ -592,7 +592,7 @@ func newTestEnv(t *testing.T, fixture string, options ...envOption) *testEnv {
 		GatewayBaseURL: "http://127.0.0.1:18080", Command: os.Args[0], PathEnv: os.Getenv("PATH"),
 		ExtensionPath: extension,
 		RunTimeout:    10 * time.Second, AbortGrace: 500 * time.Millisecond,
-		Logger: slog.New(slog.NewTextHandler(logs, nil)),
+		Logger: slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
 	for _, option := range options {
 		option(&cfg, &args)

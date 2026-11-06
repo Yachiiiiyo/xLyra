@@ -377,7 +377,7 @@ func TestQuestionRunTimeoutPausedWhileWaiting(t *testing.T) {
 
 // TestApprovalRunTimeoutPausedWhileWaiting:审批等待同样不消耗运行总时限。
 func TestApprovalRunTimeoutPausedWhileWaiting(t *testing.T) {
-	env := newTestEnv(t, "approval-allow", withDelay(5), withRunTimeout(300*time.Millisecond))
+	env := newTestEnv(t, "approval-allow", withDelay(5), withGrowSession(), withRunTimeout(300*time.Millisecond))
 	result := sendBasic(t, env)
 	c := collectRun(t, env.runs, result.SessionID)
 	escalation := waitForEvent(t, c, "escalation_request")
