@@ -95,9 +95,9 @@ func gatewayConnectPort(raw string) (int, error) {
 	}
 }
 
-// runTools 按普通 run 已就绪的能力追加 bash、生图与提问工具;compact 都不传,
+// runTools 按普通 run 已就绪的能力追加 bash、生图、提问与文件摘要工具;compact 都不传,
 // question 对话类 run 都传(含 retry),compact 不传。
-func (r *Runner) runTools(executorReady, imageGeneration, question bool) string {
+func (r *Runner) runTools(executorReady, imageGeneration, question, fastTask bool) string {
 	tools := r.tools
 	if executorReady {
 		tools += ",bash"
@@ -107,6 +107,9 @@ func (r *Runner) runTools(executorReady, imageGeneration, question bool) string 
 	}
 	if question {
 		tools += ",question"
+	}
+	if fastTask {
+		tools += ",summarize_file"
 	}
 	return tools
 }

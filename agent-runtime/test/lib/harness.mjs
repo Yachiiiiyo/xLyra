@@ -53,6 +53,7 @@ function providerConfig(baseUrl) {
  *                  - true:只把 bash 加进 --tools,不写 bash 配置(测“未启用”行为)
  *                  socket 一般用 caseDirs.root 下的路径(套接字由假执行器监听)
  *   imageGeneration 生图配置对象或 (caseDirs) => 对象,自动补 enabled:true 与白名单
+ *   fastTask      快速任务配置对象或 (caseDirs) => 对象,自动补 enabled:true 与白名单
  *   agentsMd       写入 XLYRA_RUN_CONFIG.agentsMd 的 AGENTS.md 文本
  *   systemPrompt   非空时以 --system-prompt <文本> 传给 Pi
  *   prepare        ({root, home, agentDir, sessionDir, cwd, outside}) => 额外布置
@@ -60,7 +61,7 @@ function providerConfig(baseUrl) {
  *
  * 目录布局:root/{home,agent,sessions,cwd,outside};outside/secret.txt 是工作目录外的诱饵文件。
  */
-export async function startCase({ name, permissionMode, runtimeJson, readRoots, bash, imageGeneration, agentsMd, systemPrompt, prepare, script }) {
+export async function startCase({ name, permissionMode, runtimeJson, readRoots, bash, imageGeneration, fastTask, agentsMd, systemPrompt, prepare, script }) {
 	const root = mkdtempSync(join(tmpdir(), `xlyra-ext-${name}-`));
 	const home = join(root, "home");
 	const agentDir = join(root, "agent");
@@ -86,6 +87,8 @@ export async function startCase({ name, permissionMode, runtimeJson, readRoots, 
 		typeof imageGeneration === "function"
 			? imageGeneration({ root, home, agentDir, sessionDir, cwd, outside })
 			: imageGeneration;
+	const fastTaskOptions =
+		typeof fastTask === "function" ? fastTask({ root, home, agentDir, sessionDir, cwd, outside }) : fastTask;
 	let runtimeConfig;
 	if (runtimeJson !== undefined) {
 		try {
@@ -93,7 +96,7 @@ export async function startCase({ name, permissionMode, runtimeJson, readRoots, 
 		} catch {
 			runtimeConfig = runtimeJson; // 非法 JSON 原样作为字符串,扩展应按缺失处理
 		}
-	} else if (permissionMode !== undefined || roots !== undefined || bashOptions !== undefined || imageOptions !== undefined) {
+	} else if (permissionMode !== undefined || roots !== undefined || bashOptions !== undefined || imageOptions !== undefined || fastTaskOptions !== undefined) {
 		const config = { permissionMode: permissionMode !== undefined ? permissionMode : "ask" };
 		if (roots !== undefined) config.readRoots = roots;
 		// bash:true 只把工具加进 --tools(不写配置),用于验证“未启用不覆盖”
@@ -101,6 +104,7 @@ export async function startCase({ name, permissionMode, runtimeJson, readRoots, 
 			config.bash = { enabled: true, ...bashOptions };
 		}
 		if (imageOptions !== undefined) config.imageGeneration = { enabled: true, ...imageOptions };
+		if (fastTaskOptions !== undefined) config.fastTask = { enabled: true, ...fastTaskOptions };
 		runtimeConfig = config;
 	}
 	if (runtimeConfig !== undefined) runConfig.runtime = runtimeConfig;
@@ -109,6 +113,7 @@ export async function startCase({ name, permissionMode, runtimeJson, readRoots, 
 	const tools = ["read", "ls", "grep", "find", "write", "edit", "question"];
 	if (bash !== undefined) tools.push("bash");
 	if (imageGeneration !== undefined) tools.push("image_generation");
+	if (fastTask !== undefined) tools.push("summarize_file");
 
 	const client = startRpc({
 		entry: PI_ENTRY,

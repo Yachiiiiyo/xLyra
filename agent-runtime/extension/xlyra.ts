@@ -22,10 +22,13 @@
 //   bash/生图)、provider(原样注册为 xlyra provider)、agentsMd(经 context files 注入)。
 //
 // 沙箱 bash 不新增其他命令工具;生图配置有效时额外注册 image_generation,不触发审批。
+// 快速任务配置(runtime.fastTask)有效时额外注册 summarize_file:把文件前 256 KiB 经本 run
+// 令牌交给后端的快速模型提炼摘要,结果只回文本;同样不触发审批,但走路径约束(工作目录或
+// readRoots 内,execute 内再做一次 realpath 防御校验),不修改任何文件。
 // question 工具无条件注册:通过 editor 对话向用户提多选题,结果回给模型;不触发审批、
 // 不受路径约束,每个进程最多 5 次调用,取消/异常一律返回「用户取消了提问」。
 // reason 里只回显模型的原始输入,不回显 realpath 之后的宿主机真实路径。
-import { lstatSync, readFileSync, realpathSync, readlinkSync } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, readlinkSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
@@ -44,10 +47,10 @@ import {
 
 type PermissionMode = "ask" | "auto" | "full";
 
-const PATH_TOOLS = new Set(["read", "ls", "grep", "find", "write", "edit"]);
+const PATH_TOOLS = new Set(["read", "ls", "grep", "find", "write", "edit", "summarize_file"]);
 const APPROVAL_TOOLS = new Set(["write", "edit"]);
-// read/ls/grep/find 只读类工具:工作目录之外还可访问 readRoots(技能目录)
-const READONLY_PATH_TOOLS = new Set(["read", "ls", "grep", "find"]);
+// read/ls/grep/find/summarize_file 只读类工具:工作目录之外还可访问 readRoots(技能目录)
+const READONLY_PATH_TOOLS = new Set(["read", "ls", "grep", "find", "summarize_file"]);
 // ls/grep/find 未显式给 path 时作用于 cwd,天然在工作目录内
 const OPTIONAL_PATH_TOOLS = new Set(["ls", "grep", "find"]);
 const MAX_LINK_DEPTH = 64;
@@ -459,8 +462,8 @@ function imageError(text: string): AgentToolResult<unknown> {
 	return { content: [{ type: "text", text }], details: undefined, isError: true };
 }
 
-async function readBoundedBody(response: Response, maxBytes: number): Promise<Buffer> {
-	if (!response.body) throw new Error("生图服务响应格式错误");
+async function readBoundedBody(response: Response, maxBytes: number, label = "生图服务响应"): Promise<Buffer> {
+	if (!response.body) throw new Error(`${label}格式错误`);
 	const reader = response.body.getReader();
 	const chunks: Buffer[] = [];
 	let total = 0;
@@ -468,7 +471,7 @@ async function readBoundedBody(response: Response, maxBytes: number): Promise<Bu
 		const { done, value } = await reader.read();
 		if (done) break;
 		total += value.byteLength;
-		if (total > maxBytes) throw new Error("生图服务响应超过大小限制");
+		if (total > maxBytes) throw new Error(`${label}超过大小限制`);
 		chunks.push(Buffer.from(value));
 	}
 	return Buffer.concat(chunks, total);
@@ -608,6 +611,159 @@ function registerImageGeneration(pi: ExtensionAPI, config: ImageGenerationConfig
 			sequence += 1;
 			return executeImageGeneration(config, params, signal, sequence);
 		},
+	});
+}
+
+// ---- 文件摘要工具:经本 run 令牌把文件前 256 KiB 交给快速模型 ----
+type FastTaskConfig = { endpoint: string; tokenFile: string; model: string; maxBytes: number; timeoutSeconds: number };
+type FastTaskInput = { path: string; focus?: string };
+
+// 只提供文件的前 256 KiB,更大的文件截断
+const SUMMARIZE_READ_BYTES = 256 * 1024;
+// 前 8 KiB 含 NUL 视为二进制文件
+const SUMMARIZE_SNIFF_BYTES = 8 * 1024;
+const SUMMARIZE_FOOTER = "(由快速模型摘要,可能遗漏细节;需要精确内容请用 read。)";
+
+// 读不到、解析失败、字段非法 → 一律按未启用(fail-closed),校验方式同生图,
+// 额外要求 model 为非空字符串(由 Go 侧在运行配置里下发)。
+function loadFastTaskConfig(): FastTaskConfig | null {
+	try {
+		const parsed = loadRuntimeConfig();
+		if (!parsed) return null;
+		const fastTask = parsed.fastTask;
+		if (!fastTask || typeof fastTask !== "object") return null;
+		const record = fastTask as Record<string, unknown>;
+		if (record.enabled !== true || typeof record.endpoint !== "string") return null;
+		const endpoint = new URL(record.endpoint);
+		if ((endpoint.protocol !== "http:" && endpoint.protocol !== "https:") || endpoint.hostname === "") return null;
+		if (typeof record.tokenFile !== "string" || !path.isAbsolute(record.tokenFile)) return null;
+		if (typeof record.model !== "string" || record.model.trim() === "") return null;
+		if (typeof record.maxBytes !== "number" || !Number.isInteger(record.maxBytes) || record.maxBytes <= 0) return null;
+		if (typeof record.timeoutSeconds !== "number" || !Number.isInteger(record.timeoutSeconds) || record.timeoutSeconds <= 0) return null;
+		return { endpoint: endpoint.toString(), tokenFile: record.tokenFile, model: record.model, maxBytes: record.maxBytes, timeoutSeconds: record.timeoutSeconds };
+	} catch {
+		return null;
+	}
+}
+
+function fastTaskError(text: string): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text }], details: undefined, isError: true };
+}
+
+async function executeSummarizeFile(
+	config: FastTaskConfig,
+	readRoots: string[],
+	params: FastTaskInput,
+	signal: AbortSignal | undefined,
+	cwd: string | undefined,
+): Promise<AgentToolResult<unknown>> {
+	const controller = new AbortController();
+	let cancelled = false;
+	let timedOut = false;
+	const onAbort = () => {
+		cancelled = true;
+		controller.abort();
+	};
+	if (signal?.aborted) return fastTaskError("文件摘要已取消");
+	signal?.addEventListener("abort", onAbort, { once: true });
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, config.timeoutSeconds * 1000);
+	try {
+		// 防御性校验(tool_call 层已查过一次):realpath + isInside,
+		// 只允许工作目录与 readRoots,realpath 之后的真实路径不得逃逸。
+		const dir = cwd || process.cwd();
+		const realCwd = realpathSync(dir);
+		const abs = toAbsolute(params.path, dir);
+		if (abs === null) return fastTaskError("路径不在会话工作目录内,已拒绝访问");
+		const target = resolveReal(abs);
+		if (!isInside(realCwd, target) && !readRoots.some((root) => isInside(root, target))) {
+			return fastTaskError("路径不在会话工作目录内,已拒绝访问");
+		}
+
+		let content: string;
+		let truncated = false;
+		let totalBytes = 0;
+		try {
+			const fd = openSync(target, "r");
+			try {
+				const stats = fstatSync(fd);
+				if (!stats.isFile()) return fastTaskError("不是普通文件,无法摘要");
+				const want = Math.min(stats.size, SUMMARIZE_READ_BYTES);
+				const buffer = Buffer.alloc(want);
+				const read = readSync(fd, buffer, 0, want, 0);
+				const data = buffer.subarray(0, read);
+				// 前 8 KiB 含 NUL 视为二进制,不把内容发给后端
+				if (data.subarray(0, Math.min(read, SUMMARIZE_SNIFF_BYTES)).includes(0)) {
+					return fastTaskError("不是文本文件,无法摘要");
+				}
+				truncated = stats.size > read;
+				totalBytes = stats.size;
+				content = data.toString("utf8");
+			} finally {
+				closeSync(fd);
+			}
+		} catch {
+			return fastTaskError("无法读取文件");
+		}
+
+		let instruction = `用户关注点:${params.focus?.trim() || "概括文件的主要内容与结构"}`;
+		if (truncated) instruction += `;文件共 ${totalBytes} 字节,仅提供前 256 KiB`;
+
+		// 令牌每次现读,带 AbortSignal 与超时,响应有界读取
+		const token = readFileSync(config.tokenFile, "utf8").trim();
+		if (!token) return fastTaskError("文件摘要令牌不可用");
+		const response = await fetch(config.endpoint, {
+			method: "POST",
+			headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+			body: JSON.stringify({ model: config.model, instruction, content, path: params.path }),
+			signal: controller.signal,
+		});
+		const raw = await readBoundedBody(response, config.maxBytes, "摘要服务响应");
+		let payload: any;
+		try {
+			payload = JSON.parse(raw.toString("utf8"));
+		} catch {
+			return fastTaskError("摘要服务响应格式错误");
+		}
+		const message = typeof payload?.error?.message === "string" ? payload.error.message : "";
+		if (!response.ok) {
+			if (response.status === 429) return fastTaskError("本次对话的文件摘要次数已达上限");
+			if (response.status === 400) return fastTaskError(`文件摘要参数错误:${message || "请求参数无效"}`);
+			if (response.status === 502) return fastTaskError("文件摘要失败:上游服务失败");
+			return fastTaskError("文件摘要失败:服务暂时不可用");
+		}
+		const summary = payload?.data?.text;
+		if (typeof summary !== "string" || summary.trim() === "") return fastTaskError("摘要服务未返回内容");
+		const lines = [summary.trimEnd()];
+		if (truncated) lines.push("注:文件较大,仅摘要了前 256 KiB 内容。");
+		lines.push(SUMMARIZE_FOOTER);
+		return { content: [{ type: "text", text: lines.join("\n") }] };
+	} catch (error) {
+		if (cancelled || signal?.aborted) return fastTaskError("文件摘要已取消");
+		if (timedOut) return fastTaskError("文件摘要请求超时");
+		if (error instanceof Error && /^(摘要服务响应)/.test(error.message)) return fastTaskError(error.message);
+		return fastTaskError("文件摘要请求失败:网络或服务不可用");
+	} finally {
+		clearTimeout(timer);
+		signal?.removeEventListener("abort", onAbort);
+	}
+}
+
+function registerSummarizeFile(pi: ExtensionAPI, config: FastTaskConfig, readRoots: string[]) {
+	pi.registerTool({
+		name: "summarize_file",
+		label: "Summarize file",
+		description:
+			"Summarize the content of a file with a fast model. Use it for large files (logs, long documents) when you only need the gist or a specific question answered. The summary comes from a smaller model and may miss details: use `read` or `grep` when you need exact content, and never rely on it to make edits.",
+		parameters: Type.Object({
+			path: Type.String({ minLength: 1, description: "Path of the file to summarize" }),
+			focus: Type.Optional(Type.String({ maxLength: 500, description: "What you want to learn from the file (max 500 chars)" })),
+		}),
+		executionMode: "parallel",
+		execute: async (_toolCallId, params, signal, _onUpdate, ctx) =>
+			executeSummarizeFile(config, readRoots, params, signal, ctx?.cwd),
 	});
 }
 
@@ -782,8 +938,10 @@ export default function (pi: ExtensionAPI) {
 	const readRoots = loadReadRoots();
 	const bashConfig = loadBashConfig();
 	const imageGenerationConfig = loadImageGenerationConfig();
+	const fastTaskConfig = loadFastTaskConfig();
 
 	if (imageGenerationConfig !== null) registerImageGeneration(pi, imageGenerationConfig);
+	if (fastTaskConfig !== null) registerSummarizeFile(pi, fastTaskConfig, readRoots);
 	registerQuestion(pi);
 
 	if (bashConfig !== null) {

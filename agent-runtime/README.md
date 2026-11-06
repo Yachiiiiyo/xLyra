@@ -35,9 +35,10 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 
 `extension/xlyra.ts` 是随镜像发布的小型 Pi 扩展,由 Go 以 `pi -e <扩展路径>` 加载,承担三件事:
 
-1. **路径约束**(第二层防线):`read/ls/grep/find` 只能访问会话工作目录(Pi 进程 cwd)之内、或 `readRoots`(启用技能的目录,Go 侧随 `XLYRA_RUN_CONFIG` 的 `runtime` 字段传入)之内的路径;`write/edit` 仍只允许工作目录之内,即使目标位于 `readRoots` 内也拒绝。绝对路径、`~` 前缀、`..` 逃逸、指向允许范围外的符号链接(含悬空链接)一律拒绝;`full` 模式也不放宽。路径约束对 bash 不适用(沙箱边界由执行器的 Landlock 负责)。
+1. **路径约束**(第二层防线):`read/ls/grep/find/summarize_file` 只能访问会话工作目录(Pi 进程 cwd)之内、或 `readRoots`(启用技能的目录,Go 侧随 `XLYRA_RUN_CONFIG` 的 `runtime` 字段传入)之内的路径;`write/edit` 仍只允许工作目录之内,即使目标位于 `readRoots` 内也拒绝。绝对路径、`~` 前缀、`..` 逃逸、指向允许范围外的符号链接(含悬空链接)一律拒绝;`full` 模式也不放宽。路径约束对 bash 不适用(沙箱边界由执行器的 Landlock 负责)。
 2. **审批**:`ask` 下 `write`/`edit`/`bash` 执行前经 `extension_ui_request(confirm)` 向用户确认,拒绝/取消/超时都不执行;`auto`(「替我审批」)下工作目录内的 `write`/`edit` 直接放行,`bash` 逐条发审批并由 Go 分类器自动决定;`full` 下跳过 `write`/`edit` 审批,`bash` 仅高危命令需用户确认(见下节)。三种模式的路径约束都照常生效。
 3. **沙箱 bash**:配置启用时覆盖内置 `bash`,命令一律经主进程的执行器在专用 uid + Landlock + seccomp + rlimit 下执行,失败即关闭、绝不回退本地(见下节)。
+4. **文件摘要**:`runtime.fastTask` 启用时注册 `summarize_file`(见下节)。
 
 运行配置由 Go 经环境变量 `XLYRA_RUN_CONFIG` 传入(单个 JSON,不再落盘),顶层字段:`runtime`(权限与工具配置,见下)、`provider`(原样注册为 `xlyra` provider,即原 models.json 的 `providers.xlyra`)、`agentsMd`(AGENTS.md 文本,以 context file 注入)。`runtime` 的内容:
 
@@ -45,7 +46,8 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 {
 	"permissionMode": "ask",
 	"readRoots": ["/data/agent/skills/pdf-tools"],
-	"bash": { "enabled": true, "socket": "/run/xlyra/agent/exec.sock", "defaultTimeout": 120, "maxTimeout": 600 }
+	"bash": { "enabled": true, "socket": "/run/xlyra/agent/exec.sock", "defaultTimeout": 120, "maxTimeout": 600 },
+	"fastTask": { "enabled": true, "endpoint": "https://gateway/internal/agent-llm/fast-task", "tokenFile": "/run/xlyra/agent/token", "model": "qwen3-0.6b", "maxBytes": 1048576, "timeoutSeconds": 120 }
 }
 ```
 
@@ -53,9 +55,10 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 - `auto`:工作目录内的 write/edit 直接放行,bash 逐条发审批,由 Go 侧分类器自动允许或拒绝;
 - `full`:跳过 write/edit 审批,bash 仅命中高危模式时确认;路径约束照常生效;
 - `readRoots`:只读根(启用技能的目录绝对路径),只放宽 `read/ls/grep/find`;每项须是存在的绝对路径且深度 ≥ 2 段,非法项忽略,缺省为 `[]`;
-- `bash`:沙箱执行器配置,见下节。
+- `bash`:沙箱执行器配置,见下节;
+- `fastTask`:快速模型文件摘要配置,见下节。
 
-读不到、解析失败、值非法一律按 `ask` 处理(fail-closed);Go 每次 run 重建该变量并拉起新进程,扩展只在启动时读一次。除启用沙箱 bash 时用同名工具覆盖内置 bash 外不注册新工具、不改系统提示,工具白名单仍由 Go 的 `--tools` 控制。
+读不到、解析失败、值非法一律按 `ask` 处理(fail-closed);Go 每次 run 重建该变量并拉起新进程,扩展只在启动时读一次。除启用沙箱 bash 时用同名工具覆盖内置 bash、fastTask 启用时注册 `summarize_file` 外不注册新工具、不改系统提示,工具白名单仍由 Go 的 `--tools` 控制。
 
 ### bash 与沙箱执行器协议
 
@@ -79,6 +82,15 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 - `permissionMode=auto`:每条命令都审批,title `允许执行命令?`,message 结构与 ask 相同;命中高危模式时 `note` 追加 `;命中规则: <规则名>`,未命中不追加。审批由 Go 分类器自动决定,命中规则的 bash 不调模型、直接拒绝;
 - `permissionMode=full`:仅命中高危模式时用 title `这条命令有风险,允许执行?` 审批,message 同上,`note` 追加 `;命中规则: <规则名>`。高危规则(rm 递归删除高危目标、mkfs、dd 写块设备、重定向写磁盘设备、fork 炸弹、下载脚本直接执行、递归改根目录权限、关机/重启、git 强推、sudo、覆盖 SSH/shell 配置)是**尽力而为的提示层,不是安全边界**,真正的边界是执行器的 Landlock/seccomp/rlimit;
 - 拒绝时工具返回 `用户拒绝了本次命令`;路径约束对 bash 不适用(沙箱的 Landlock 才是边界),`cwd` 原样使用 Pi 给的工作目录。
+
+### 文件摘要工具 summarize_file
+
+`runtime.fastTask` 启用时,扩展注册 `summarize_file`:把文件前 256 KiB(更大则截断,并在 instruction 里注明「文件共 N 字节,仅提供前 256 KiB」)发给后端 `POST <endpoint>`(即 `/internal/agent-llm/fast-task`,令牌每次现读 tokenFile,带 AbortSignal 与超时,响应有界读取 maxBytes),由快速模型提炼摘要,工具结果只回摘要文本与尾部说明「(由快速模型摘要,可能遗漏细节;需要精确内容请用 read。)」。
+
+- 参数:`path`(必填)、`focus`(可选,≤500 字,想从文件里了解什么);模型由后端下发在 `fastTask.model`,扩展原样携带;
+- 路径约束与 `read` 一致(工作目录或 readRoots 内,符号链接逃逸拒绝),execute 内再做 realpath 防御性校验;不触发审批、不修改任何文件;
+- 防御:目标必须是普通文件;前 8 KiB 含 NUL 视为二进制,返回「不是文本文件,无法摘要」;后端 429/400/502 映射为简短中文原因,不泄露内部细节;
+- 配置校验与生图一致:endpoint 必须 http/https、tokenFile 绝对路径、数值合法、model 非空,非法一律按未启用(fail-closed),此时 Go 侧也不会把 `summarize_file` 放进 `--tools`。
 
 ### 运行测试
 

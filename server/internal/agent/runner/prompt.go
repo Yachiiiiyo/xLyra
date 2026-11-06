@@ -63,8 +63,15 @@ const questionSystemPrompt = `
 
 需要用户在几个方案里做选择、或缺少无法自行判断的关键信息时,调用 question 工具提问,不要猜测。一次最多 4 个问题、每题 2–6 个选项;用户总能选择「其他」并输入文字,所以不必自己加「其他」。能自己合理判断的事不要问;每轮提问次数有限。收到回答后继续完成任务。`
 
+const fastTaskSystemPrompt = `
+
+可以使用 summarize_file 工具让较小的快速模型先读一遍文件,只把摘要返回给你:
+- 适合文件很大(日志、长文档、大文件)且你只需要了解大意或回答一个具体问题的情况,用 focus 说明想了解什么。
+- 需要逐字内容、要编辑或修改文件、或文件不大时,直接用 read。
+- 摘要来自较小的模型,可能遗漏细节;据此得出的关键结论请用 read 或 grep 复核。`
+
 // systemPrompt 返回本次 run 使用的系统提示文本。
-func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGeneration, question bool) string {
+func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGeneration, question, fastTask bool) string {
 	text := strings.TrimSpace(r.cfg.SystemPrompt)
 	if text == "" {
 		text = defaultSystemPrompt
@@ -77,6 +84,9 @@ func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGene
 	}
 	if question {
 		text += questionSystemPrompt
+	}
+	if fastTask {
+		text += fastTaskSystemPrompt
 	}
 	text += "\n\n# 环境\n- 当前日期:" + time.Now().Format("2006-01-02")
 	return text

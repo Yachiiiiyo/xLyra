@@ -47,13 +47,16 @@ func (h *Handler) SetImageGenerationOptions(maxCalls int, totalTimeout time.Dura
 	h.imageTotalTimeout = totalTimeout
 }
 
+// clearImageRun 在 run 结束时清掉该 run 的生图与快速任务计数。
 func (h *Handler) clearImageRun(sessionID, runID string) {
-	if h.imageTracker == nil {
-		return
+	for _, tracker := range []*agentImageTracker{h.imageTracker, h.fastTaskTracker} {
+		if tracker == nil {
+			continue
+		}
+		tracker.mu.Lock()
+		delete(tracker.runs, sessionID+"\x00"+runID)
+		tracker.mu.Unlock()
 	}
-	h.imageTracker.mu.Lock()
-	delete(h.imageTracker.runs, sessionID+"\x00"+runID)
-	h.imageTracker.mu.Unlock()
 }
 
 func (h *Handler) Images(w http.ResponseWriter, r *http.Request) {

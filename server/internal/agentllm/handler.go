@@ -44,6 +44,7 @@ type Handler struct {
 	imageMaxCalls     int
 	imageTotalTimeout time.Duration
 	imageTracker      *agentImageTracker
+	fastTaskTracker   *agentImageTracker
 }
 
 type agentRepository interface {
@@ -81,7 +82,7 @@ type credentialResponse struct {
 }
 
 func NewHandler(logger *slog.Logger, db *store.Store, gatewayHandler gateway.Handler) Handler {
-	return Handler{logger: logger, repo: store.NewAgentRepository(db.DB()), gateway: gatewayHandler, now: time.Now, imageTracker: newAgentImageTracker()}
+	return Handler{logger: logger, repo: store.NewAgentRepository(db.DB()), gateway: gatewayHandler, now: time.Now, imageTracker: newAgentImageTracker(), fastTaskTracker: newAgentImageTracker()}
 }
 
 func (h Handler) Credential(w http.ResponseWriter, r *http.Request) {

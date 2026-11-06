@@ -1,3 +1,4 @@
+import type { AgentSession } from '@/features/agent/api/agent'
 import type { QueryClient } from '@tanstack/react-query'
 import {
   fetchAgentAvailableModels,
@@ -25,6 +26,17 @@ export function agentSessionsQueryOptions() {
     initialData: () => readQuerySnapshot<Awaited<ReturnType<typeof listAgentSessions>>>('agent:sessions'),
     initialDataUpdatedAt: 0,
   }
+}
+
+/** session_title 事件:就地更新会话列表缓存里对应会话的标题。
+ * 缓存缺失或找不到会话时不动(终态后列本来就会 invalidate 重拉);
+ * 标题为空串时忽略。不与终态刷新冲突:终态 invalidate 会重新拉列表,这里
+ * 只是把运行中提前到达的新标题即时反映到侧栏。 */
+export function applySessionTitleToCache(queryClient: QueryClient, sessionId: string, title: string): void {
+  if (!title.trim()) return
+  queryClient.setQueryData<AgentSession[]>(['agent', 'sessions'], (sessions) =>
+    sessions?.map((session) => (session.session_id === sessionId ? { ...session, title } : session)),
+  )
 }
 
 export function agentModelMemoryQueryOptions() {

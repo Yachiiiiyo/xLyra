@@ -84,6 +84,12 @@ type Config struct {
 	Classify func(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error)
 	// ClassifierModel 返回分类器专用模型;为空时使用本次 run 的模型。
 	ClassifierModel func() string
+	// FastModel 返回快速模型(文件摘要、会话标题);为空时使用本次 run 的模型。
+	FastModel func() string
+	// FastTasks 为 true 时普通 run 注册 summarize_file 工具(经 fast-task 端点调快速模型)。
+	FastTasks bool
+	// CompleteText 调用内部文本补全生成会话标题等;nil 时跳过 AI 标题。
+	CompleteText func(ctx context.Context, sessionID, model, system, user string, maxTokens int, kind string) (string, error)
 	// ExtensionPath 是 xLyra 扩展(xLyra.ts)的绝对路径,经 -e 传给 Pi;
 	// Tools 含 write/edit 时必填且文件必须存在(Health fail-closed)。
 	ExtensionPath string
@@ -133,6 +139,9 @@ type Runner struct {
 	running int
 	queue   []*activeRun
 	wg      sync.WaitGroup
+	// bgCtx 是不随单个 run 结束的后台任务(会话标题)的父 ctx,Shutdown 时取消。
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
 }
 
 type activeRun struct {
@@ -172,6 +181,7 @@ type activeRun struct {
 	resolved         map[string]resolveOptions   // 已回写的审批决定:决定先于落盘到达时由 recordEscalation 补写
 	pendingQuestions map[string]session.Question // 未回答的提问,id 即 extension_ui_request 的 id
 	questionTimers   map[string]*time.Timer      // 提问超时自动跳过的计时器,与 pendingQuestions 同生命周期
+	titleCancel      context.CancelFunc          // 首条消息的标题生成;仅显式停止 run 时取消,正常结束仍允许落盘
 	waitChanged      chan struct{}               // 未决审批/提问集合变化的信号(容量 1),事件循环据此暂停/恢复运行总时限
 	startedAt        time.Time
 	lastEntryID      string // 事件循环里最后见到的 Pi 条目 id,作 run 失败记录的锚点
@@ -341,11 +351,14 @@ func New(cfg Config) (*Runner, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	bgCtx, bgCancel := context.WithCancel(context.Background())
 	return &Runner{
-		cfg:    cfg,
-		logger: cfg.Logger,
-		tools:  strings.Join(cfg.Tools, ","),
-		active: map[string]*activeRun{},
+		cfg:      cfg,
+		logger:   cfg.Logger,
+		tools:    strings.Join(cfg.Tools, ","),
+		active:   map[string]*activeRun{},
+		bgCtx:    bgCtx,
+		bgCancel: bgCancel,
 	}, nil
 }
 
@@ -444,9 +457,14 @@ func (r *Runner) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	ar.setRun(ar.run)
 	messageID := uuid.NewString()
 	ar.turnID = messageID
-	if err := r.appendUserMessage(meta.ID, messageID, in.Content, spec, metaAttachments, len(meta.Messages) == 0); err != nil {
+	first := len(meta.Messages) == 0
+	if err := r.appendUserMessage(meta.ID, messageID, in.Content, spec, metaAttachments, first); err != nil {
 		r.cleanup(ar, nil)
 		return fail(err)
+	}
+	// 必须在 start 之前:此时本 run 的 r.wg 计数尚未释放,标题 goroutine 才能安全 Add。
+	if first && ar.kind == "send" {
+		r.maybeGenerateTitle(ar, in.Content)
 	}
 	r.start(ar, spec)
 	return SendResult{SessionID: meta.ID, MessageID: messageID, RunID: ar.runID}, nil
@@ -657,6 +675,9 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	r.closed = true
+	if r.bgCancel != nil {
+		r.bgCancel()
+	}
 	runs := make([]*activeRun, 0, len(r.active))
 	for _, ar := range r.active {
 		runs = append(runs, ar)
@@ -944,7 +965,11 @@ func (r *Runner) stopRun(ar *activeRun) {
 	for id := range ar.pending {
 		ids = append(ids, id)
 	}
+	titleCancel := ar.titleCancel
 	ar.stateMu.Unlock()
+	if titleCancel != nil {
+		titleCancel()
+	}
 	for _, id := range ids {
 		r.resolveEscalation(ar, id, resolveOptions{granted: false})
 	}

@@ -14,6 +14,15 @@ import (
 	"xlyra/server/internal/gateway"
 )
 
+// CompletionStatusError 表示网关对内部补全返回了非 2xx 状态,供调用方区分限流等情况。
+type CompletionStatusError struct {
+	Status int
+}
+
+func (e *CompletionStatusError) Error() string {
+	return fmt.Sprintf("agentllm: chat completions returned status %d", e.Status)
+}
+
 // CompleteText 在进程内调用网关完成一次非流式文本补全,供输入预测使用;
 // 鉴权与请求记录仍走内部 Agent API key,审计 kind 保持 prompt_suggestion。
 func (h Handler) CompleteText(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error) {
@@ -56,7 +65,7 @@ func (h Handler) CompleteTextKind(ctx context.Context, sessionID, model, system,
 	}
 	next(rec, req)
 	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("agentllm: chat completions returned status %d", rec.Code)
+		return "", &CompletionStatusError{Status: rec.Code}
 	}
 	var payload struct {
 		Choices []struct {

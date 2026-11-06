@@ -596,6 +596,9 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			runs.With(limitBody).Post("/runs/end", agentLLMHandler.End)
 		})
 		internal.With(limitBody).Post("/images", agentLLMHandler.Images)
+		// 文件摘要的请求体含最多 300KB 文件内容(JSON 转义后会膨胀),用独立的 2 MiB 上限,
+		// 不随全局 MaxRequestBodyBytes 变化,也不影响其它路由。
+		internal.With(httpx.LimitRequestBody(agentllm.FastTaskMaxRequestBytes)).Post("/fast-task", agentLLMHandler.FastTask)
 		internal.With(limitBody).Post("/v1/responses", agentLLMHandler.Responses)
 		internal.With(limitBody).Post("/v1/messages", agentLLMHandler.Messages)
 		internal.With(limitBody).Post("/v1/chat/completions", agentLLMHandler.ChatCompletions)
@@ -831,7 +834,7 @@ func routeAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if r.Method == http.MethodPost && (r.URL.Path == "/internal/agent-llm/images" || strings.HasPrefix(r.URL.Path, "/internal/agent-llm/v1/")) {
+			if r.Method == http.MethodPost && (r.URL.Path == "/internal/agent-llm/images" || r.URL.Path == "/internal/agent-llm/fast-task" || strings.HasPrefix(r.URL.Path, "/internal/agent-llm/v1/")) {
 				next.ServeHTTP(w, r)
 				return
 			}

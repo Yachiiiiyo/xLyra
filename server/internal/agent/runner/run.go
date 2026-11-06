@@ -117,13 +117,15 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	// 系统提示与运行配置同样逐 run 重建(权限模式非 full 一律 ask)。
 	imageGeneration := r.imageGenerationConfig(ar.kind, prep.tokenFile)
 	imageEnabled := imageGeneration != nil
+	fastTask := r.fastTaskConfig(ar.kind, prep.tokenFile, ar.model)
+	fastTaskEnabled := fastTask != nil
 	// question 对话类 run 都开放(含编辑重发的 retry),与 bash/生图一致;只有 compact 不开放。
 	questionEnabled := ar.kind != "compact"
 	execDefaultTimeout := time.Duration(0)
 	if r.cfg.Sandbox != nil {
 		execDefaultTimeout = r.cfg.Sandbox.ExecDefaultTimeout
 	}
-	systemPrompt := r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled)
+	systemPrompt := r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled, fastTaskEnabled)
 	files := map[string][]byte{
 		"settings.json": settingsJSON,
 	}
@@ -154,7 +156,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		Provider json.RawMessage `json:"provider"`
 		AgentsMD string          `json:"agentsMd"`
 	}{
-		Runtime:  xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration),
+		Runtime:  xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration, fastTask),
 		Provider: modelsFile.Providers[piconfig.ProviderName],
 		AgentsMD: snap.AgentsMD,
 	})
@@ -175,7 +177,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		args = append(args, "-e", extension)
 	}
 	args = append(args, "--system-prompt", systemPrompt)
-	if tools := r.runTools(prep.executor != nil, imageEnabled, questionEnabled); tools != "" {
+	if tools := r.runTools(prep.executor != nil, imageEnabled, questionEnabled, fastTaskEnabled); tools != "" {
 		args = append(args, "--tools", tools)
 	}
 	// 技能发现固定关闭,只加载快照里启用的目录(停用 = 不传,不依赖
@@ -477,7 +479,38 @@ func (r *Runner) imageGenerationConfig(kind, tokenFile string) *xlyraImageGenera
 	}
 }
 
-func xlyraConfigJSON(mode string, readRoots []string, bash *xlyraBashConfig, imageGeneration *xlyraImageGenerationConfig) []byte {
+// xlyraFastTaskConfig 是 summarize_file 工具的配置:扩展经本 run 令牌调用
+// fast-task 端点,model 原样带上(快速模型,未配置时为本次 run 的模型)。
+type xlyraFastTaskConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Endpoint       string `json:"endpoint"`
+	TokenFile      string `json:"tokenFile"`
+	Model          string `json:"model"`
+	MaxBytes       int    `json:"maxBytes"`
+	TimeoutSeconds int    `json:"timeoutSeconds"`
+}
+
+func (r *Runner) fastTaskConfig(kind, tokenFile, runModel string) *xlyraFastTaskConfig {
+	if !r.cfg.FastTasks || kind == "compact" {
+		return nil
+	}
+	return &xlyraFastTaskConfig{
+		Enabled: true, Endpoint: strings.TrimRight(r.cfg.GatewayBaseURL, "/") + "/internal/agent-llm/fast-task",
+		TokenFile: tokenFile, Model: r.fastModel(runModel), MaxBytes: 1 << 20, TimeoutSeconds: 120,
+	}
+}
+
+// fastModel 返回快速模型;未配置时回退到本次 run 的模型。
+func (r *Runner) fastModel(runModel string) string {
+	if r.cfg.FastModel != nil {
+		if model := strings.TrimSpace(r.cfg.FastModel()); model != "" {
+			return model
+		}
+	}
+	return runModel
+}
+
+func xlyraConfigJSON(mode string, readRoots []string, bash *xlyraBashConfig, imageGeneration *xlyraImageGenerationConfig, fastTask *xlyraFastTaskConfig) []byte {
 	if readRoots == nil {
 		readRoots = []string{}
 	}
@@ -486,7 +519,8 @@ func xlyraConfigJSON(mode string, readRoots []string, bash *xlyraBashConfig, ima
 		ReadRoots       []string                    `json:"readRoots"`
 		Bash            *xlyraBashConfig            `json:"bash,omitempty"`
 		ImageGeneration *xlyraImageGenerationConfig `json:"imageGeneration,omitempty"`
-	}{PermissionMode: permissionModeValue(mode), ReadRoots: readRoots, Bash: bash, ImageGeneration: imageGeneration})
+		FastTask        *xlyraFastTaskConfig        `json:"fastTask,omitempty"`
+	}{PermissionMode: permissionModeValue(mode), ReadRoots: readRoots, Bash: bash, ImageGeneration: imageGeneration, FastTask: fastTask})
 	if err != nil {
 		return []byte(`{"permissionMode":"ask","readRoots":[]}`)
 	}

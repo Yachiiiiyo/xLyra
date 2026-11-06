@@ -72,6 +72,7 @@ import {
   agentRuntimeSettingsQueryOptions,
   agentSessionsQueryOptions,
   agentWorkspaceAvailableModelsQueryOptions,
+  applySessionTitleToCache,
 } from '@/features/agent/lib/agent-queries'
 import { agentGeneratedFileCount } from '@/features/agent/lib/artifacts'
 import { BUSY_RETRY_DELAY_MS, shouldRetryBusySend } from '@/features/agent/lib/busy-retry'
@@ -382,7 +383,15 @@ export function AgentWorkspace() {
             })
           }).catch(() => undefined)
         }
-        // run_changes 在终态之后到达：本轮工作区已定，刷新文件清单
+        // session_title 事件:后端用快速模型生成了更好的标题,即时更新会话列表缓存
+        if (event.type === 'session_title') {
+          const title = (event.data && typeof event.data === 'object' && !Array.isArray(event.data)
+            && typeof (event.data as { title?: unknown }).title === 'string')
+            ? (event.data as { title: string }).title
+            : ''
+          if (title.trim()) applySessionTitleToCache(queryClient, sessionId, title)
+        }
+        // run_changes 在终态之后到达:本轮工作区已定,刷新文件清单
         if (event.type === 'run_changes') {
           void queryClient.invalidateQueries({ queryKey: ['agent', 'artifacts', sessionId] })
         }

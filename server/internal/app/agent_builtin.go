@@ -533,6 +533,8 @@ func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.C
 		Protocol:          agentProtocolResolver(logger, confFile, routerService),
 		ImageModels:       func() int { return len(agentproxy.ImageModelsFromConfig(confFile)) },
 		ClassifierModel:   func() string { return agentproxy.ClassifierModelFromConfig(confFile) },
+		FastModel:         func() string { return agentproxy.FastModelFromConfig(confFile) },
+		FastTasks:         true,
 		GatewayBaseURL:    gatewayBaseURL,
 		Command:           bins.command,
 		Args:              []string{bins.piEntry},
@@ -556,6 +558,7 @@ func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.C
 		rc.Classify = func(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error) {
 			return completer.CompleteTextKind(ctx, sessionID, model, system, user, maxTokens, "permission_classifier")
 		}
+		rc.CompleteText = completer.CompleteTextKind
 	}
 	if decision.Sandbox != nil && decision.Sandbox.Mode == "on" {
 		rc.Sandbox = &runner.SandboxConfig{

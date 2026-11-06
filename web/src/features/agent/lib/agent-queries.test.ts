@@ -6,6 +6,7 @@ import {
   agentRuntimeSettingsQueryOptions,
   agentSessionsQueryOptions,
   agentWorkspaceAvailableModelsQueryOptions,
+  applySessionTitleToCache,
   prefetchAgentWorkspace,
 } from '@/features/agent/lib/agent-queries'
 
@@ -98,6 +99,40 @@ describe('agent query snapshots', () => {
       availableSites,
     })
     expect(available.availableSites).toBe(availableSites)
+  })
+})
+
+describe('applySessionTitleToCache', () => {
+  it('更新缓存中对应会话的标题,其余会话不变', () => {
+    const queryClient = new QueryClient()
+    const sessions = [
+      { session_id: 'session-1', title: '旧标题' },
+      { session_id: 'session-2', title: '另一个会话' },
+    ]
+    queryClient.setQueryData(['agent', 'sessions'], sessions)
+
+    applySessionTitleToCache(queryClient, 'session-1', '新标题')
+
+    expect(queryClient.getQueryData(['agent', 'sessions'])).toEqual([
+      { session_id: 'session-1', title: '新标题' },
+      { session_id: 'session-2', title: '另一个会话' },
+    ])
+  })
+
+  it('会话不在缓存或缓存缺失时不动、空标题忽略', () => {
+    const queryClient = new QueryClient()
+    // 缓存缺失:不创建缓存条目
+    applySessionTitleToCache(queryClient, 'missing', '标题')
+    expect(queryClient.getQueryData(['agent', 'sessions'])).toBeUndefined()
+
+    const sessions = [{ session_id: 'session-1', title: '旧标题' }]
+    queryClient.setQueryData(['agent', 'sessions'], sessions)
+    // 找不到对应会话:原样保留
+    applySessionTitleToCache(queryClient, 'other', '标题')
+    expect(queryClient.getQueryData(['agent', 'sessions'])).toBe(sessions)
+    // 空白标题:忽略
+    applySessionTitleToCache(queryClient, 'session-1', '  ')
+    expect(queryClient.getQueryData(['agent', 'sessions'])).toBe(sessions)
   })
 })
 

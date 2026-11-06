@@ -148,7 +148,7 @@ func (f *fakeAgentRepository) ModelMemory(context.Context) (string, map[string]s
 }
 
 func newTestHandler(repo agentRepository) Handler {
-	return Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), repo: repo, now: time.Now, imageTracker: newAgentImageTracker()}
+	return Handler{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), repo: repo, now: time.Now, imageTracker: newAgentImageTracker(), fastTaskTracker: newAgentImageTracker()}
 }
 
 func credentialBody(reason string) *strings.Reader {
