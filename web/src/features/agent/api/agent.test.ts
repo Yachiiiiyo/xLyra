@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dedupeImageModels, fetchAgentRuntimeSettings, fetchAgentSuggestion, updateAgentFastModel, updateAgentImageModels, updateAgentPromptSuggestion } from './agent'
+import { dedupeImageModels, fetchAgentRuntimeSettings, fetchAgentSuggestion, updateAgentClassifierModel, updateAgentFastModel, updateAgentImageModels, updateAgentPromptSuggestion } from './agent'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -97,6 +97,29 @@ describe('fast model settings', () => {
     expect(JSON.parse(request.body as string)).toEqual({ fast_model: 'gpt-fast' })
     const [, clearRequest] = fetchMock.mock.calls[1] as [string, RequestInit]
     expect(JSON.parse(clearRequest.body as string)).toEqual({ fast_model: '' })
+  })
+})
+
+describe('classifier model settings', () => {
+  it('reads classifier_model and defaults absent or non-string values to empty', async () => {
+    stubFetch({ classifier_model: 'gpt-classifier' })
+    await expect(fetchAgentRuntimeSettings()).resolves.toMatchObject({ classifier_model: 'gpt-classifier' })
+    for (const data of [{}, { classifier_model: null }, { classifier_model: 42 }]) {
+      stubFetch(data)
+      await expect(fetchAgentRuntimeSettings()).resolves.toMatchObject({ classifier_model: '' })
+    }
+  })
+
+  it('updates only the trimmed classifier_model, including an empty clearing value', async () => {
+    const fetchMock = stubFetch()
+    await updateAgentClassifierModel('  gpt-classifier  ')
+    await updateAgentClassifierModel('   ')
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/v1/agent/settings')
+    expect(request.method).toBe('PUT')
+    expect(JSON.parse(request.body as string)).toEqual({ classifier_model: 'gpt-classifier' })
+    const [, clearRequest] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(JSON.parse(clearRequest.body as string)).toEqual({ classifier_model: '' })
   })
 })
 

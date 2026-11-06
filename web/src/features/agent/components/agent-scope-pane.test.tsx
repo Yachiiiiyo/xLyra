@@ -9,11 +9,10 @@ import type { AgentImageModelSelection } from '@/features/agent/api/agent'
 import zhAgent from '@/locales/zh/agent.json'
 import zhCommon from '@/locales/zh/common.json'
 
-const entry = vi.hoisted(() => ({ current: 'closed' as 'closed' | 'preview' | 'config' | 'image' | 'fast', stateIndex: 0 }))
+const entry = vi.hoisted(() => ({ current: 'closed' as 'closed' | 'preview' | 'config' | 'image', stateIndex: 0 }))
 const config = vi.hoisted(() => ({ open: false }))
 const imageConfig = vi.hoisted(() => ({ open: false }))
-const fastConfig = vi.hoisted(() => ({ open: false }))
-const overview = vi.hoisted(() => ({ imageModels: [] as AgentImageModelSelection[], fastModel: '', sites: [] as Array<{ site_id: string; site_name: string; site_type: string; enabled: boolean; models: Array<{ id: string; upstream_model_name: string; display_name: string; canonical_model_id: string; model_key?: string }> }> }))
+const overview = vi.hoisted(() => ({ imageModels: [] as AgentImageModelSelection[], classifierModel: '', fastModel: '', sites: [] as Array<{ site_id: string; site_name: string; site_type: string; enabled: boolean; models: Array<{ id: string; upstream_model_name: string; display_name: string; canonical_model_id: string; model_key?: string }> }> }))
 const promptSetting = vi.hoisted(() => ({
   checked: undefined as boolean | undefined,
   onCheckedChange: undefined as ((enabled: boolean) => void) | undefined,
@@ -30,7 +29,6 @@ vi.mock('react', async (importOriginal) => {
       const open = (entry.current === 'preview' && index === 0)
         || (entry.current === 'config' && index === 1)
         || (entry.current === 'image' && index === 2)
-        || (entry.current === 'fast' && index === 3)
       return actual.useState(open as T)
     },
   }
@@ -44,7 +42,7 @@ vi.mock('@radix-ui/react-dialog', async () => {
 vi.mock('@tanstack/react-query', () => ({
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     const key = queryKey.at(-1)
-    if (key === 'runtime') return { data: { allowed_site_ids: [], allowed_site_model_ids: [], site_policy: 'allow_all', model_policy: 'allow_all', image_models: overview.imageModels, fast_model: overview.fastModel }, isLoading: false }
+    if (key === 'runtime') return { data: { allowed_site_ids: [], allowed_site_model_ids: [], site_policy: 'allow_all', model_policy: 'allow_all', image_models: overview.imageModels, classifier_model: overview.classifierModel, fast_model: overview.fastModel }, isLoading: false }
     if (key === 'sites') return { data: { items: overview.sites.map((site) => ({ id: site.site_id, name: site.site_name, site_type: site.site_type, enabled: site.enabled })) }, isLoading: false }
     if (queryKey.at(-2) === 'models' && key === 'all') return {
       data: Object.fromEntries(overview.sites.map((site) => [site.site_id, site.models.map((model) => ({ ...model, site_id: site.site_id, capabilities: {}, status: 'active' }))])),
@@ -54,6 +52,13 @@ vi.mock('@tanstack/react-query', () => ({
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   useMutation: () => ({ mutate: promptSetting.mutate, isPending: false }),
+}))
+vi.mock('@/components/ui/select', () => ({
+  Select: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+  SelectTrigger: ({ children, ...props }: React.ComponentProps<'button'>) => React.createElement('button', { type: 'button', role: 'combobox', ...props }, children),
+  SelectValue: ({ placeholder }: { placeholder?: string }) => React.createElement('span', null, placeholder),
+  SelectContent: () => null,
+  SelectItem: () => null,
 }))
 vi.mock('@/features/agent/components/agent-scope-config-dialog', () => ({
   AgentScopeConfigDialog: (props: { open: boolean }) => {
@@ -65,12 +70,6 @@ vi.mock('@/features/agent/components/agent-image-model-dialog', () => ({
   AgentImageModelDialog: (props: { open: boolean }) => {
     imageConfig.open = props.open
     return props.open ? React.createElement('div', null, zhAgent.settings.scope.imageDialogTitle) : null
-  },
-}))
-vi.mock('@/features/agent/components/agent-fast-model-dialog', () => ({
-  AgentFastModelDialog: (props: { open: boolean }) => {
-    fastConfig.open = props.open
-    return props.open ? React.createElement('div', null, zhAgent.settings.scope.fastDialogTitle) : null
   },
 }))
 vi.mock('@/hooks/use-media-query', () => ({ useMobileLayout: () => false }))
@@ -90,8 +89,8 @@ beforeEach(() => {
   entry.current = 'closed'
   config.open = false
   imageConfig.open = false
-  fastConfig.open = false
   overview.imageModels = []
+  overview.classifierModel = ''
   overview.fastModel = ''
   overview.sites = [{ site_id: 'site-1', site_name: 'Site', site_type: 'openai', enabled: true, models: [{ id: 'model-1', upstream_model_name: 'gpt', display_name: 'GPT', canonical_model_id: '' }] }]
   promptSetting.checked = undefined
@@ -119,7 +118,7 @@ describe('AgentScopePane 概览', () => {
     const html = render()
     expect(html).toContain('<button type="button"')
     expect(html).toContain(zhAgent.settings.scope.allSites)
-    expect(html.match(/>配置</g)).toHaveLength(3)
+    expect(html.match(/>配置</g)).toHaveLength(2)
     expect(html).not.toContain(zhAgent.settings.save)
     expect(html).not.toContain(zhAgent.settings.scope.configDialogTitle)
     expect(html).toContain(zhAgent.settings.scope.imageNotConfigured)
@@ -149,13 +148,10 @@ describe('AgentScopePane 概览', () => {
     expect(imageConfig.open).toBe(true)
   })
 
-  it('快速模型配置入口只打开快速模型弹窗', () => {
-    entry.current = 'fast'
+  it('审批模型位于快速模型上方，两项均使用行内下拉选择', () => {
     const html = render()
-    expect(html).toContain(zhAgent.settings.scope.fastDialogTitle)
-    expect(fastConfig.open).toBe(true)
-    expect(config.open).toBe(false)
-    expect(imageConfig.open).toBe(false)
+    expect(html.indexOf(zhAgent.settings.scope.classifierModelTitle)).toBeLessThan(html.indexOf(zhAgent.settings.scope.fastModelTitle))
+    expect(html.match(/role="combobox"/g)).toHaveLength(2)
   })
 
   it('生图摘要按已选顺序用箭头连接模型名，不显示站点名', () => {

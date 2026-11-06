@@ -39,6 +39,8 @@ export type AgentRuntimeSettings = {
   image_models: AgentImageModelSelection[]
   /** 输入预测等轻量后台任务使用的模型;空串表示跟随当前对话模型 */
   fast_model: string
+  /** 「替我审批」分类器使用的模型;空串表示跟随当前对话模型 */
+  classifier_model: string
   /** 是否在每轮正常结束后预测下一条输入，缺省开启 */
   prompt_suggestion_enabled: boolean
   /** 后端过渡期可能仍返回的旧单值字段,仅用于兼容读取 */
@@ -89,6 +91,7 @@ export async function fetchAgentRuntimeSettings() {
     model_policy: response.data?.model_policy ?? 'allow_all',
     image_models: normalizeImageModels(response.data?.image_models, response.data?.image_model),
     fast_model: typeof response.data?.fast_model === 'string' ? response.data.fast_model : '',
+    classifier_model: typeof response.data?.classifier_model === 'string' ? response.data.classifier_model : '',
     prompt_suggestion_enabled: response.data?.prompt_suggestion_enabled ?? true,
     appearance: response.data?.appearance,
   }
@@ -145,6 +148,14 @@ export async function updateAgentFastModel(model: string) {
   const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
     method: 'PUT',
     body: { fast_model: model.trim() },
+  })
+  return response.data
+}
+
+export async function updateAgentClassifierModel(model: string) {
+  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
+    method: 'PUT',
+    body: { classifier_model: model.trim() },
   })
   return response.data
 }
@@ -382,7 +393,7 @@ export async function fetchAgentModelMemory(): Promise<AgentModelMemory> {
   return response.data ?? { default_model: '', sessions: {} }
 }
 
-export async function createAgentSession(input: { content: string; model?: string; session_id?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'full'; attachments?: AgentAttachment[]; references?: string[] }) {
+export async function createAgentSession(input: { content: string; model?: string; session_id?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'auto' | 'full'; attachments?: AgentAttachment[]; references?: string[] }) {
   const response = await apiFetch<{ data: { session_id: string; message_id?: string; run_id: string } }>('/api/v1/agent/sessions', {
     method: 'POST',
     body: input,
@@ -390,7 +401,7 @@ export async function createAgentSession(input: { content: string; model?: strin
   return response.data
 }
 
-export async function retryAgentSession(sessionId: string, input: { message_id: string; content?: string; model?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'full'; attachments?: AgentAttachment[]; references?: string[] }) {
+export async function retryAgentSession(sessionId: string, input: { message_id: string; content?: string; model?: string; reasoning_effort?: string; permission_mode?: 'ask' | 'auto' | 'full'; attachments?: AgentAttachment[]; references?: string[] }) {
   const response = await apiFetch<{ data: { session_id: string; message_id?: string; run_id: string } }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/retry`, {
     method: 'POST',
     body: input,
@@ -533,8 +544,10 @@ export type AgentTranscriptEntry = {
   granted?: boolean | null
   /** type === 'escalation'：'session' 表示本会话内不再询问 */
   scope?: 'once' | 'session'
-  /** type === 'escalation'：会话内允许自动放行 */
+  /** type === 'escalation'：自动决定；带 reason 时由「替我审批」分类器判定 */
   auto?: boolean
+  /** type === 'escalation'：分类器自动决定的理由 */
+  reason?: string
   /** type === 'question'：question 工具的提问（items/answers/status 见 agent-events 的映射） */
   question_id?: string
   tool_call_id?: string

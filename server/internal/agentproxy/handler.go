@@ -86,6 +86,7 @@ type Settings struct {
 	ImageModels             []ImageModelSelection `json:"image_models"`
 	PromptSuggestionEnabled bool                  `json:"prompt_suggestion_enabled"`
 	FastModel               string                `json:"fast_model"`
+	ClassifierModel         string                `json:"classifier_model"`
 	SitePolicy              string                `json:"site_policy"`
 	ModelPolicy             string                `json:"model_policy"`
 	Appearance              AppearanceSettings    `json:"appearance"`
@@ -137,6 +138,7 @@ type settingsInput struct {
 	ImageModels             *[]ImageModelSelection `json:"image_models"`
 	PromptSuggestionEnabled *bool                  `json:"prompt_suggestion_enabled"`
 	FastModel               *string                `json:"fast_model"`
+	ClassifierModel         *string                `json:"classifier_model"`
 	SitePolicy              *string                `json:"site_policy"`
 	ModelPolicy             *string                `json:"model_policy"`
 	Appearance              *AppearanceSettings    `json:"appearance"`
@@ -407,6 +409,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request, confFile *
 		settings.ImageModels = ImageModelsFromConfig(confFile)
 		settings.PromptSuggestionEnabled = PromptSuggestionEnabledFromConfig(confFile)
 		settings.FastModel = FastModelFromConfig(confFile)
+		settings.ClassifierModel = ClassifierModelFromConfig(confFile)
 		if value, ok := confFile.Get("agent.site_policy"); ok {
 			if policy, valid := value.(string); valid && (policy == "allow_all" || policy == "allow_list") {
 				settings.SitePolicy = policy
@@ -506,6 +509,17 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request, confFil
 		}
 		if err := confFile.Set("agent.fast_model", fastModel); err != nil {
 			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent fast model setting")
+			return
+		}
+	}
+	if input.ClassifierModel != nil {
+		classifierModel := strings.TrimSpace(*input.ClassifierModel)
+		if utf8.RuneCountInString(classifierModel) > 200 {
+			httpx.Error(w, r, http.StatusBadRequest, "invalid_classifier_model", "classifier model must not exceed 200 characters")
+			return
+		}
+		if err := confFile.Set("agent.classifier_model", classifierModel); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent classifier model setting")
 			return
 		}
 	}
@@ -848,6 +862,19 @@ func FastModelFromConfig(confFile *config.ConfigFile) string {
 		return ""
 	}
 	value, ok := confFile.Get("agent.fast_model")
+	if !ok {
+		return ""
+	}
+	model, _ := value.(string)
+	return strings.TrimSpace(model)
+}
+
+// ClassifierModelFromConfig 读取审批分类器模型;未配置时返回空串。
+func ClassifierModelFromConfig(confFile *config.ConfigFile) string {
+	if confFile == nil {
+		return ""
+	}
+	value, ok := confFile.Get("agent.classifier_model")
 	if !ok {
 		return ""
 	}

@@ -9,18 +9,18 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { buildAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentFastModel, updateAgentPromptSuggestion, type AgentRuntimeSettings } from '@/features/agent/api/agent'
+import { buildAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentClassifierModel, updateAgentFastModel, updateAgentPromptSuggestion, type AgentRuntimeSettings } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
-import { agentFastModelCandidates, resolveFastModel } from '@/features/agent/lib/agent-fast-model'
+import { agentModelCandidates, resolveAgentModel, type AgentModelCandidate } from '@/features/agent/lib/agent-fast-model'
 import { agentImageModelsSummary } from '@/features/agent/lib/agent-image-model'
 import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview, type AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
 import { listAllSiteModels, listCanonicalModels, listSitesLite, sitesQueryKeys, type CanonicalModelItem } from '@/features/sites/api/sites'
 import { formatSiteTypeLabel } from '@/features/sites/lib/site-utils'
 import { canonicalModelIconInfo, modelNameIconInfo } from '@/features/sites/lib/model-icon'
 import { AgentImageModelDialog } from '@/features/agent/components/agent-image-model-dialog'
-import { AgentFastModelDialog } from '@/features/agent/components/agent-fast-model-dialog'
 import { AgentScopeConfigDialog } from '@/features/agent/components/agent-scope-config-dialog'
 import { toast } from '@/lib/toast'
 
@@ -38,8 +38,6 @@ export function AgentScopePane() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [scopeConfigOpen, setScopeConfigOpen] = useState(false)
   const [imageConfigOpen, setImageConfigOpen] = useState(false)
-  const [fastConfigOpen, setFastConfigOpen] = useState(false)
-  const clearedFastModel = useRef('')
   const promptSuggestionMutation = useMutation({
     mutationFn: updateAgentPromptSuggestion,
     onMutate: async (enabled) => {
@@ -66,23 +64,10 @@ export function AgentScopePane() {
     modelPolicy: runtime.data?.model_policy ?? 'allow_all',
     siteModelIds: runtime.data?.allowed_site_model_ids ?? [],
   }), [available, runtime.data])
-  const fastCandidates = useMemo(() => agentFastModelCandidates(previewGroups), [previewGroups])
-  const configuredFastModel = runtime.data?.fast_model ?? ''
-  const fastModel = resolveFastModel(configuredFastModel, fastCandidates).model
-  const fastModelLoading = runtime.isLoading || sitesQuery.isLoading || canonicalQuery.isLoading || modelsQuery.isLoading
+  const modelCandidates = useMemo(() => agentModelCandidates(previewGroups), [previewGroups])
+  const modelSelectionLoading = runtime.isLoading || sitesQuery.isLoading || canonicalQuery.isLoading || modelsQuery.isLoading
   const scopeQueriesReady = runtime.isSuccess && sitesQuery.isSuccess && canonicalQuery.isSuccess && modelsQuery.isSuccess
     && !runtime.isFetching && !sitesQuery.isFetching && !canonicalQuery.isFetching && !modelsQuery.isFetching
-  useEffect(() => {
-    if (!configuredFastModel || fastModel) {
-      clearedFastModel.current = ''
-      return
-    }
-    if (!scopeQueriesReady || clearedFastModel.current === configuredFastModel) return
-    clearedFastModel.current = configuredFastModel
-    void updateAgentFastModel('')
-      .then(() => queryClient.invalidateQueries({ queryKey: agentSettingsKey }))
-      .catch(() => undefined)
-  }, [configuredFastModel, fastModel, queryClient, scopeQueriesReady])
   const summary = summarizeAgentScopePreview(previewGroups)
   const summaryText = runtime.data?.site_policy === 'allow_all' && runtime.data.model_policy === 'allow_all'
     ? `${t('agent:settings.scope.allSites')} · ${t('agent:settings.scope.allModels')}`
@@ -103,13 +88,6 @@ export function AgentScopePane() {
       />
       <AgentScopeConfigDialog open={scopeConfigOpen} onOpenChange={setScopeConfigOpen} />
       <AgentImageModelDialog open={imageConfigOpen} onOpenChange={setImageConfigOpen} />
-      <AgentFastModelDialog
-        open={fastConfigOpen}
-        onOpenChange={setFastConfigOpen}
-        candidates={fastCandidates}
-        current={fastModel?.id ?? ''}
-        loading={fastModelLoading}
-      />
     </>
   )
 
@@ -150,31 +128,29 @@ export function AgentScopePane() {
         </Button>
       </section>
 
-      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 py-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.fastModelTitle')}</p>
-          {fastModelLoading ? (
-            <div className="mt-1 space-y-1">
-              <Skeleton className="h-3 w-24" />
-              <Skeleton className="h-3 w-full max-w-md" />
-            </div>
-          ) : fastModel ? (
-            <>
-              <p className="mt-0.5 truncate text-xs text-muted-soft" title={fastModel.name}>{fastModel.name}</p>
-              <p className="mt-0.5 text-xs leading-5 text-muted-soft">{t('agent:settings.scope.fastModelConfigured')}</p>
-            </>
-          ) : (
-            <>
-              <p className="mt-0.5 text-xs text-muted-soft">{t('agent:settings.scope.fastModelNotConfigured')}</p>
-              <p className="mt-0.5 text-xs leading-5 text-muted-soft">{t('agent:settings.scope.fastModelUnsetHint')}</p>
-            </>
-          )}
-        </div>
-        <Button size="sm" variant="secondary" onClick={() => setFastConfigOpen(true)}>
-          <Settings2 className="h-3.5 w-3.5" />
-          {t('agent:settings.scope.configure')}
-        </Button>
-      </section>
+      <ScopeModelSetting
+        title={t('agent:settings.scope.classifierModelTitle')}
+        description={t('agent:settings.scope.classifierModelDescription')}
+        notConfigured={t('agent:settings.scope.classifierModelNotConfigured')}
+        unsetHint={t('agent:settings.scope.classifierModelUnsetHint')}
+        configuredModel={runtime.data?.classifier_model ?? ''}
+        candidates={modelCandidates}
+        loading={modelSelectionLoading}
+        scopeQueriesReady={scopeQueriesReady}
+        updateModel={updateAgentClassifierModel}
+      />
+
+      <ScopeModelSetting
+        title={t('agent:settings.scope.fastModelTitle')}
+        description={t('agent:settings.scope.fastModelConfigured')}
+        notConfigured={t('agent:settings.scope.fastModelNotConfigured')}
+        unsetHint={t('agent:settings.scope.fastModelUnsetHint')}
+        configuredModel={runtime.data?.fast_model ?? ''}
+        candidates={modelCandidates}
+        loading={modelSelectionLoading}
+        scopeQueriesReady={scopeQueriesReady}
+        updateModel={updateAgentFastModel}
+      />
 
       <section className="flex items-center gap-4 pt-4">
         <div className="min-w-0 flex-1">
@@ -192,6 +168,88 @@ export function AgentScopePane() {
       {dialogs}
     </div>
   )
+}
+
+const CURRENT_CONVERSATION_MODEL = '__current_conversation_model__'
+
+type AgentModelUpdater = (model: string) => Promise<unknown>
+
+function ScopeModelSetting({ title, description, notConfigured, unsetHint, configuredModel, candidates, loading, scopeQueriesReady, updateModel }: {
+  title: string
+  description: string
+  notConfigured: string
+  unsetHint: string
+  configuredModel: string
+  candidates: AgentModelCandidate[]
+  loading: boolean
+  scopeQueriesReady: boolean
+  updateModel: AgentModelUpdater
+}) {
+  const { t } = useTranslation('agent')
+  const queryClient = useQueryClient()
+  const model = resolveAgentModel(configuredModel, candidates).model
+  useClearUnavailableModel(configuredModel, model, scopeQueriesReady, updateModel)
+  const save = useMutation({
+    mutationFn: updateModel,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [...agentSettingsKey, 'runtime'] })
+    },
+    onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }),
+  })
+
+  return (
+    <section className="flex flex-wrap items-center gap-x-4 gap-y-2 py-4">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        {loading ? (
+          <div className="mt-1 space-y-1">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-3 w-full max-w-md" />
+          </div>
+        ) : model ? (
+          <p className="mt-0.5 text-xs leading-5 text-muted-soft">{description}</p>
+        ) : (
+          <>
+            <p className="mt-0.5 text-xs text-muted-soft">{notConfigured}</p>
+            <p className="mt-0.5 text-xs leading-5 text-muted-soft">{unsetHint}</p>
+          </>
+        )}
+      </div>
+      {loading ? <Skeleton className="h-9 w-full sm:w-64" /> : (
+        <Select
+          value={model?.id ?? CURRENT_CONVERSATION_MODEL}
+          disabled={save.isPending}
+          onValueChange={(value) => save.mutate(value === CURRENT_CONVERSATION_MODEL ? '' : value)}
+        >
+          <SelectTrigger aria-label={title} className="w-full sm:w-64">
+            <SelectValue placeholder={t('settings.scope.modelFollowCurrent')} />
+          </SelectTrigger>
+          <SelectContent searchable={false} widthMode="content">
+            <SelectItem value={CURRENT_CONVERSATION_MODEL}>{t('settings.scope.modelFollowCurrent')}</SelectItem>
+            {candidates.map((candidate) => (
+              <SelectItem key={candidate.id} value={candidate.id}>{candidate.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </section>
+  )
+}
+
+function useClearUnavailableModel(configuredModel: string, model: AgentModelCandidate | null, scopeQueriesReady: boolean, updateModel: AgentModelUpdater) {
+  const queryClient = useQueryClient()
+  const clearedModel = useRef('')
+  useEffect(() => {
+    if (!configuredModel || model) {
+      clearedModel.current = ''
+      return
+    }
+    if (!scopeQueriesReady || clearedModel.current === configuredModel) return
+    clearedModel.current = configuredModel
+    void updateModel('')
+      .then(() => queryClient.invalidateQueries({ queryKey: [...agentSettingsKey, 'runtime'] }))
+      .catch(() => undefined)
+  }, [configuredModel, model, queryClient, scopeQueriesReady, updateModel])
 }
 
 /** 「查看」弹出的第二个 Dialog：搜索框 + 按站点分组的模型平铺列表，内容区滚动，模型行点击复制 model_key。 */

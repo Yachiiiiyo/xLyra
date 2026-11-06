@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
-import { agentFastModelCandidates, resolveFastModel, type AgentFastModelCandidate } from './agent-fast-model'
+import { agentModelCandidates, resolveAgentModel, type AgentModelCandidate } from './agent-fast-model'
 
 type PreviewModel = AgentScopePreviewGroup['models'][number]
 
@@ -13,9 +13,9 @@ function group(siteName: string, models: PreviewModel[]): AgentScopePreviewGroup
   return { site, models }
 }
 
-describe('agentFastModelCandidates', () => {
+describe('agentModelCandidates', () => {
   it('排除非聊天模型，使用模型 key 并丢弃空 id', () => {
-    const candidates = agentFastModelCandidates([
+    const candidates = agentModelCandidates([
       group('Alpha', [
         model({ id: 'chat', model_key: ' gpt-fast ', upstream_model_name: 'upstream', display_name: 'GPT Fast' }),
         model({ id: 'image', category: 'image' }),
@@ -28,7 +28,7 @@ describe('agentFastModelCandidates', () => {
   })
 
   it('同 id 跨站点合并并去重站点名，display_name 缺省时回退 id', () => {
-    const candidates = agentFastModelCandidates([
+    const candidates = agentModelCandidates([
       group('Alpha', [model({ id: 'one', model_key: 'shared', display_name: 'Shared' })]),
       group('Beta', [model({ id: 'two', model_key: 'shared', display_name: 'Another Name' })]),
       group('Alpha', [model({ id: 'three', upstream_model_name: 'fallback' })]),
@@ -40,7 +40,7 @@ describe('agentFastModelCandidates', () => {
   })
 
   it('按显示名做不区分大小写的排序', () => {
-    const candidates = agentFastModelCandidates([
+    const candidates = agentModelCandidates([
       group('Alpha', [
         model({ id: 'c', display_name: 'charlie' }),
         model({ id: 'a', display_name: 'Alpha' }),
@@ -51,14 +51,14 @@ describe('agentFastModelCandidates', () => {
   })
 })
 
-describe('resolveFastModel', () => {
-  const candidates: AgentFastModelCandidate[] = [{ id: 'gpt-fast', name: 'GPT Fast', siteNames: ['Alpha'] }]
+describe('resolveAgentModel', () => {
+  const candidates: AgentModelCandidate[] = [{ id: 'gpt-fast', name: 'GPT Fast', siteNames: ['Alpha'] }]
 
   it('解析有效配置并允许配置值两侧有空白', () => {
-    expect(resolveFastModel(' gpt-fast ', candidates)).toEqual({ model: candidates[0] })
+    expect(resolveAgentModel(' gpt-fast ', candidates)).toEqual({ model: candidates[0] })
   })
 
   it.each(['', '   ', 'removed-model'])('空配置或失效配置 %j 按未配置处理', (configured) => {
-    expect(resolveFastModel(configured, candidates)).toEqual({ model: null })
+    expect(resolveAgentModel(configured, candidates)).toEqual({ model: null })
   })
 })

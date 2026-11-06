@@ -2,15 +2,15 @@ import type { AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-pr
 
 export const NON_CHAT_CATEGORIES = new Set(['image', 'audio', 'embedding'])
 
-export type AgentFastModelCandidate = {
+export type AgentModelCandidate = {
   id: string
   name: string
   siteNames: string[]
 }
 
-/** 当前 Agent 可用范围内可用于轻量后台任务的聊天模型。 */
-export function agentFastModelCandidates(groups: AgentScopePreviewGroup[]): AgentFastModelCandidate[] {
-  const merged = new Map<string, AgentFastModelCandidate>()
+/** 当前 Agent 可用范围内可用于后台任务的聊天模型。 */
+export function agentModelCandidates(groups: AgentScopePreviewGroup[]): AgentModelCandidate[] {
+  const merged = new Map<string, AgentModelCandidate>()
   for (const group of groups) {
     for (const model of group.models) {
       if (NON_CHAT_CATEGORIES.has(model.category ?? '')) continue
@@ -28,7 +28,7 @@ export function agentFastModelCandidates(groups: AgentScopePreviewGroup[]): Agen
 }
 
 /** 空配置与已不在候选中的配置都按「未配置」处理。 */
-export function resolveFastModel(configured: string, candidates: AgentFastModelCandidate[]): { model: AgentFastModelCandidate | null } {
+export function resolveAgentModel(configured: string, candidates: AgentModelCandidate[]): { model: AgentModelCandidate | null } {
   const id = configured.trim()
   return { model: id ? candidates.find((candidate) => candidate.id === id) ?? null : null }
 }
