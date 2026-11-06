@@ -29,9 +29,10 @@ export type AgentPermissionRequest = {
   /** Resolved path/capability key recorded by the grant, echoed back to the grant-access API. */
   resolvedPath?: string
   decision?: 'allowed' | 'denied'
-  /** 决定的来源：'session' = 会话内允许；auto = 后端会话内自动放行 */
+  /** 决定的来源：'session' = 会话内允许；auto = 后端自动决定，reason 为分类器判定理由 */
   scope?: 'session'
   auto?: boolean
+  reason?: string
   /** 权限请求到达时 run.steps 的长度，用于把它插回流程中的实际位置 */
   position?: number
 }
@@ -387,9 +388,15 @@ function closeRun(run: AgentRun, status: AgentRunStatus, elapsedMs?: number, err
 }
 
 /** 记录一条权限决定;最后一条未决请求被处理后,结束这段审批等待,用时恢复计时。 */
-function applyPermissionDecision(run: AgentRun, requestId: string, decision: 'allowed' | 'denied', options?: { scope?: 'session'; auto?: boolean }): AgentRun {
+function applyPermissionDecision(run: AgentRun, requestId: string, decision: 'allowed' | 'denied', options?: { scope?: 'session'; auto?: boolean; reason?: string }): AgentRun {
   const permissions = run.permissions.map((request) => (request.id === requestId
-    ? { ...request, decision, ...(options?.scope && decision === 'allowed' ? { scope: options.scope } : {}), ...(options?.auto ? { auto: true } : {}) }
+    ? {
+        ...request,
+        decision,
+        ...(options?.scope && decision === 'allowed' && !options.reason ? { scope: options.scope } : {}),
+        ...(options?.reason ? { scope: undefined, reason: options.reason } : {}),
+        ...(options?.auto || options?.reason ? { auto: true } : {}),
+      }
     : request))
   if (run.pendingSince === undefined || permissions.some((request) => !request.decision)) return { ...run, permissions }
   return {
@@ -688,9 +695,11 @@ export function reduceAgentEvent(timeline: AgentTimeline, event: AgentStreamEven
     case 'permission_result': {
       const requestId = pickId(record, ['request_id', 'permission_id', 'id'])
       const decision = record?.allowed === true || record?.decision === 'allow' || record?.decision === 'allowed' ? 'allowed' : 'denied'
-      // 会话内允许自动放行的 permission_result 带 auto:true，展示为「已自动允许(会话内)」
-      const auto = record?.auto === true
-      return updateLastRun(timeline, (run) => applyPermissionDecision(run, requestId, decision, auto ? { auto: true, scope: 'session' } : undefined))
+      const reason = pickString(record, ['reason'])
+      const auto = record?.auto === true || Boolean(reason)
+      return updateLastRun(timeline, (run) => applyPermissionDecision(run, requestId, decision, auto
+        ? { auto: true, ...(reason ? { reason } : { scope: 'session' as const }) }
+        : undefined))
     }
     case 'done':
       // 用墙钟收束（用户发出消息 → 最后输出结束），不用 runner 的 elapsed_ms：
@@ -740,6 +749,7 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
       // Escalations render as permission entries; granted null means undecided (stays interactive).
       const withRun = ensureRun(timeline)
       const command = entry.requested_command
+      const reason = entry.reason?.trim() ? entry.reason : undefined
       timeline = markRunEndedAt(updateLastRun(withRun, (run) => {
         const request: AgentPermissionRequest = {
           id: entry.escalation_id || nextId('permission'),
@@ -750,8 +760,9 @@ export function timelineFromTranscript(entries: AgentTranscriptEntry[]): AgentTi
           note: entry.note || undefined,
           resolvedPath: entry.resolved_path || undefined,
           decision: entry.granted === true ? 'allowed' : entry.granted === false ? 'denied' : undefined,
-          ...(entry.granted === true && entry.scope === 'session' ? { scope: 'session' as const } : {}),
-          ...(entry.auto === true ? { auto: true } : {}),
+          ...(entry.granted === true && entry.scope === 'session' && !reason ? { scope: 'session' as const } : {}),
+          ...(entry.auto === true || reason ? { auto: true } : {}),
+          ...(reason ? { reason } : {}),
           position: run.steps.length,
         }
         return { ...run, permissions: [...run.permissions, request] }

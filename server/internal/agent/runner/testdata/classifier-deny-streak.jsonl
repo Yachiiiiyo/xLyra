@@ -1,0 +1,17 @@
+{"type":"agent_start"}
+{"type":"tool_execution_start","toolCallId":"call-d1","toolName":"bash","args":{"command":"echo d1"}}
+{"type":"extension_ui_request","id":"esc-d1","method":"confirm","title":"允许执行命令?","message":"{\"toolCallId\":\"call-d1\",\"toolName\":\"bash\",\"command\":[\"echo d1\"],\"note\":\"工作目录: .\"}"}
+{"type":"tool_execution_end","toolCallId":"call-d1","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}
+{"type":"tool_execution_start","toolCallId":"call-d2","toolName":"bash","args":{"command":"echo d2"}}
+{"type":"extension_ui_request","id":"esc-d2","method":"confirm","title":"允许执行命令?","message":"{\"toolCallId\":\"call-d2\",\"toolName\":\"bash\",\"command\":[\"echo d2\"],\"note\":\"工作目录: .\"}"}
+{"type":"tool_execution_end","toolCallId":"call-d2","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}
+{"type":"tool_execution_start","toolCallId":"call-d3","toolName":"bash","args":{"command":"echo d3"}}
+{"type":"extension_ui_request","id":"esc-d3","method":"confirm","title":"允许执行命令?","message":"{\"toolCallId\":\"call-d3\",\"toolName\":\"bash\",\"command\":[\"echo d3\"],\"note\":\"工作目录: .\"}"}
+{"type":"tool_execution_end","toolCallId":"call-d3","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}
+{"type":"tool_execution_start","toolCallId":"call-d4","toolName":"bash","args":{"command":"echo d4"}}
+{"type":"extension_ui_request","id":"esc-d4","method":"confirm","title":"允许执行命令?","message":"{\"toolCallId\":\"call-d4\",\"toolName\":\"bash\",\"command\":[\"echo d4\"],\"note\":\"工作目录: .\"}"}
+{"type":"tool_execution_end","toolCallId":"call-d4","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}
+{"type":"tool_execution_start","toolCallId":"call-d5","toolName":"bash","args":{"command":"echo d5"}}
+{"type":"extension_ui_request","id":"esc-d5","method":"confirm","title":"允许执行命令?","message":"{\"toolCallId\":\"call-d5\",\"toolName\":\"bash\",\"command\":[\"echo d5\"],\"note\":\"工作目录: .\"}"}
+{"type":"tool_execution_end","toolCallId":"call-d5","toolName":"bash","isError":false,"result":{"content":[{"type":"text","text":"done"}]}}
+{"type":"agent_settled","aborted":false}

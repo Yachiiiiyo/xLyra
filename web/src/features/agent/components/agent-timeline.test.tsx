@@ -113,6 +113,8 @@ describe('AgentTimeline 权限卡片', () => {
           { id: 'p1', tool: 'bash', detail: 'cd . && cat > gen.js <<EOF\nconst a = 1;\nEOF', decision: 'allowed', scope: 'session', auto: true, position: 0 },
           { id: 'p2', tool: 'edit', detail: 'pelican-bicycle.html', decision: 'denied', position: 0 },
           { id: 'p3', tool: 'write', detail: 'notes.md', position: 0 },
+          { id: 'p4', tool: 'write', detail: 'safe.md', decision: 'allowed', auto: true, reason: '仅写入工作区内的目标文件', position: 0 },
+          { id: 'p5', tool: 'write', detail: '../outside.md', decision: 'denied', auto: true, reason: '目标文件位于工作区外', position: 0 },
         ],
       },
     }]
@@ -129,6 +131,19 @@ describe('AgentTimeline 权限卡片', () => {
     expect(html).toContain(zhAgent.permission.denied)
     expect(html).toContain('cd . &amp;&amp; cat &gt; gen.js')
     expect(html).not.toMatch(/>const a = 1;</)
+  })
+
+  it('替我审批自动放行显示专用结果和理由,会话内自动放行文案不变', () => {
+    const html = renderToStaticMarkup(<I18nextProvider i18n={i18n}><AgentTimeline items={permissionTimeline()} sessionId="session-1" /></I18nextProvider>)
+    expect(html).toContain(zhAgent.permission.autoApproved)
+    expect(html).toContain(zhAgent.permission.autoReason.replace('{{reason}}', '仅写入工作区内的目标文件'))
+    expect(html).toContain(zhAgent.permission.autoAllowed)
+  })
+
+  it('替我审批自动拒绝显示专用结果和理由', () => {
+    const html = renderToStaticMarkup(<I18nextProvider i18n={i18n}><AgentTimeline items={permissionTimeline()} sessionId="session-1" /></I18nextProvider>)
+    expect(html).toContain(zhAgent.permission.autoDenied)
+    expect(html).toContain(zhAgent.permission.autoReason.replace('{{reason}}', '目标文件位于工作区外'))
   })
 })
 

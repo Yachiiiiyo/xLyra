@@ -1339,6 +1339,15 @@ func TestXlyraRunConfigEnv(t *testing.T) {
 		t.Fatalf("full 模式 runtime = %s", got)
 	}
 
+	auto, err := env.runner.Send(context.Background(), SendInput{Content: "auto 模式", Model: "mock-1", PermissionMode: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectRun(t, env.runs, auto.SessionID).wait(t)
+	if got := runtimeJSON(); got != `{"permissionMode":"auto","readRoots":[]}` {
+		t.Fatalf("auto 模式 runtime = %s, want auto", got)
+	}
+
 	// 默认(未传 PermissionMode)传 ask。
 	ask, err := env.runner.Send(context.Background(), SendInput{Content: "默认模式", Model: "mock-1"})
 	if err != nil {
@@ -1367,8 +1376,8 @@ func TestXlyraRunConfigEnv(t *testing.T) {
 		t.Fatalf("非法模式 runtime = %s", got)
 	}
 
-	// 归一化函数的边界:大小写敏感,非 full 一律 ask。
-	for mode, want := range map[string]string{"": "ask", "full": "full", "Full": "ask", "ask": "ask", "bogus": "ask"} {
+	// 归一化函数的边界:full/auto 原样保留,大小写敏感,其余一律 ask。
+	for mode, want := range map[string]string{"": "ask", "full": "full", "auto": "auto", "Full": "ask", "ask": "ask", "bogus": "ask"} {
 		if got := permissionModeValue(mode); got != want {
 			t.Errorf("permissionModeValue(%q) = %q, want %q", mode, got, want)
 		}

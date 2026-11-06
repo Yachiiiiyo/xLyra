@@ -594,12 +594,19 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 					}
 					continue
 				}
-				// 先发布事件再记录审批:自动放行会在记录后立即补发
-				// permission_result,不能跑到对应的 escalation_request 前面。
-				r.publish(ar, event)
 				if event.Type == "escalation_request" {
+					if ar.mode == "auto" {
+						// auto 审批在决定前不发布请求,避免前端出现等待用户操作的卡片;
+						// 原请求由 pending 记录保存,决定时按请求、结果的顺序补发。
+						r.recordEscalation(ar, event, lastEntryID)
+						continue
+					}
+					// 其它模式保持先发布请求再登记,自动放行结果不能跑到请求前面。
+					r.publish(ar, event)
 					r.recordEscalation(ar, event, lastEntryID)
+					continue
 				}
+				r.publish(ar, event)
 			}
 			// 翻译层丢弃的 UI 请求必须回写取消,否则 Pi 会一直等待。
 			r.drainCancelUIRequests(ar)
@@ -666,6 +673,7 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 	}
 	escalation := session.Escalation{
 		EscalationID: id, AfterEntryID: afterEntryID, At: time.Now().UTC(),
+		Reviewing: ar.mode == "auto",
 	}
 	escalation.ToolName, _ = data["tool_name"].(string)
 	escalation.RequestedPath, _ = data["requested_path"].(string)
@@ -684,6 +692,12 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 	// 快可见,锚点究底要走文件 IO,不能挡在前面。
 	ar.stateMu.Lock()
 	ar.pending[id] = escalation
+	if escalation.Reviewing {
+		if ar.autoReviewing == nil {
+			ar.autoReviewing = map[string]translate.Event{}
+		}
+		ar.autoReviewing[id] = event
+	}
 	ar.stateMu.Unlock()
 	ar.notifyWaitChanged()
 	if escalation.AfterEntryID == "" {
@@ -702,11 +716,13 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 		if decided {
 			value := opts.granted
 			record.Granted = &value
+			record.Reviewing = false
 			if opts.scope != "" {
 				record.Scope = opts.scope
 			}
 			if opts.auto {
 				record.Auto = true
+				record.ClassifierReason = opts.reason
 			}
 			if opts.resolvedPath != "" {
 				record.ResolvedPath = opts.resolvedPath
@@ -717,11 +733,15 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 	}); err != nil {
 		r.logger.Error("记录审批失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", err)
 	}
-	// permission_mode=full 的自动放行由 P3 的 Pi 扩展完成;runner 只传递用户决定。
-	// 会话内允许的工具直接放行(读取最新 meta 判断);bash 高危命令的 note
-	// 携带「命中规则」提示时不自动放行,仍交用户逐条确认。
+	// permission_mode=full 的自动放行由 Pi 扩展完成;会话内允许的工具由 runner
+	// 直接放行。auto 模式在未命中会话内允许后交给分类器,所有结果都自动决定,
+	// 不再把审批留给用户。
 	if r.autoGrantable(ar, escalation, note) {
 		r.resolveEscalation(ar, id, resolveOptions{granted: true, scope: "session", auto: true})
+		return
+	}
+	if ar.mode == "auto" {
+		r.startClassification(ar, escalation, note)
 	}
 }
 
@@ -756,27 +776,37 @@ func (r *Runner) autoGrantable(ar *activeRun, escalation session.Escalation, not
 
 // resolveOptions 描述一次审批回写:granted/resolvedPath 是决定本体;
 // scope="session" 表示会话内允许(允许时把工具写进 meta.SessionAllow);
-// auto 表示由会话内允许自动放行,事件里带 auto 标记。
+// auto 表示由会话内允许或分类器自动放行,事件里带 auto 标记;reason 是分类器理由。
 type resolveOptions struct {
 	granted      bool
 	resolvedPath string
 	scope        string
 	auto         bool
+	reason       string
 }
 
 func (r *Runner) resolveEscalation(ar *activeRun, id string, opts resolveOptions) bool {
 	ar.stateMu.Lock()
 	escalation, ok := ar.pending[id]
-	if ok {
-		delete(ar.pending, id)
+	if !ok {
+		ar.stateMu.Unlock()
+		return false
+	}
+	delete(ar.pending, id)
+	request, reviewing := ar.autoReviewing[id]
+	if reviewing {
+		delete(ar.autoReviewing, id)
 	}
 	// 决定同时记在内存里:若审批记录还未落盘(recordEscalation 正在取锚点),
 	// 那里的补写逻辑靠它把决定带回 meta,避免刷新后回到未决。
 	ar.resolved[id] = opts
 	ar.stateMu.Unlock()
 	ar.notifyWaitChanged()
-	if !ok {
-		return false
+	// auto 的请求事件一直保留到作出决定;run 收尾的静默拒绝只落盘,不补发
+	// 用户从未见过的请求或孤立结果。
+	publishDecision := !reviewing || opts.auto
+	if reviewing && opts.auto {
+		r.publish(ar, request)
 	}
 	if proc := ar.proc.Load(); proc != nil {
 		if err := proc.Send(map[string]any{
@@ -785,10 +815,12 @@ func (r *Runner) resolveEscalation(ar *activeRun, id string, opts resolveOptions
 			r.logger.Warn("回写审批失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", err)
 		}
 	}
-	if opts.auto {
-		r.publish(ar, ar.tr.AutoDecision(id, opts.granted))
-	} else {
-		r.publish(ar, ar.tr.Decision(id, opts.granted))
+	if publishDecision {
+		if opts.auto {
+			r.publish(ar, ar.tr.AutoDecision(id, opts.granted, opts.reason))
+		} else {
+			r.publish(ar, ar.tr.Decision(id, opts.granted))
+		}
 	}
 	toolName := escalation.ToolName
 	if _, err := r.cfg.Store.Update(ar.sessionID, func(meta *session.Meta) error {
@@ -798,11 +830,13 @@ func (r *Runner) resolveEscalation(ar *activeRun, id string, opts resolveOptions
 			}
 			value := opts.granted
 			meta.Escalations[i].Granted = &value
+			meta.Escalations[i].Reviewing = false
 			if opts.scope != "" {
 				meta.Escalations[i].Scope = opts.scope
 			}
 			if opts.auto {
 				meta.Escalations[i].Auto = true
+				meta.Escalations[i].ClassifierReason = opts.reason
 			}
 			if opts.resolvedPath != "" {
 				meta.Escalations[i].ResolvedPath = opts.resolvedPath

@@ -101,6 +101,10 @@ func (s *Store) BuildTranscript(id string) ([]map[string]any, error) {
 	afterEsc := map[string][]Escalation{}
 	var tailEsc []Escalation
 	for _, esc := range meta.Escalations {
+		// auto 分类期间请求事件尚未发布,刷新时也不能重建出待审批卡片。
+		if esc.Reviewing {
+			continue
+		}
 		switch {
 		case esc.AfterEntryID != "" && onPath[esc.AfterEntryID]:
 			afterEsc[esc.AfterEntryID] = append(afterEsc[esc.AfterEntryID], esc)
@@ -338,7 +342,7 @@ func messageEntry(entry piEntry, meta Meta) map[string]any {
 }
 
 // escalationEntry 把审批记录转成前端条目;时间用 Pi 条目同款毫秒精度 ISO。
-// scope/auto 只在有意义时输出(会话内允许 / 自动放行),其余省略。
+// scope/auto 只在有意义时输出(会话内允许 / 自动决定),其余省略。
 func escalationEntry(esc Escalation) map[string]any {
 	var granted any // 未决为 null,与前端 granted?: boolean | null 对齐
 	if esc.Granted != nil {
@@ -361,6 +365,10 @@ func escalationEntry(esc Escalation) map[string]any {
 	}
 	if esc.Auto {
 		out["auto"] = true
+	}
+	// 自动决定的理由随审批输出,拒绝与允许都保留审计信息。
+	if esc.Auto && esc.ClassifierReason != "" {
+		out["reason"] = esc.ClassifierReason
 	}
 	return out
 }

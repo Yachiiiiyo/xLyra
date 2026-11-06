@@ -6,8 +6,10 @@
 //   悬空链接)一律拒绝。路径约束对 bash 不适用:沙箱执行器的 Landlock 才是 bash 的
 //   边界,这里不做词法检查。
 // - 审批:permissionMode=ask 时 write/edit/bash 执行前必须经用户确认(bash 逐条命令
-//   审批,卡片展示完整命令);full 时跳过 write/edit 审批,bash 仅在命中高危模式时
-//   要求确认。路径约束照常生效,工具白名单由 Go 侧 --tools 控制。
+//   审批,卡片展示完整命令);auto(「替我审批」)时 write/edit 直接放行,bash 逐条
+//   发审批并由 Go 分类器自动决定;full 时跳过 write/edit 审批,bash 仅在命中高危
+//   模式时要求确认。auto/full 的 bash 备注都带高危规则名,路径约束照常生效,
+//   工具白名单由 Go 侧 --tools 控制。
 // - 沙箱 bash:运行配置 runtime.bash 启用时,用 createBashTool 以同名工具覆盖内置
 //   bash(描述、参数 schema、输出截断全部不变),模型与用户的 bash 命令(! 前缀与
 //   RPC 的 bash)一律发给 xLyra 主进程的 Unix 套接字执行器(专用 uid + Landlock +
@@ -40,7 +42,7 @@ import {
 	type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
-type PermissionMode = "ask" | "full";
+type PermissionMode = "ask" | "auto" | "full";
 
 const PATH_TOOLS = new Set(["read", "ls", "grep", "find", "write", "edit"]);
 const APPROVAL_TOOLS = new Set(["write", "edit"]);
@@ -124,8 +126,8 @@ function optionalPositiveInt(value: unknown, fallback: number): number | null {
 }
 
 // 高危命令规则:尽力而为的提示层,不是安全边界——真正的边界是沙箱执行器的
-// Landlock/seccomp/rlimit。命中只是在 full 模式下多一道用户审批,漏报不构成漏洞,
-// 误报可接受。按「命令文本中出现」匹配,不解析 shell 语义。
+// Landlock/seccomp/rlimit。命中只是在 auto 模式下确定性拒绝、在 full 模式下多一道
+// 用户审批,漏报不构成漏洞,误报可接受。按「命令文本中出现」匹配,不解析 shell 语义。
 const HIGH_RISK_RULES: { name: string; pattern: RegExp }[] = [
 	// rm 带递归标志(-r/-R/-rf/--recursive 等)且目标含绝对路径 /、~、$HOME、..、
 	// 通配 * 或单独的点(整个工作目录)
@@ -273,9 +275,9 @@ function sandboxOperations(config: BashSandboxConfig): BashOperations {
 	};
 }
 
-// bash 审批:ask 模式逐条审批;full 模式仅高危命令审批(标题与 note 不同)。
-// 异常/abort 一律按拒绝;message.command 对齐 Go 侧 ParseApprovalMessage 的 []string,
-// 完整命令不截断。
+// bash 审批:ask/auto 模式逐条审批;full 模式仅高危命令审批。auto/full 都在命中时
+// 注明规则名,auto 仍由 Go 分类器决定。异常/abort 一律按拒绝;message.command 对齐
+// Go 侧 ParseApprovalMessage 的 []string,完整命令不截断。
 async function approveBashCall(
 	event: BashToolCallEvent,
 	ctx: ExtensionContext,
@@ -288,7 +290,7 @@ async function approveBashCall(
 	if (Buffer.byteLength(command, "utf8") > MAX_APPROVAL_COMMAND_BYTES) {
 		return { block: true, reason: "命令过长,已拒绝(超过 8 KiB)" };
 	}
-	const hits = permissionMode === "full" ? matchHighRiskRules(command) : null;
+	const hits = permissionMode === "ask" ? null : matchHighRiskRules(command);
 	if (permissionMode === "full" && hits === null) return; // full 且未命中:不审批
 
 	const cwd = ctx.cwd || process.cwd();
@@ -298,15 +300,15 @@ async function approveBashCall(
 		toolName: "bash",
 		command: [command],
 		note:
-			permissionMode === "ask"
+			hits === null
 				? `工作目录: ${workdir}`
-				: `工作目录: ${workdir};命中规则: ${hits!.join("、")}`,
+				: `工作目录: ${workdir};命中规则: ${hits.join("、")}`,
 	};
 	let confirmed = false;
 	try {
 		// 必须传 signal,否则等待审批时 abort 会被卡住
 		confirmed = await ctx.ui.confirm(
-			permissionMode === "ask" ? "允许执行命令?" : "这条命令有风险,允许执行?",
+			permissionMode === "full" ? "这条命令有风险,允许执行?" : "允许执行命令?",
 			JSON.stringify(payload),
 			{ signal: ctx.signal },
 		);
@@ -319,7 +321,8 @@ async function approveBashCall(
 
 // 读不到、解析失败、值非法 → 一律按 ask(fail-closed)。
 function loadPermissionMode(): PermissionMode {
-	return loadRuntimeConfig()?.permissionMode === "full" ? "full" : "ask";
+	const mode = loadRuntimeConfig()?.permissionMode;
+	return mode === "auto" || mode === "full" ? mode : "ask";
 }
 
 // 读取并校验只读根(readRoots,启用技能的目录):只放开 read/ls/grep/find,

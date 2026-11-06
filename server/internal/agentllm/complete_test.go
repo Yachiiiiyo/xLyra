@@ -68,6 +68,26 @@ func TestCompleteTextRequestAndResponse(t *testing.T) {
 	}
 }
 
+func TestCompleteTextKindMetadata(t *testing.T) {
+	handler := newTestHandler(&fakeAgentRepository{})
+	var metadata map[string]any
+	handler.chatCompletions = func(w http.ResponseWriter, r *http.Request) {
+		metadata = gateway.InternalRequestMetadataFromContext(r.Context())
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"decision\":\"block\"}"}}]}`))
+	}
+	text, err := handler.CompleteTextKind(context.Background(), "session-1", "gpt-test", "system", "user", 200, "permission_classifier")
+	if err != nil {
+		t.Fatalf("CompleteTextKind: %v", err)
+	}
+	if text != `{"decision":"block"}` {
+		t.Fatalf("text = %q", text)
+	}
+	want := map[string]any{"agent_session_id": "session-1", "agent_transport": "xlyra-agent", "kind": "permission_classifier"}
+	if !reflect.DeepEqual(metadata, want) {
+		t.Fatalf("metadata = %#v, want %#v", metadata, want)
+	}
+}
+
 func TestCompleteTextFailures(t *testing.T) {
 	tests := []struct {
 		name   string

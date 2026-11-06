@@ -139,10 +139,14 @@ func (t *Translator) Decision(escalationID string, allowed bool) Event {
 	return decisionEvent(escalationID, allowed, false)
 }
 
-// AutoDecision 生成会话内允许自动放行的 permission_result,额外带 auto 标记,
-// 供前端区分「用户点击允许」与「会话内允许自动放行」。
-func (t *Translator) AutoDecision(escalationID string, allowed bool) Event {
-	return decisionEvent(escalationID, allowed, true)
+// AutoDecision 生成自动放行的 permission_result,额外带 auto 标记,供前端区分
+// 「用户点击允许」与自动放行。可选 reason 是 auto 分类器的判定理由,非空时带出。
+func (t *Translator) AutoDecision(escalationID string, allowed bool, reason ...string) Event {
+	event := decisionEvent(escalationID, allowed, true)
+	if len(reason) > 0 && reason[0] != "" {
+		event.Data["reason"] = reason[0]
+	}
+	return event
 }
 
 func decisionEvent(escalationID string, allowed, auto bool) Event {

@@ -77,7 +77,9 @@ type Attachment struct {
 
 // Escalation 是一次权限审批;Granted 为 nil 表示未决。Scope 为 "session"
 // 表示这条审批以「会话内允许」作出(同时把工具写进 SessionAllow);
-// Auto 为 true 表示由会话内允许自动放行,未经用户逐条确认。
+// Auto 为 true 表示由会话内允许或 auto 分类器自动决定,未经用户逐条确认。
+// ClassifierReason 记录分类器的判定理由;Reviewing 表示 auto 分类尚未完成,
+// 此时审批对用户不可见,也不计入等待用户。
 type Escalation struct {
 	EscalationID     string    `json:"escalation_id"`
 	ToolName         string    `json:"tool_name"`
@@ -89,6 +91,8 @@ type Escalation struct {
 	AfterEntryID     string    `json:"after_entry_id"` // 审批发生时的锚点:最后已见的 Pi 条目 id,事件缺失时取 Pi 会话文件末尾条目
 	Scope            string    `json:"scope,omitempty"`
 	Auto             bool      `json:"auto,omitempty"`
+	ClassifierReason string    `json:"classifier_reason,omitempty"`
+	Reviewing        bool      `json:"reviewing,omitempty"`
 }
 
 // MaxRunErrors 是 meta 里保留的 run 失败记录条数上限,超出丢弃最旧的。

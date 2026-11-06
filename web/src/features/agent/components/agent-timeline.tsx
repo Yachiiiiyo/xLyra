@@ -709,10 +709,15 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
   const { t } = useTranslation('agent')
   // bash 审批带「命中规则」的 note 是高风险命令提示，后端不会自动放行，故不提供会话内允许
   const allowSession = !(request.tool.toLowerCase() === 'bash' && (request.note ?? '').includes('命中规则'))
+  const autoReason = request.auto ? request.reason : undefined
   const decisionLabel = request.decision === 'denied'
-    ? t('permission.denied')
+    ? autoReason
+      ? t('permission.autoDenied')
+      : t('permission.denied')
     : request.auto
-      ? t('permission.autoAllowed')
+      ? autoReason
+        ? t('permission.autoApproved')
+        : t('permission.autoAllowed')
       : request.scope === 'session'
         ? t('permission.allowedSession')
         : t('permission.allowed')
@@ -722,13 +727,20 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
     const summary = (request.detail ?? '').split('\n').find((line) => line.trim()) ?? ''
     return (
       <div
-        className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs"
+        className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs"
         title={[request.detail, request.note].filter(Boolean).join('\n')}
       >
-        <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-        <span className="shrink-0 font-medium text-foreground">{toolDisplayName(request.tool, t)}</span>
-        {summary ? <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-soft">{summary}</code> : <span className="flex-1" />}
-        <span className={cn('shrink-0 font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>{decisionLabel}</span>
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <span className="shrink-0 font-medium text-foreground">{toolDisplayName(request.tool, t)}</span>
+          {summary ? <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-soft">{summary}</code> : <span className="flex-1" />}
+          <span className={cn('shrink-0 font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>{decisionLabel}</span>
+        </div>
+        {autoReason ? (
+          <p className="mt-1 whitespace-pre-wrap break-words pl-5 text-[11px] leading-4 text-muted-soft">
+            {t('permission.autoReason', { reason: autoReason })}
+          </p>
+        ) : null}
       </div>
     )
   }

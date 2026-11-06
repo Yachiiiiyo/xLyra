@@ -388,6 +388,15 @@ func TestAutoDecision(t *testing.T) {
 	// 自动拒绝(理论路径)同样带标记;原 Decision 事件形状不变。
 	deny := tr.Decision("esc-3", false)
 	assertEvents(t, []Event{deny}, []Event{{Type: "permission_result", Data: map[string]any{"request_id": "esc-3", "allowed": false}}})
+	// 分类器理由按需追加;空理由与原事件形状一致。
+	withReason := tr.AutoDecision("esc-4", true, "仅修改工作区文件")
+	assertEvents(t, []Event{withReason}, []Event{{Type: "permission_result", Data: map[string]any{
+		"request_id": "esc-4", "allowed": true, "auto": true, "reason": "仅修改工作区文件",
+	}}})
+	emptyReason := tr.AutoDecision("esc-5", true, "")
+	assertEvents(t, []Event{emptyReason}, []Event{{Type: "permission_result", Data: map[string]any{
+		"request_id": "esc-5", "allowed": true, "auto": true,
+	}}})
 }
 
 func TestParseApprovalMessage(t *testing.T) {

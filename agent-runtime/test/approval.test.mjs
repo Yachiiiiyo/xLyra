@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+	SECRET,
 	autoApprove,
 	readFileOrNull,
 	resultText,
@@ -15,6 +16,7 @@ import {
 	uiRequests,
 	waitFor,
 } from "./lib/harness.mjs";
+import { startFakeExec } from "./lib/fake-exec.mjs";
 
 const TIMEOUT = { timeout: 30000 };
 
@@ -210,6 +212,110 @@ test("full: write/edit 不产生审批请求,直接成功", TIMEOUT, async () =>
 		assert.equal(readFileOrNull(join(c.cwd, "out/full.txt")), "FULL-MODE");
 		assert.equal(readFileOrNull(join(c.cwd, "edit-me.txt")), "delta\n");
 		assert.equal(toolEnds(turn.events).length, 2);
+	} finally {
+		await c.close();
+	}
+});
+
+test("auto: write/edit 不触发审批,工作目录外的路径仍拒绝", TIMEOUT, async () => {
+	const c = await startCase({
+		name: "auto-write-edit-fast-path",
+		permissionMode: "auto",
+		prepare: ({ cwd }) => writeFileSync(join(cwd, "edit-me.txt"), "alpha\n"),
+		script: steps([
+			{
+				toolCalls: [
+					{ id: "call_aw", name: "write", args: { path: "out/auto.txt", content: "AUTO-MODE" } },
+					{
+						id: "call_ae",
+						name: "edit",
+						args: { path: "edit-me.txt", edits: [{ oldText: "alpha", newText: "auto" }] },
+					},
+					{ id: "call_aow", name: "write", args: { path: "../outside/denied.txt", content: "NOPE" } },
+					{
+						id: "call_aoe",
+						name: "edit",
+						args: { path: "../outside/secret.txt", edits: [{ oldText: SECRET, newText: "NOPE" }] },
+					},
+				],
+			},
+		]),
+	});
+	try {
+		const turn = await c.client.promptAndWait("auto 写入并尝试越界", { timeoutMs: 15000 });
+		assert.equal(uiRequests(c.client).length, 0);
+		assert.equal(toolEnds(turn.events).length, 4);
+		assert.equal(toolEnd(turn.events, "call_aw")?.isError, false);
+		assert.equal(toolEnd(turn.events, "call_ae")?.isError, false);
+		assert.equal(readFileOrNull(join(c.cwd, "out/auto.txt")), "AUTO-MODE");
+		assert.equal(readFileOrNull(join(c.cwd, "edit-me.txt")), "auto\n");
+		for (const id of ["call_aow", "call_aoe"]) {
+			const end = toolEnd(turn.events, id);
+			assert.equal(end?.isError, true);
+			assert.ok(resultText(end).includes("路径不在会话工作目录内"), resultText(end));
+		}
+		assert.equal(existsSync(join(c.outside, "denied.txt")), false);
+		assert.equal(readFileOrNull(join(c.outside, "secret.txt")), SECRET);
+	} finally {
+		await c.close();
+	}
+});
+
+test("auto: bash 每条都审批,高危 note 带规则名,普通命令不带", TIMEOUT, async () => {
+	const commands = [
+		{ id: "call_auto_plain", command: "echo AUTO-PLAIN" },
+		{ id: "call_auto_risky", command: "rm -rf /" },
+		{ id: "call_auto_tail", command: "echo AUTO-TAIL" },
+	];
+	const c = await startCase({
+		name: "auto-bash-approval",
+		permissionMode: "auto",
+		bash: ({ root }) => ({ socket: join(root, "exec.sock"), defaultTimeout: 30, maxTimeout: 60 }),
+		script: steps([
+			{ toolCalls: commands.map(({ id, command }) => ({ id, name: "bash", args: { command } })) },
+		]),
+	});
+	const exec = await startFakeExec({ socketPath: join(c.root, "exec.sock"), behavior: () => ({ out: "ok\n" }) });
+	autoApprove(c.client, true);
+	try {
+		const turn = await c.client.promptAndWait("auto 跑三条命令", { timeoutMs: 15000 });
+		const requests = uiRequests(c.client, "confirm");
+		assert.equal(requests.length, commands.length);
+		const messages = new Map(requests.map((request) => {
+			assert.equal(request.title, "允许执行命令?");
+			const message = JSON.parse(request.message);
+			return [message.toolCallId, message];
+		}));
+		assert.deepEqual([...messages.keys()].sort(), commands.map(({ id }) => id).sort());
+		assert.equal(messages.get("call_auto_plain").note, "工作目录: .");
+		assert.equal(messages.get("call_auto_tail").note, "工作目录: .");
+		assert.equal(messages.get("call_auto_risky").note, "工作目录: .;命中规则: rm 递归删除高危目标");
+		assert.ok(!messages.get("call_auto_plain").note.includes("命中规则"));
+		assert.ok(!messages.get("call_auto_tail").note.includes("命中规则"));
+		for (const { id } of commands) assert.equal(toolEnd(turn.events, id)?.isError, false);
+		assert.equal(exec.requests.length, commands.length);
+	} finally {
+		await exec.close();
+		await c.close();
+	}
+});
+
+test("非法 permissionMode: fail-closed 回退 ask,write 仍需确认", TIMEOUT, async () => {
+	const c = await startCase({
+		name: "invalid-permission-mode-fallback",
+		permissionMode: "yolo",
+		script: steps([
+			{ toolCalls: [{ id: "call_invalid", name: "write", args: { path: "fallback.txt", content: "ASK" } }] },
+		]),
+	});
+	try {
+		const pending = c.client.promptAndWait("非法模式下写文件", { timeoutMs: 15000 });
+		const request = await waitFor(() => uiRequest(c.client, "confirm"), 8000, "confirm 请求");
+		assert.equal(request.title, "允许修改文件?");
+		c.client.extensionUiRespond(request.id, { confirmed: true });
+		const turn = await pending;
+		assert.equal(toolEnd(turn.events, "call_invalid")?.isError, false);
+		assert.equal(readFileOrNull(join(c.cwd, "fallback.txt")), "ASK");
 	} finally {
 		await c.close();
 	}

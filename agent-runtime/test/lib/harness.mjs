@@ -41,7 +41,7 @@ function providerConfig(baseUrl) {
  *
  * options:
  *   name           用例名(临时目录前缀)
- *   permissionMode "ask" | "full"(写入 XLYRA_RUN_CONFIG.runtime)
+ *   permissionMode "ask" | "auto" | "full"(写入 XLYRA_RUN_CONFIG.runtime)
  *   runtimeJson    直接指定 runtime 的原始 JSON 文本(优先于 permissionMode/readRoots;
  *                  不是合法 JSON 时原样作为字符串放进 runtime,测“配置非法”;
  *                  undefined 且未给 permissionMode 时不带 runtime,测“配置缺失”)

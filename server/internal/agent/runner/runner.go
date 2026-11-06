@@ -80,6 +80,10 @@ type Config struct {
 	Tools          []string
 	// ImageModels 每次 run 实时返回生图模型数量;nil 或零不注册生图工具。
 	ImageModels func() int
+	// Classify 调用内部文本补全判断单次审批能否自动放行;nil 时 auto 直接拒绝。
+	Classify func(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error)
+	// ClassifierModel 返回分类器专用模型;为空时使用本次 run 的模型。
+	ClassifierModel func() string
 	// ExtensionPath 是 xLyra 扩展(xLyra.ts)的绝对路径,经 -e 传给 Pi;
 	// Tools 含 write/edit 时必填且文件必须存在(Health fail-closed)。
 	ExtensionPath string
@@ -135,6 +139,7 @@ type activeRun struct {
 	sessionID string
 	runID     string
 	model     string
+	mode      string
 	kind      string
 	turnID    string
 	run       *runlog.Run // stateMu 保护;admit 后即可被 Grant/清理并发访问
@@ -153,13 +158,17 @@ type activeRun struct {
 	stopping  atomic.Bool
 	abortOnce sync.Once
 	cleanOnce sync.Once
-	renewWG   sync.WaitGroup // 续期与配额 goroutine,cleanup 里 cancel 后 Wait
+	renewWG   sync.WaitGroup // 续期、配额与分类 goroutine,cleanup 里 cancel 后 Wait
+	// auto 的自动拒绝计数;分类器放行只清连续值,累计值贯穿本次 run。
+	autoDenyStreak atomic.Int64
+	autoDenyTotal  atomic.Int64
 
 	stateMu          sync.Mutex
 	terminal         string
 	singleTerminal   bool
 	endReason        string
 	pending          map[string]session.Escalation
+	autoReviewing    map[string]translate.Event  // auto 决定前的原审批请求;这些审批不等用户,决定时随结果补发
 	resolved         map[string]resolveOptions   // 已回写的审批决定:决定先于落盘到达时由 recordEscalation 补写
 	pendingQuestions map[string]session.Question // 未回答的提问,id 即 extension_ui_request 的 id
 	questionTimers   map[string]*time.Timer      // 提问超时自动跳过的计时器,与 pendingQuestions 同生命周期
@@ -420,7 +429,7 @@ func (r *Runner) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	}
 	spec.references = r.withTextReferences(meta.ID, in.Content, references)
 
-	ar, err := r.admit(meta.ID, spec.model, "send")
+	ar, err := r.admit(meta.ID, spec, "send")
 	if err != nil {
 		return fail(err)
 	}
@@ -497,7 +506,7 @@ func (r *Runner) Retry(ctx context.Context, in RetryInput) (SendResult, error) {
 	}
 	spec.references = r.withTextReferences(meta.ID, content, references)
 
-	ar, err := r.admit(meta.ID, spec.model, "retry")
+	ar, err := r.admit(meta.ID, spec, "retry")
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -541,7 +550,8 @@ func (r *Runner) Compact(ctx context.Context, sessionID, model string) (CompactR
 	if health := r.Health(); !health.Available {
 		return CompactResult{}, fmt.Errorf("%w: %s", ErrUnavailable, health.Reason)
 	}
-	ar, err := r.admit(sessionID, model, "compact")
+	spec := runSpec{model: model, mode: meta.PermissionMode}
+	ar, err := r.admit(sessionID, spec, "compact")
 	if err != nil {
 		return CompactResult{}, err
 	}
@@ -559,7 +569,6 @@ func (r *Runner) Compact(ctx context.Context, sessionID, model string) (CompactR
 	stopCaller := context.AfterFunc(ctx, cancel)
 	defer stopCaller()
 
-	spec := runSpec{model: model, mode: meta.PermissionMode}
 	prep, err = r.prepare(ar, spec, meta.PiSessionID)
 	if err != nil {
 		return CompactResult{}, err
@@ -671,7 +680,7 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 
 var errQueueTimeout = errors.New("runner: 排队超时")
 
-func (r *Runner) admit(sessionID, model, kind string) (*activeRun, error) {
+func (r *Runner) admit(sessionID string, spec runSpec, kind string) (*activeRun, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -688,9 +697,9 @@ func (r *Runner) admit(sessionID, model, kind string) (*activeRun, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	ar := &activeRun{
-		sessionID: sessionID, runID: uuid.NewString(), model: model, kind: kind,
+		sessionID: sessionID, runID: uuid.NewString(), model: spec.model, mode: spec.mode, kind: kind,
 		tr: translate.New(), ctx: ctx, cancel: cancel, done: make(chan struct{}), grant: make(chan struct{}),
-		pending: map[string]session.Escalation{}, resolved: map[string]resolveOptions{}, startedAt: time.Now(),
+		pending: map[string]session.Escalation{}, autoReviewing: map[string]translate.Event{}, resolved: map[string]resolveOptions{}, startedAt: time.Now(),
 		pendingQuestions: map[string]session.Question{}, questionTimers: map[string]*time.Timer{},
 		waitChanged: make(chan struct{}, 1),
 	}
@@ -1044,9 +1053,15 @@ func (ar *activeRun) notifyWaitChanged() {
 	}
 }
 
-// waiting 报告是否存在未决审批或提问:此时等的是用户,运行总时限暂停计时。
+// waiting 报告是否存在等待用户的审批或提问,此时运行总时限暂停计时。
+// auto 分类中的审批由模型自动决定,不暂停运行总时限。
 func (ar *activeRun) waiting() bool {
 	ar.stateMu.Lock()
 	defer ar.stateMu.Unlock()
-	return len(ar.pending) > 0 || len(ar.pendingQuestions) > 0
+	for id := range ar.pending {
+		if _, reviewing := ar.autoReviewing[id]; !reviewing {
+			return true
+		}
+	}
+	return len(ar.pendingQuestions) > 0
 }

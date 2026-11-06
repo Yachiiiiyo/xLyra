@@ -63,11 +63,12 @@ func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGene
 	return text
 }
 
-// permissionModeValue 归一化写进运行配置 runtime 的权限模式:只有 full 视为放行,
-// 其余(含空、非法值)一律 ask,由扩展按 ask 走审批。
+// permissionModeValue 归一化写进运行配置 runtime 的权限模式:full/auto 原样传给
+// 扩展,其余(含空、非法值)一律 ask。auto 由扩展放行工作区内 write/edit,bash
+// 仍逐条发审批并交给 runner 的分类器判定。
 func permissionModeValue(mode string) string {
-	if mode == "full" {
-		return "full"
+	if mode == "full" || mode == "auto" {
+		return mode
 	}
 	return "ask"
 }

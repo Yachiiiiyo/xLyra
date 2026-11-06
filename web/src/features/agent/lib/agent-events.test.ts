@@ -979,6 +979,55 @@ describe('会话内允许与自动放行', () => {
     expect(runElapsedMs(lastRunOf(timeline), 8_000)).toBe(8_000)
   })
 
+  it('替我审批自动放行记录理由且不带会话内 scope,重复事件保持幂等', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(3_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    const result = { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true, reason: '仅写入工作区内的文件' } }
+    timeline = reduceAgentEvent(timeline, result)
+    timeline = reduceAgentEvent(timeline, result)
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', auto: true, reason: '仅写入工作区内的文件' })
+    expect(run.permissions[0]?.scope).toBeUndefined()
+    expect(run.pausedMs).toBe(0)
+    expect(run.pendingSince).toBeUndefined()
+  })
+
+  it('替我审批自动拒绝记录理由且不带 scope,重复事件保持幂等', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(3_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    const result = { type: 'permission_result', data: { request_id: 'e1', allowed: false, auto: true, reason: '目标路径在工作区外' } }
+    timeline = reduceAgentEvent(timeline, result)
+    timeline = reduceAgentEvent(timeline, result)
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'denied', auto: true, reason: '目标路径在工作区外' })
+    expect(run.permissions[0]?.scope).toBeUndefined()
+    expect(run.pausedMs).toBe(0)
+    expect(run.pendingSince).toBeUndefined()
+  })
+
+  it('带理由的服务端结果清除乐观更新的会话内 scope,仍保持同一条权限', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(2_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    vi.setSystemTime(5_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed', { scope: 'session' })
+    vi.setSystemTime(6_000)
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true, reason: '操作明确安全' } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', auto: true, reason: '操作明确安全' })
+    expect(run.permissions[0]?.scope).toBeUndefined()
+    expect(run.pausedMs).toBe(3_000)
+    expect(runElapsedMs(run, 6_000)).toBe(3_000)
+  })
+
   it('用户先乐观更新、随后收到带 auto 的服务端结果时仍是同一条权限且幂等', () => {
     vi.setSystemTime(0)
     let timeline = reduceAll([{ type: 'agent_start', data: {} }])
@@ -995,16 +1044,22 @@ describe('会话内允许与自动放行', () => {
     expect(runElapsedMs(run, 6_000)).toBe(3_000)
   })
 
-  it('转录的 escalation scope/auto 映射到同样的展示字段', () => {
+  it('转录的 escalation scope/auto/reason 映射到同样的展示字段', () => {
     const timeline = timelineFromTranscript([
       { type: 'message', message: { role: 'user', content: '写两个文件' } },
       { type: 'escalation', escalation_id: 'e1', tool_name: 'write', granted: true, scope: 'session' },
       { type: 'escalation', escalation_id: 'e2', tool_name: 'write', granted: true, scope: 'session', auto: true },
+      { type: 'escalation', escalation_id: 'e3', tool_name: 'write', granted: true, scope: 'session', auto: true, reason: '仅修改目标文件' },
+      { type: 'escalation', escalation_id: 'e4', tool_name: 'write', granted: false, scope: 'session', reason: '目标路径在工作区外' },
     ])
     const run = timeline[1]
     if (run.kind !== 'run') throw new Error('expected run')
     expect(run.run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session' })
     expect(run.run.permissions[1]).toMatchObject({ decision: 'allowed', scope: 'session', auto: true })
+    expect(run.run.permissions[2]).toMatchObject({ decision: 'allowed', auto: true, reason: '仅修改目标文件' })
+    expect(run.run.permissions[2]?.scope).toBeUndefined()
+    expect(run.run.permissions[3]).toMatchObject({ decision: 'denied', auto: true, reason: '目标路径在工作区外' })
+    expect(run.run.permissions[3]?.scope).toBeUndefined()
   })
 })
 

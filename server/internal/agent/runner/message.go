@@ -26,7 +26,7 @@ func (r *Runner) validateMessage(content, model, permissionMode, effort string, 
 	if permissionMode == "" {
 		permissionMode = "ask"
 	}
-	if permissionMode != "ask" && permissionMode != "full" {
+	if permissionMode != "ask" && permissionMode != "auto" && permissionMode != "full" {
 		return runSpec{}, nil, fmt.Errorf("%w: 未知权限模式 %q", ErrInvalid, permissionMode)
 	}
 	spec := runSpec{model: model, effort: effort, mode: permissionMode, text: content}

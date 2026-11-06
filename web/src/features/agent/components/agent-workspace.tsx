@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
-import { Folder, FolderOpen, Globe, Link2, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
+import { FolderOpen, Link2, Menu, TriangleAlert, X } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { Composer } from '@/components/chat/composer'
 import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
@@ -16,6 +16,8 @@ import { newId } from '@/lib/id'
 import { AgentSidebar } from '@/features/agent/components/agent-sidebar'
 import { AgentSettingsDialog } from '@/features/agent/components/agent-settings-dialog'
 import { AgentReferenceDialog } from '@/features/agent/components/agent-reference-dialog'
+import { AgentPermissionMenu } from '@/features/agent/components/agent-permission-menu'
+import { loadPermissionMode, type PermissionMode } from '@/features/agent/lib/agent-permission-mode'
 import { AgentTimeline } from '@/features/agent/components/agent-timeline'
 import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-panel'
 import { AgentArtifactFiles } from '@/features/agent/components/agent-artifact-files'
@@ -25,7 +27,7 @@ import { AppLogo } from '@/components/common/app-logo'
 import { JumpToLatestButton } from '@/components/common/jump-to-latest-button'
 import { useStickToBottom } from '@/hooks/use-stick-to-bottom'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { LiquidGlass } from '@/components/glass/liquid-glass'
 import { AgentBackdrop } from '@/features/agent/components/agent-backdrop'
 import { AgentLiquidGlassPanel, type AgentLiquidGlassSettings } from '@/features/agent/components/liquid-glass/agent-liquid-glass'
@@ -83,7 +85,6 @@ import { cn } from '@/lib/utils'
 
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
-const PERMISSION_MODE_KEY = 'xlyra-agent-permission-mode'
 /** transcript 走 React Query 缓存：staleTime 内切回已看过的会话直接命中缓存秒开 */
 const TRANSCRIPT_STALE_TIME = 30_000
 /** sessions 列表加载后后台预取 transcript 的最近会话数 */
@@ -105,8 +106,6 @@ const composerGlassSettings: AgentLiquidGlassSettings = {
   brightness: 0,
 }
 
-type PermissionMode = 'ask' | 'full'
-
 type EditReplaySnapshot = {
   timeline: AgentTimelineData
   draft: string
@@ -120,14 +119,6 @@ type PreviewState =
   | { mode: 'run'; runId: string; runOrdinal: number; path: string; fromFiles?: boolean }
   | { mode: 'files' }
   | null
-
-function loadPermissionMode(): PermissionMode {
-  try {
-    return window.localStorage.getItem(PERMISSION_MODE_KEY) === 'full' ? 'full' : 'ask'
-  } catch {
-    return 'ask'
-  }
-}
 
 function fileToDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -164,55 +155,6 @@ function WaitingIndicator({ state }: { state: OrbState }) {
       <ThinkingOrb state={state} size={20} theme="dark" aria-label={statusLabel} className="shrink-0" />
       <span>{statusLabel}</span>
     </div>
-  )
-}
-
-/** Confirmation shown before enabling full-access permission mode. */
-function FullAccessConfirmDialog({
-  open,
-  onCancel,
-  onConfirm,
-}: {
-  open: boolean
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  const { t } = useTranslation('agent')
-  const items = [
-    { icon: Folder, title: t('composer.fullConfirmFiles'), description: t('composer.fullConfirmFilesDesc') },
-    { icon: TerminalSquare, title: t('composer.fullConfirmCommands'), description: t('composer.fullConfirmCommandsDesc') },
-    { icon: Globe, title: t('composer.fullConfirmNetwork'), description: t('composer.fullConfirmNetworkDesc') },
-  ]
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
-      <DialogContent size="sm" presentation="center" className="w-[min(92vw,480px)]">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <TriangleAlert className="h-4 w-4 text-amber-500" />
-            {t('composer.fullConfirmTitle')}
-          </DialogTitle>
-          <DialogDescription>{t('composer.fullConfirmDescription')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          <div className="space-y-1 rounded-xl border border-[hsl(var(--glass-border))] bg-[hsl(var(--surface-subtle))]/60 p-2">
-            {items.map((item) => (
-              <div key={item.title} className="flex items-start gap-3 rounded-lg px-3 py-2.5">
-                <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-soft" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">{item.title}</p>
-                  <p className="mt-0.5 text-xs leading-5 text-muted-soft">{item.description}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs leading-5 text-muted-soft">{t('composer.fullConfirmRisk')}</p>
-        </DialogBody>
-        <DialogFooter
-          cancel={<Button variant="outline" onClick={onCancel}>{t('composer.fullConfirmCancel')}</Button>}
-          confirm={<Button variant="destructive" onClick={onConfirm}>{t('composer.fullConfirmAccept')}</Button>}
-        />
-      </DialogContent>
-    </Dialog>
   )
 }
 
@@ -265,7 +207,6 @@ export function AgentWorkspace() {
   const [model, setModel] = useState<string | null>(null)
   const [effort, setEffort] = useState<ReasoningEffort>('high')
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(loadPermissionMode)
-  const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [references, setReferences] = useState<AgentSessionReference[]>([])
@@ -810,22 +751,6 @@ export function AgentWorkspace() {
     })
   }
 
-  function applyPermissionMode(next: PermissionMode) {
-    setPermissionMode(next)
-    try {
-      window.localStorage.setItem(PERMISSION_MODE_KEY, next)
-    } catch { /* ignore */ }
-  }
-
-  function togglePermissionMode() {
-    if (permissionMode === 'ask') {
-      // Full access requires an explicit confirmation.
-      setConfirmFullAccess(true)
-      return
-    }
-    applyPermissionMode('ask')
-  }
-
   const addAttachments = async (files: FileList | File[] | null) => {
     if (!files) return
     const remaining = MAX_ATTACHMENTS - attachments.length
@@ -899,16 +824,12 @@ export function AgentWorkspace() {
             }]}
             label={t('chat:chat.attach')}
           />
-          <button
-            type="button"
-            onClick={togglePermissionMode}
-            className="flex h-11 items-center gap-1.5 rounded-full px-2.5 text-footnote font-medium text-label-2 transition-colors active:bg-fill-3 active:text-label md:h-8 md:hover:bg-fill-3 md:hover:text-label"
-            aria-label={t('agent:composer.permissionMode')}
-            title={permissionMode === 'ask' ? t('agent:composer.permissionAskHint') : t('agent:composer.permissionFullHint')}
-          >
-            {permissionMode === 'ask' ? <ShieldQuestion className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-            <span className="hidden sm:inline">{permissionMode === 'ask' ? t('agent:composer.permissionAsk') : t('agent:composer.permissionFull')}</span>
-          </button>
+          <AgentPermissionMenu
+            value={permissionMode}
+            onChange={setPermissionMode}
+            classifierModel={runtimeSettingsQuery.data?.classifier_model}
+            runtimeSettingsLoaded={runtimeSettingsQuery.isSuccess}
+          />
         </>
       }
       attachments={attachments.length > 0 || attachmentError || references.length > 0 ? (
@@ -1097,14 +1018,6 @@ export function AgentWorkspace() {
             hasBackgroundImage={hasBackgroundImage}
           />
         </AgentMobileDrawer>
-        <FullAccessConfirmDialog
-          open={confirmFullAccess}
-          onCancel={() => setConfirmFullAccess(false)}
-          onConfirm={() => {
-            applyPermissionMode('full')
-            setConfirmFullAccess(false)
-          }}
-        />
         <EditReplayConfirmDialog
           open={Boolean(editReplayConfirmation)}
           onCancel={() => setEditReplayConfirmation(null)}

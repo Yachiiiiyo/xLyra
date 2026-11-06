@@ -14,9 +14,14 @@ import (
 	"xlyra/server/internal/gateway"
 )
 
-// CompleteText 在进程内调用网关完成一次非流式文本补全,供输入预测等内部
-// 短任务使用;鉴权与请求记录仍走内部 Agent API key。
+// CompleteText 在进程内调用网关完成一次非流式文本补全,供输入预测使用;
+// 鉴权与请求记录仍走内部 Agent API key,审计 kind 保持 prompt_suggestion。
 func (h Handler) CompleteText(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error) {
+	return h.CompleteTextKind(ctx, sessionID, model, system, user, maxTokens, "prompt_suggestion")
+}
+
+// CompleteTextKind 与 CompleteText 相同,但允许内部调用方指定请求审计 kind。
+func (h Handler) CompleteTextKind(ctx context.Context, sessionID, model, system, user string, maxTokens int, kind string) (string, error) {
 	body, err := json.Marshal(map[string]any{
 		"model":      model,
 		"stream":     false,
@@ -37,7 +42,7 @@ func (h Handler) CompleteText(ctx context.Context, sessionID, model, system, use
 	ctx = gateway.WithInternalRequestMetadata(ctx, map[string]any{
 		"agent_session_id": sessionID,
 		"agent_transport":  "xlyra-agent",
-		"kind":             "prompt_suggestion",
+		"kind":             kind,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
