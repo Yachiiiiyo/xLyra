@@ -3,6 +3,7 @@ module xlyra/server
 go 1.26.10
 
 require (
+	github.com/andybalholm/brotli v1.2.0
 	github.com/caarlos0/env/v11 v11.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.3.0
@@ -25,8 +26,6 @@ require (
 	github.com/evanw/esbuild v0.28.2
 	github.com/refraction-networking/utls v1.8.2
 )
-
-require github.com/andybalholm/brotli v1.2.0 // indirect
 
 require (
 	github.com/Yachiiiiyo/moejs v0.1.0-yachiyo.3

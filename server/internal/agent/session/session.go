@@ -391,32 +391,7 @@ type ListItem struct {
 // Preview 读 Pi 会话文件尾部(最后一条 assistant/用户文本);running 由
 // 调用方(runlog.Registry)传入判断函数。
 func (s *Store) ListItems(running func(id string) bool) ([]ListItem, error) {
-	metas, err := s.List()
-	if err != nil {
-		return nil, err
-	}
-	items := make([]ListItem, 0, len(metas))
-	for _, meta := range metas {
-		item := ListItem{
-			SessionID: meta.ID,
-			UpdatedAt: meta.UpdatedAt.UnixMilli(),
-		}
-		if meta.Title != "" {
-			item.Title = meta.Title
-		} else {
-			item.Title = TitleFrom(firstUserText(meta))
-		}
-		item.Preview = s.Preview(meta)
-		item.SessionAllow = meta.SessionAllow
-		if item.SessionAllow == nil {
-			item.SessionAllow = []string{}
-		}
-		if running != nil {
-			item.Running = running(meta.ID)
-		}
-		items = append(items, item)
-	}
-	return items, nil
+	return s.listItemsCached(running)
 }
 
 // firstUserText 返回第一条非空的用户消息文本。

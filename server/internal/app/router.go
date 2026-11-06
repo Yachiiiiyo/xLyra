@@ -858,7 +858,7 @@ func spaHandler(staticDir string) http.Handler {
 }
 
 func newSPAHandler(staticDir string, authService *auth.Service) http.Handler {
-	fs := http.FileServer(http.Dir(staticDir))
+	fs := newCompressedFileServer(staticDir, http.FileServer(http.Dir(staticDir)))
 	index := filepath.Join(staticDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := filepath.Join(staticDir, filepath.Clean("/"+r.URL.Path))
