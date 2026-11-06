@@ -79,14 +79,16 @@ func (s *ImageModelSelection) UnmarshalJSON(data []byte) error {
 }
 
 type Settings struct {
-	RunnerBaseURL         string                `json:"runner_base_url"`
-	RunnerTokenConfigured bool                  `json:"runner_token_configured"`
-	AllowedSiteIDs        []string              `json:"allowed_site_ids"`
-	AllowedSiteModelIDs   []string              `json:"allowed_site_model_ids"`
-	ImageModels           []ImageModelSelection `json:"image_models"`
-	SitePolicy            string                `json:"site_policy"`
-	ModelPolicy           string                `json:"model_policy"`
-	Appearance            AppearanceSettings    `json:"appearance"`
+	RunnerBaseURL           string                `json:"runner_base_url"`
+	RunnerTokenConfigured   bool                  `json:"runner_token_configured"`
+	AllowedSiteIDs          []string              `json:"allowed_site_ids"`
+	AllowedSiteModelIDs     []string              `json:"allowed_site_model_ids"`
+	ImageModels             []ImageModelSelection `json:"image_models"`
+	PromptSuggestionEnabled bool                  `json:"prompt_suggestion_enabled"`
+	FastModel               string                `json:"fast_model"`
+	SitePolicy              string                `json:"site_policy"`
+	ModelPolicy             string                `json:"model_policy"`
+	Appearance              AppearanceSettings    `json:"appearance"`
 }
 
 type AppearanceSettings struct {
@@ -127,15 +129,17 @@ func defaultAppearanceSettings() AppearanceSettings {
 // settingsInput uses partial-update semantics: absent fields are left unchanged,
 // so runner connection and site/model scope can be saved independently.
 type settingsInput struct {
-	RunnerBaseURL       *string                `json:"runner_base_url"`
-	RunnerToken         *string                `json:"runner_token"`
-	ClearRunner         bool                   `json:"clear_runner"`
-	AllowedSiteIDs      *[]string              `json:"allowed_site_ids"`
-	AllowedSiteModelIDs *[]string              `json:"allowed_site_model_ids"`
-	ImageModels         *[]ImageModelSelection `json:"image_models"`
-	SitePolicy          *string                `json:"site_policy"`
-	ModelPolicy         *string                `json:"model_policy"`
-	Appearance          *AppearanceSettings    `json:"appearance"`
+	RunnerBaseURL           *string                `json:"runner_base_url"`
+	RunnerToken             *string                `json:"runner_token"`
+	ClearRunner             bool                   `json:"clear_runner"`
+	AllowedSiteIDs          *[]string              `json:"allowed_site_ids"`
+	AllowedSiteModelIDs     *[]string              `json:"allowed_site_model_ids"`
+	ImageModels             *[]ImageModelSelection `json:"image_models"`
+	PromptSuggestionEnabled *bool                  `json:"prompt_suggestion_enabled"`
+	FastModel               *string                `json:"fast_model"`
+	SitePolicy              *string                `json:"site_policy"`
+	ModelPolicy             *string                `json:"model_policy"`
+	Appearance              *AppearanceSettings    `json:"appearance"`
 }
 
 func NewHandler(baseURL, token string, client *http.Client, logger *slog.Logger, workdirs ...string) *Handler {
@@ -386,7 +390,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request, confFile *
 	if confFile != nil {
 		h.backgroundDir(confFile)
 	}
-	settings := Settings{RunnerBaseURL: h.snapshotBaseURL(), RunnerTokenConfigured: h.snapshotToken() != "", AllowedSiteIDs: []string{}, AllowedSiteModelIDs: []string{}, ImageModels: []ImageModelSelection{}, SitePolicy: "allow_all", ModelPolicy: "allow_all", Appearance: defaultAppearanceSettings()}
+	settings := Settings{RunnerBaseURL: h.snapshotBaseURL(), RunnerTokenConfigured: h.snapshotToken() != "", AllowedSiteIDs: []string{}, AllowedSiteModelIDs: []string{}, ImageModels: []ImageModelSelection{}, PromptSuggestionEnabled: true, SitePolicy: "allow_all", ModelPolicy: "allow_all", Appearance: defaultAppearanceSettings()}
 	if confFile != nil {
 		if value, ok := confFile.Get("agent.runner_base_url"); ok {
 			if baseURL, valid := value.(string); valid && strings.TrimSpace(baseURL) != "" {
@@ -401,6 +405,8 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request, confFile *
 		settings.AllowedSiteIDs = readStringList(confFile, "agent.allowed_site_ids")
 		settings.AllowedSiteModelIDs = readStringList(confFile, "agent.allowed_site_model_ids")
 		settings.ImageModels = ImageModelsFromConfig(confFile)
+		settings.PromptSuggestionEnabled = PromptSuggestionEnabledFromConfig(confFile)
+		settings.FastModel = FastModelFromConfig(confFile)
 		if value, ok := confFile.Get("agent.site_policy"); ok {
 			if policy, valid := value.(string); valid && (policy == "allow_all" || policy == "allow_list") {
 				settings.SitePolicy = policy
@@ -483,6 +489,23 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request, confFil
 		}
 		if err := confFile.Set("agent.image_models", normalizeImageModels(*input.ImageModels)); err != nil {
 			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent image model settings")
+			return
+		}
+	}
+	if input.PromptSuggestionEnabled != nil {
+		if err := confFile.Set("agent.prompt_suggestion_enabled", *input.PromptSuggestionEnabled); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent prompt suggestion setting")
+			return
+		}
+	}
+	if input.FastModel != nil {
+		fastModel := strings.TrimSpace(*input.FastModel)
+		if utf8.RuneCountInString(fastModel) > 200 {
+			httpx.Error(w, r, http.StatusBadRequest, "invalid_fast_model", "fast model must not exceed 200 characters")
+			return
+		}
+		if err := confFile.Set("agent.fast_model", fastModel); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent fast model setting")
 			return
 		}
 	}
@@ -817,6 +840,32 @@ func AccessPolicyFromConfig(confFile *config.ConfigFile) (sitePolicy, modelPolic
 		}
 	}
 	return sitePolicy, modelPolicy, siteIDs, siteModelIDs
+}
+
+// FastModelFromConfig 读取输入预测快速模型;未配置时返回空串。
+func FastModelFromConfig(confFile *config.ConfigFile) string {
+	if confFile == nil {
+		return ""
+	}
+	value, ok := confFile.Get("agent.fast_model")
+	if !ok {
+		return ""
+	}
+	model, _ := value.(string)
+	return strings.TrimSpace(model)
+}
+
+// PromptSuggestionEnabledFromConfig 读取输入预测开关;未配置时默认开启。
+func PromptSuggestionEnabledFromConfig(confFile *config.ConfigFile) bool {
+	if confFile == nil {
+		return true
+	}
+	value, ok := confFile.Get("agent.prompt_suggestion_enabled")
+	if !ok {
+		return true
+	}
+	enabled, valid := value.(bool)
+	return !valid || enabled
 }
 
 func ImageModelsFromConfig(confFile *config.ConfigFile) []ImageModelSelection {

@@ -831,7 +831,7 @@ func (r *Runner) cleanup(ar *activeRun, prep *prepared) {
 		terminal := ar.terminal
 		reason := ar.endReason
 		ar.stateMu.Unlock()
-		r.logger.Info("Agent run 结束", "session_id", ar.sessionID, "run_id", ar.runID, "kind", ar.kind,
+		r.logger.Debug("Agent run 结束", "session_id", ar.sessionID, "run_id", ar.runID, "kind", ar.kind,
 			"duration", time.Since(ar.startedAt), "terminal", terminal, "exit_code", exitCode, "reason", reason)
 		close(ar.done)
 	})

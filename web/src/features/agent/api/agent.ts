@@ -37,6 +37,10 @@ export type AgentRuntimeSettings = {
   model_policy: 'allow_all' | 'allow_list'
   /** 生图模型,按模型名去重并排序;每个模型各自选定站点,site_ids 为空表示不限站点 */
   image_models: AgentImageModelSelection[]
+  /** 输入预测等轻量后台任务使用的模型;空串表示跟随当前对话模型 */
+  fast_model: string
+  /** 是否在每轮正常结束后预测下一条输入，缺省开启 */
+  prompt_suggestion_enabled: boolean
   /** 后端过渡期可能仍返回的旧单值字段,仅用于兼容读取 */
   image_model?: { site_id: string; model: string } | null
   /** 后端仍返回该字段；前端外观配置已下线，仅保留契约，不再消费 */
@@ -84,6 +88,8 @@ export async function fetchAgentRuntimeSettings() {
     site_policy: response.data?.site_policy ?? 'allow_all',
     model_policy: response.data?.model_policy ?? 'allow_all',
     image_models: normalizeImageModels(response.data?.image_models, response.data?.image_model),
+    fast_model: typeof response.data?.fast_model === 'string' ? response.data.fast_model : '',
+    prompt_suggestion_enabled: response.data?.prompt_suggestion_enabled ?? true,
     appearance: response.data?.appearance,
   }
 }
@@ -133,6 +139,35 @@ export async function updateAgentImageModels(imageModels: AgentImageModelSelecti
     body: { image_models: dedupeImageModels(imageModels) },
   })
   return response.data
+}
+
+export async function updateAgentFastModel(model: string) {
+  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
+    method: 'PUT',
+    body: { fast_model: model.trim() },
+  })
+  return response.data
+}
+
+export async function updateAgentPromptSuggestion(enabled: boolean) {
+  const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
+    method: 'PUT',
+    body: { prompt_suggestion_enabled: enabled },
+  })
+  return response.data
+}
+
+export async function fetchAgentSuggestion(sessionId: string, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const response = await apiFetch<{ data?: { suggestion?: string | null; request_id?: string } }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/suggestion`, {
+      method: 'POST',
+      signal,
+    })
+    const suggestion = response.data?.suggestion?.trim()
+    return suggestion || null
+  } catch {
+    return null
+  }
 }
 
 export async function updateAgentScopeSettings(settings: { site_policy: 'allow_all' | 'allow_list'; model_policy: 'allow_all' | 'allow_list'; allowed_site_ids: string[]; allowed_site_model_ids: string[]; image_models?: AgentImageModelSelection[] }) {

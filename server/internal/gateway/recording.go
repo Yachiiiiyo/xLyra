@@ -126,6 +126,12 @@ func WithInternalRequestMetadata(ctx context.Context, metadata map[string]any) c
 	return context.WithValue(ctx, internalRequestMetadataContextKey{}, metadata)
 }
 
+// InternalRequestMetadataFromContext 返回内部请求元数据,供进程内网关调用的测试核对。
+func InternalRequestMetadataFromContext(ctx context.Context) map[string]any {
+	metadata, _ := ctx.Value(internalRequestMetadataContextKey{}).(map[string]any)
+	return metadata
+}
+
 func mergeInternalRequestMetadata(metadata map[string]any, ctx context.Context) {
 	values, ok := ctx.Value(internalRequestMetadataContextKey{}).(map[string]any)
 	if !ok {

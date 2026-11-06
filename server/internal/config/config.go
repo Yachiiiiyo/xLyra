@@ -49,10 +49,11 @@ type Config struct {
 	AgentMaxConcurrent  int           `env:"AGENT_MAX_CONCURRENT" envDefault:"4"`
 	AgentRunTimeout     time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
 	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长,0 表示不超时。
-	AgentQuestionTimeout time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"30m"`
-	AgentGatewayBaseURL  string        `env:"AGENT_GATEWAY_BASE_URL"`
-	AgentImageMaxCalls   int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
-	AgentImageTimeout    time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
+	AgentQuestionTimeout  time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"30m"`
+	AgentGatewayBaseURL   string        `env:"AGENT_GATEWAY_BASE_URL"`
+	AgentImageMaxCalls    int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
+	AgentImageTimeout     time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
+	AgentPromptSuggestion bool          `env:"AGENT_PROMPT_SUGGESTION" envDefault:"true"`
 	// AgentIsolation 决定 uid 隔离的启动策略:auto(默认)按探测与自检
 	// 结果决定;required 在环境不支持时直接关闭 Agent;off 完全不隔离
 	// (仅本地开发)。

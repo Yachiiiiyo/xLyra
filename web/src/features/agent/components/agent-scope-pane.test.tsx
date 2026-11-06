@@ -9,10 +9,16 @@ import type { AgentImageModelSelection } from '@/features/agent/api/agent'
 import zhAgent from '@/locales/zh/agent.json'
 import zhCommon from '@/locales/zh/common.json'
 
-const entry = vi.hoisted(() => ({ current: 'closed' as 'closed' | 'preview' | 'config' | 'image', stateIndex: 0 }))
+const entry = vi.hoisted(() => ({ current: 'closed' as 'closed' | 'preview' | 'config' | 'image' | 'fast', stateIndex: 0 }))
 const config = vi.hoisted(() => ({ open: false }))
 const imageConfig = vi.hoisted(() => ({ open: false }))
-const overview = vi.hoisted(() => ({ imageModels: [] as AgentImageModelSelection[], sites: [] as Array<{ site_id: string; site_name: string; site_type: string; enabled: boolean; models: Array<{ id: string; upstream_model_name: string; display_name: string; canonical_model_id: string; model_key?: string }> }> }))
+const fastConfig = vi.hoisted(() => ({ open: false }))
+const overview = vi.hoisted(() => ({ imageModels: [] as AgentImageModelSelection[], fastModel: '', sites: [] as Array<{ site_id: string; site_name: string; site_type: string; enabled: boolean; models: Array<{ id: string; upstream_model_name: string; display_name: string; canonical_model_id: string; model_key?: string }> }> }))
+const promptSetting = vi.hoisted(() => ({
+  checked: undefined as boolean | undefined,
+  onCheckedChange: undefined as ((enabled: boolean) => void) | undefined,
+  mutate: vi.fn(),
+}))
 
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
@@ -24,6 +30,7 @@ vi.mock('react', async (importOriginal) => {
       const open = (entry.current === 'preview' && index === 0)
         || (entry.current === 'config' && index === 1)
         || (entry.current === 'image' && index === 2)
+        || (entry.current === 'fast' && index === 3)
       return actual.useState(open as T)
     },
   }
@@ -37,7 +44,7 @@ vi.mock('@radix-ui/react-dialog', async () => {
 vi.mock('@tanstack/react-query', () => ({
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     const key = queryKey.at(-1)
-    if (key === 'runtime') return { data: { allowed_site_ids: [], allowed_site_model_ids: [], site_policy: 'allow_all', model_policy: 'allow_all', image_models: overview.imageModels }, isLoading: false }
+    if (key === 'runtime') return { data: { allowed_site_ids: [], allowed_site_model_ids: [], site_policy: 'allow_all', model_policy: 'allow_all', image_models: overview.imageModels, fast_model: overview.fastModel }, isLoading: false }
     if (key === 'sites') return { data: { items: overview.sites.map((site) => ({ id: site.site_id, name: site.site_name, site_type: site.site_type, enabled: site.enabled })) }, isLoading: false }
     if (queryKey.at(-2) === 'models' && key === 'all') return {
       data: Object.fromEntries(overview.sites.map((site) => [site.site_id, site.models.map((model) => ({ ...model, site_id: site.site_id, capabilities: {}, status: 'active' }))])),
@@ -46,7 +53,7 @@ vi.mock('@tanstack/react-query', () => ({
     return { data: { items: [] }, isLoading: false }
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useMutation: () => ({ mutate: promptSetting.mutate, isPending: false }),
 }))
 vi.mock('@/features/agent/components/agent-scope-config-dialog', () => ({
   AgentScopeConfigDialog: (props: { open: boolean }) => {
@@ -60,7 +67,20 @@ vi.mock('@/features/agent/components/agent-image-model-dialog', () => ({
     return props.open ? React.createElement('div', null, zhAgent.settings.scope.imageDialogTitle) : null
   },
 }))
+vi.mock('@/features/agent/components/agent-fast-model-dialog', () => ({
+  AgentFastModelDialog: (props: { open: boolean }) => {
+    fastConfig.open = props.open
+    return props.open ? React.createElement('div', null, zhAgent.settings.scope.fastDialogTitle) : null
+  },
+}))
 vi.mock('@/hooks/use-media-query', () => ({ useMobileLayout: () => false }))
+vi.mock('@/components/ui/switch', () => ({
+  Switch: (props: { checked?: boolean; onCheckedChange?: (enabled: boolean) => void; 'aria-label'?: string }) => {
+    promptSetting.checked = props.checked
+    promptSetting.onCheckedChange = props.onCheckedChange
+    return React.createElement('button', { type: 'button', role: 'switch', 'aria-checked': props.checked, 'aria-label': props['aria-label'] })
+  },
+}))
 
 const i18n = createInstance()
 beforeAll(async () => {
@@ -70,8 +90,13 @@ beforeEach(() => {
   entry.current = 'closed'
   config.open = false
   imageConfig.open = false
+  fastConfig.open = false
   overview.imageModels = []
+  overview.fastModel = ''
   overview.sites = [{ site_id: 'site-1', site_name: 'Site', site_type: 'openai', enabled: true, models: [{ id: 'model-1', upstream_model_name: 'gpt', display_name: 'GPT', canonical_model_id: '' }] }]
+  promptSetting.checked = undefined
+  promptSetting.onCheckedChange = undefined
+  promptSetting.mutate.mockReset()
 })
 
 function render() {
@@ -80,11 +105,21 @@ function render() {
 }
 
 describe('AgentScopePane 概览', () => {
+  it('渲染输入预测开关，切换时提交目标开关值', () => {
+    const html = render()
+    expect(html).toContain(zhAgent.settings.scope.promptSuggestionTitle)
+    expect(html).toContain(zhAgent.settings.scope.promptSuggestionDescription)
+    expect(html).toContain('role="switch"')
+    expect(promptSetting.checked).toBe(true)
+    promptSetting.onCheckedChange?.(false)
+    expect(promptSetting.mutate).toHaveBeenCalledExactlyOnceWith(false)
+  })
+
   it('统计文字可聚焦，配置入口存在且没有内嵌保存按钮', () => {
     const html = render()
     expect(html).toContain('<button type="button"')
     expect(html).toContain(zhAgent.settings.scope.allSites)
-    expect(html.match(/>配置</g)).toHaveLength(2)
+    expect(html.match(/>配置</g)).toHaveLength(3)
     expect(html).not.toContain(zhAgent.settings.save)
     expect(html).not.toContain(zhAgent.settings.scope.configDialogTitle)
     expect(html).toContain(zhAgent.settings.scope.imageNotConfigured)
@@ -112,6 +147,15 @@ describe('AgentScopePane 概览', () => {
     expect(html).toContain(zhAgent.settings.scope.imageDialogTitle)
     expect(config.open).toBe(false)
     expect(imageConfig.open).toBe(true)
+  })
+
+  it('快速模型配置入口只打开快速模型弹窗', () => {
+    entry.current = 'fast'
+    const html = render()
+    expect(html).toContain(zhAgent.settings.scope.fastDialogTitle)
+    expect(fastConfig.open).toBe(true)
+    expect(config.open).toBe(false)
+    expect(imageConfig.open).toBe(false)
   })
 
   it('生图摘要按已选顺序用箭头连接模型名，不显示站点名', () => {

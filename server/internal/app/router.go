@@ -736,6 +736,7 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Get("/sessions/{id}/artifacts.zip", h.SessionArtifactsZip)
 	agentRouter.Post("/sessions/{id}/retry", h.RetrySession)
 	agentRouter.Post("/sessions/{id}/stop", h.StopSession)
+	agentRouter.Post("/sessions/{id}/suggestion", h.Suggestion)
 	agentRouter.Post("/sessions/{id}/grant-access", h.GrantAccess)
 	agentRouter.Post("/sessions/{id}/answer-question", h.AnswerQuestion)
 	agentRouter.Post("/sessions/{id}/revoke-access", h.RevokeAccess)

@@ -17,6 +17,10 @@ type ComposerProps = {
   trailingControls?: ReactNode
   attachments?: ReactNode
   onPasteFiles?: (files: File[]) => boolean
+  ghostText?: string
+  onAcceptGhost?: () => void
+  /** 灰字右侧 Tab 提示按钮的无障碍文案 */
+  ghostAcceptLabel?: string
   stopButtonClassName?: string
   stopIconClassName?: string
   sendButtonTitle?: string
@@ -38,6 +42,9 @@ export function Composer({
   trailingControls,
   attachments,
   onPasteFiles,
+  ghostText,
+  onAcceptGhost,
+  ghostAcceptLabel,
   stopButtonClassName,
   stopIconClassName,
   sendButtonTitle,
@@ -45,6 +52,7 @@ export function Composer({
   mascot = true,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const showGhost = value === '' && Boolean(ghostText)
 
   useLayoutEffect(() => {
     const el = textareaRef.current
@@ -54,6 +62,14 @@ export function Composer({
   }, [value, minRows])
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const noModifiers = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+    const atEnd = event.currentTarget.selectionStart === value.length && event.currentTarget.selectionEnd === value.length
+    if (showGhost && onAcceptGhost && noModifiers && !event.nativeEvent.isComposing
+      && (event.key === 'Tab' || (event.key === 'ArrowRight' && atEnd))) {
+      event.preventDefault()
+      onAcceptGhost()
+      return
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
       if (canSubmit) onSubmit()
@@ -75,16 +91,32 @@ export function Composer({
         className="composer-surface rounded-[26px] px-3 pb-2 pt-3"
       >
         {attachments ? <div className="px-1 pb-2">{attachments}</div> : null}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder={placeholder}
-          rows={minRows}
-          className="max-h-[220px] w-full resize-none bg-transparent px-1.5 text-[15px] leading-6 text-label outline-none placeholder:text-label-3"
-        />
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={showGhost ? '' : placeholder}
+            rows={minRows}
+            className="block max-h-[220px] w-full resize-none bg-transparent px-1.5 text-[15px] leading-6 text-label outline-none placeholder:text-label-3"
+          />
+          {showGhost ? (
+            <div className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1.5 text-[15px] leading-6 text-label-3">
+              <span aria-hidden="true">{ghostText}</span>
+              <button
+                type="button"
+                aria-label={ghostAcceptLabel}
+                title={ghostAcceptLabel}
+                onClick={() => onAcceptGhost?.()}
+                className="pointer-events-auto ml-1.5 mt-0.5 inline-flex h-5 items-center rounded border border-separator bg-fill-2 px-1.5 align-top text-[10px] leading-4 text-label-3 transition-colors hover:text-label-2"
+              >
+                <kbd>Tab</kbd>
+              </button>
+            </div>
+          ) : null}
+        </div>
         <div className="mt-1 flex items-center justify-between gap-2">
           <div className="flex shrink-0 items-center gap-1">{controls}</div>
           <div className="flex min-w-0 flex-1 items-center justify-end gap-1">

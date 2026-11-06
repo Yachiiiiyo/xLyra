@@ -36,6 +36,7 @@ import {
   appendUserMessage,
   decidePermission,
   decideQuestion,
+  pausedForUser,
   reconcileTimeline,
   replaceFromUserMessage,
   reduceAgentEvent,
@@ -71,13 +72,14 @@ import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
 import { agentGeneratedFileCount } from '@/features/agent/lib/artifacts'
 import { BUSY_RETRY_DELAY_MS, shouldRetryBusySend } from '@/features/agent/lib/busy-retry'
 import { MAX_SESSION_REFERENCES, referenceChipLabel, type AgentSessionReference } from '@/features/agent/lib/references'
+import { NON_CHAT_CATEGORIES } from '@/features/agent/lib/agent-fast-model'
+import { usePromptSuggestion } from '@/features/agent/lib/use-prompt-suggestion'
 import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
-const NON_CHAT_CATEGORIES = new Set(['image', 'audio', 'embedding'])
 const PERMISSION_MODE_KEY = 'xlyra-agent-permission-mode'
 /** transcript 走 React Query 缓存：staleTime 内切回已看过的会话直接命中缓存秒开 */
 const TRANSCRIPT_STALE_TIME = 30_000
@@ -245,10 +247,14 @@ export function AgentWorkspace() {
   const sessionsQuery = useQuery({ queryKey: ['agent', 'sessions'], queryFn: listAgentSessions, retry: false })
   // Model memory lives server-side: a fresh session defaults to the last globally used model, an existing session to its own last model.
   const modelMemoryQuery = useQuery({ queryKey: ['agent', 'model-memory'], queryFn: fetchAgentModelMemory, retry: false })
+  const runtimeSettingsQuery = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false })
   const availableModelsQuery = useQuery({
     queryKey: [...agentSettingsKey, 'workspace-available-models'],
     queryFn: async () => {
-      const [{ allowed_site_ids: allowedSites, allowed_site_model_ids: allowedModels }, availableSites] = await Promise.all([fetchAgentRuntimeSettings(), fetchAgentAvailableModels()])
+      const [{ allowed_site_ids: allowedSites, allowed_site_model_ids: allowedModels }, availableSites] = await Promise.all([
+        queryClient.fetchQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false }),
+        fetchAgentAvailableModels(),
+      ])
       return { allowedSites, allowedModels, availableSites }
     },
     retry: false,
@@ -367,6 +373,24 @@ export function AgentWorkspace() {
     return gatewayModels[0]?.id ?? null
   }, [gatewayModels, model, modelMemoryQuery.data, selectedId])
 
+  const lastItem = timeline[timeline.length - 1]
+  const hasPendingInteraction = lastItem?.kind === 'run' && pausedForUser(lastItem.run)
+  const { suggestion: promptSuggestion, requestSuggestion, clearSuggestion, acceptSuggestion } = usePromptSuggestion({
+    sessionId: selectedId,
+    draft,
+    running,
+    enabled: runtimeSettingsQuery.data?.prompt_suggestion_enabled ?? true,
+    hasPendingInteraction,
+    onAccept: (text) => {
+      setDraft(text)
+      requestAnimationFrame(() => {
+        const textarea = document.querySelector<HTMLTextAreaElement>('[data-chat-composer="true"] textarea')
+        textarea?.focus()
+        textarea?.setSelectionRange(text.length, text.length)
+      })
+    },
+  })
+
   const followSession = useCallback(async (sessionId: string) => {
     eventAbort.current?.abort()
     const controller = new AbortController()
@@ -411,6 +435,7 @@ export function AgentWorkspace() {
         if (terminal) {
           setRunning(false)
           lastTerminalAtRef.current = Date.now()
+          if (event.type === 'agent_done') requestSuggestion(sessionId)
           void queryClient.invalidateQueries({ queryKey: ['agent', 'sessions'] })
           void queryClient.invalidateQueries({ queryKey: ['agent', 'artifacts', sessionId] })
           // On terminal status, reconcile the timeline against the authoritative
@@ -442,7 +467,7 @@ export function AgentWorkspace() {
     // 流正常结束但没有终态事件（连接被服务端提前关闭等）：同样落定，防止计时无限走
     flush()
     setTimeline((current) => settleRunningRuns(current))
-  }, [queryClient])
+  }, [queryClient, requestSuggestion])
 
   useEffect(() => {
     if (!selectedId) return
@@ -608,7 +633,6 @@ export function AgentWorkspace() {
   // Busy = session creation pending or a run in flight; drives the send/stop button state.
   const awaiting = sendMutation.isPending || retryMutation.isPending || running
   // Waiting indicator shows while busy before the final response, including active tool calls.
-  const lastItem = timeline[timeline.length - 1]
   const runNeedsIndicator = lastItem?.kind === 'run'
     && lastItem.run.status === 'running'
     && (!lastItem.run.finalText
@@ -622,6 +646,7 @@ export function AgentWorkspace() {
   // 用户滚离阅读时不打扰，贴底时内容增长自动滚到底
 
   function createNew() {
+    clearSuggestion()
     eventAbort.current?.abort()
     skipTranscriptLoadFor.current = null
     lastTerminalAtRef.current = null
@@ -642,6 +667,7 @@ export function AgentWorkspace() {
   }
 
   function handleSelect(sessionId: string) {
+    clearSuggestion()
     // 点击的同一 tick 发起 transcript 预取，不等渲染后的 effect；与 effect 里的 fetchQuery 按 key 去重
     void queryClient.prefetchQuery({
       queryKey: agentTranscriptKey(sessionId),
@@ -702,6 +728,7 @@ export function AgentWorkspace() {
   function submit() {
     const content = draft.trim() || attachments[0]?.name || ''
     if (!canSubmit || !content) return
+    clearSuggestion()
     // /compact 指令：不冒泡为用户消息，直接在时间线展示压缩状态
     if (content === AGENT_COMPACT_COMMAND && attachments.length === 0) {
       if (!selectedId) {
@@ -729,6 +756,7 @@ export function AgentWorkspace() {
 
   function confirmEditReplay() {
     if (!editReplayConfirmation || !selectedId) return
+    clearSuggestion()
     const { messageId, content } = editReplayConfirmation
     const original = timeline.find((item) => item.kind === 'user' && (item.messageId === messageId || item.id === messageId))
     const files = original?.kind === 'user' ? original.attachments ?? [] : attachments
@@ -845,6 +873,7 @@ export function AgentWorkspace() {
       onChange={setDraft}
       onSubmit={submit}
       onStop={() => {
+        clearSuggestion()
         if (selectedId) {
           void stopAgentSession(selectedId)
           setRunning(false)
@@ -854,6 +883,9 @@ export function AgentWorkspace() {
       canSubmit={canSubmit}
       sendButtonTitle={agentUnavailableReason}
       placeholder={t('agent:chat.inputPlaceholder')}
+      ghostText={promptSuggestion?.sessionId === selectedId ? promptSuggestion.text : undefined}
+      onAcceptGhost={acceptSuggestion}
+      ghostAcceptLabel={t('agent:chat.acceptSuggestion')}
       minRows={isMobileLayout ? 2 : 3}
       onPasteFiles={(files) => {
         if (running || editingMessage) return false

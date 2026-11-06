@@ -430,6 +430,25 @@ func TestValidateRejectsInvalidAgentIsolation(t *testing.T) {
 	}
 }
 
+func TestAgentPromptSuggestionEnvironment(t *testing.T) {
+	t.Parallel()
+
+	var cfg Config
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: map[string]string{}}); err != nil {
+		t.Fatalf("parse default: %v", err)
+	}
+	if !cfg.AgentPromptSuggestion {
+		t.Fatal("AGENT_PROMPT_SUGGESTION 默认应为 true")
+	}
+	cfg = Config{}
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: map[string]string{"AGENT_PROMPT_SUGGESTION": "false"}}); err != nil {
+		t.Fatalf("parse false: %v", err)
+	}
+	if cfg.AgentPromptSuggestion {
+		t.Fatal("AGENT_PROMPT_SUGGESTION=false 应关闭输入预测")
+	}
+}
+
 // TestValidateRejectsInvalidAgentIsolationRanges:身份池与限额的范围校验。
 func TestValidateRejectsInvalidAgentIsolationRanges(t *testing.T) {
 	t.Parallel()

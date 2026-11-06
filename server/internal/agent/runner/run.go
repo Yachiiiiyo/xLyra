@@ -230,7 +230,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		ar.renewWG.Add(1)
 		go r.quotaLoop(ar, prep)
 	}
-	r.logger.Info("Agent run 开始", "session_id", ar.sessionID, "run_id", ar.runID, "kind", ar.kind, "model", spec.model)
+	r.logger.Debug("Agent run 开始", "session_id", ar.sessionID, "run_id", ar.runID, "kind", ar.kind, "model", spec.model)
 	return prep, nil
 }
 

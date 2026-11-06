@@ -80,12 +80,25 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 	decision := prepareIsolation(cfg, logger, dataDir, caps, bins)
 
 	run, shutdown := newBuiltinRunner(cfg, logger, confFile, routerService, store, runs, tokens, caps, decision, bins)
+	var suggest func(context.Context, string, string, string, string, int) (string, error)
+	if completer, ok := tokens.(interface {
+		CompleteText(context.Context, string, string, string, string, int) (string, error)
+	}); ok {
+		suggest = completer.CompleteText
+	}
 	handler := agent.NewHandler(agent.Deps{
-		Runner:              run,
-		Store:               store,
-		Runs:                runs,
-		Capabilities:        caps,
-		ModelMemory:         modelMemory,
+		Runner:       run,
+		Store:        store,
+		Runs:         runs,
+		Capabilities: caps,
+		ModelMemory:  modelMemory,
+		Suggest:      suggest,
+		SuggestionEnabled: func() bool {
+			return cfg.AgentPromptSuggestion && agentproxy.PromptSuggestionEnabledFromConfig(confFile)
+		},
+		FastModel: func() string {
+			return agentproxy.FastModelFromConfig(confFile)
+		},
 		ValidateAttachments: agentproxy.ValidateAttachments,
 		Logger:              logger,
 		MaxBodyBytes:        cfg.MaxRequestBodyBytes,

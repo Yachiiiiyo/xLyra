@@ -40,6 +40,7 @@ type Handler struct {
 
 	imageModelsSource func() []agentproxy.ImageModelSelection
 	imageGenerate     func(context.Context, gateway.ImageGenerationRequest) gateway.ImageGenerationResult
+	chatCompletions   http.HandlerFunc
 	imageMaxCalls     int
 	imageTotalTimeout time.Duration
 	imageTracker      *agentImageTracker

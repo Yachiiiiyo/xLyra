@@ -155,6 +155,7 @@ func agentRouter(h *Handler) http.Handler {
 		g.Get("/sessions/{id}/artifacts.zip", h.SessionArtifactsZip)
 		g.Post("/sessions/{id}/retry", h.RetrySession)
 		g.Post("/sessions/{id}/stop", h.StopSession)
+		g.Post("/sessions/{id}/suggestion", h.Suggestion)
 		g.Post("/sessions/{id}/grant-access", h.GrantAccess)
 		g.Post("/sessions/{id}/answer-question", h.AnswerQuestion)
 		g.Post("/sessions/{id}/revoke-access", h.RevokeAccess)

@@ -63,6 +63,9 @@ type Deps struct {
 	Runs                *runlog.Registry
 	Capabilities        *capabilities.Store
 	ModelMemory         http.HandlerFunc
+	Suggest             func(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error)
+	SuggestionEnabled   func() bool
+	FastModel           func() string
 	ValidateAttachments func(any) error
 	Logger              *slog.Logger
 	MaxBodyBytes        int64
@@ -94,6 +97,9 @@ type Handler struct {
 	runs                *runlog.Registry
 	capabilities        *capabilities.Store
 	modelMemory         http.HandlerFunc
+	suggest             func(context.Context, string, string, string, string, int) (string, error)
+	suggestionEnabled   func() bool
+	fastModel           func() string
 	validateAttachments func(any) error
 	logger              *slog.Logger
 	maxBody             int64
@@ -107,6 +113,9 @@ func NewHandler(d Deps) *Handler {
 		runs:                d.Runs,
 		capabilities:        d.Capabilities,
 		modelMemory:         d.ModelMemory,
+		suggest:             d.Suggest,
+		suggestionEnabled:   d.SuggestionEnabled,
+		fastModel:           d.FastModel,
 		validateAttachments: d.ValidateAttachments,
 		logger:              d.Logger,
 		maxBody:             d.MaxBodyBytes,

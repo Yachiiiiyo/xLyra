@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Search, Settings2 } from 'lucide-react'
 import { BrandMark } from '@/components/common/brand-mark'
@@ -9,22 +9,28 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { useMobileLayout } from '@/hooks/use-media-query'
-import { buildAgentAvailableModels, fetchAgentRuntimeSettings } from '@/features/agent/api/agent'
+import { buildAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentFastModel, updateAgentPromptSuggestion, type AgentRuntimeSettings } from '@/features/agent/api/agent'
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
+import { agentFastModelCandidates, resolveFastModel } from '@/features/agent/lib/agent-fast-model'
 import { agentImageModelsSummary } from '@/features/agent/lib/agent-image-model'
 import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview, type AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
 import { listAllSiteModels, listCanonicalModels, listSitesLite, sitesQueryKeys, type CanonicalModelItem } from '@/features/sites/api/sites'
 import { formatSiteTypeLabel } from '@/features/sites/lib/site-utils'
 import { canonicalModelIconInfo, modelNameIconInfo } from '@/features/sites/lib/model-icon'
 import { AgentImageModelDialog } from '@/features/agent/components/agent-image-model-dialog'
+import { AgentFastModelDialog } from '@/features/agent/components/agent-fast-model-dialog'
 import { AgentScopeConfigDialog } from '@/features/agent/components/agent-scope-config-dialog'
+import { toast } from '@/lib/toast'
 
 export function AgentScopePane() {
   // api-keys 命名空间原本要等配置弹窗里的站点模型选择器首次渲染才加载,加载期间整棵 Suspense 树挂起重挂,
   // 会打乱叠在设置弹窗之上的 Radix 层级(配置弹窗整体不可点);这里提前加载,弹窗打开时不再挂起
   const { t } = useTranslation(['agent', 'components', 'api-keys'])
-  const runtime = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false })
+  const queryClient = useQueryClient()
+  const runtimeKey = [...agentSettingsKey, 'runtime'] as const
+  const runtime = useQuery({ queryKey: runtimeKey, queryFn: fetchAgentRuntimeSettings, retry: false })
   const sitesQuery = useQuery({ queryKey: [...agentSettingsKey, 'sites'], queryFn: listSitesLite, retry: false })
   const canonicalQuery = useQuery({ queryKey: [...agentSettingsKey, 'canonical-models'], queryFn: listCanonicalModels, retry: false })
   const modelsQuery = useQuery({ queryKey: sitesQueryKeys.allModels(), queryFn: listAllSiteModels, retry: false, staleTime: 0 })
@@ -32,6 +38,25 @@ export function AgentScopePane() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [scopeConfigOpen, setScopeConfigOpen] = useState(false)
   const [imageConfigOpen, setImageConfigOpen] = useState(false)
+  const [fastConfigOpen, setFastConfigOpen] = useState(false)
+  const clearedFastModel = useRef('')
+  const promptSuggestionMutation = useMutation({
+    mutationFn: updateAgentPromptSuggestion,
+    onMutate: async (enabled) => {
+      await queryClient.cancelQueries({ queryKey: runtimeKey })
+      const previous = queryClient.getQueryData<AgentRuntimeSettings>(runtimeKey)
+      queryClient.setQueryData<AgentRuntimeSettings>(runtimeKey, (current) => current ? { ...current, prompt_suggestion_enabled: enabled } : current)
+      return { previous }
+    },
+    onError: (error, _enabled, context) => {
+      if (context?.previous) queryClient.setQueryData(runtimeKey, context.previous)
+      toast.error(t('agent:settings.saveFailed'), { description: error.message })
+    },
+    onSuccess: async (_data, enabled) => {
+      queryClient.setQueryData<AgentRuntimeSettings>(runtimeKey, (current) => current ? { ...current, prompt_suggestion_enabled: enabled } : current)
+      await queryClient.invalidateQueries({ queryKey: runtimeKey })
+    },
+  })
   const canonicalById = useMemo(() => new Map((canonicalQuery.data?.items ?? []).map((model) => [model.id, model])), [canonicalQuery.data])
   const imageSummary = agentImageModelsSummary(runtime.data?.image_models ?? [], available)
   const previewGroups = useMemo(() => groupAgentScopePreview({
@@ -41,6 +66,23 @@ export function AgentScopePane() {
     modelPolicy: runtime.data?.model_policy ?? 'allow_all',
     siteModelIds: runtime.data?.allowed_site_model_ids ?? [],
   }), [available, runtime.data])
+  const fastCandidates = useMemo(() => agentFastModelCandidates(previewGroups), [previewGroups])
+  const configuredFastModel = runtime.data?.fast_model ?? ''
+  const fastModel = resolveFastModel(configuredFastModel, fastCandidates).model
+  const fastModelLoading = runtime.isLoading || sitesQuery.isLoading || canonicalQuery.isLoading || modelsQuery.isLoading
+  const scopeQueriesReady = runtime.isSuccess && sitesQuery.isSuccess && canonicalQuery.isSuccess && modelsQuery.isSuccess
+    && !runtime.isFetching && !sitesQuery.isFetching && !canonicalQuery.isFetching && !modelsQuery.isFetching
+  useEffect(() => {
+    if (!configuredFastModel || fastModel) {
+      clearedFastModel.current = ''
+      return
+    }
+    if (!scopeQueriesReady || clearedFastModel.current === configuredFastModel) return
+    clearedFastModel.current = configuredFastModel
+    void updateAgentFastModel('')
+      .then(() => queryClient.invalidateQueries({ queryKey: agentSettingsKey }))
+      .catch(() => undefined)
+  }, [configuredFastModel, fastModel, queryClient, scopeQueriesReady])
   const summary = summarizeAgentScopePreview(previewGroups)
   const summaryText = runtime.data?.site_policy === 'allow_all' && runtime.data.model_policy === 'allow_all'
     ? `${t('agent:settings.scope.allSites')} · ${t('agent:settings.scope.allModels')}`
@@ -61,6 +103,13 @@ export function AgentScopePane() {
       />
       <AgentScopeConfigDialog open={scopeConfigOpen} onOpenChange={setScopeConfigOpen} />
       <AgentImageModelDialog open={imageConfigOpen} onOpenChange={setImageConfigOpen} />
+      <AgentFastModelDialog
+        open={fastConfigOpen}
+        onOpenChange={setFastConfigOpen}
+        candidates={fastCandidates}
+        current={fastModel?.id ?? ''}
+        loading={fastModelLoading}
+      />
     </>
   )
 
@@ -79,7 +128,7 @@ export function AgentScopePane() {
         </Button>
       </section>
 
-      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-4">
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 py-4">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.imageTitle')}</p>
           <p className="mt-0.5 line-clamp-2 break-words text-xs text-muted-soft">
@@ -99,6 +148,45 @@ export function AgentScopePane() {
           <Settings2 className="h-3.5 w-3.5" />
           {t('agent:settings.scope.configure')}
         </Button>
+      </section>
+
+      <section className="flex flex-wrap items-center gap-x-4 gap-y-2 py-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.fastModelTitle')}</p>
+          {fastModelLoading ? (
+            <div className="mt-1 space-y-1">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-3 w-full max-w-md" />
+            </div>
+          ) : fastModel ? (
+            <>
+              <p className="mt-0.5 truncate text-xs text-muted-soft" title={fastModel.name}>{fastModel.name}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-soft">{t('agent:settings.scope.fastModelConfigured')}</p>
+            </>
+          ) : (
+            <>
+              <p className="mt-0.5 text-xs text-muted-soft">{t('agent:settings.scope.fastModelNotConfigured')}</p>
+              <p className="mt-0.5 text-xs leading-5 text-muted-soft">{t('agent:settings.scope.fastModelUnsetHint')}</p>
+            </>
+          )}
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => setFastConfigOpen(true)}>
+          <Settings2 className="h-3.5 w-3.5" />
+          {t('agent:settings.scope.configure')}
+        </Button>
+      </section>
+
+      <section className="flex items-center gap-4 pt-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">{t('agent:settings.scope.promptSuggestionTitle')}</p>
+          <p className="mt-0.5 text-xs leading-5 text-muted-soft">{t('agent:settings.scope.promptSuggestionDescription')}</p>
+        </div>
+        <Switch
+          aria-label={t('agent:settings.scope.promptSuggestionTitle')}
+          checked={runtime.data?.prompt_suggestion_enabled ?? true}
+          disabled={!runtime.data || promptSuggestionMutation.isPending}
+          onCheckedChange={(enabled) => promptSuggestionMutation.mutate(enabled)}
+        />
       </section>
 
       {dialogs}
