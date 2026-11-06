@@ -54,10 +54,6 @@ import {
   compactAgentSession,
   createAgentSession,
   deleteAgentSession,
-  fetchAgentAvailableModels,
-  fetchAgentHealth,
-  fetchAgentModelMemory,
-  fetchAgentRuntimeSettings,
   fetchAgentTranscript,
   fetchSessionArtifacts,
   followAgentEvents,
@@ -68,7 +64,13 @@ import {
   revokeAgentAccess,
   stopAgentSession,
 } from '@/features/agent/api/agent'
-import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
+import {
+  agentHealthQueryOptions,
+  agentModelMemoryQueryOptions,
+  agentRuntimeSettingsQueryOptions,
+  agentSessionsQueryOptions,
+  agentWorkspaceAvailableModelsQueryOptions,
+} from '@/features/agent/lib/agent-queries'
 import { agentGeneratedFileCount } from '@/features/agent/lib/artifacts'
 import { BUSY_RETRY_DELAY_MS, shouldRetryBusySend } from '@/features/agent/lib/busy-retry'
 import { MAX_SESSION_REFERENCES, referenceChipLabel, type AgentSessionReference } from '@/features/agent/lib/references'
@@ -245,24 +247,12 @@ export function AgentWorkspace() {
   const { t } = useTranslation(['agent', 'chat', 'api-keys', 'components'])
   const backOrDashboard = useBackOrDashboard()
   const queryClient = useQueryClient()
-  const sessionsQuery = useQuery({ queryKey: ['agent', 'sessions'], queryFn: listAgentSessions, retry: false })
+  const sessionsQuery = useQuery(agentSessionsQueryOptions())
   // Model memory lives server-side: a fresh session defaults to the last globally used model, an existing session to its own last model.
-  const modelMemoryQuery = useQuery({ queryKey: ['agent', 'model-memory'], queryFn: fetchAgentModelMemory, retry: false })
-  const runtimeSettingsQuery = useQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false })
-  const availableModelsQuery = useQuery({
-    queryKey: [...agentSettingsKey, 'workspace-available-models'],
-    queryFn: async () => {
-      const [{ allowed_site_ids: allowedSites, allowed_site_model_ids: allowedModels }, availableSites] = await Promise.all([
-        queryClient.fetchQuery({ queryKey: [...agentSettingsKey, 'runtime'], queryFn: fetchAgentRuntimeSettings, retry: false }),
-        fetchAgentAvailableModels(),
-      ])
-      return { allowedSites, allowedModels, availableSites }
-    },
-    retry: false,
-    refetchOnMount: 'always',
-    refetchOnWindowFocus: 'always',
-  })
-  const healthQuery = useQuery({ queryKey: [...agentSettingsKey, 'health'], queryFn: fetchAgentHealth, retry: false, staleTime: 30_000, refetchInterval: 30_000 })
+  const modelMemoryQuery = useQuery(agentModelMemoryQueryOptions())
+  const runtimeSettingsQuery = useQuery(agentRuntimeSettingsQueryOptions())
+  const availableModelsQuery = useQuery(agentWorkspaceAvailableModelsQueryOptions(queryClient))
+  const healthQuery = useQuery(agentHealthQueryOptions())
 
   // 打开 Agent 页默认停在无对话的初始页，不恢复上次的会话；选中会话后才进入对话
   const [activeId, setActiveId] = useState<string | null>(null)

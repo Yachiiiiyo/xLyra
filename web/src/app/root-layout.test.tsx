@@ -7,6 +7,8 @@ import { RootLayout } from '@/app/root-layout'
 import zhComponents from '@/locales/zh/components.json'
 import { useAuthStore } from '@/stores/auth-store'
 
+vi.mock('@/app/use-agent-prefetch', () => ({ useAgentPrefetch: vi.fn() }))
+
 vi.mock('@/components/auth/auth-guard', async () => {
   const React = await import('react')
   return {

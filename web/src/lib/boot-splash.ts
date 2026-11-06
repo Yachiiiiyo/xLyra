@@ -6,7 +6,7 @@ import { drawStarfield } from '@/lib/draw-starfield'
  */
 
 /** 从导航起点算起至少展示的时长 */
-const MIN_DISPLAY_MS = 1000
+const MIN_DISPLAY_MS = 300
 /** 兜底：超过这个时长强制收起，避免卡死遮罩 */
 const MAX_WAIT_MS = 10_000
 const FADE_OUT_MS = 400

@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { AppBackground } from '@/components/layout/app-background'
+import { decodeAppBackgroundImage } from '@/components/layout/app-background-decode'
 
 const useAppearanceQuery = vi.hoisted(() => vi.fn())
 
@@ -26,6 +27,10 @@ beforeEach(() => {
   useAppearanceQuery.mockReset()
 })
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('AppBackground', () => {
   it('renders the starfield while loading or on failure', () => {
     useAppearanceQuery.mockReturnValue({ data: undefined })
@@ -41,15 +46,45 @@ describe('AppBackground', () => {
     expect(html).not.toContain('app-background-image')
   })
 
-  it('renders the image layer with cover sizing', () => {
+  it('keeps the starfield below a loading image layer during SSR', () => {
     useAppearanceQuery.mockReturnValue({ data: { background_image: '/api/v1/appearance/backgrounds/appearance-bg-abcd.png', custom_background_images: [] } })
     const html = renderAt('/agent')
-    expect(html).not.toContain('data-ambient-background')
-    expect(html).toContain('app-background-image')
+    expect(html).toContain('data-ambient-background')
+    expect(html).toContain('app-background-image app-background-image-loading')
     expect(html).toContain('background-image:url(')
     expect(html).toContain('appearance-bg-abcd.png')
     expect(html).toContain('data-liquid-glass-background="true"')
     expect(html).toContain('aria-hidden="true"')
+  })
+
+  it('shows an already decoded image immediately without the loading class', async () => {
+    class ImageStub {
+      src = ''
+      decode = vi.fn().mockResolvedValue(undefined)
+    }
+    vi.stubGlobal('Image', ImageStub)
+    const image = '/api/v1/appearance/backgrounds/already-decoded.webp'
+    await decodeAppBackgroundImage(image)
+    useAppearanceQuery.mockReturnValue({ data: { background_image: image, custom_background_images: [] } })
+
+    const html = renderAt('/agent')
+
+    expect(html).toContain('class="app-background-image"')
+    expect(html).not.toContain('app-background-image-loading')
+    expect(html).toContain('data-ambient-background')
+  })
+
+  it('treats a decode failure as loaded', async () => {
+    class ImageStub {
+      src = ''
+      decode = vi.fn().mockRejectedValue(new Error('decode failed'))
+    }
+    vi.stubGlobal('Image', ImageStub)
+    const image = '/api/v1/appearance/backgrounds/decode-failed.webp'
+    await decodeAppBackgroundImage(image)
+    useAppearanceQuery.mockReturnValue({ data: { background_image: image, custom_background_images: [] } })
+
+    expect(renderAt('/agent')).not.toContain('app-background-image-loading')
   })
 
   it('adds the blur overlay outside /agent and keeps /agent clean', () => {

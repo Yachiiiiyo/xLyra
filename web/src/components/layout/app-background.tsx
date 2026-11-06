@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AmbientBackground } from '@/components/layout/ambient-background'
+import { decodedBackgroundImages, decodeAppBackgroundImage } from '@/components/layout/app-background-decode'
 import { useAppearanceQuery } from '@/features/appearance/api/appearance'
 
 /**
- * 全局背景（L0）：配置了实例背景图时整层铺满视口，取代星点背景；
+ * 全局背景（L0）：配置了实例背景图时整层铺满视口，图片解码后淡入星点背景之上；
  * 未配置 / 加载中 / 加载失败一律回退星点背景，不报错、不阻塞。
  *
  * 必须作为 `.app-viewport` 的直接子元素渲染（与 AmbientBackground 相同的定位方式），
@@ -16,7 +18,20 @@ export function AppBackground({ mainContentOverlay = false }: { mainContentOverl
   const { data } = useAppearanceQuery()
   const location = useLocation()
   const image = data?.background_image?.trim() || null
+  const [loadedImage, setLoadedImage] = useState<string | null>(null)
+  const loaded = image !== null && (decodedBackgroundImages.has(image) || loadedImage === image)
   const isAgentWorkspace = location.pathname === '/agent' || location.pathname.startsWith('/agent/')
+
+  useEffect(() => {
+    if (!image || decodedBackgroundImages.has(image)) return
+    let active = true
+    void decodeAppBackgroundImage(image).then(() => {
+      if (active) setLoadedImage(image)
+    })
+    return () => {
+      active = false
+    }
+  }, [image])
 
   if (!image) {
     return <AmbientBackground />
@@ -24,8 +39,9 @@ export function AppBackground({ mainContentOverlay = false }: { mainContentOverl
 
   return (
     <>
+      <AmbientBackground />
       <div
-        className="app-background-image"
+        className={`app-background-image${loaded ? '' : ' app-background-image-loading'}`}
         data-liquid-glass-background="true"
         aria-hidden="true"
         style={{ backgroundImage: `url("${image}")` }}

@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { loadCachedAppearance, saveCachedAppearance } from '@/features/appearance/lib/appearance-cache'
 import { apiFetch } from '@/lib/http'
 
 export type HomePage = 'dashboard' | 'agent'
@@ -23,14 +24,18 @@ export const defaultAppearanceConfig: AppearanceConfig = {
 export const appearanceKey = ['settings', 'appearance'] as const
 
 export async function fetchAppearance(): Promise<AppearanceConfig> {
-  return apiFetch<AppearanceConfig>('/api/v1/settings/appearance')
+  const config = await apiFetch<AppearanceConfig>('/api/v1/settings/appearance')
+  saveCachedAppearance(config)
+  return config
 }
 
 export async function updateAppearance(config: AppearanceConfig) {
-  return apiFetch<AppearanceConfig>('/api/v1/settings/appearance', {
+  const updated = await apiFetch<AppearanceConfig>('/api/v1/settings/appearance', {
     method: 'PUT',
     body: config,
   })
+  saveCachedAppearance(updated)
+  return updated
 }
 
 /** 全局外观查询：失败或加载中都按「无背景」处理，不报错、不阻塞页面 */
@@ -38,6 +43,8 @@ export function useAppearanceQuery() {
   return useQuery({
     queryKey: appearanceKey,
     queryFn: fetchAppearance,
+    initialData: loadCachedAppearance(),
+    initialDataUpdatedAt: 0,
     staleTime: 60_000,
     retry: false,
   })

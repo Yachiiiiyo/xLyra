@@ -15,11 +15,13 @@ import {
 } from '@/features/appearance/api/appearance'
 import { getAppNavSections, isNavItemHideable } from '@/lib/navigation'
 import { drawStarfield } from '@/lib/draw-starfield'
+import { convertImageToWebp } from '@/lib/image-webp'
 import { useAgentAvailability } from '@/features/agent/lib/use-agent-availability'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 const MAX_BACKGROUND_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_BACKGROUND_SOURCE_BYTES = 32 * 1024 * 1024
 
 export function AppearanceSettingsPage() {
   const { t } = useTranslation('settings')
@@ -40,6 +42,7 @@ export function AppearanceSettingsPage() {
     },
   })
   const [draft, setDraft] = useState<AppearanceConfig>(defaultAppearanceConfig)
+  const [backgroundUploading, setBackgroundUploading] = useState(false)
 
   useEffect(() => {
     if (appearanceQuery.data) {
@@ -77,12 +80,18 @@ export function AppearanceSettingsPage() {
 
   async function uploadBackground(file: File | undefined) {
     if (!file) return
-    if (file.size > MAX_BACKGROUND_IMAGE_BYTES) {
+    if (file.size > MAX_BACKGROUND_SOURCE_BYTES) {
       toast.error(t('appearance.background.imageTooLarge'))
       return
     }
+    setBackgroundUploading(true)
     try {
-      const dataURL = await readFileAsDataURL(file)
+      const convertedFile = await convertImageToWebp(file)
+      if (convertedFile.size > MAX_BACKGROUND_IMAGE_BYTES) {
+        toast.error(t('appearance.background.imageTooLarge'))
+        return
+      }
+      const dataURL = await readFileAsDataURL(convertedFile)
       setDraft((current) => ({
         ...current,
         background_image: dataURL,
@@ -90,6 +99,8 @@ export function AppearanceSettingsPage() {
       }))
     } catch (error) {
       toast.error(t('appearance.background.imageReadFailed'), { description: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setBackgroundUploading(false)
     }
   }
 
@@ -184,9 +195,10 @@ export function AppearanceSettingsPage() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
+              disabled={backgroundUploading}
               className="flex h-full min-h-[110px] w-full flex-col items-center justify-center gap-2 rounded-inner border border-dashed border-separator text-footnote text-label-2 transition-colors hover:border-label-3 hover:text-label"
             >
-              <ImagePlus className="h-5 w-5" />
+              {backgroundUploading ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
               <span>{t('appearance.background.upload')}</span>
             </button>
           </div>
@@ -194,6 +206,7 @@ export function AppearanceSettingsPage() {
             ref={fileInputRef}
             type="file"
             accept="image/png,image/jpeg,image/webp"
+            disabled={backgroundUploading}
             className="hidden"
             onChange={(event) => {
               void uploadBackground(event.target.files?.[0])

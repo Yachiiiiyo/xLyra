@@ -5,6 +5,8 @@ import { PublicOnlyRoute } from '@/components/auth/auth-guard'
 import { LoginPage } from '@/routes/login'
 import { RegisterPage } from '@/routes/register'
 import { HomeRedirect } from '@/app/home-redirect'
+import { prefetchAgentWorkspace } from '@/features/agent/lib/agent-queries'
+import { queryClient } from '@/lib/query-client'
 
 function lazyNamed<T extends ComponentType>(
   loader: () => Promise<Record<string, T>>,
@@ -67,7 +69,14 @@ export const appRouter = createBrowserRouter([
     element: <ProtectedLayout />,
     children: [
       { index: true, element: <HomeRedirect /> },
-      { path: 'agent', element: lazyElement(<AgentPage />) },
+      {
+        path: 'agent',
+        element: lazyElement(<AgentPage />),
+        loader: () => {
+          prefetchAgentWorkspace(queryClient)
+          return null
+        },
+      },
       { path: 'dashboard', element: quietElement(<DashboardPage />) },
       { path: 'analytics', element: lazyElement(<AnalyticsPage />) },
       { path: 'sites', element: lazyElement(<SitesPage />) },

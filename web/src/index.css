@@ -539,7 +539,19 @@ thead .table-sticky-end {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  opacity: 1;
+  transition: opacity 300ms ease;
   pointer-events: none;
+}
+
+.app-background-image-loading {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-background-image {
+    transition: none;
+  }
 }
 
 /* 非 /agent 页面的可读性遮罩：模糊 + 半透明压暗背景图。backdrop-filter 只作用于

@@ -11,6 +11,7 @@ import type { AppearanceConfig } from '@/features/appearance/api/appearance'
 
 const updateAppearance = vi.hoisted(() => vi.fn())
 const useAppearanceQuery = vi.hoisted(() => vi.fn())
+const convertImageToWebp = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/appearance/api/appearance', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/appearance/api/appearance')>()
@@ -20,6 +21,8 @@ vi.mock('@/features/appearance/api/appearance', async (importOriginal) => {
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }))
+
+vi.mock('@/lib/image-webp', () => ({ convertImageToWebp }))
 
 // 假 DOM 下 Radix Tabs 的内容挂载不可靠，这里换成同时渲染所有面板的简化实现
 vi.mock('@/components/ui/tabs', () => {
@@ -65,6 +68,18 @@ beforeAll(async () => {
   vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '', ...{} }))
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number)
   vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
+  class FileReaderStub {
+    result: string | null = null
+    error: Error | null = null
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+
+    readAsDataURL() {
+      this.result = 'data:image/webp;base64,dGVzdA=='
+      this.onload?.()
+    }
+  }
+  vi.stubGlobal('FileReader', FileReaderStub)
   await i18n.init({
     lng: 'zh',
     defaultNS: 'settings',
@@ -81,11 +96,13 @@ afterAll(() => {
 
 beforeEach(() => {
   useAppearanceQuery.mockReturnValue({ data: defaultConfig(), isLoading: false, isFetching: false })
+  convertImageToWebp.mockImplementation(async (file) => file)
 })
 
 afterEach(() => {
   useAppearanceQuery.mockReset()
   updateAppearance.mockReset()
+  convertImageToWebp.mockReset()
   vi.mocked(toast.success).mockClear()
   vi.mocked(toast.error).mockClear()
 })
@@ -126,14 +143,47 @@ describe('appearance settings page', () => {
     }
   })
 
-  it('上传超过 8MB 的图片被拒绝并 toast，不进图库', async () => {
+  it('原始图片超过 32MB 时被拒绝，不进行转码', async () => {
     const mounted = await mountPage()
     try {
       const input = findFileInput(mounted.container)
       expect(input).not.toBeNull()
       ;(input as MiniNode & { files?: Array<{ size: number }> }).files = [
-        { size: 8 * 1024 * 1024 + 1 },
+        { size: 32 * 1024 * 1024 + 1 },
       ]
+      await dispatch(input!, 'change')
+      expect(toast.error).toHaveBeenCalledWith('图片不能超过 8MB')
+      expect(convertImageToWebp).not.toHaveBeenCalled()
+      expect(mounted.container.textContent).not.toContain('自定义 1')
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('原始图片超过 8MB 但转码后不超限时可以上传', async () => {
+    const mounted = await mountPage()
+    try {
+      const original = { size: 9 * 1024 * 1024 }
+      const converted = { size: 1024 }
+      convertImageToWebp.mockResolvedValue(converted)
+      const input = findFileInput(mounted.container)
+      ;(input as MiniNode & { files?: Array<{ size: number }> }).files = [original]
+      await dispatch(input!, 'change')
+      expect(convertImageToWebp).toHaveBeenCalledWith(original)
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(mounted.container.textContent).toContain('自定义 1')
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('转码后的图片仍超过 8MB 时被拒绝，不进图库', async () => {
+    const mounted = await mountPage()
+    try {
+      const original = { size: 4 * 1024 * 1024 }
+      convertImageToWebp.mockResolvedValue({ size: 8 * 1024 * 1024 + 1 })
+      const input = findFileInput(mounted.container)
+      ;(input as MiniNode & { files?: Array<{ size: number }> }).files = [original]
       await dispatch(input!, 'change')
       expect(toast.error).toHaveBeenCalledWith('图片不能超过 8MB')
       expect(updateAppearance).not.toHaveBeenCalled()
