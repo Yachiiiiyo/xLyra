@@ -146,11 +146,11 @@ func TestXlyraConfigBash(t *testing.T) {
 
 func TestSandboxSystemPrompt(t *testing.T) {
 	r := &Runner{}
-	if got := r.systemPrompt(false, 120*time.Second, false, false); got != defaultSystemPrompt {
-		t.Fatal("未开启 bash 时系统提示发生变化")
+	if got := r.systemPrompt(false, 120*time.Second, false, false); !strings.HasPrefix(got, defaultSystemPrompt) || !strings.Contains(got, "当前日期:"+time.Now().Format("2006-01-02")) {
+		t.Fatal("默认系统提示缺少默认文本或当前日期")
 	}
 	got := r.systemPrompt(true, 120*time.Second, false, false)
-	for _, text := range []string{"没有网络", "默认 120 秒", "后台进程都会被清理", "安装依赖"} {
+	for _, text := range []string{"没有网络", "默认 120 秒", "后台进程都会被清理", "安装依赖", "运行最相关的测试或类型检查"} {
 		if !strings.Contains(got, text) {
 			t.Errorf("系统提示缺少 %q", text)
 		}
@@ -183,6 +183,10 @@ func TestSandboxSystemPrompt(t *testing.T) {
 	}
 	if strings.ContainsAny(questionSystemPrompt, "{}") {
 		t.Error("提问系统提示不应包含可照抄的 JSON 示例")
+	}
+	custom := (&Runner{cfg: Config{SystemPrompt: "自定义提示"}}).systemPrompt(false, 120*time.Second, false, false)
+	if !strings.HasPrefix(custom, "自定义提示") || !strings.Contains(custom, "# 环境") {
+		t.Error("自定义系统提示缺少自定义文本或环境段")
 	}
 }
 
