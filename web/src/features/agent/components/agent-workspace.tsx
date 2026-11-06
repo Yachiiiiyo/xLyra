@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Folder, FolderOpen, Globe, Link2, Menu, ShieldCheck, ShieldQuestion, TriangleAlert, TerminalSquare, X } from 'lucide-react'
 import { ThinkingOrb, type OrbState } from 'thinking-orbs'
 import { Composer } from '@/components/chat/composer'
@@ -74,6 +74,7 @@ import { BUSY_RETRY_DELAY_MS, shouldRetryBusySend } from '@/features/agent/lib/b
 import { MAX_SESSION_REFERENCES, referenceChipLabel, type AgentSessionReference } from '@/features/agent/lib/references'
 import { NON_CHAT_CATEGORIES } from '@/features/agent/lib/agent-fast-model'
 import { usePromptSuggestion } from '@/features/agent/lib/use-prompt-suggestion'
+import { useBackOrDashboard } from '@/features/agent/lib/use-back-or-dashboard'
 import { dismissCapabilityNotice, loadCapabilityNoticeDismissed, saveLastSessionId } from '@/features/agent/lib/agent-local-cache'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -242,7 +243,7 @@ function EditReplayConfirmDialog({
 export function AgentWorkspace() {
   // 配置弹窗用到的命名空间随工作台一起加载：首次点开「配置」时再加载会让整棵 Suspense 树挂起，页面闪一下空屏
   const { t } = useTranslation(['agent', 'chat', 'api-keys', 'components'])
-  const navigate = useNavigate()
+  const backOrDashboard = useBackOrDashboard()
   const queryClient = useQueryClient()
   const sessionsQuery = useQuery({ queryKey: ['agent', 'sessions'], queryFn: listAgentSessions, retry: false })
   // Model memory lives server-side: a fresh session defaults to the last globally used model, an existing session to its own last model.
@@ -1057,7 +1058,7 @@ export function AgentWorkspace() {
   const sidebarContent = <AgentSidebar
     sessions={sessions}
     activeId={selectedId}
-    onBack={() => navigate(-1)}
+    onBack={backOrDashboard}
     onSelect={handleSelect}
     onNew={createNew}
     onDelete={handleDelete}
@@ -1086,7 +1087,7 @@ export function AgentWorkspace() {
             activeId={selectedId}
             onBack={() => {
               setMobileSidebarOpen(false)
-              navigate(-1)
+              backOrDashboard()
             }}
             onSelect={(id) => {
               setMobileSidebarOpen(false)
