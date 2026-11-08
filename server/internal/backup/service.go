@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,6 +55,7 @@ type Service struct {
 	confFile         *config.ConfigFile
 	masterKey        string
 	playgroundRoot   string
+	agentRoot        string
 	preRestore       func(context.Context) error
 	postRestore      func(context.Context) error
 	databaseRestored func(context.Context) error
@@ -68,6 +70,7 @@ type ImportSummary struct {
 	FormatVersion int   `json:"format_version"`
 	Files         int   `json:"files"`
 	FileBytes     int64 `json:"file_bytes"`
+	AgentFiles    int   `json:"agent_files"`
 }
 
 type ImportOptions struct {
@@ -97,6 +100,11 @@ func NewService(db *store.Store, confFile *config.ConfigFile, masterKey string, 
 		now:            func() time.Time { return time.Now().UTC() },
 		timeZone:       backupTimeZone(timeZones...),
 	}
+}
+
+func (s Service) WithAgentRoot(root string) Service {
+	s.agentRoot = root
+	return s
 }
 
 func (s Service) WithRestoreHooks(pre func(context.Context) error, post func(context.Context) error) Service {
@@ -149,6 +157,10 @@ func (s Service) exportAt(ctx context.Context, passphrase string, createdAt time
 	}()
 
 	plainReader, plainWriter := io.Pipe()
+	var sections []string
+	if strings.TrimSpace(s.agentRoot) != "" {
+		sections = []string{sectionAgentCapabilities}
+	}
 	payload := archivePayload{
 		Manifest: manifest{
 			FormatVersion: currentFormatVersion,
@@ -156,13 +168,23 @@ func (s Service) exportAt(ctx context.Context, passphrase string, createdAt time
 			Payload:       backupPayload,
 			CreatedAt:     createdAt,
 			Tables:        append([]string(nil), exportTables...),
+			Sections:      sections,
 		},
 		Config: config.SanitizeConfigForBackup(s.confFile.Data()),
 	}
 	writeErrs := make(chan error, 1)
 	go func() {
 		writeErr := writeArchive(payload, func(zw *zip.Writer) (map[string]int, error) {
-			return exportDatabase(ctx, s.db.DB(), s.masterKey, s.playgroundRoot, zw)
+			rowCounts, err := exportDatabase(ctx, s.db.DB(), s.masterKey, s.playgroundRoot, zw)
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimSpace(s.agentRoot) != "" {
+				if _, err := exportAgentCapabilities(zw, s.agentRoot); err != nil {
+					return nil, fmt.Errorf("export agent capabilities: %w", err)
+				}
+			}
+			return rowCounts, nil
 		}, plainWriter)
 		if writeErr != nil {
 			_ = plainWriter.CloseWithError(writeErr)
@@ -328,6 +350,24 @@ func (s Service) importReaderLocked(ctx context.Context, passphrase string, encr
 
 	emit(ProgressEvent{Step: "files", Status: "complete", Bytes: restoredBytes})
 
+	agentFiles := 0
+	if slices.Contains(payload.Manifest.Sections, sectionAgentCapabilities) && strings.TrimSpace(s.agentRoot) != "" {
+		emit(ProgressEvent{Step: "agent", Status: "in_progress", Message: "Restoring agent capabilities"})
+		lastAgentProgress := int64(0)
+		var restoredAgentBytes int64
+		agentFiles, restoredAgentBytes, err = restoreAgentCapabilities(archivePath, s.agentRoot, func(restored int64) {
+			if restored-lastAgentProgress >= 4<<20 {
+				lastAgentProgress = restored
+				emit(ProgressEvent{Step: "agent", Status: "in_progress", Bytes: restored})
+			}
+		})
+		if err != nil {
+			converge()
+			return ImportSummary{}, err
+		}
+		emit(ProgressEvent{Step: "agent", Status: "complete", Bytes: restoredAgentBytes})
+	}
+
 	if err := s.finishRestore(ctx); err != nil {
 		return ImportSummary{}, err
 	}
@@ -343,6 +383,7 @@ func (s Service) importReaderLocked(ctx context.Context, passphrase string, encr
 		FormatVersion: payload.Manifest.FormatVersion,
 		Files:         restoredFiles,
 		FileBytes:     restoredBytes,
+		AgentFiles:    agentFiles,
 	}
 	emit(ProgressEvent{Step: "complete", Status: "complete", Rows: importedRows, TotalRows: totalRows, Summary: &summary})
 
@@ -383,6 +424,11 @@ func validateManifest(value manifest) error {
 	}
 	if value.Payload != backupPayload {
 		return fmt.Errorf("unsupported backup payload %q", value.Payload)
+	}
+	for _, name := range value.Sections {
+		if name != sectionAgentCapabilities {
+			return fmt.Errorf("unsupported backup section %q", name)
+		}
 	}
 	if value.FormatVersion == currentFormatVersion {
 		if len(value.Tables) != len(exportTables) {

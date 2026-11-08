@@ -23,6 +23,7 @@ type manifest struct {
 	Payload       string    `json:"payload"`
 	CreatedAt     time.Time `json:"created_at"`
 	Tables        []string  `json:"tables"`
+	Sections      []string  `json:"sections,omitempty"`
 }
 
 type archivePayload struct {

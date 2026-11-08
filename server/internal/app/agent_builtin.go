@@ -67,10 +67,7 @@ func (b agentBins) ready() bool {
 // 隔离启动流程、runner 与 HTTP handler)。node 命令或 Pi 入口脚本缺失时不
 // 报错:handler 正常路由,health 会报告不可用原因。
 func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc) *builtinAgent {
-	dataDir := strings.TrimSpace(cfg.AgentDataDir)
-	if dataDir == "" {
-		dataDir = filepath.Join(config.ResolveWorkdir(), "agent")
-	}
+	dataDir := resolveAgentDataDir(cfg)
 	// 能力存储与 sessions 同级:<dataDir>/skills、AGENTS.md、config.json。
 	caps := capabilities.NewStore(dataDir)
 	store := session.NewStore(filepath.Join(dataDir, "sessions"))
@@ -105,6 +102,15 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 		Status:              func() agent.Status { return decision.status() },
 	})
 	return &builtinAgent{handler: handler, shutdown: shutdown}
+}
+
+// resolveAgentDataDir 返回内置 Agent 的数据目录，供运行时装配与备份共用。
+func resolveAgentDataDir(cfg config.Config) string {
+	dataDir := strings.TrimSpace(cfg.AgentDataDir)
+	if dataDir == "" {
+		dataDir = filepath.Join(config.ResolveWorkdir(), "agent")
+	}
+	return dataDir
 }
 
 // resolveAgentBins 解析 node 命令、Pi 入口与扩展路径;command 缺省时回退

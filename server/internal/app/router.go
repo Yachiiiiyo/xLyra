@@ -284,7 +284,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			return nil
 		}
 	}
-	settingsHandler := settings.NewHandlerWithBackup(logger.With("thread", "settings"), confFile, db, masterKey, downloadService, playgroundRoot, preRestore, postRestore, databaseRestored, appTimeZone)
+	settingsHandler := settings.NewHandlerWithBackup(logger.With("thread", "settings"), confFile, db, masterKey, downloadService, playgroundRoot, resolveAgentDataDir(cfg), preRestore, postRestore, databaseRestored, appTimeZone)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
