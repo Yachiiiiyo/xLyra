@@ -88,6 +88,13 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 			DefaultTimeout: int(r.cfg.Sandbox.ExecDefaultTimeout / time.Second),
 			MaxTimeout:     int(r.cfg.Sandbox.ExecMaxTimeout / time.Second),
 		}
+	} else if r.cfg.LocalBash != nil && ar.kind != "compact" {
+		// 沙箱未启用:bash 在本机直接执行,无 socket,只有超时限制。
+		bashConfig = &xlyraBashConfig{
+			Enabled: true, Mode: "local",
+			DefaultTimeout: int(r.cfg.LocalBash.DefaultTimeout / time.Second),
+			MaxTimeout:     int(r.cfg.LocalBash.MaxTimeout / time.Second),
+		}
 	}
 	token, _, err := r.cfg.Tokens.IssueRunToken(ar.ctx, ar.sessionID, ar.runID, spec.model)
 	if err != nil {
@@ -124,8 +131,12 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	execDefaultTimeout := time.Duration(0)
 	if r.cfg.Sandbox != nil {
 		execDefaultTimeout = r.cfg.Sandbox.ExecDefaultTimeout
+	} else if r.cfg.LocalBash != nil {
+		execDefaultTimeout = r.cfg.LocalBash.DefaultTimeout
 	}
-	systemPrompt := r.systemPrompt(r.cfg.Store.WorkDir(ar.sessionID), prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled, fastTaskEnabled)
+	bashReady := prep.executor != nil || bashConfig != nil
+	localBash := bashConfig != nil && bashConfig.Mode == "local"
+	systemPrompt := r.systemPrompt(r.cfg.Store.WorkDir(ar.sessionID), bashReady, localBash, execDefaultTimeout, imageEnabled, questionEnabled, fastTaskEnabled)
 	files := map[string][]byte{
 		"settings.json": settingsJSON,
 	}
@@ -177,7 +188,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		args = append(args, "-e", extension)
 	}
 	args = append(args, "--system-prompt", systemPrompt)
-	if tools := r.runTools(prep.executor != nil, imageEnabled, questionEnabled, fastTaskEnabled); tools != "" {
+	if tools := r.runTools(bashReady, imageEnabled, questionEnabled, fastTaskEnabled); tools != "" {
 		args = append(args, "--tools", tools)
 	}
 	// 技能发现固定关闭,只加载快照里启用的目录(停用 = 不传,不依赖
@@ -458,7 +469,8 @@ func writeAtomicFile(path string, data []byte, identity *isolation.Identity) err
 // 数组,无技能时为空数组而不是 null,方便扩展侧统一校验。
 type xlyraBashConfig struct {
 	Enabled        bool   `json:"enabled"`
-	Socket         string `json:"socket"`
+	Socket         string `json:"socket,omitempty"`
+	Mode           string `json:"mode,omitempty"` // 本机直接执行时为 "local",沙箱模式不带
 	DefaultTimeout int    `json:"defaultTimeout"`
 	MaxTimeout     int    `json:"maxTimeout"`
 }

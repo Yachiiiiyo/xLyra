@@ -22,6 +22,18 @@ func TestDecideSandbox(t *testing.T) {
 					iso := isolationDecision{Mode: isoMode}
 					got := decideSandbox(bashMode, iso, detect, check)
 					switch {
+					case isoMode == "off":
+						// 隔离关闭:命令在本机执行,bash 仅受 AGENT_BASH=off 控制。
+						if got.Mode != "off" || got.PiLandlock || got.Bash != (bashMode != "off") {
+							t.Fatalf("bash=%s iso=%s: %+v", bashMode, isoMode, got)
+						}
+						if bashMode == "off" {
+							if !strings.Contains(got.Reason, "AGENT_BASH=off") {
+								t.Fatalf("bash=off iso=off Reason = %q", got.Reason)
+							}
+						} else if !strings.Contains(got.Reason, "直接在本机执行") {
+							t.Fatalf("bash=%s iso=off Reason = %q", bashMode, got.Reason)
+						}
 					case isoMode != "on":
 						if got.Mode != "off" || got.PiLandlock || got.Bash || !strings.Contains(got.Reason, "uid 隔离未启用") {
 							t.Fatalf("bash=%s iso=%s: %+v", bashMode, isoMode, got)

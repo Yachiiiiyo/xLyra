@@ -68,6 +68,13 @@ type SandboxConfig struct {
 	ExecMaxTimeout     time.Duration
 }
 
+// LocalBashConfig 描述 bash 在本机直接执行的超时限制;非 nil 表示 bash 不经
+// 沙箱,与 xLyra 同权限运行。
+type LocalBashConfig struct {
+	DefaultTimeout time.Duration
+	MaxTimeout     time.Duration
+}
+
 type Config struct {
 	Store          *session.Store
 	Runs           *runlog.Registry
@@ -123,7 +130,10 @@ type Config struct {
 	// 收尾,不降级为无隔离启动。nil 时行为与无隔离时完全一致。
 	Isolation *IsolationConfig
 	// Sandbox 非 nil 时按配置用 Landlock 启动 Pi,并可为普通 run 启动命令执行器。
-	Sandbox    *SandboxConfig
+	Sandbox *SandboxConfig
+	// LocalBash 非 nil 表示 bash 在本机直接执行(不经沙箱,可联网),
+	// 与 Sandbox.Bash 互斥。
+	LocalBash  *LocalBashConfig
 	AbortGrace time.Duration
 	Logger     *slog.Logger
 }
@@ -307,6 +317,8 @@ func New(cfg Config) (*Runner, error) {
 		return nil, errors.New("runner: Command 不能为空")
 	case cfg.Sandbox != nil && cfg.Sandbox.Bash && (!cfg.Sandbox.PiLandlock || cfg.Isolation == nil):
 		return nil, errors.New("runner: 沙箱 bash 要求同时开启 PiLandlock 与 Isolation")
+	case cfg.LocalBash != nil && cfg.Sandbox != nil && cfg.Sandbox.Bash:
+		return nil, errors.New("runner: LocalBash 与沙箱 bash 不能同时开启")
 	}
 	if cfg.Sandbox != nil {
 		sandbox := *cfg.Sandbox

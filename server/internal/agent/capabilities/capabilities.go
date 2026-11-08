@@ -158,6 +158,7 @@ func (s *Store) DeleteAgentsMD() error {
 type Config struct {
 	EnableAgentsMD      bool     `json:"enable_agents_md"`
 	EnableSkills        bool     `json:"enable_skills"`
+	SandboxEnabled      bool     `json:"sandbox_enabled"`
 	DisabledSkills      []string `json:"disabled_skills"`
 	CompactTriggerRatio float64  `json:"compact_trigger_ratio"`    // 自动压缩水位线,[0.5, 0.95]
 	ContextWindow       int      `json:"context_window,omitempty"` // 0 表示未设置,运行时按 200000 兜底

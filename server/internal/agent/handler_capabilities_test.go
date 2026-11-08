@@ -422,6 +422,38 @@ func TestConfigEndpoints(t *testing.T) {
 	}
 }
 
+func TestConfigSandboxEnabled(t *testing.T) {
+	handler, _ := newCapsHandler(t)
+
+	// 默认关闭;写入 true 后读回,且不影响其它字段。
+	rec := doJSONAgent(t, handler, http.MethodGet, "/api/v1/agent/config", "")
+	var payload struct {
+		Data struct {
+			Agent capabilities.Config `json:"agent"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &payload)
+	if payload.Data.Agent.SandboxEnabled {
+		t.Fatalf("默认 sandbox_enabled 应为 false: %+v", payload.Data.Agent)
+	}
+	rec = doJSONAgent(t, handler, http.MethodPut, "/api/v1/agent/config",
+		`{"agent":{"sandbox_enabled":true}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put sandbox_enabled status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	rec = doJSONAgent(t, handler, http.MethodGet, "/api/v1/agent/config", "")
+	decodeBody(t, rec, &payload)
+	if !payload.Data.Agent.SandboxEnabled || !payload.Data.Agent.EnableSkills {
+		t.Fatalf("merged agent = %+v", payload.Data.Agent)
+	}
+	// 类型错误拒绝。
+	rec = doJSONAgent(t, handler, http.MethodPut, "/api/v1/agent/config",
+		`{"agent":{"sandbox_enabled":"yes"}}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("sandbox_enabled 类型错误应 400: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestConfigInvalidValues(t *testing.T) {
 	handler, _ := newCapsHandler(t)
 
@@ -434,6 +466,7 @@ func TestConfigInvalidValues(t *testing.T) {
 		"disabled not array":  `{"agent":{"disabled_skills":"pdf-tools"}}`,
 		"agents_md not bool":  `{"agent":{"enable_agents_md":"yes"}}`,
 		"skills not bool":     `{"agent":{"enable_skills":1}}`,
+		"sandbox not bool":    `{"agent":{"sandbox_enabled":"yes"}}`,
 		"agent not object":    `{"agent":[1,2]}`,
 		"garbage body":        "not-json",
 	} {

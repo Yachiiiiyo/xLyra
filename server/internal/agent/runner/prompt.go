@@ -51,6 +51,15 @@ const bashSystemPrompt = `
 - 需要联网或安装依赖的需求无法完成,应如实告诉用户。
 - 修改代码后,运行最相关的测试或类型检查,并根据结果继续修正。`
 
+const localBashSystemPrompt = `
+
+命令执行规则:
+- 命令在本机直接执行(与 xLyra 同权限),可以联网、安装依赖。
+- 每条命令是否需要用户确认取决于用户的权限设置,需要时系统会自动弹出确认。
+- 单条命令有超时限制,默认 %d 秒;长时间运行的命令请拆分,不要依赖常驻进程。
+- 谨慎执行破坏性命令(批量删除、覆盖、格式化);不要修改 xLyra 自身的数据与配置。
+- 修改代码后,运行最相关的测试或类型检查,并根据结果继续修正。`
+
 const imageGenerationSystemPrompt = `
 
 可以使用 image_generation 工具生成图片,图片会保存在工作区 images/ 下,图片内容不会返回给你。
@@ -72,13 +81,17 @@ const fastTaskSystemPrompt = `
 
 // systemPrompt 返回本次 run 使用的系统提示文本;workspace 是共享工作区路径,
 // 非空时在环境段里告知模型(所有会话共用)。
-func (r *Runner) systemPrompt(workspace string, bash bool, defaultTimeout time.Duration, imageGeneration, question, fastTask bool) string {
+func (r *Runner) systemPrompt(workspace string, bash, localBash bool, defaultTimeout time.Duration, imageGeneration, question, fastTask bool) string {
 	text := strings.TrimSpace(r.cfg.SystemPrompt)
 	if text == "" {
 		text = defaultSystemPrompt
 	}
 	if bash {
-		text += fmt.Sprintf(bashSystemPrompt, int(defaultTimeout/time.Second))
+		if localBash {
+			text += fmt.Sprintf(localBashSystemPrompt, int(defaultTimeout/time.Second))
+		} else {
+			text += fmt.Sprintf(bashSystemPrompt, int(defaultTimeout/time.Second))
+		}
 	}
 	if imageGeneration {
 		text += imageGenerationSystemPrompt

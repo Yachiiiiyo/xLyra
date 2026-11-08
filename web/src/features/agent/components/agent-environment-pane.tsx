@@ -1,8 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
-import { fetchAgentHealth } from '@/features/agent/api/agent'
-import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
+import { Switch } from '@/components/ui/switch'
+import { fetchAgentCapabilities, fetchAgentHealth, updateAgentCapabilities } from '@/features/agent/api/agent'
+import { agentSettingsKey, capabilitiesKey } from '@/features/agent/lib/use-agent-availability'
+import { toast } from '@/lib/toast'
 
 export function AgentEnvironmentPane() {
   const { t } = useTranslation('agent')
@@ -14,6 +16,17 @@ export function AgentEnvironmentPane() {
     refetchInterval: 30_000,
   })
   const data = health.data
+  const capabilitiesQuery = useQuery({ queryKey: capabilitiesKey, queryFn: fetchAgentCapabilities, retry: false })
+  const queryClient = useQueryClient()
+  const capabilitiesMutation = useMutation({
+    mutationFn: updateAgentCapabilities,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: capabilitiesKey })
+    },
+  })
+  const sandboxEnabled = capabilitiesQuery.data?.sandbox_enabled === true
+  const sandboxMismatch = health.data != null
+    && ((sandboxEnabled && data?.sandbox !== 'on') || (!sandboxEnabled && data?.sandbox === 'on'))
   const isolationLabel = data?.isolation === 'on'
     ? t('settings.environment.enabled')
     : data?.isolation === 'degraded'
@@ -63,6 +76,21 @@ export function AgentEnvironmentPane() {
           value={data?.bash_enabled == null ? t('settings.environment.unknown') : data.bash_enabled ? t('settings.environment.enabled') : t('settings.environment.disabled')}
           tone={data?.bash_enabled == null ? 'neutral' : data.bash_enabled ? 'success' : 'warning'}
         />
+      </div>
+      <div className="space-y-2">
+        <Switch
+          label={t('settings.environment.sandboxEnable')}
+          description={t('settings.environment.sandboxEnableHint')}
+          checked={sandboxEnabled}
+          disabled={capabilitiesQuery.data === null || capabilitiesQuery.isLoading || capabilitiesMutation.isPending}
+          onCheckedChange={(checked) => capabilitiesMutation.mutate(
+            { sandbox_enabled: checked },
+            { onError: (error) => toast.error(t('settings.saveFailed'), { description: error.message }) },
+          )}
+        />
+        {sandboxMismatch ? (
+          <p className="text-xs text-faint">{t('settings.environment.sandboxRestartHint')}</p>
+        ) : null}
       </div>
     </div>
   )

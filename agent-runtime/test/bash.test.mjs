@@ -520,3 +520,83 @@ test("源码断言: extension/xlyra.ts 不含本地执行 API", () => {
 	assert.ok(source.includes("createBashTool"), "应使用 createBashTool");
 	assert.ok(source.includes('pi.on("user_bash"'), "应挂 user_bash 钩子");
 });
+
+// ---- 11. 本机模式(runtime.bash.mode=local):不经执行器,直接用 Pi 的本地 shell ----
+function localBash(extra = {}) {
+	return () => ({ mode: "local", defaultTimeout: 30, maxTimeout: 60, ...extra });
+}
+
+test("本机模式: full 下普通命令直接在工作目录执行并回传输出(无需套接字)", TIMEOUT, async () => {
+	const c = await startCase({
+		name: "local-bash-run",
+		permissionMode: "full",
+		bash: localBash(),
+		script: steps([{ toolCalls: [{ id: "call_l1", name: "bash", args: { command: "echo LOCAL-OK && pwd" } }] }]),
+	});
+	try {
+		const turn = await c.client.promptAndWait("跑命令", { timeoutMs: 15000 });
+		const end = toolEnd(turn.events, "call_l1");
+		assert.equal(end?.isError, false, resultText(end));
+		const text = resultText(end);
+		assert.ok(text.includes("LOCAL-OK"), text);
+		assert.ok(text.includes(realpathSync(c.cwd)), text);
+	} finally {
+		await c.close();
+	}
+});
+
+test("本机模式: ask 仍逐条审批,拒绝后命令不执行", TIMEOUT, async () => {
+	const c = await startCase({
+		name: "local-bash-deny",
+		permissionMode: "ask",
+		bash: localBash(),
+		script: steps([{ toolCalls: [{ id: "call_l2", name: "bash", args: { command: "touch local-denied.txt" } }] }]),
+	});
+	try {
+		const pending = c.client.promptAndWait("跑命令", { timeoutMs: 15000 });
+		const request = await waitFor(() => uiRequest(c.client, "confirm"), 8000, "confirm 请求");
+		assert.equal(request.title, "允许执行命令?");
+		c.client.extensionUiRespond(request.id, { confirmed: false });
+		await pending;
+		assert.equal(existsSync(join(c.cwd, "local-denied.txt")), false);
+	} finally {
+		await c.close();
+	}
+});
+
+test("本机模式: 模型传的 timeout 收敛到 maxTimeout,超时后命令被终止", { timeout: 40000 }, async () => {
+	const c = await startCase({
+		name: "local-bash-timeout",
+		permissionMode: "full",
+		bash: localBash({ defaultTimeout: 1, maxTimeout: 1 }),
+		script: steps([{ toolCalls: [{ id: "call_l3", name: "bash", args: { command: "sleep 20", timeout: 30 } }] }]),
+	});
+	try {
+		const started = Date.now();
+		const turn = await c.client.promptAndWait("跑命令", { timeoutMs: 20000 });
+		const end = toolEnd(turn.events, "call_l3");
+		assert.equal(end?.isError, true);
+		assert.ok(/timed out|timeout/i.test(resultText(end)), resultText(end));
+		assert.ok(Date.now() - started < 15000, "应在 maxTimeout 附近终止,而不是等 20 秒");
+	} finally {
+		await c.close();
+	}
+});
+
+test("本机模式: 未知 mode 按未启用处理(不注册、不审批)", TIMEOUT, async () => {
+	const c = await startCase({
+		name: "local-bash-bogus-mode",
+		permissionMode: "ask",
+		bash: () => ({ mode: "bogus", defaultTimeout: 30, maxTimeout: 60 }),
+		script: steps([{ toolCalls: [{ id: "call_l4", name: "bash", args: { command: "echo X" } }] }]),
+	});
+	try {
+		const turn = await c.client.promptAndWait("跑命令", { timeoutMs: 15000 });
+		assert.equal(uiRequests(c.client, "confirm").length, 0);
+		const end = toolEnd(turn.events, "call_l4");
+		// 未启用时不覆盖、不拦截:内置 bash 保持原样,这里只断言没有弹审批
+		assert.ok(end, "应有工具结果");
+	} finally {
+		await c.close();
+	}
+});

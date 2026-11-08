@@ -25,13 +25,13 @@ import {
   type AgentSkill,
 } from '@/features/agent/api/agent'
 import { buildSkillTemplate, isValidSkillName, syncSkillNameInContent } from '@/features/agent/lib/skill-editor'
+import { capabilitiesKey } from '@/features/agent/lib/use-agent-availability'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useMobileLayout } from '@/hooks/use-media-query'
 import { AgentScopePane } from '@/features/agent/components/agent-scope-pane'
 import { AgentEnvironmentPane } from '@/features/agent/components/agent-environment-pane'
 
-const capabilitiesKey = ['agent', 'capabilities'] as const
 const skillsKey = ['agent', 'skills'] as const
 
 type SettingsTab = 'scope' | 'skills' | 'context' | 'environment'

@@ -95,7 +95,7 @@ func TestNewBuiltinRunnerWiresExtension(t *testing.T) {
 		cfg.AgentPiEntry = entry
 		store := session.NewStore(filepath.Join(root, "sessions"))
 		// 决策为 on 的形态(工具全开 + 隔离配置),不实际探测
-		decision := decideIsolation("off", isolation.Capability{}, nil)
+		decision := decideIsolation("off", false, isolation.Capability{}, nil)
 		bins := resolveAgentBins(cfg)
 		run, shutdown := newBuiltinRunner(cfg, logger, nil, nil, store, runlog.NewRegistry(), fakeBuiltinTokenIssuer{}, capabilities.NewStore(filepath.Join(root, "caps")), decision, bins)
 		return run, shutdown
@@ -202,32 +202,36 @@ func TestDecideIsolation(t *testing.T) {
 	}}
 
 	cases := []struct {
-		name        string
-		mode        string
-		detect      isolation.Capability
-		check       *isolation.Report
-		wantMode    string
-		wantTools   []string
-		wantIso     bool
-		reasonParts []string
+		name          string
+		mode          string
+		sandboxOpen   bool
+		detect        isolation.Capability
+		check         *isolation.Report
+		wantMode      string
+		wantTools     []string
+		wantIso       bool
+		reasonParts   []string
 	}{
-		{"off 忽略探测与自检", "off", detectBad, nil, "off", fullAgentTools, false, nil},
-		{"off 即使探测通过", "off", detectOK, checkBad, "off", fullAgentTools, false, nil},
-		{"auto 探测失败降级只读", "auto", detectBad, nil, "degraded", readOnlyAgentTools, false, []string{"需要 root"}},
-		{"auto 探测失败不看自检", "auto", detectBad, checkOK, "degraded", readOnlyAgentTools, false, []string{"需要 root"}},
-		{"required 探测失败直接关闭", "required", detectBad, nil, "failed", nil, false, []string{"需要 root"}},
-		{"auto 探测通过自检未执行 fail-closed", "auto", detectOK, nil, "failed", nil, false, []string{"自检未执行"}},
-		{"required 探测通过自检未执行 fail-closed", "required", detectOK, nil, "failed", nil, false, []string{"自检未执行"}},
-		{"auto 探测通过自检通过", "auto", detectOK, checkOK, "on", fullAgentTools, true, nil},
-		{"required 探测通过自检通过", "required", detectOK, checkOK, "on", fullAgentTools, true, nil},
-		{"auto 自检失败绝不降级运行", "auto", detectOK, checkBad, "failed", nil, false, []string{"敏感路径不可读", "跨会话隔离"}},
-		{"required 自检失败直接关闭", "required", detectOK, checkBad, "failed", nil, false, []string{"敏感路径不可读", "跨会话隔离"}},
-		{"未知模式按 required 处理", "force", detectBad, nil, "failed", nil, false, []string{"需要 root"}},
-		{"空模式按 required 处理", "", detectOK, nil, "failed", nil, false, []string{"自检未执行"}},
+		{"off 忽略探测与自检", "off", true, detectBad, nil, "off", fullAgentTools, false, nil},
+		{"off 即使探测通过", "off", true, detectOK, checkBad, "off", fullAgentTools, false, nil},
+		{"auto 沙箱未开直接不隔离", "auto", false, detectBad, nil, "off", fullAgentTools, false, []string{"沙箱未启用", "直接在本机执行"}},
+		{"auto 沙箱未开即使探测通过", "auto", false, detectOK, checkOK, "off", fullAgentTools, false, nil},
+		{"required 忽略沙箱开关", "required", false, detectBad, nil, "failed", nil, false, []string{"需要 root"}},
+		{"auto 探测失败降级只读", "auto", true, detectBad, nil, "degraded", readOnlyAgentTools, false, []string{"需要 root"}},
+		{"auto 探测失败不看自检", "auto", true, detectBad, checkOK, "degraded", readOnlyAgentTools, false, []string{"需要 root"}},
+		{"required 探测失败直接关闭", "required", true, detectBad, nil, "failed", nil, false, []string{"需要 root"}},
+		{"auto 探测通过自检未执行 fail-closed", "auto", true, detectOK, nil, "failed", nil, false, []string{"自检未执行"}},
+		{"required 探测通过自检未执行 fail-closed", "required", true, detectOK, nil, "failed", nil, false, []string{"自检未执行"}},
+		{"auto 探测通过自检通过", "auto", true, detectOK, checkOK, "on", fullAgentTools, true, nil},
+		{"required 探测通过自检通过", "required", true, detectOK, checkOK, "on", fullAgentTools, true, nil},
+		{"auto 自检失败绝不降级运行", "auto", true, detectOK, checkBad, "failed", nil, false, []string{"敏感路径不可读", "跨会话隔离"}},
+		{"required 自检失败直接关闭", "required", true, detectOK, checkBad, "failed", nil, false, []string{"敏感路径不可读", "跨会话隔离"}},
+		{"未知模式按 required 处理且忽略开关", "force", false, detectBad, nil, "failed", nil, false, []string{"需要 root"}},
+		{"空模式按 required 处理", "", true, detectOK, nil, "failed", nil, false, []string{"自检未执行"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideIsolation(tc.mode, tc.detect, tc.check)
+			got := decideIsolation(tc.mode, tc.sandboxOpen, tc.detect, tc.check)
 			if got.Mode != tc.wantMode {
 				t.Fatalf("Mode = %q, want %q", got.Mode, tc.wantMode)
 			}
@@ -317,11 +321,37 @@ func TestNewBuiltinAgentIsolationOff(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("off 模式 health = %d, body %v", code, body)
 	}
-	if body["isolation"] != "off" || body["write_tools_enabled"] != true || body["sandbox"] != "off" || body["bash_enabled"] != false {
+	if body["isolation"] != "off" || body["write_tools_enabled"] != true || body["sandbox"] != "off" || body["bash_enabled"] != true {
 		t.Fatalf("off 模式隔离状态 = %v", body)
 	}
 	if _, has := body["reason"]; has {
 		t.Fatalf("runner 可用时不应有 reason: %v", body)
+	}
+}
+
+// TestNewBuiltinAgentSandboxDisabled:默认沙箱未开启时 auto 直接不隔离,工具全开
+// 且 bash 开放(命令在本机执行);AGENT_BASH=off 时 bash 关闭。
+func TestNewBuiltinAgentSandboxDisabled(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 环境下 uid 隔离路径由集成测试覆盖")
+	}
+	for name, bashMode := range map[string]string{"": "", "bash off": "off"} {
+		cfg := readyAgentConfig(t, "auto")
+		cfg.AgentBash = bashMode
+		code, body := agentHealth(t, cfg)
+		if code != http.StatusOK || body["status"] != "healthy" {
+			t.Fatalf("%s: health = %d %v", name, code, body)
+		}
+		if body["isolation"] != "off" || body["write_tools_enabled"] != true || body["sandbox"] != "off" {
+			t.Fatalf("%s: 隔离状态 = %v", name, body)
+		}
+		wantBash := bashMode != "off"
+		if body["bash_enabled"] != wantBash {
+			t.Fatalf("%s: bash_enabled = %v, want %v", name, body["bash_enabled"], wantBash)
+		}
+		if reason, _ := body["isolation_reason"].(string); !strings.Contains(reason, "沙箱未启用") {
+			t.Fatalf("%s: isolation_reason = %q", name, reason)
+		}
 	}
 }
 
@@ -333,6 +363,13 @@ func TestNewBuiltinAgentDegradedOnNonRoot(t *testing.T) {
 	}
 	// readyAgentConfig 用 t.Setenv 固定 WORKDIR,不能并行
 	cfg := readyAgentConfig(t, "auto")
+	// auto 降级用例需先在 Agent 设置里开启沙箱，否则默认不隔离。
+	if _, err := capabilities.NewStore(cfg.AgentDataDir).PutConfig(capabilities.Config{
+		EnableAgentsMD: true, EnableSkills: true, DisabledSkills: []string{},
+		CompactTriggerRatio: 0.9, SandboxEnabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	code, body := agentHealth(t, cfg)
 	if code != http.StatusOK {
 		t.Fatalf("degraded 模式 health = %d, body %v", code, body)

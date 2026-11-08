@@ -190,11 +190,20 @@ func (d isolationDecision) status() agent.Status {
 //   - required:环境不支持时 Agent 整体关闭;
 //   - 探测通过但自检未通过:两种模式都关闭 Agent——环境明明能切 uid 却
 //     隔离不成立,说明部署有误(Pi 能读到 xLyra 的东西),绝不降级运行。
-func decideIsolation(mode string, detect isolation.Capability, check *isolation.Report) isolationDecision {
+func decideIsolation(mode string, sandboxEnabled bool, detect isolation.Capability, check *isolation.Report) isolationDecision {
 	if mode == "off" {
 		return isolationDecision{
 			Mode:   "off",
 			Reason: "AGENT_ISOLATION=off,Agent 与 xLyra 同权限运行,仅用于本地开发",
+			Tools:  fullAgentTools,
+		}
+	}
+	// 沙箱未开启时 auto 直接不隔离:Agent 与 xLyra 同权限运行,命令可联网;
+	// required(含未知值)仍然强制沙箱,不看开关。
+	if mode == "auto" && !sandboxEnabled {
+		return isolationDecision{
+			Mode:   "off",
+			Reason: "沙箱未启用（可在 Agent 设置中开启），Agent 与 xLyra 同权限运行，命令直接在本机执行",
 			Tools:  fullAgentTools,
 		}
 	}
@@ -241,13 +250,31 @@ func prepareIsolation(cfg config.Config, logger *slog.Logger, dataDir string, ca
 	}
 	if mode == "off" {
 		logger.Warn("AGENT_ISOLATION=off,Agent 与 xLyra 同权限运行,仅用于本地开发")
-		decision := decideIsolation(mode, isolation.Capability{}, nil)
+		decision := decideIsolation(mode, false, isolation.Capability{}, nil)
 		sandbox := decideSandbox(cfg.AgentBash, decision, sandbox.Capability{}, nil)
 		decision.Sandbox = &sandbox
 		return decision
 	}
 	if !bins.ready() {
 		return isolationDecision{}
+	}
+	// Agent 设置里的沙箱开关(默认关闭):未开启时不做任何探测与自检,
+	// 命令直接在本机执行;读取失败按未开启处理。
+	sandboxEnabled := false
+	if caps != nil {
+		capsCfg, err := caps.GetConfig()
+		if err != nil {
+			logger.Warn("读取 Agent 配置失败,按沙箱未启用处理", "error", err)
+		} else {
+			sandboxEnabled = capsCfg.SandboxEnabled
+		}
+	}
+	if mode == "auto" && !sandboxEnabled {
+		logger.Info("沙箱未启用，命令直接在本机执行")
+		decision := decideIsolation(mode, sandboxEnabled, isolation.Capability{}, nil)
+		sandbox := decideSandbox(cfg.AgentBash, decision, sandbox.Capability{}, nil)
+		decision.Sandbox = &sandbox
+		return decision
 	}
 	isoCfg := isolation.Config{UIDBase: cfg.AgentUIDBase, MaxSlots: cfg.AgentMaxSlots}
 	// Detect 的探针身份要走进数据目录才能读回文件,而旧部署里数据目录可能是 0750
@@ -273,7 +300,7 @@ func prepareIsolation(cfg config.Config, logger *slog.Logger, dataDir string, ca
 	} else {
 		logger.Warn("uid 隔离能力探测未通过,按降级策略处理", "reason", detect.Reason)
 	}
-	decision := decideIsolation(mode, detect, check)
+	decision := decideIsolation(mode, sandboxEnabled, detect, check)
 	if decision.Isolation != nil {
 		decision.Isolation.Config = isoCfg
 	}
@@ -448,6 +475,14 @@ type sandboxDecision struct {
 
 // decideSandbox 按 uid 隔离、能力探测与执行器自检决定沙箱和 bash 开关。
 func decideSandbox(bashMode string, iso isolationDecision, detect sandbox.Capability, check *isolation.Report) sandboxDecision {
+	// 隔离关闭(环境变量 off 或沙箱开关未开)时命令直接在本机执行,
+	// bash 仅受 AGENT_BASH=off 控制;降级/失败等其余情况仍然 bash 关闭。
+	if iso.Mode == "off" {
+		if bashMode == "off" {
+			return sandboxDecision{Mode: "off", Reason: "AGENT_BASH=off,bash 已关闭"}
+		}
+		return sandboxDecision{Mode: "off", Bash: true, Reason: "沙箱未启用,命令直接在本机执行"}
+	}
 	if iso.Mode != "on" {
 		return sandboxDecision{Mode: "off", Reason: "uid 隔离未启用,沙箱与 bash 关闭"}
 	}
@@ -602,6 +637,23 @@ func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.C
 			ExecDefaultTimeout: cfg.AgentExecDefaultTimeout,
 			ExecMaxTimeout:     cfg.AgentExecMaxTimeout,
 		}
+	}
+	// 沙箱关闭但 bash 开放:命令在本机直接执行,不经沙箱执行器。
+	if decision.Sandbox != nil && decision.Sandbox.Mode == "off" && decision.Sandbox.Bash {
+		local := runner.LocalBashConfig{
+			DefaultTimeout: cfg.AgentExecDefaultTimeout,
+			MaxTimeout:     cfg.AgentExecMaxTimeout,
+		}
+		if local.DefaultTimeout <= 0 {
+			local.DefaultTimeout = 120 * time.Second
+		}
+		if local.MaxTimeout <= 0 {
+			local.MaxTimeout = 600 * time.Second
+		}
+		if local.DefaultTimeout > local.MaxTimeout {
+			local.DefaultTimeout = local.MaxTimeout
+		}
+		rc.LocalBash = &local
 	}
 	if cfg.AgentNodeMaxHeapMB > 0 {
 		rc.NodeFlags = []string{fmt.Sprintf("--max-old-space-size=%d", cfg.AgentNodeMaxHeapMB)}

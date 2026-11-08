@@ -316,6 +316,8 @@ export type AgentCapabilitiesConfig = {
   compact_trigger_ratio?: number
   /** 全局上下文窗口回退（token）：模型未在端点 models 声明时使用；再缺省按 200k 兜底 */
   context_window?: number
+  /** 命令沙箱隔离：开启后命令在无网络、仅能访问工作区的沙箱中运行（默认关闭，重启 xLyra 后生效） */
+  sandbox_enabled?: boolean
 }
 
 export type AgentEndpointConfig = {

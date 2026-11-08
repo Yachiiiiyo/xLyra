@@ -1,4 +1,4 @@
-// xLyra Pi 扩展:路径约束(第二层防线)+ write/edit 审批 + 沙箱 bash。
+// xLyra Pi 扩展:路径约束(第二层防线)+ write/edit 审批 + bash(沙箱 / 本机两种模式)。
 //
 // - 路径约束:read/ls/grep/find 只能访问会话工作目录(Pi 进程 cwd)之内、或 readRoots
 //   (启用技能的目录)之内的路径;write/edit 仍只允许工作目录之内,即使目标位于
@@ -16,6 +16,9 @@
 //   seccomp + rlimit 下执行,环境也由执行器构造)。失败即关闭:连不上、协议错误
 //   一律报错,绝不回退到本地执行;未启用时不覆盖、不拦截,内置行为保持原样
 //   (契约:Go 侧此时不把 bash 放进 --tools)。
+// - 本机 bash:runtime.bash.mode 为 "local"(没有 socket)时,命令不经执行器,直接用 Pi 自带的
+//   本地 shell 执行(与 xLyra 同权限、可联网),只在外面套 defaultTimeout/maxTimeout 超时;审批
+//   与高危规则同沙箱模式完全一致。用户 ! 前缀与 RPC 的 bash 同样走这套本机 operations。
 // - fail-closed:配置读不到/非法一律按 ask、readRoots 为空、bash 与生图未启用;钩子内任何
 //   意外错误都阻断工具调用。
 // - 运行配置:Go 经环境变量 XLYRA_RUN_CONFIG 传入单个 JSON:runtime(权限/只读根/
@@ -35,6 +38,7 @@ import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import {
 	createBashTool,
+	createLocalBashOperations,
 	type AgentToolResult,
 	type BashOperations,
 	type BashToolCallEvent,
@@ -60,7 +64,9 @@ const BLOCK_REASON_GENERIC = "扩展检查失败,已拒绝";
 // 执行器请求是一行 JSON:{"cmd":命令,"cwd":工作目录,"timeout":秒}\n;不传 env,
 // 环境由执行器构造。响应也是 JSON 行:{"t":"out"|"err","d":"<base64>"} 流式输出;
 // {"t":"exit","code":N,"signal":"","timed_out":bool,"reaped":N,"error":""} 结束。
-type BashSandboxConfig = { socket: string; defaultTimeout: number; maxTimeout: number };
+type BashSandboxConfig = { mode: "sandbox"; socket: string; defaultTimeout: number; maxTimeout: number };
+type BashLocalConfig = { mode: "local"; defaultTimeout: number; maxTimeout: number };
+type BashConfig = BashSandboxConfig | BashLocalConfig;
 type ExecutorMessage =
 	| { t: "out" | "err"; d: string }
 	| { t: "exit"; code: number; signal?: string; timed_out?: boolean; reaped?: number; error?: string };
@@ -103,7 +109,7 @@ function loadRuntimeConfig(): Record<string, unknown> | null {
 
 // 读不到、解析失败、字段非法 → 一律按未启用(fail-closed:宁可工具不可用,也不本地执行)。
 // enabled 必须严格为 true,socket 必须是绝对路径,超时必须是正整数(缺省 120/600)。
-function loadBashConfig(): BashSandboxConfig | null {
+function loadBashConfig(): BashConfig | null {
 	try {
 		const parsed = loadRuntimeConfig();
 		if (!parsed) return null;
@@ -111,11 +117,15 @@ function loadBashConfig(): BashSandboxConfig | null {
 		if (!bash || typeof bash !== "object") return null;
 		const record = bash as Record<string, unknown>;
 		if (record.enabled !== true) return null;
-		if (typeof record.socket !== "string" || !path.isAbsolute(record.socket)) return null;
+		const mode = record.mode === undefined ? "sandbox" : record.mode;
+		if (mode !== "sandbox" && mode !== "local") return null;
 		const defaultTimeout = optionalPositiveInt(record.defaultTimeout, DEFAULT_BASH_TIMEOUT_SECONDS);
 		const maxTimeout = optionalPositiveInt(record.maxTimeout, MAX_BASH_TIMEOUT_SECONDS);
 		if (defaultTimeout === null || maxTimeout === null) return null;
-		return { socket: record.socket, defaultTimeout: Math.min(defaultTimeout, maxTimeout), maxTimeout };
+		const clamped = Math.min(defaultTimeout, maxTimeout);
+		if (mode === "local") return { mode: "local", defaultTimeout: clamped, maxTimeout };
+		if (typeof record.socket !== "string" || !path.isAbsolute(record.socket)) return null;
+		return { mode: "sandbox", socket: record.socket, defaultTimeout: clamped, maxTimeout };
 	} catch {
 		return null;
 	}
@@ -173,6 +183,19 @@ const HIGH_RISK_RULES: { name: string; pattern: RegExp }[] = [
 function matchHighRiskRules(command: string): string[] | null {
 	const names = HIGH_RISK_RULES.filter((rule) => rule.pattern.test(command)).map((rule) => rule.name);
 	return names.length > 0 ? names : null;
+}
+
+// 本机 operations:复用 Pi 自带的本地 shell 执行(含进程树终止与 abort),只统一超时:
+// Pi 没传用 defaultTimeout,传了与 maxTimeout 取小。
+function localOperations(config: BashLocalConfig): BashOperations {
+	const base = createLocalBashOperations();
+	return {
+		exec: (command, cwd, options) => {
+			const requested = typeof options.timeout === "number" && options.timeout > 0 ? options.timeout : config.defaultTimeout;
+			const seconds = Math.max(1, Math.min(Math.floor(requested), config.maxTimeout));
+			return base.exec(command, cwd, { ...options, timeout: seconds });
+		},
+	};
 }
 
 // 沙箱执行器 operations:Pi 的 bash 工具与 user_bash(! 前缀/RPC bash)都走这里。
@@ -945,10 +968,13 @@ export default function (pi: ExtensionAPI) {
 	registerQuestion(pi);
 
 	if (bashConfig !== null) {
-		const operations = sandboxOperations(bashConfig);
+		const operations = bashConfig.mode === "local" ? localOperations(bashConfig) : sandboxOperations(bashConfig);
 		// 覆盖内置 bash:工具名/描述/参数 schema/输出截断全部沿用,只换执行方式
-		pi.registerTool({ ...createBashTool(process.cwd(), { operations }), label: "bash(xlyra 沙箱)" });
-		// 用户 ! 前缀与 RPC 的 bash 命令同样只走执行器,不回退本地
+		pi.registerTool({
+			...createBashTool(process.cwd(), { operations }),
+			label: bashConfig.mode === "local" ? "bash(本机)" : "bash(xlyra 沙箱)",
+		});
+		// 用户 ! 前缀与 RPC 的 bash 命令走同一套 operations;沙箱模式下不回退本地
 		pi.on("user_bash", () => ({ operations }));
 	}
 

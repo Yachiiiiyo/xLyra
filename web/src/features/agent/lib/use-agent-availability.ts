@@ -4,6 +4,9 @@ import { fetchAgentHealth, type AgentHealth } from '@/features/agent/api/agent'
 // Shares the query cache with the agent settings page, so nav visibility follows saves/refreshes there.
 export const agentSettingsKey = ['settings', 'agent'] as const
 
+/** Agent 能力配置的 query key，设置弹窗与「环境」面板共用。 */
+export const capabilitiesKey = ['agent', 'capabilities'] as const
+
 /**
  * The built-in agent defaults to available while loading or on network failure.
  * Only an explicit 404 hides the entry; an unhealthy instance stays visible.

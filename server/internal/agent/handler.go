@@ -782,6 +782,7 @@ func mergeAgentConfig(fields map[string]json.RawMessage, config *capabilities.Co
 	boolFields := map[string]*bool{
 		"enable_agents_md": &config.EnableAgentsMD,
 		"enable_skills":    &config.EnableSkills,
+		"sandbox_enabled":  &config.SandboxEnabled,
 	}
 	for name, target := range boolFields {
 		if value, ok := fields[name]; ok {
