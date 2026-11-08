@@ -49,6 +49,13 @@ const (
 type builtinAgent struct {
 	handler  *agent.Handler
 	shutdown func(context.Context)
+	// beginRestore / endRestore 在备份恢复前后拦住 Agent 运行;Agent 不可用
+	// (runner 未构造)时为 nil。
+	beginRestore func() error
+	endRestore   func()
+	// relaxWorkspace 在 uid 隔离开启时放开共享工作区已有内容的权限(备份恢复出的
+	// 文件属主是 xLyra 进程用户,各会话身份需要能读写);隔离未开启时为 nil。
+	relaxWorkspace func()
 }
 
 // agentBins 是 node 命令、Pi 入口与 xLyra 扩展的解析结果;任一为空表示
@@ -116,29 +123,33 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 		MaxBodyBytes:        cfg.MaxRequestBodyBytes,
 		Status:              func() agent.Status { return decision.status() },
 	})
-	return &builtinAgent{handler: handler, shutdown: shutdown}
+	agentInstance := &builtinAgent{handler: handler, shutdown: shutdown}
+	if gate, ok := run.(interface {
+		BeginRestore() error
+		EndRestore()
+	}); ok {
+		agentInstance.beginRestore = gate.BeginRestore
+		agentInstance.endRestore = gate.EndRestore
+	}
+	if decision.Isolation != nil {
+		agentInstance.relaxWorkspace = func() {
+			if err := isolation.RelaxWorkspacePermissions(workspaceDir); err != nil {
+				logger.Warn("放开共享工作区权限失败", "workspace", workspaceDir, "error", err)
+			}
+		}
+	}
+	return agentInstance
 }
 
 // resolveAgentDataDir 返回内置 Agent 的数据目录，供运行时装配与备份共用。
 func resolveAgentDataDir(cfg config.Config) string {
-	dataDir := strings.TrimSpace(cfg.AgentDataDir)
-	if dataDir == "" {
-		dataDir = filepath.Join(config.ResolveWorkdir(), "agent")
-	}
-	return dataDir
+	return config.ResolveAgentDataDir(cfg)
 }
 
 // resolveAgentWorkspaceDir 返回共享工作区目录:配置了 AGENT_WORKSPACE_DIR
 // 则用之,否则 <数据目录>/workspace;用 filepath.Abs 规整(失败则原样返回)。
 func resolveAgentWorkspaceDir(cfg config.Config, dataDir string) string {
-	workspace := strings.TrimSpace(cfg.AgentWorkspaceDir)
-	if workspace == "" {
-		workspace = filepath.Join(dataDir, "workspace")
-	}
-	if abs, err := filepath.Abs(workspace); err == nil {
-		return abs
-	}
-	return workspace
+	return config.ResolveAgentWorkspaceDir(cfg)
 }
 
 // resolveAgentBins 解析 node 命令、Pi 入口与扩展路径;command 缺省时回退

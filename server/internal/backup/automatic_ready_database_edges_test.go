@@ -35,9 +35,9 @@ func TestExportAtRequiresReadyDependencies(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			path, filename, err := tt.service.exportAt(context.Background(), "passphrase", time.Date(2026, 6, 24, 1, 2, 3, 0, time.UTC))
+			path, filename, err := tt.service.exportSectionsAt(context.Background(), "passphrase", v4SectionsWithoutAgent(), time.Date(2026, 6, 24, 1, 2, 3, 0, time.UTC))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("exportAt path=%q filename=%q err=%v, want %q", path, filename, err, tt.want)
+				t.Fatalf("exportSectionsAt path=%q filename=%q err=%v, want %q", path, filename, err, tt.want)
 			}
 		})
 	}
@@ -151,7 +151,7 @@ func TestDatabaseImportExportWrapTransactionBeginFailures(t *testing.T) {
 
 	txErr := errors.New("transaction begin failed")
 	db := backupTransactionGorm(t, txErr)
-	_, err := exportDatabase(context.Background(), db, "master-key", "", nil)
+	_, err := exportDatabase(context.Background(), db, "master-key", exportTables, nil)
 	if !errors.Is(err, txErr) {
 		t.Fatalf("exportDatabase err=%v, want transaction begin failure", err)
 	}

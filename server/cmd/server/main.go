@@ -124,7 +124,7 @@ func run() int {
 	siteService := site.NewServiceWithOAuthService(db, masterKey, appTimeZone, oauthService, confFile)
 	syncService := catalog.NewSyncService(db, logger.With("thread", "model-catalog-sync"), confFile)
 	usageSummaryService := usage.NewSummaryService(db, confFile, appTimeZone)
-	backupService := backup.NewService(db, confFile, masterKey, filepath.Join(config.ResolveWorkdir(), "playground"), appTimeZone)
+	backupService := backup.NewService(db, confFile, masterKey, appTimeZone).WithAgentRoot(config.ResolveAgentDataDir(cfg)).WithAgentWorkspaceRoot(config.ResolveAgentWorkspaceDir(cfg))
 	automaticBackupService := backup.NewAutomaticService(backupService, masterKey)
 	reconcileCtx, reconcileCancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	if err := catalog.ReconcileCategories(reconcileCtx, db.DB()); err != nil {

@@ -280,7 +280,8 @@
       "failed": "Export failed",
       "noticeSensitive": "Includes sites, models, credentials, OAuth accounts, downstream API keys, request logs, and usage records.",
       "noticePassphrase": "Keep the passphrase safe. You will need it again when importing.",
-      "noticeUsersExcluded": "Does not include admin accounts, sessions, 2FA, admin access tokens, or audit logs."
+      "noticeUsersExcluded": "Does not include admin accounts, sessions, 2FA, admin access tokens, or audit logs.",
+      "sectionsTitle": "Backup contents"
     },
     "import": {
       "title": "Import Data",
@@ -299,11 +300,84 @@
       "noticeRestart": "Health state, route cooldowns, and rate limit windows are not restored; the system will rebuild them.",
       "confirmTitle": "Confirm import",
       "confirmDescription": "Import replaces current sites, models, credentials, downstream API keys, request logs, usage records, and the config file.",
-      "confirmAction": "Import and overwrite"
+      "confirmAction": "Import and overwrite",
+      "previewAction": "Next: Preview",
+      "backAction": "Back",
+      "inspectFailed": "Unable to read the backup contents"
+    },
+    "restorePreview": {
+      "createdAt": "Backup created",
+      "formatVersion": "Format version",
+      "legacy": "This is a legacy backup; it will be restored with the full legacy contents",
+      "restoreTitle": "Will restore",
+      "clearTitle": "The following existing data will be cleared after the restore",
+      "clearHint": "This data depends on the restored contents and cannot be kept separately. To keep it, cancel and export it first.",
+      "partial": " (partial data)",
+      "unavailableTitle": "This instance cannot restore the following contents. Resolve them before continuing",
+      "loading": "Reading backup contents..."
     },
     "tabs": {
       "manual": "Manual Backup",
       "automatic": "Automatic Backup"
+    },
+    "sections": {
+      "groups": {
+        "system": "System",
+        "gateway": "Gateway Data",
+        "agent": "Agent"
+      },
+      "items": {
+        "settings": {
+          "label": "System Settings",
+          "description": "Global settings, appearance, notifications, backup settings, etc."
+        },
+        "gateway_sites": {
+          "label": "Sites & Models",
+          "description": "Sites, groups, credentials, OAuth connections, models and pricing, proxy settings"
+        },
+        "gateway_keys": {
+          "label": "API Keys & Permissions",
+          "description": "API keys, site permissions, rate-limit rules"
+        },
+        "gateway_logs": {
+          "label": "Request Logs & Usage",
+          "description": "Request logs, usage records and statistics; usually the largest in size"
+        },
+        "plugins": {
+          "label": "Plugins",
+          "description": "Installed plugin packages, bindings, trusted public keys, marketplace subscriptions"
+        },
+        "agent_config": {
+          "label": "Agent Settings",
+          "description": "Agent's model selection, appearance and access policy"
+        },
+        "agent_capabilities": {
+          "label": "Agent Capability Files",
+          "description": "Skills, AGENTS.md and capability configuration"
+        },
+        "agent_sessions": {
+          "label": "Agent Sessions",
+          "description": "Conversation history and file-change records of all agent sessions"
+        },
+        "agent_workspace": {
+          "label": "Agent Workspace",
+          "description": "All files in the shared workspace (excluding rebuildable directories such as node_modules); can be very large"
+        }
+      },
+      "requiredBy": "Required by \"{{names}}\"; cancel them first",
+      "recommends": "Recommended to also back up: {{names}}",
+      "unavailable": "Currently unavailable: {{reason}}",
+      "sizeRows": "About {{count}} rows",
+      "sizeBytes": "{{size}}",
+      "atLeastOne": "Select at least one backup item",
+      "loading": "Loading backup contents...",
+      "loadFailed": "Failed to load backup contents; the export will use server defaults.",
+      "choose": "Choose contents",
+      "summary": "Selected {{count}} items: {{names}}",
+      "summaryNone": "None selected",
+      "dialogTitle": "Choose backup contents",
+      "dialogDescription": "Select the contents to back up. Dependent contents will be selected automatically.",
+      "done": "Done"
     },
     "automatic": {
       "title": "Automatic Backup",
@@ -327,6 +401,8 @@
         "description": "Restoring data from {{filename}} in a background server task.",
         "completeTitle": "Restore complete",
         "completeDescription": "Successfully imported {{rows}} rows across {{tables}} tables.",
+        "completeDescriptionSections": "Restored {{count}} content categories — {{tables}} tables / {{rows}} rows in the database.",
+        "clearedNote": "Cleared dependent data: {{names}}",
         "canceledTitle": "Restore canceled",
         "canceledDescription": "The restore transaction was rolled back and the database was returned to its pre-restore state.",
         "errorTitle": "Restore failed",
@@ -335,7 +411,9 @@
         "stepDecrypt": "Decrypt backup file",
         "stepParse": "Validate backup contents",
         "stepImport": "Write backup data",
-        "stepFiles": "Write session files",
+        "stepAgent": "Write agent configuration",
+        "stepAgentSessions": "Write agent sessions",
+        "stepAgentWorkspace": "Write agent workspace",
         "status": {
           "pending": "Waiting",
           "in_progress": "In progress",
@@ -385,7 +463,9 @@
         "retention": "Retention count",
         "passphrase": "Backup file passphrase",
         "passphraseDesc": "The generated .xlyra files are encrypted with this passphrase.",
-        "passphraseSaved": "Saved: {{value}}. Leave blank to keep it unchanged."
+        "passphraseSaved": "Saved: {{value}}. Leave blank to keep it unchanged.",
+        "sectionsTitle": "Backup contents",
+        "sectionsHint": "Automatic backups are generated from the contents selected here. Everything except the Agent workspace is included by default; uncheck large items as needed."
       },
       "files": {
         "title": "Remote Backup Files",
@@ -791,8 +871,16 @@
     "previewPricingFailed": "Preview failed",
     "pricingPreviewSummary": "Parsed {{items}} model prices and {{groups}} groups.",
     "pricingReviewConfirm": "I have reviewed the result and allow this plugin to provide prices for this site.",
-    "bindSiteHint": {"model_list": "When this site syncs models, this plugin fetches the model list.", "credential_check": "This plugin validates keys and runs health checks for this site.", "error_classifier": "Upstream errors of this site are classified by this plugin (it only picks a class and cannot change cooldown length).", "pricing_parse": "When this site refreshes its models, this plugin reads and saves the prices. It changes the prices shown for the site, so preview and review them first."},
-    "globalKindHint": {"site_detect": "Once enabled, this plugin also runs when xLyra detects a site type; it can only point to site types xLyra already supports.", "model_metadata": "Once enabled, it applies to every site. It only fills in missing model names and capabilities and never overrides existing values."},
+    "bindSiteHint": {
+      "model_list": "When this site syncs models, this plugin fetches the model list.",
+      "credential_check": "This plugin validates keys and runs health checks for this site.",
+      "error_classifier": "Upstream errors of this site are classified by this plugin (it only picks a class and cannot change cooldown length).",
+      "pricing_parse": "When this site refreshes its models, this plugin reads and saves the prices. It changes the prices shown for the site, so preview and review them first."
+    },
+    "globalKindHint": {
+      "site_detect": "Once enabled, this plugin also runs when xLyra detects a site type; it can only point to site types xLyra already supports.",
+      "model_metadata": "Once enabled, it applies to every site. It only fills in missing model names and capabilities and never overrides existing values."
+    },
     "trialPassed": "Trial passed",
     "trialFailed": "Trial failed",
     "siteBinding": {

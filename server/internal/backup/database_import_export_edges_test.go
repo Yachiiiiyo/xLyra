@@ -111,7 +111,7 @@ func TestExportDatabaseSnapshotWrapsTableQueryError(t *testing.T) {
 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	_, err := exportDatabaseSnapshot(context.Background(), db, "master-key", zw)
+	_, err := exportDatabaseSnapshot(context.Background(), db, "master-key", exportTables, zw)
 	if !errors.Is(err, queryErr) {
 		t.Fatalf("exportDatabaseSnapshot error = %v, want wrapped query error", err)
 	}

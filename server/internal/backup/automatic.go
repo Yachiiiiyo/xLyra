@@ -28,41 +28,46 @@ const (
 	automaticBackupTimeout  = 10 * time.Minute
 	automaticRestoreTimeout = 30 * time.Minute
 	automaticTaskRetention  = time.Hour
+	// inspectObjectHeadBytes 是预览自动备份文件时用 Range 请求取的对象
+	// 开头字节数:信封头 + 第一个 1MiB 分块绰绰有余。
+	inspectObjectHeadBytes = 4 << 20
 )
 
 type AutomaticConfigInput struct {
-	Enabled          bool   `json:"enabled"`
-	Cron             string `json:"cron"`
-	RetentionCount   int    `json:"retention_count"`
-	Endpoint         string `json:"endpoint"`
-	Region           string `json:"region"`
-	Bucket           string `json:"bucket"`
-	Prefix           string `json:"prefix"`
-	AccessKey        string `json:"access_key"`
-	SecretKey        string `json:"secret_key"`
-	BackupPassphrase string `json:"backup_passphrase"`
-	ForcePathStyle   bool   `json:"force_path_style"`
-	UseSSL           bool   `json:"use_ssl"`
-	SkipTLSVerify    bool   `json:"skip_tls_verify"`
+	Enabled          bool     `json:"enabled"`
+	Cron             string   `json:"cron"`
+	RetentionCount   int      `json:"retention_count"`
+	Sections         []string `json:"sections"`
+	Endpoint         string   `json:"endpoint"`
+	Region           string   `json:"region"`
+	Bucket           string   `json:"bucket"`
+	Prefix           string   `json:"prefix"`
+	AccessKey        string   `json:"access_key"`
+	SecretKey        string   `json:"secret_key"`
+	BackupPassphrase string   `json:"backup_passphrase"`
+	ForcePathStyle   bool     `json:"force_path_style"`
+	UseSSL           bool     `json:"use_ssl"`
+	SkipTLSVerify    bool     `json:"skip_tls_verify"`
 }
 
 type AutomaticConfigPayload struct {
-	Enabled                bool   `json:"enabled"`
-	Cron                   string `json:"cron"`
-	RetentionCount         int    `json:"retention_count"`
-	Endpoint               string `json:"endpoint"`
-	Region                 string `json:"region"`
-	Bucket                 string `json:"bucket"`
-	Prefix                 string `json:"prefix"`
-	AccessKey              string `json:"access_key"`
-	SecretKeyMasked        string `json:"secret_key_masked,omitempty"`
-	BackupPassphraseMasked string `json:"backup_passphrase_masked,omitempty"`
-	HasSecretKey           bool   `json:"has_secret_key"`
-	HasBackupPassphrase    bool   `json:"has_backup_passphrase"`
-	ForcePathStyle         bool   `json:"force_path_style"`
-	UseSSL                 bool   `json:"use_ssl"`
-	SkipTLSVerify          bool   `json:"skip_tls_verify"`
-	Ready                  bool   `json:"ready"`
+	Enabled                bool     `json:"enabled"`
+	Cron                   string   `json:"cron"`
+	RetentionCount         int      `json:"retention_count"`
+	Sections               []string `json:"sections"`
+	Endpoint               string   `json:"endpoint"`
+	Region                 string   `json:"region"`
+	Bucket                 string   `json:"bucket"`
+	Prefix                 string   `json:"prefix"`
+	AccessKey              string   `json:"access_key"`
+	SecretKeyMasked        string   `json:"secret_key_masked,omitempty"`
+	BackupPassphraseMasked string   `json:"backup_passphrase_masked,omitempty"`
+	HasSecretKey           bool     `json:"has_secret_key"`
+	HasBackupPassphrase    bool     `json:"has_backup_passphrase"`
+	ForcePathStyle         bool     `json:"force_path_style"`
+	UseSSL                 bool     `json:"use_ssl"`
+	SkipTLSVerify          bool     `json:"skip_tls_verify"`
+	Ready                  bool     `json:"ready"`
 }
 
 type AutomaticTestResult struct {
@@ -122,9 +127,14 @@ type automaticBackupVersion struct {
 	IsDeleteMarker bool
 }
 
+// objectHeadFetcher 取备份对象开头 length 字节的读取流;抽成可注入的
+// 字段便于测试。
+type objectHeadFetcher func(ctx context.Context, cfg config.AutomaticBackupConfig, client *minio.Client, key string, length int64) (io.ReadCloser, error)
+
 type AutomaticService struct {
 	base            Service
 	credentials     credential.Service
+	fetchObjectHead objectHeadFetcher
 	operationMu     sync.Mutex
 	running         atomic.Bool
 	restoring       atomic.Bool
@@ -145,14 +155,79 @@ func NewAutomaticService(base Service, masterKey string) *AutomaticService {
 	}
 }
 
+// WithObjectHeadFetcher 替换「取对象开头字节」的实现,便于测试注入。
+func (s *AutomaticService) WithObjectHeadFetcher(fetcher objectHeadFetcher) *AutomaticService {
+	s.fetchObjectHead = fetcher
+	return s
+}
+
+// InspectFile 预览存储在 S3 的自动备份文件:用 Range 请求只取对象开头
+// 一段,交给 InspectReader 解出 manifest,不下载整个文件。
+func (s *AutomaticService) InspectFile(ctx context.Context, key string) (InspectResult, error) {
+	cfg, client, err := s.readyClient()
+	if err != nil {
+		return InspectResult{}, err
+	}
+	key, err = normalizeBackupObjectKey(cfg.Storage.Prefix, key)
+	if err != nil {
+		return InspectResult{}, err
+	}
+	passphrase, err := s.decryptBackupPassphrase(cfg)
+	if err != nil {
+		return InspectResult{}, err
+	}
+	fetch := s.fetchObjectHead
+	if fetch == nil {
+		fetch = fetchBackupObjectHead
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	reader, err := fetch(fetchCtx, cfg, client, key, inspectObjectHeadBytes)
+	if err != nil {
+		return InspectResult{}, fmt.Errorf("download backup head from S3: %w", err)
+	}
+	defer reader.Close()
+	return s.base.InspectReader(ctx, passphrase, reader)
+}
+
+// fetchBackupObjectHead 用 Range 请求取对象开头 length 字节;先 Stat 一次,
+// 让对象不存在等错误在这里就暴露。
+func fetchBackupObjectHead(ctx context.Context, cfg config.AutomaticBackupConfig, client *minio.Client, key string, length int64) (io.ReadCloser, error) {
+	opts := minio.GetObjectOptions{}
+	if err := opts.SetRange(0, length-1); err != nil {
+		return nil, err
+	}
+	object, err := client.GetObject(ctx, cfg.Storage.Bucket, key, opts)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := object.Stat(); err != nil {
+		_ = object.Close()
+		return nil, err
+	}
+	return object, nil
+}
+
 func (s *AutomaticService) GetConfig() AutomaticConfigPayload {
 	cfg, _ := config.ReadAutomaticBackupConfig(s.base.confFile)
-	return automaticConfigPayload(cfg)
+	return s.automaticConfigPayload(cfg)
 }
 
 func (s *AutomaticService) UpdateConfig(input AutomaticConfigInput) (AutomaticConfigPayload, error) {
 	if s.base.confFile == nil {
 		return AutomaticConfigPayload{}, fmt.Errorf("config persistence is not available")
+	}
+	// sections 为 nil 表示保持当前设置不变;非 nil(含空数组)则替换并校验。
+	if input.Sections != nil {
+		if err := ValidateSelection(input.Sections); err != nil {
+			return AutomaticConfigPayload{}, err
+		}
+		for _, id := range input.Sections {
+			available, reason := s.base.sectionAvailability(id)
+			if !available {
+				return AutomaticConfigPayload{}, fmt.Errorf("backup section %q is not available: %s", id, reason)
+			}
+		}
 	}
 	current, _ := config.ReadAutomaticBackupConfig(s.base.confFile)
 	next, err := s.configFromInput(input, current)
@@ -165,7 +240,7 @@ func (s *AutomaticService) UpdateConfig(input AutomaticConfigInput) (AutomaticCo
 	if err := s.base.confFile.Set(config.AutomaticBackupConfigPath, config.AutomaticBackupConfigToMap(next)); err != nil {
 		return AutomaticConfigPayload{}, fmt.Errorf("save automatic backup config: %w", err)
 	}
-	return automaticConfigPayload(next), nil
+	return s.automaticConfigPayload(next), nil
 }
 
 func (s *AutomaticService) Test(ctx context.Context) (AutomaticTestResult, error) {
@@ -307,7 +382,7 @@ func (s *AutomaticService) RunScheduled(ctx context.Context) (AutomaticRunResult
 }
 
 func (s *AutomaticService) run(ctx context.Context, cfg config.AutomaticBackupConfig, client *minio.Client, passphrase string, createdAt time.Time) (AutomaticRunResult, error) {
-	filePath, filename, err := s.base.exportAt(ctx, passphrase, createdAt)
+	filePath, filename, err := s.base.exportSectionsAt(ctx, passphrase, s.base.resolveAutomaticSections(cfg.Sections), createdAt)
 	if err != nil {
 		return AutomaticRunResult{}, err
 	}
@@ -760,10 +835,16 @@ func (s *AutomaticService) mergeTaskFiles(cfg config.AutomaticBackupConfig, file
 }
 
 func (s *AutomaticService) configFromInput(input AutomaticConfigInput, current config.AutomaticBackupConfig) (config.AutomaticBackupConfig, error) {
+	// sections 为 nil 表示沿用当前保存的类别设置。
+	sections := current.Sections
+	if input.Sections != nil {
+		sections = input.Sections
+	}
 	next := config.AutomaticBackupConfig{
 		Enabled:        input.Enabled,
 		Cron:           input.Cron,
 		RetentionCount: input.RetentionCount,
+		Sections:       sections,
 		Storage: config.AutomaticBackupStorageConfig{
 			Endpoint:                  input.Endpoint,
 			Region:                    input.Region,
@@ -1103,12 +1184,19 @@ func backupVersionKey(key string, versionID string) string {
 	return key + "\x00" + versionID
 }
 
-func automaticConfigPayload(cfg config.AutomaticBackupConfig) AutomaticConfigPayload {
+func (s *AutomaticService) automaticConfigPayload(cfg config.AutomaticBackupConfig) AutomaticConfigPayload {
 	cfg = config.NormalizeAutomaticBackupConfig(cfg)
+	// 返回生效的类别:配置里显式保存的(即使当前不可用也原样返回),
+	// 没保存则返回自动备份默认类别中当前可用的。
+	sections := cfg.Sections
+	if sections == nil {
+		sections = s.base.AvailableDefaultSections(true)
+	}
 	return AutomaticConfigPayload{
 		Enabled:                cfg.Enabled,
 		Cron:                   cfg.Cron,
 		RetentionCount:         cfg.RetentionCount,
+		Sections:               sections,
 		Endpoint:               cfg.Storage.Endpoint,
 		Region:                 cfg.Storage.Region,
 		Bucket:                 cfg.Storage.Bucket,

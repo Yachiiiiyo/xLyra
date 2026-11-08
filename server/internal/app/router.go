@@ -271,20 +271,60 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
-	if playgroundService != nil {
-		preRestore = playgroundService.QuiesceForRestore
-		postRestore = playgroundService.RecoverAfterRestore
+	agentRestoreGate := builtin != nil && builtin.beginRestore != nil
+	playgroundRestore := playgroundService != nil
+	if agentRestoreGate || playgroundRestore {
+		// 恢复前先拦住 Agent 运行(有进行中的任务则拒绝恢复),再暂停 playground;
+		// 恢复后(含失败收敛)按相反顺序放行。
+		preRestore = func(ctx context.Context) error {
+			if agentRestoreGate {
+				if err := builtin.beginRestore(); err != nil {
+					return err
+				}
+			}
+			if playgroundRestore {
+				if err := playgroundService.QuiesceForRestore(ctx); err != nil {
+					if agentRestoreGate {
+						builtin.endRestore()
+					}
+					return err
+				}
+			}
+			return nil
+		}
+		postRestore = func(ctx context.Context) error {
+			var err error
+			if playgroundRestore {
+				err = playgroundService.RecoverAfterRestore(ctx)
+			}
+			// 恢复出的工作区文件属主是 xLyra 进程用户;沙箱开启时放开权限。
+			if builtin != nil && builtin.relaxWorkspace != nil {
+				builtin.relaxWorkspace()
+			}
+			if agentRestoreGate {
+				builtin.endRestore()
+			}
+			return err
+		}
 	}
-	if authService != nil {
+	if authService != nil || jsPluginManager != nil {
 		databaseRestored = func(ctx context.Context) error {
-			if err := authService.RefreshBootstrapCache(ctx); err != nil {
-				authService.ClearBootstrapCache()
-				logger.Warn("bootstrap admin cache refresh after restore failed", "error", err)
+			if authService != nil {
+				if err := authService.RefreshBootstrapCache(ctx); err != nil {
+					authService.ClearBootstrapCache()
+					logger.Warn("bootstrap admin cache refresh after restore failed", "error", err)
+				}
+			}
+			// 插件类别恢复后,运行时需要按库里的新内容重新加载。
+			if jsPluginManager != nil {
+				if err := jsPluginManager.Reload(ctx); err != nil {
+					logger.Warn("js plugin reload after restore failed", "error", err)
+				}
 			}
 			return nil
 		}
 	}
-	settingsHandler := settings.NewHandlerWithBackup(logger.With("thread", "settings"), confFile, db, masterKey, downloadService, playgroundRoot, resolveAgentDataDir(cfg), preRestore, postRestore, databaseRestored, appTimeZone)
+	settingsHandler := settings.NewHandlerWithBackup(logger.With("thread", "settings"), confFile, db, masterKey, downloadService, resolveAgentDataDir(cfg), resolveAgentWorkspaceDir(cfg, resolveAgentDataDir(cfg)), preRestore, postRestore, databaseRestored, appTimeZone)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -531,11 +571,14 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Put("/settings/rate-limits", settingsHandler.UpdateRateLimits)
 				protected.Post("/settings/backup/export", settingsHandler.ExportBackup)
 				protected.Post("/settings/backup/import", settingsHandler.ImportBackup)
+				protected.Post("/settings/backup/inspect", settingsHandler.InspectBackup)
+				protected.Get("/settings/backup/sections", settingsHandler.GetBackupSections)
 				protected.Get("/settings/backup/automatic", settingsHandler.GetAutomaticBackup)
 				protected.Put("/settings/backup/automatic", settingsHandler.UpdateAutomaticBackup)
 				protected.Post("/settings/backup/automatic/test", settingsHandler.TestAutomaticBackup)
 				protected.Get("/settings/backup/automatic/files", settingsHandler.ListAutomaticBackupFiles)
 				protected.Post("/settings/backup/automatic/run", settingsHandler.RunAutomaticBackup)
+				protected.Post("/settings/backup/automatic/files/inspect", settingsHandler.InspectAutomaticBackupFile)
 				protected.Post("/settings/backup/automatic/files/restore", settingsHandler.RestoreAutomaticBackupFile)
 				protected.Get("/settings/backup/automatic/files/restore/active", settingsHandler.GetActiveAutomaticBackupRestoreTask)
 				protected.Get("/settings/backup/automatic/files/restore/{taskID}", settingsHandler.GetAutomaticBackupRestoreTask)

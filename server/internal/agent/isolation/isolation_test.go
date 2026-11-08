@@ -376,3 +376,57 @@ func TestEnsureTraversable(t *testing.T) {
 		t.Fatal("root 为空应报错")
 	}
 }
+
+// 非 root 调用 RelaxWorkspacePermissions 返回 ErrNotRoot,且不改动任何权限。
+func TestRelaxWorkspacePermissionsNotRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root 下走实际放开权限的测试")
+	}
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := RelaxWorkspacePermissions(dir); !errors.Is(err, ErrNotRoot) {
+		t.Fatalf("err = %v, want ErrNotRoot", err)
+	}
+	info, _ := os.Stat(file)
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode changed to %v", info.Mode().Perm())
+	}
+}
+
+// root 下:已有目录/文件被放开读写,可执行位保留,符号链接指向的目标不被改动。
+func TestRelaxWorkspacePermissionsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("需要 root")
+	}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(sub, "run.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RelaxWorkspacePermissions(dir); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(sub); info.Mode().Perm() != 0o777 {
+		t.Fatalf("dir mode = %v", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(script); info.Mode().Perm() != 0o777 {
+		t.Fatalf("exec file mode = %v, want executable and writable", info.Mode().Perm())
+	}
+	if info, _ := os.Stat(outside); info.Mode().Perm() != 0o600 {
+		t.Fatalf("symlink target must not change, got %v", info.Mode().Perm())
+	}
+}

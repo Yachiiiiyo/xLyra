@@ -143,12 +143,14 @@ type Runner struct {
 	logger *slog.Logger
 	tools  string
 
-	mu      sync.Mutex
-	closed  bool
-	active  map[string]*activeRun
-	running int
-	queue   []*activeRun
-	wg      sync.WaitGroup
+	mu     sync.Mutex
+	closed bool
+	// restoring 为真表示正在恢复备份:新 run 一律被拒绝(见 BeginRestore)。
+	restoring bool
+	active    map[string]*activeRun
+	running   int
+	queue     []*activeRun
+	wg        sync.WaitGroup
 	// bgCtx 是不随单个 run 结束的后台任务(会话标题)的父 ctx,Shutdown 时取消。
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
@@ -711,6 +713,29 @@ func (r *Runner) Shutdown(ctx context.Context) error {
 	}
 }
 
+// BeginRestore 在恢复备份前调用:有进行中或排队的 run 时返回 ErrBusy(恢复会
+// 替换会话与工作区文件,不能与运行中的 Agent 并行);否则进入恢复态,新 run
+// 一律被拒绝,直到调用 EndRestore。
+func (r *Runner) BeginRestore() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil
+	}
+	if len(r.active) > 0 || len(r.queue) > 0 {
+		return fmt.Errorf("%w: 有进行中的 Agent 任务,请先停止后再恢复备份", ErrBusy)
+	}
+	r.restoring = true
+	return nil
+}
+
+// EndRestore 退出恢复态,允许新的 run。
+func (r *Runner) EndRestore() {
+	r.mu.Lock()
+	r.restoring = false
+	r.mu.Unlock()
+}
+
 var errQueueTimeout = errors.New("runner: 排队超时")
 
 func (r *Runner) admit(sessionID string, spec runSpec, kind string) (*activeRun, error) {
@@ -718,6 +743,9 @@ func (r *Runner) admit(sessionID string, spec runSpec, kind string) (*activeRun,
 	defer r.mu.Unlock()
 	if r.closed {
 		return nil, fmt.Errorf("%w: 服务正在关闭", ErrUnavailable)
+	}
+	if r.restoring {
+		return nil, fmt.Errorf("%w: 正在恢复备份,请稍后再试", ErrUnavailable)
 	}
 	if r.active[sessionID] != nil {
 		return nil, fmt.Errorf("%w: %s", ErrBusy, sessionID)

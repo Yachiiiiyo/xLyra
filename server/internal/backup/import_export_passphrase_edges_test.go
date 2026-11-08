@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -12,7 +13,7 @@ func TestImportRejectsDamagedEncryptedPayloadBeforeDatabaseImport(t *testing.T) 
 
 	summary, err := service.Import(context.Background(), "passphrase", []byte("not an encrypted backup"), ImportOptions{})
 	assertBackupErrorContains(t, "Import damaged payload", err, "unsupported backup format")
-	if summary != (ImportSummary{}) {
+	if !reflect.DeepEqual(summary, ImportSummary{}) {
 		t.Fatalf("Import damaged payload summary = %#v, want zero", summary)
 	}
 }

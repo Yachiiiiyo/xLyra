@@ -20,6 +20,7 @@ import (
 
 func TestManifestSectionsSerialization(t *testing.T) {
 	value := validAgentSectionManifest()
+	value.Sections = nil
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		t.Fatalf("marshal manifest without sections: %v", err)
@@ -47,7 +48,10 @@ func TestManifestSectionsSerialization(t *testing.T) {
 }
 
 func TestValidateManifestRejectsUnknownSection(t *testing.T) {
+	// v3 旧备份的 sections 只允许空或 agent_capabilities,未知段名沿用原有错误。
 	value := validAgentSectionManifest()
+	value.FormatVersion = 3
+	value.Tables = append([]string(nil), legacyV3Tables...)
 	value.Sections = []string{sectionAgentCapabilities}
 	if err := validateManifest(value); err != nil {
 		t.Fatalf("validate known section: %v", err)
@@ -60,19 +64,32 @@ func TestValidateManifestRejectsUnknownSection(t *testing.T) {
 	}
 }
 
+// allExportedSections 是 v4 全量导出包含的类别清单。
+func allExportedSections() []string {
+	return []string{
+		sectionSettings,
+		sectionGatewaySites,
+		sectionGatewayKeys,
+		sectionGatewayLogs,
+		sectionPlugins,
+		sectionAgentConfig,
+		sectionAgentCapabilities,
+	}
+}
+
 func validAgentSectionManifest() manifest {
 	return manifest{
 		FormatVersion: currentFormatVersion,
 		App:           backupAppName,
 		Payload:       backupPayload,
-		Tables:        append([]string(nil), exportTables...),
+		Sections:      allExportedSections(),
+		Tables:        TablesOf(allExportedSections()),
 	}
 }
 
 func TestServiceAgentCapabilitiesExportImportRoundTrip(t *testing.T) {
 	st := openAgentBackupTestStore(t)
 	confFile := backupConfigFile(t)
-	playgroundRoot := filepath.Join(t.TempDir(), "playground")
 	sourceRoot := t.TempDir()
 	targetRoot := t.TempDir()
 
@@ -87,9 +104,9 @@ func TestServiceAgentCapabilitiesExportImportRoundTrip(t *testing.T) {
 	}
 	writeAgentTestFile(t, targetRoot, "skills/stale/SKILL.md", "旧技能")
 
-	exporter := NewService(st, confFile, "master-key", playgroundRoot).WithAgentRoot(sourceRoot)
+	exporter := NewService(st, confFile, "master-key").WithAgentRoot(sourceRoot)
 	encrypted := exportAgentBackupTestArchive(t, exporter)
-	importer := NewService(st, confFile, "master-key", playgroundRoot).WithAgentRoot(targetRoot)
+	importer := NewService(st, confFile, "master-key").WithAgentRoot(targetRoot)
 	var events []ProgressEvent
 	summary, err := importer.Import(context.Background(), "passphrase", encrypted, ImportOptions{}, func(event ProgressEvent) {
 		events = append(events, event)
@@ -127,7 +144,6 @@ func TestServiceAgentCapabilitiesExportImportRoundTrip(t *testing.T) {
 func TestServiceLegacyBackupLeavesAgentCapabilitiesUntouched(t *testing.T) {
 	st := openAgentBackupTestStore(t)
 	confFile := backupConfigFile(t)
-	playgroundRoot := filepath.Join(t.TempDir(), "playground")
 	targetRoot := t.TempDir()
 	existingFiles := map[string]string{
 		"skills/keep/SKILL.md": "保留技能",
@@ -138,9 +154,9 @@ func TestServiceLegacyBackupLeavesAgentCapabilitiesUntouched(t *testing.T) {
 		writeAgentTestFile(t, targetRoot, name, content)
 	}
 
-	exporter := NewService(st, confFile, "master-key", playgroundRoot)
+	exporter := NewService(st, confFile, "master-key")
 	encrypted := exportAgentBackupTestArchive(t, exporter)
-	importer := NewService(st, confFile, "master-key", playgroundRoot).WithAgentRoot(targetRoot)
+	importer := NewService(st, confFile, "master-key").WithAgentRoot(targetRoot)
 	var events []ProgressEvent
 	summary, err := importer.Import(context.Background(), "passphrase", encrypted, ImportOptions{}, func(event ProgressEvent) {
 		events = append(events, event)

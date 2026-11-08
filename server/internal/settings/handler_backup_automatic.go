@@ -138,6 +138,26 @@ func (h Handler) CancelAutomaticBackupRestoreTask(w http.ResponseWriter, r *http
 	httpx.JSON(w, http.StatusAccepted, map[string]any{"restore": task})
 }
 
+// InspectAutomaticBackupFile 预览存储在 S3 的自动备份文件:只取对象开头
+// 一段解出 manifest,返回备份包含的类别与恢复会清空的数据。
+func (h Handler) InspectAutomaticBackupFile(w http.ResponseWriter, r *http.Request) {
+	if h.autoBackups == nil {
+		httpx.Error(w, r, http.StatusServiceUnavailable, "backup_unavailable", "automatic backup service is not available")
+		return
+	}
+	var req automaticBackupKeyRequest
+	if err := httpx.DecodeJSONBody(r, &req); err != nil {
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	result, err := h.autoBackups.InspectFile(r.Context(), req.Key)
+	if err != nil {
+		h.writeAutomaticBackupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"backup": result})
+}
+
 func (h Handler) DeleteAutomaticBackupFile(w http.ResponseWriter, r *http.Request) {
 	if h.autoBackups == nil {
 		httpx.Error(w, r, http.StatusServiceUnavailable, "backup_unavailable", "automatic backup service is not available")

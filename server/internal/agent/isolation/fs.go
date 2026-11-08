@@ -99,7 +99,54 @@ func PrepareWorkspace(dir string) error {
 		return err
 	}
 	// MkdirAll 受 umask 影响,显式 Chmod 保证 0777。
-	return os.Chmod(dir, 0o777)
+	if err := os.Chmod(dir, 0o777); err != nil {
+		return err
+	}
+	return RelaxWorkspacePermissions(dir)
+}
+
+// RelaxWorkspacePermissions 递归放开共享工作区里已有内容的权限(目录 |0777、
+// 文件 |0666,保留可执行位):沙箱关闭期间由 xLyra 身份创建的文件、以及备份
+// 恢复出来的文件,属主是 xLyra 进程用户,沙箱开启后各会话身份要能读写它们。
+// 符号链接不跟随也不改权限;单个条目失败不中断,返回第一个错误。
+func RelaxWorkspacePermissions(dir string) error {
+	if os.Geteuid() != 0 {
+		return ErrNotRoot
+	}
+	if dir == "" {
+		return errors.New("isolation: 工作区目录为空")
+	}
+	var first error
+	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if first == nil {
+				first = walkErr
+			}
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			return nil
+		}
+		mode := info.Mode().Perm()
+		want := mode | 0o666
+		if entry.IsDir() {
+			want = mode | 0o777
+		}
+		if want != mode {
+			if err := os.Chmod(path, want); err != nil && first == nil {
+				first = err
+			}
+		}
+		return nil
+	})
+	return first
 }
 
 // ChownFile 把 runner 以 root 写出的文件(令牌、settings.json 等)移交给会话身份:

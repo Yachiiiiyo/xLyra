@@ -51,10 +51,10 @@ func NewHandler(logger *slog.Logger, confFile *config.ConfigFile, stores ...*sto
 	return handler
 }
 
-func NewHandlerWithBackup(logger *slog.Logger, confFile *config.ConfigFile, db *store.Store, masterKey string, downloadService *downloads.Service, playgroundRoot string, agentRoot string, preRestore func(context.Context) error, postRestore func(context.Context) error, databaseRestored func(context.Context) error, timeZones ...config.TimeZone) Handler {
+func NewHandlerWithBackup(logger *slog.Logger, confFile *config.ConfigFile, db *store.Store, masterKey string, downloadService *downloads.Service, agentRoot string, agentWorkspaceRoot string, preRestore func(context.Context) error, postRestore func(context.Context) error, databaseRestored func(context.Context) error, timeZones ...config.TimeZone) Handler {
 	timeZone := config.TimeZoneOrDefault(timeZones...)
 	handler := NewHandler(logger, confFile, db)
-	handler.backups = backup.NewService(db, confFile, masterKey, playgroundRoot, timeZone).WithAgentRoot(agentRoot).WithRestoreHooks(preRestore, postRestore).WithDatabaseRestored(databaseRestored)
+	handler.backups = backup.NewService(db, confFile, masterKey, timeZone).WithAgentRoot(agentRoot).WithAgentWorkspaceRoot(agentWorkspaceRoot).WithRestoreHooks(preRestore, postRestore).WithDatabaseRestored(databaseRestored)
 	handler.autoBackups = backup.NewAutomaticService(handler.backups, masterKey)
 	handler.downloads = downloadService
 	return handler

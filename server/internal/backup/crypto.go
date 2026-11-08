@@ -87,6 +87,32 @@ func decryptStream(passphrase string, src io.Reader, dst io.Writer) error {
 	}
 }
 
+// decryptFirstChunk 只解密信封头之后的第一个数据块并返回明文,用于恢复前
+// 预览:不必下载/解密整个备份就能读出开头的 manifest。输入在第一个块
+// 之后被截断是允许的;口令错误/头损坏沿用与 decryptStream 一致的错误。
+func decryptFirstChunk(passphrase string, src io.Reader) ([]byte, error) {
+	header, err := readEnvelopeHeader(src)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := gcmFromPassphrase(passphrase, header.salt)
+	if err != nil {
+		return nil, err
+	}
+	ciphertext, err := readChunk(src)
+	if err != nil {
+		return nil, err
+	}
+	if ciphertext == nil {
+		return nil, fmt.Errorf("backup payload is empty")
+	}
+	plaintext, err := gcm.Open(nil, chunkNonce(header.noncePrefix, 0), ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt backup payload: %w", err)
+	}
+	return plaintext, nil
+}
+
 type streamCipherContext struct {
 	salt   []byte
 	prefix []byte

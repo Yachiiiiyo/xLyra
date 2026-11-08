@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -26,6 +27,7 @@ type AutomaticBackupConfig struct {
 	Enabled        bool                         `json:"enabled"`
 	Cron           string                       `json:"cron"`
 	RetentionCount int                          `json:"retention_count"`
+	Sections       []string                     `json:"sections"`
 	Storage        AutomaticBackupStorageConfig `json:"storage"`
 }
 
@@ -63,6 +65,22 @@ func AutomaticBackupConfigFromRaw(raw any) AutomaticBackupConfig {
 	cfg.Enabled = boolFromMap(root, "enabled", cfg.Enabled)
 	cfg.Cron = stringFromMap(root, "cron", cfg.Cron)
 	cfg.RetentionCount = intFromMap(root, "retention_count", cfg.RetentionCount)
+	// sections 缺省(或为空)时保持 nil,表示「未显式保存,使用默认类别」;
+	// 兼容 []any(JSON 解析)与 []string(ToMap 直接写入)两种形态。
+	var rawSections []string
+	switch typed := root["sections"].(type) {
+	case []any:
+		for _, raw := range typed {
+			if name, ok := raw.(string); ok {
+				rawSections = append(rawSections, name)
+			}
+		}
+	case []string:
+		rawSections = typed
+	}
+	if len(rawSections) > 0 {
+		cfg.Sections = rawSections
+	}
 	if storage, ok := root["storage"].(map[string]any); ok {
 		cfg.Storage.Endpoint = stringFromMap(storage, "endpoint", cfg.Storage.Endpoint)
 		cfg.Storage.Region = stringFromMap(storage, "region", cfg.Storage.Region)
@@ -89,6 +107,8 @@ func NormalizeAutomaticBackupConfig(cfg AutomaticBackupConfig) AutomaticBackupCo
 	if cfg.RetentionCount == 0 {
 		cfg.RetentionCount = defaults.RetentionCount
 	}
+	// 类别列表去空白、去空项并保序去重;清理后为空视为未设置。
+	cfg.Sections = normalizeSectionIDs(cfg.Sections)
 	cfg.Storage.Endpoint = strings.TrimSpace(cfg.Storage.Endpoint)
 	cfg.Storage.Region = strings.TrimSpace(cfg.Storage.Region)
 	cfg.Storage.Bucket = strings.TrimSpace(cfg.Storage.Bucket)
@@ -151,12 +171,40 @@ func ValidateAutomaticBackupStorageConfig(cfg AutomaticBackupConfig) error {
 	return nil
 }
 
+// normalizeSectionIDs 清理类别列表:去首尾空白、丢弃空项,保序去重;
+// 清理后为空返回 nil,表示未显式保存。
+func normalizeSectionIDs(ids []string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func AutomaticBackupConfigToMap(cfg AutomaticBackupConfig) map[string]any {
 	cfg = NormalizeAutomaticBackupConfig(cfg)
+	// sections 为 nil 时写空数组,保持 JSON 结构稳定;读回时视为未设置。
+	sections := cfg.Sections
+	if sections == nil {
+		sections = []string{}
+	}
 	return map[string]any{
 		"enabled":         cfg.Enabled,
 		"cron":            cfg.Cron,
 		"retention_count": cfg.RetentionCount,
+		"sections":        sections,
 		"storage": map[string]any{
 			"endpoint":                    cfg.Storage.Endpoint,
 			"region":                      cfg.Storage.Region,
@@ -176,10 +224,16 @@ func AutomaticBackupConfigToMap(cfg AutomaticBackupConfig) map[string]any {
 
 func AutomaticBackupConfigForExport(cfg AutomaticBackupConfig) map[string]any {
 	cfg = NormalizeAutomaticBackupConfig(cfg)
+	// 导出与 ToMap 一样写出 sections(nil 写空数组),属于非敏感配置。
+	sections := cfg.Sections
+	if sections == nil {
+		sections = []string{}
+	}
 	return map[string]any{
 		"enabled":         cfg.Enabled,
 		"cron":            cfg.Cron,
 		"retention_count": cfg.RetentionCount,
+		"sections":        sections,
 		"storage": map[string]any{
 			"endpoint":         cfg.Storage.Endpoint,
 			"region":           cfg.Storage.Region,

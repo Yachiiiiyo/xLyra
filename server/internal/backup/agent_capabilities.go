@@ -321,3 +321,19 @@ func swapAgentCapabilities(root string, staging string) error {
 	}
 	return nil
 }
+
+// zipMethodForFile 按扩展名选择压缩方式:媒体类文件本已是压缩格式,直接存储。
+func zipMethodForFile(relPath string) uint16 {
+	switch strings.ToLower(path.Ext(relPath)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".mp4", ".webm", ".zip", ".gz":
+		return zip.Store
+	default:
+		return zip.Deflate
+	}
+}
+
+// dirExists 判断目录是否存在,供导出/恢复时探测目标目录。
+func dirExists(path string) bool {
+	stat, err := os.Stat(path)
+	return err == nil && stat.IsDir()
+}

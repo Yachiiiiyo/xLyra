@@ -77,9 +77,24 @@ func parseArchiveContext(ctx context.Context, filename string) (archivePayload, 
 		return archivePayload{}, databaseDump{}, err
 	}
 
-	dump := databaseDump{Tables: make(map[string][]map[string]any, len(exportTables)), archivePath: filename}
-	strict := payload.Manifest.FormatVersion == currentFormatVersion
+	// archivePresentTables 按格式版本确定备份包里实际存在的表:v4 使用 manifest
+	// 的表清单(其中的表必须都是已知备份表);v2/v3 视为旧全量备份,只存在
+	// legacyV3Tables 里属于已知备份表的那部分(旧备份里的 playground 条目继续忽略),
+	// 不含后来新增的备份表。
+	present, err := archivePresentTables(payload.Manifest)
+	if err != nil {
+		return archivePayload{}, databaseDump{}, err
+	}
+	dump := databaseDump{Tables: make(map[string][]map[string]any, len(exportTables)), Present: present, archivePath: filename}
+	strict := payload.Manifest.FormatVersion >= 3
+	presentSet := make(map[string]struct{}, len(present))
+	for _, table := range present {
+		presentSet[table] = struct{}{}
+	}
 	for _, table := range backupTables {
+		if _, ok := presentSet[table.Name]; !ok {
+			continue
+		}
 		if _, streamed := streamedImportTables[table.Name]; streamed {
 			// Large detail tables are streamed from the archive during import;
 			// only verify the entry exists so validation still fails fast.
@@ -94,7 +109,7 @@ func parseArchiveContext(ctx context.Context, filename string) (archivePayload, 
 		}
 		dump.Tables[table.Name] = rows
 	}
-	totalRows, err := archiveTotalRows(ctx, zr.File, dump.Tables, strict)
+	totalRows, err := archiveTotalRows(ctx, zr.File, dump.Tables, strict, presentSet)
 	if err != nil {
 		return archivePayload{}, databaseDump{}, err
 	}
@@ -102,7 +117,30 @@ func parseArchiveContext(ctx context.Context, filename string) (archivePayload, 
 	return payload, dump, nil
 }
 
-func archiveTotalRows(ctx context.Context, files []*zip.File, loaded map[string][]map[string]any, strict bool) (int, error) {
+func archivePresentTables(m manifest) ([]string, error) {
+	if m.FormatVersion >= 4 {
+		wanted := make(map[string]struct{}, len(m.Tables))
+		for _, table := range m.Tables {
+			if _, ok := backupTableByName(table); !ok {
+				return nil, fmt.Errorf("backup table list mismatch")
+			}
+			wanted[table] = struct{}{}
+		}
+		return tablesInExportOrder(wanted), nil
+	}
+	// v2/v3 旧备份:只存在 legacyV3Tables 里属于已知备份表的那些(即旧的 22 张);
+	// 后来新增的备份表不在旧备份里,恢复时只会因外键级联被清空。
+	present := make([]string, 0, len(legacyV3Tables))
+	for _, table := range legacyV3Tables {
+		if _, ok := backupTableByName(table); !ok {
+			continue
+		}
+		present = append(present, table)
+	}
+	return present, nil
+}
+
+func archiveTotalRows(ctx context.Context, files []*zip.File, loaded map[string][]map[string]any, strict bool, present map[string]struct{}) (int, error) {
 	if archiveFile(files, archiveRowCountsFile) != nil {
 		rowCounts := map[string]int{}
 		if err := decodeArchiveJSON(files, archiveRowCountsFile, &rowCounts); err != nil {
@@ -110,6 +148,9 @@ func archiveTotalRows(ctx context.Context, files []*zip.File, loaded map[string]
 		}
 		total := 0
 		for _, table := range backupTables {
+			if _, ok := present[table.Name]; !ok {
+				continue
+			}
 			rows, ok := rowCounts[table.Name]
 			if !ok {
 				if strict {
@@ -126,6 +167,9 @@ func archiveTotalRows(ctx context.Context, files []*zip.File, loaded map[string]
 	}
 	total := 0
 	for _, table := range backupTables {
+		if _, ok := present[table.Name]; !ok {
+			continue
+		}
 		if _, streamed := streamedImportTables[table.Name]; !streamed {
 			total += len(loaded[table.Name])
 			continue

@@ -280,7 +280,8 @@
       "failed": "エクスポートに失敗しました",
       "noticeSensitive": "サイト、モデル、認証情報、OAuth アカウント、下流 API Key、リクエストログ、使用量記録を含みます。",
       "noticePassphrase": "パスフレーズは安全に保管してください。インポート時にもう一度必要です。",
-      "noticeUsersExcluded": "管理者アカウント、セッション、2FA、管理者アクセストークン、監査ログは含まれません。"
+      "noticeUsersExcluded": "管理者アカウント、セッション、2FA、管理者アクセストークン、監査ログは含まれません。",
+      "sectionsTitle": "バックアップ内容"
     },
     "import": {
       "title": "データをインポート",
@@ -299,11 +300,84 @@
       "noticeRestart": "ヘルス状態、ルートクールダウン、レート制限ウィンドウは復元されず、システムが再作成します。",
       "confirmTitle": "インポートの確認",
       "confirmDescription": "現在のサイト、モデル、認証情報、下流 API Key、リクエストログ、使用量記録、設定ファイルを置き換えます。",
-      "confirmAction": "インポートして上書き"
+      "confirmAction": "インポートして上書き",
+      "previewAction": "次へ：プレビュー",
+      "backAction": "戻る",
+      "inspectFailed": "バックアップ内容を読み取れません"
+    },
+    "restorePreview": {
+      "createdAt": "バックアップ作成日時",
+      "formatVersion": "フォーマットバージョン",
+      "legacy": "旧形式のバックアップのため、旧形式の全内容で復元されます",
+      "restoreTitle": "復元される内容",
+      "clearTitle": "復元後、以下の既存データは削除されます",
+      "clearHint": "これらのデータは復元される内容に依存しているため、個別に保持できません。保持したい場合はキャンセルして先に書き出してください。",
+      "partial": "（一部のデータ）",
+      "unavailableTitle": "現在のインスタンスでは以下の内容を復元できません。先に対処してください",
+      "loading": "バックアップ内容を読み込み中..."
     },
     "tabs": {
       "manual": "手動バックアップ",
       "automatic": "自動バックアップ"
+    },
+    "sections": {
+      "groups": {
+        "system": "システム",
+        "gateway": "ゲートウェイデータ",
+        "agent": "Agent"
+      },
+      "items": {
+        "settings": {
+          "label": "システム設定",
+          "description": "グローバル設定、外観、通知、バックアップ設定など"
+        },
+        "gateway_sites": {
+          "label": "サイトとモデル",
+          "description": "サイト、グループ、認証情報、OAuth 接続、モデルと価格、プロキシ設定"
+        },
+        "gateway_keys": {
+          "label": "API キーと権限",
+          "description": "API キー、サイト権限、レート制限ルール"
+        },
+        "gateway_logs": {
+          "label": "リクエストログと使用量",
+          "description": "リクエストログ、使用量記録と統計。通常もっとも大きい"
+        },
+        "plugins": {
+          "label": "プラグイン",
+          "description": "インストール済みプラグイン、バインディング、信頼済み公開鍵、マーケット購読"
+        },
+        "agent_config": {
+          "label": "Agent 設定",
+          "description": "Agent のモデル選択、外観、アクセスポリシー"
+        },
+        "agent_capabilities": {
+          "label": "Agent 能力ファイル",
+          "description": "スキル(skills)、AGENTS.md と能力設定"
+        },
+        "agent_sessions": {
+          "label": "Agent セッション記録",
+          "description": "すべての Agent セッションの会話履歴とファイル変更記録"
+        },
+        "agent_workspace": {
+          "label": "Agent ワークスペース",
+          "description": "共有ワークスペース内の全ファイル(node_modules など再構築可能なディレクトリを除く)。サイズが大きくなる可能性があります"
+        }
+      },
+      "requiredBy": "「{{names}}」から依存されています。先にそれらの選択を解除してください",
+      "recommends": "一緒にバックアップすることを推奨: {{names}}",
+      "unavailable": "現在利用できません: {{reason}}",
+      "sizeRows": "約 {{count}} 行",
+      "sizeBytes": "{{size}}",
+      "atLeastOne": "バックアップ内容を1つ以上選択してください",
+      "loading": "バックアップ内容を読み込み中...",
+      "loadFailed": "バックアップ内容の取得に失敗しました。サーバーの既定内容でエクスポートします。",
+      "choose": "内容を選択",
+      "summary": "{{count}} 項目を選択済み：{{names}}",
+      "summaryNone": "未選択",
+      "dialogTitle": "バックアップ内容を選択",
+      "dialogDescription": "バックアップする内容を選択してください。依存関係のある内容は自動的に一緒に選択されます。",
+      "done": "完了"
     },
     "automatic": {
       "title": "自動バックアップ",
@@ -327,6 +401,8 @@
         "description": "{{filename}} からサーバーのバックグラウンドタスクでデータを復元しています。",
         "completeTitle": "復元完了",
         "completeDescription": "{{tables}} テーブル、{{rows}} 行を正常にインポートしました。",
+        "completeDescriptionSections": "{{count}} 個のカテゴリを復元しました。データベースは {{tables}} テーブル / {{rows}} 行。",
+        "clearedNote": "依存データを削除しました：{{names}}",
         "canceledTitle": "復元をキャンセルしました",
         "canceledDescription": "復元トランザクションはロールバックされ、データベースは復元開始前の状態に戻りました。",
         "errorTitle": "復元失敗",
@@ -335,7 +411,9 @@
         "stepDecrypt": "バックアップファイルを復号",
         "stepParse": "バックアップ内容を検証",
         "stepImport": "バックアップデータを書き込み",
-        "stepFiles": "セッションファイルを書き込み",
+        "stepAgent": "Agent 設定を書き込み",
+        "stepAgentSessions": "Agent セッションを書き込み",
+        "stepAgentWorkspace": "Agent ワークスペースを書き込み",
         "status": {
           "pending": "待機中",
           "in_progress": "進行中",
@@ -385,7 +463,9 @@
         "retention": "保持数",
         "passphrase": "バックアップファイル用パスフレーズ",
         "passphraseDesc": "生成される .xlyra ファイルはこのパスフレーズで暗号化されます。",
-        "passphraseSaved": "保存済み：{{value}}。空欄なら変更しません。"
+        "passphraseSaved": "保存済み：{{value}}。空欄なら変更しません。",
+        "sectionsTitle": "バックアップ内容",
+        "sectionsHint": "自動バックアップはここで選択した内容で生成されます。既定では Agent ワークスペース以外のすべてを含みます。容量が大きい場合は必要に応じて選択を解除できます。"
       },
       "files": {
         "title": "リモートバックアップファイル",
@@ -791,8 +871,16 @@
     "previewPricingFailed": "プレビューに失敗しました",
     "pricingPreviewSummary": "モデル価格 {{items}} 件、グループ {{groups}} 件を解析しました。",
     "pricingReviewConfirm": "結果を確認し、このプラグインがこのサイトの価格を提供することを許可します。",
-    "bindSiteHint": {"model_list": "このサイトのモデル同期で、このプラグインがモデル一覧を取得します。", "credential_check": "このサイトのキー検証とヘルスチェックにこのプラグインを使います。", "error_classifier": "このサイトのアップストリームエラーをこのプラグインが分類します（クールダウン時間は変更できません）。", "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。"},
-    "globalKindHint": {"site_detect": "有効にすると、サイト種別の判別時にこのプラグインも実行されます。xLyra が対応済みの種別のみ指定できます。", "model_metadata": "有効にすると全サイトに適用されます。不足しているモデル名と機能を補うだけで、既存の値は上書きしません。"},
+    "bindSiteHint": {
+      "model_list": "このサイトのモデル同期で、このプラグインがモデル一覧を取得します。",
+      "credential_check": "このサイトのキー検証とヘルスチェックにこのプラグインを使います。",
+      "error_classifier": "このサイトのアップストリームエラーをこのプラグインが分類します（クールダウン時間は変更できません）。",
+      "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。"
+    },
+    "globalKindHint": {
+      "site_detect": "有効にすると、サイト種別の判別時にこのプラグインも実行されます。xLyra が対応済みの種別のみ指定できます。",
+      "model_metadata": "有効にすると全サイトに適用されます。不足しているモデル名と機能を補うだけで、既存の値は上書きしません。"
+    },
     "trialPassed": "試行に成功",
     "trialFailed": "試行に失敗",
     "siteBinding": {

@@ -18,20 +18,20 @@ func TestServiceValidatesPassphraseAndImportPayloadAfterReadiness(t *testing.T) 
 
 	service := readyBackupService(t)
 
-	path, filename, err := service.exportAt(context.Background(), "  ", service.now())
+	path, filename, err := service.exportSectionsAt(context.Background(), "  ", v4SectionsWithoutAgent(), service.now())
 	if path != "" || filename != "" {
-		t.Fatalf("exportAt path=%q filename=%q, want empty result on passphrase validation", path, filename)
+		t.Fatalf("exportSectionsAt path=%q filename=%q, want empty result on passphrase validation", path, filename)
 	}
-	assertBackupErrorContains(t, "exportAt blank passphrase", err, "backup passphrase is required")
+	assertBackupErrorContains(t, "exportSectionsAt blank passphrase", err, "backup passphrase is required")
 
 	summary, err := service.Import(context.Background(), "  ", []byte("encrypted"), ImportOptions{})
-	if summary != (ImportSummary{}) {
+	if !reflect.DeepEqual(summary, (ImportSummary{})) {
 		t.Fatalf("Import blank passphrase summary=%#v, want zero", summary)
 	}
 	assertBackupErrorContains(t, "Import blank passphrase", err, "backup passphrase is required")
 
 	summary, err = service.Import(context.Background(), "passphrase", nil, ImportOptions{})
-	if summary != (ImportSummary{}) {
+	if !reflect.DeepEqual(summary, (ImportSummary{})) {
 		t.Fatalf("Import empty file summary=%#v, want zero", summary)
 	}
 	assertBackupErrorContains(t, "Import empty file", err, "backup file is required")
