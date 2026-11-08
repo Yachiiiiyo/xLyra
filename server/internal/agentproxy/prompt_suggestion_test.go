@@ -16,7 +16,7 @@ func TestPromptSuggestionSettingsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("", "", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 	requestSettings := func(body string) Settings {
 		t.Helper()
 		method := http.MethodGet

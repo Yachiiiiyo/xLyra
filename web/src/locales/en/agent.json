@@ -44,9 +44,7 @@
       "missing": "Image file not found (it may not have been copied with the fork)",
       "generating": "Generating image…",
       "download": "Download",
-      "copyPath": "Copy path",
-      "close": "Close",
-      "caption": "{{model}}@{{site}}"
+      "close": "Close"
     }
   },
   "composer": {
@@ -165,7 +163,6 @@
     "navigated": "The preview tried to navigate and was stopped",
     "reload": "Reload preview",
     "csvTruncated": "Showing only the first {{count}} rows",
-    "copyPath": "Copy path",
     "copyContent": "Copy content",
     "close": "Close",
     "selectFile": "Switch file",
@@ -181,7 +178,6 @@
   "files": {
     "entry": "Files · {{count}}",
     "title": "Session files",
-    "downloadAll": "Download all (zip)",
     "preview": "Preview",
     "download": "Download",
     "truncated": "Too many files, only some are shown",
@@ -204,12 +200,10 @@
     "skillAdd": "Add",
     "skillCreate": "New skill",
     "skillScopeExternal": "External",
-    "backToList": "Back to list",
     "skillName": "Name",
     "skillNameInvalid": "Lowercase letters, digits and dashes only",
     "skillNameTaken": "A skill with this name already exists",
     "skillTemplateDescription": "Describe what this skill does in one line; the model uses this to decide activation.",
-    "skillDescription": "Description (used by the model to decide activation)",
     "skillBody": "Instructions",
     "skillBodyPlaceholder": "# Instructions\n\nDescribe the steps this skill performs…",
     "skillSaved": "Skill saved",
@@ -286,7 +280,6 @@
       "unsavedChanges": "You have unsaved changes",
       "imageDialogTitle": "Configure image model",
       "imageDialogHint": "Choose the models the agent uses to generate images. Sites and models are independent: ticking a model on one site only affects that site; the same model on another site must be ticked separately. Models are deduplicated by name and tried in order: each model fails over across its selected sites, then the next model is tried. Independent of the available models.",
-      "imageSites": "Sites",
       "imageModels": "Image models",
       "imageOrder": "Order",
       "imageMoveUp": "Move up",

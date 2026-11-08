@@ -199,7 +199,7 @@ func TestHandleStreamResponseRecordsNon2xxBodyWithoutProxying(t *testing.T) {
 	t.Parallel()
 
 	body := `{"error":{"message":"limited"}}`
-	result := Handler{logger: gatewayDiscardLogger(), exposeRouteSite: true}.handleStreamResponse(
+	result := Handler{logger: gatewayDiscardLogger()}.handleStreamResponse(
 		context.Background(),
 		httptest.NewRecorder(),
 		"req-forward",
@@ -231,7 +231,7 @@ func TestHandleStreamResponseEmptySuccessfulUpstreamMarksSemanticFailure(t *test
 	t.Parallel()
 
 	recorder := httptest.NewRecorder()
-	result := Handler{logger: gatewayDiscardLogger(), exposeRouteSite: true}.handleStreamResponse(
+	result := Handler{logger: gatewayDiscardLogger()}.handleStreamResponse(
 		context.Background(),
 		recorder,
 		"req-forward",
@@ -256,9 +256,6 @@ func TestHandleStreamResponseEmptySuccessfulUpstreamMarksSemanticFailure(t *test
 	}
 	if result.responseStarted {
 		t.Fatal("empty stream should not mark the downstream response as started")
-	}
-	if got := recorder.Header().Get(RouteSiteHeader); got != "" {
-		t.Fatalf("%s = %q, want empty for an unstarted stream", RouteSiteHeader, got)
 	}
 }
 
@@ -498,7 +495,7 @@ func TestHandleStreamResponseDownstreamCancelAfterHeadersUses499(t *testing.T) {
 	t.Parallel()
 
 	recorder := httptest.NewRecorder()
-	result := Handler{logger: gatewayDiscardLogger(), exposeRouteSite: true}.handleStreamResponse(
+	result := Handler{logger: gatewayDiscardLogger()}.handleStreamResponse(
 		context.Background(),
 		recorder,
 		"req-forward",
@@ -524,9 +521,6 @@ func TestHandleStreamResponseDownstreamCancelAfterHeadersUses499(t *testing.T) {
 	}
 	if !result.responseStarted || result.firstByteLatencyMS != 7 {
 		t.Fatalf("stream metadata = responseStarted %v firstByte %d", result.responseStarted, result.firstByteLatencyMS)
-	}
-	if got := recorder.Header().Get(RouteSiteHeader); got != "tokenfree" {
-		t.Fatalf("%s = %q, want tokenfree", RouteSiteHeader, got)
 	}
 }
 

@@ -13,12 +13,9 @@
     "attachmentReadFailed": "添付ファイルを読み込めませんでした"
   },
   "credential": {
-    "keyLabel": "下流キー",
-    "keyPlaceholder": "キーを選択",
     "modelPlaceholder": "モデルを選択"
   },
   "picker": {
-    "model": "モデル",
     "reasoning": "推論強度",
     "noModels": "利用可能なモデルがありません",
     "selectModel": "モデルを選択",

@@ -18,7 +18,7 @@ func TestCopyUpstreamResponseWritesBufferedResult(t *testing.T) {
 		contentType:  "application/problem+json",
 		body:         []byte(`{"error":"short and stout"}`),
 		promptTokens: 99,
-	}, "tokenfree", true)
+	})
 
 	if recorder.Code != http.StatusTeapot {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTeapot)
@@ -26,37 +26,8 @@ func TestCopyUpstreamResponseWritesBufferedResult(t *testing.T) {
 	if got := recorder.Header().Get("Content-Type"); got != "application/problem+json" {
 		t.Fatalf("Content-Type = %q, want application/problem+json", got)
 	}
-	if got := recorder.Header().Get(RouteSiteHeader); got != "tokenfree" {
-		t.Fatalf("%s = %q, want tokenfree", RouteSiteHeader, got)
-	}
 	if got := recorder.Body.String(); got != `{"error":"short and stout"}` {
 		t.Fatalf("body = %q, want upstream body", got)
-	}
-}
-
-func TestCopyUpstreamResponseOmitsRouteSiteByDefault(t *testing.T) {
-	t.Parallel()
-
-	recorder := httptest.NewRecorder()
-	copyUpstreamResponse(recorder, gatewayAttemptResult{
-		statusCode:  http.StatusOK,
-		contentType: "application/json",
-		body:        []byte(`{"ok":true}`),
-	}, "tokenfree", false)
-
-	if got := recorder.Header().Get(RouteSiteHeader); got != "" {
-		t.Fatalf("%s = %q, want empty", RouteSiteHeader, got)
-	}
-}
-
-func TestSetRouteSiteHeaderEncodesUnicodeSiteName(t *testing.T) {
-	t.Parallel()
-
-	headers := http.Header{}
-	setRouteSiteHeader(headers, "图片站点")
-
-	if got := headers.Get(RouteSiteHeader); got != "%E5%9B%BE%E7%89%87%E7%AB%99%E7%82%B9" {
-		t.Fatalf("%s = %q", RouteSiteHeader, got)
 	}
 }
 

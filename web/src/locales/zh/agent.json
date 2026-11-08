@@ -44,9 +44,7 @@
       "missing": "图片文件不存在（可能未随分叉复制）",
       "generating": "正在生成图片…",
       "download": "下载",
-      "copyPath": "复制路径",
-      "close": "关闭",
-      "caption": "{{model}}@{{site}}"
+      "close": "关闭"
     }
   },
   "composer": {
@@ -165,7 +163,6 @@
     "navigated": "预览页面尝试跳转，已停止",
     "reload": "重新加载预览",
     "csvTruncated": "仅显示前 {{count}} 行",
-    "copyPath": "复制路径",
     "copyContent": "复制内容",
     "close": "关闭",
     "selectFile": "切换文件",
@@ -181,7 +178,6 @@
   "files": {
     "entry": "文件 · {{count}}",
     "title": "会话文件",
-    "downloadAll": "全部下载 (zip)",
     "preview": "预览",
     "download": "下载",
     "truncated": "文件过多，仅显示部分",
@@ -204,12 +200,10 @@
     "skillAdd": "添加",
     "skillCreate": "新建 skill",
     "skillScopeExternal": "外部",
-    "backToList": "返回列表",
     "skillName": "名称",
     "skillNameInvalid": "仅允许小写字母、数字与中划线",
     "skillNameTaken": "同名 skill 已存在",
     "skillTemplateDescription": "一句话描述这个 skill 的用途，模型据此判断是否激活。",
-    "skillDescription": "描述（模型据此判断是否激活）",
     "skillBody": "操作说明正文",
     "skillBodyPlaceholder": "# 操作说明\n\n写下这个 skill 的执行步骤…",
     "skillSaved": "Skill 已保存",
@@ -286,7 +280,6 @@
       "unsavedChanges": "有未保存的更改",
       "imageDialogTitle": "配置生图模型",
       "imageDialogHint": "选择 Agent 生成图片时使用的模型。站点和模型是两个独立的维度:在某个站点上勾选某个模型,只影响该站点,同名模型在其他站点要单独勾选。按模型名去重排序,依次尝试:每个模型先在它选中的站点间兜底,全部失败再换下一个模型。与可用模型范围互不影响。",
-      "imageSites": "选择站点",
       "imageModels": "选择生图模型",
       "imageOrder": "排序",
       "imageMoveUp": "上移",

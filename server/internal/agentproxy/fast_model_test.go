@@ -50,7 +50,7 @@ func TestFastModelSettingsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("", "", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 
 	if settings := requestFastModelSettings(t, h, confFile, "", http.StatusOK).Data; settings.FastModel != "" {
 		t.Fatalf("fast_model 默认应为空串: %+v", settings)

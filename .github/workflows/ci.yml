@@ -168,7 +168,7 @@ jobs:
             --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN \
             --cap-add KILL --cap-add FOWNER --cap-add DAC_OVERRIDE \
             -e DB_HOST=pg -e DB_NAME=xlyra -e DB_USER=xlyra -e DB_PASSWORD=pw \
-            -e AGENT_ENGINE=pi xlyra:ci
+            xlyra:ci
           for _ in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:5801/api/v1/bootstrap/status >/dev/null 2>&1; then break; fi
             sleep 1

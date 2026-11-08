@@ -13,12 +13,9 @@
     "attachmentReadFailed": "附件读取失败"
   },
   "credential": {
-    "keyLabel": "下游密钥",
-    "keyPlaceholder": "选择一个密钥",
     "modelPlaceholder": "选择一个模型"
   },
   "picker": {
-    "model": "模型",
     "reasoning": "推理强度",
     "noModels": "暂无可用模型",
     "selectModel": "选择模型",

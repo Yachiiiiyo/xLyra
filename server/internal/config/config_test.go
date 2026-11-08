@@ -221,18 +221,6 @@ func TestLoadUsesEnvironmentAndSanitizesOrigins(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsInvalidAgentEngine(t *testing.T) {
-	t.Parallel()
-
-	cfg := validConfig()
-	cfg.AgentEngine = "codex"
-
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "AGENT_ENGINE") {
-		t.Fatalf("expected AGENT_ENGINE validation error, got %v", err)
-	}
-}
-
 func TestValidateRejectsAgentRunTimeoutOutsideBounds(t *testing.T) {
 	t.Parallel()
 
@@ -279,9 +267,6 @@ func TestLoadAppliesAgentDefaults(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load config: %v", err)
-	}
-	if cfg.AgentEngine != "pi" {
-		t.Fatalf("AGENT_ENGINE default = %q, want pi", cfg.AgentEngine)
 	}
 	if cfg.AgentNodeBin != "" || cfg.AgentPiEntry != "" || cfg.AgentExtensionPath != "" || cfg.AgentDataDir != "" || cfg.AgentWorkspaceDir != "" || cfg.AgentGatewayBaseURL != "" {
 		t.Fatalf("unexpected agent path defaults: %#v", cfg)
@@ -334,7 +319,6 @@ func validConfig() Config {
 		SiteHealthInterval:      15 * time.Minute,
 		SiteHealthTimeout:       10 * time.Second,
 		SiteHealthWorkers:       4,
-		AgentEngine:             "runner",
 		AgentMaxConcurrent:      4,
 		AgentRunTimeout:         60 * time.Minute,
 		AgentIsolation:          "auto",

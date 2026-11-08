@@ -90,7 +90,6 @@ func TestNewBuiltinRunnerWiresExtension(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	build := func() (agent.Runner, func(context.Context)) {
 		cfg := testConfig()
-		cfg.AgentEngine = "pi"
 		cfg.AgentNodeBin = os.Args[0]
 		cfg.AgentPiEntry = entry
 		store := session.NewStore(filepath.Join(root, "sessions"))
@@ -126,7 +125,6 @@ func TestBuiltinAgentWiresCapabilities(t *testing.T) {
 	t.Parallel()
 
 	cfg := testConfig()
-	cfg.AgentEngine = "pi"
 	cfg.AgentDataDir = t.TempDir()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	builtin := newBuiltinAgent(cfg, logger, nil, nil, fakeBuiltinTokenIssuer{}, nil)
@@ -202,15 +200,15 @@ func TestDecideIsolation(t *testing.T) {
 	}}
 
 	cases := []struct {
-		name          string
-		mode          string
-		sandboxOpen   bool
-		detect        isolation.Capability
-		check         *isolation.Report
-		wantMode      string
-		wantTools     []string
-		wantIso       bool
-		reasonParts   []string
+		name        string
+		mode        string
+		sandboxOpen bool
+		detect      isolation.Capability
+		check       *isolation.Report
+		wantMode    string
+		wantTools   []string
+		wantIso     bool
+		reasonParts []string
 	}{
 		{"off 忽略探测与自检", "off", true, detectBad, nil, "off", fullAgentTools, false, nil},
 		{"off 即使探测通过", "off", true, detectOK, checkBad, "off", fullAgentTools, false, nil},
@@ -304,7 +302,6 @@ func readyAgentConfig(t *testing.T, isolationMode string) config.Config {
 	root := t.TempDir()
 	entry, _ := makeAgentRuntime(t, root, true)
 	cfg := testConfig()
-	cfg.AgentEngine = "pi"
 	cfg.AgentNodeBin = os.Args[0]
 	cfg.AgentPiEntry = entry
 	cfg.AgentDataDir = filepath.Join(workdir, "agent")

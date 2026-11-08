@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"archive/zip"
 	"context"
-	"io"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -13,8 +11,6 @@ import (
 	"xlyra/server/internal/agent/workspace"
 	"xlyra/server/internal/httpx"
 )
-
-var artifactsZipMaxBytes int64 = 256 << 20
 
 type sessionArtifact struct {
 	Path           string    `json:"path"`
@@ -81,64 +77,4 @@ func artifactKind(path string, entry workspace.Entry) string {
 		return "text"
 	}
 	return "binary"
-}
-
-// SessionArtifactsZip GET /sessions/{id}/artifacts.zip。
-func (h *Handler) SessionArtifactsZip(w http.ResponseWriter, r *http.Request) {
-	id, ok := h.sessionID(w, r)
-	if !ok {
-		return
-	}
-	if _, err := h.store.Get(id); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	manifest, err := scanArtifacts(r.Context(), h.store.WorkDir(id))
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	paths := make([]string, 0, len(manifest.Entries))
-	for path := range manifest.Entries {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	w.Header().Set("Content-Type", "application/zip")
-	name := id
-	if len(name) > 8 {
-		name = name[:8]
-	}
-	w.Header().Set("Content-Disposition", `attachment; filename="workspace-`+name+`.zip"`)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Cache-Control", "private, no-store")
-	zw := zip.NewWriter(w)
-	defer zw.Close()
-	var total int64
-	for _, path := range paths {
-		if r.Context().Err() != nil {
-			return
-		}
-		file, info, ok := openSessionFile(h.store.WorkDir(id), path)
-		if !ok {
-			continue
-		}
-		if info.Size() > artifactsZipMaxBytes-total {
-			// 放不下的文件跳过,后面更小的文件仍可入包
-			file.Close()
-			continue
-		}
-		header := &zip.FileHeader{Name: path, Method: zip.Deflate}
-		header.Modified = info.ModTime()
-		entry, err := zw.CreateHeader(header)
-		if err == nil {
-			_, _ = io.CopyN(entry, file, info.Size())
-			total += info.Size()
-		}
-		file.Close()
-		if err != nil {
-			return
-		}
-	}
 }

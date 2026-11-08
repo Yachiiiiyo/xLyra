@@ -44,20 +44,6 @@ export function validateAnswers(items: AgentQuestionItem[], state: QuestionDraft
   return null
 }
 
-/** 摘要文案：选中标签以「、」连接，「其他」写成 `其他：文本`；跳过/取消给对应状态词 */
-export function summarizeAnswers(items: AgentQuestionItem[], answers: AgentQuestionAnswer[] | undefined, status: 'answered' | 'skipped' | 'cancelled', auto: boolean | undefined, t: (key: string) => string): string {
-  if (status === 'skipped') return auto ? t('question.timedOutSkipped') : t('question.skippedLabel')
-  if (status === 'cancelled') return t('question.cancelledLabel')
-  if (!answers) return ''
-  return items.map((item, index) => {
-    const answer = answers[index]
-    const selected = answer?.selected ?? []
-    const labels = selected.filter((label) => label !== QUESTION_OTHER)
-    if (selected.includes(QUESTION_OTHER)) labels.push(`${t('question.otherLabel')}：${answer?.other ?? ''}`)
-    return `${item.question} → ${labels.join(t('question.summaryJoin'))}`
-  }).join('\n')
-}
-
 /** 数字键映射：按键 1-9 对应第 n 个选项（不含「其他」），超界返回 null */
 export function optionIndexForDigit(digit: string, item: AgentQuestionItem): number | null {
   if (!/^[1-9]$/.test(digit)) return null

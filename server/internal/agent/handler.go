@@ -541,11 +541,6 @@ func (h *Handler) ModelMemory(w http.ResponseWriter, r *http.Request) {
 	h.modelMemory(w, r)
 }
 
-// FeatureRemoved 内置引擎下已移除的 Runner 接口(memory/learning/version/upgrade)。
-func (h *Handler) FeatureRemoved(w http.ResponseWriter, r *http.Request) {
-	httpx.Error(w, r, http.StatusNotFound, "agent_feature_unavailable", "内置 Agent 不提供该功能")
-}
-
 // FeatureUnavailable 计划支持但尚未实现的接口;能力接口在未注入存储时
 // 也降级到这里。
 func (h *Handler) FeatureUnavailable(w http.ResponseWriter, r *http.Request) {

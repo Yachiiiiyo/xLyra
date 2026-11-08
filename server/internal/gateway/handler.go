@@ -16,8 +16,6 @@ import (
 	"xlyra/server/internal/usage"
 )
 
-const RouteSiteHeader = "X-Xlyra-Route-Site"
-
 type Handler struct {
 	logger               *slog.Logger
 	auth                 *auth.Service
@@ -39,13 +37,7 @@ type Handler struct {
 	confFile             *config.ConfigFile
 	usage                *usage.Service
 	timeZone             config.TimeZone
-	exposeRouteSite      bool
 	cacheObservationKey  []byte
-}
-
-func (h Handler) WithRouteSiteHeader() Handler {
-	h.exposeRouteSite = true
-	return h
 }
 
 // WithPluginAccountRefresher installs the plugin account-pool token refresher.

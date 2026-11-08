@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -809,9 +808,6 @@ func (h Handler) handleStreamResponse(
 		return result
 	}
 
-	if h.exposeRouteSite {
-		setRouteSiteHeader(w.Header(), candidate.Site.Name)
-	}
 	capture, responseStarted, proxyErr := protocol.ProxyStream(ctx, w, resp, startedAt, candidate)
 	result.upstreamResponseModel = capture.responseModel
 	if proxyErr != nil && streamCompletedAfterReadError(capture, proxyErr) {
@@ -825,9 +821,6 @@ func (h Handler) handleStreamResponse(
 		if writer, ok := w.(downstreamSSELifecycleWriter); ok {
 			writer.FinishSSE()
 		}
-	}
-	if !responseStarted {
-		w.Header().Del(RouteSiteHeader)
 	}
 	result.firstByteLatencyMS = capture.firstByteLatency
 	result.streamCompleted = capture.streamCompleted
@@ -1095,20 +1088,8 @@ func gatewayRequestFailureBody(code string, message string, requestID string) []
 	return body
 }
 
-func copyUpstreamResponse(w http.ResponseWriter, result gatewayAttemptResult, siteName string, exposeRouteSite bool) {
-	if exposeRouteSite {
-		setRouteSiteHeader(w.Header(), siteName)
-	}
+func copyUpstreamResponse(w http.ResponseWriter, result gatewayAttemptResult) {
 	writeUpstreamBody(w, result.statusCode, result.contentType, result.body)
-}
-
-func setRouteSiteHeader(headers http.Header, siteName string) {
-	siteName = strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(siteName))
-	if siteName == "" {
-		headers.Del(RouteSiteHeader)
-		return
-	}
-	headers.Set(RouteSiteHeader, url.PathEscape(siteName))
 }
 
 func writeUpstreamBody(w http.ResponseWriter, status int, contentType string, body []byte) {

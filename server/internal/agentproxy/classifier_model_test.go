@@ -49,7 +49,7 @@ func TestClassifierModelSettingsLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("", "", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 
 	if settings := requestClassifierModelSettings(t, h, confFile, "", http.StatusOK).Data; settings.ClassifierModel != "" {
 		t.Fatalf("classifier_model 默认应为空串: %+v", settings)

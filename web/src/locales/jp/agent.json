@@ -44,9 +44,7 @@
       "missing": "画像ファイルが見つかりません（フォーク時にコピーされていない可能性があります）",
       "generating": "画像を生成しています…",
       "download": "ダウンロード",
-      "copyPath": "パスをコピー",
-      "close": "閉じる",
-      "caption": "{{model}}@{{site}}"
+      "close": "閉じる"
     }
   },
   "composer": {
@@ -165,7 +163,6 @@
     "navigated": "プレビューが移動しようとしたため停止しました",
     "reload": "プレビューを再読み込み",
     "csvTruncated": "先頭 {{count}} 行のみ表示しています",
-    "copyPath": "パスをコピー",
     "copyContent": "内容をコピー",
     "close": "閉じる",
     "selectFile": "ファイルを切り替え",
@@ -181,7 +178,6 @@
   "files": {
     "entry": "ファイル · {{count}}",
     "title": "セッションファイル",
-    "downloadAll": "すべてダウンロード (zip)",
     "preview": "プレビュー",
     "download": "ダウンロード",
     "truncated": "ファイルが多いため一部のみ表示しています",
@@ -204,12 +200,10 @@
     "skillAdd": "追加",
     "skillCreate": "新規 skill",
     "skillScopeExternal": "外部",
-    "backToList": "一覧に戻る",
     "skillName": "名前",
     "skillNameInvalid": "小文字・数字・ハイフンのみ使用できます",
     "skillNameTaken": "同名の skill が既に存在します",
     "skillTemplateDescription": "この skill の用途を一文で記述します。モデルが有効化を判断する基準になります。",
-    "skillDescription": "説明（モデルが有効化を判断する基準）",
     "skillBody": "手順本文",
     "skillBodyPlaceholder": "# 手順\n\nこの skill の実行手順を記述します…",
     "skillSaved": "Skill を保存しました",
@@ -286,7 +280,6 @@
       "unsavedChanges": "未保存の変更があります",
       "imageDialogTitle": "画像生成モデルを設定",
       "imageDialogHint": "Agent が画像生成に使うモデルを選択します。サイトとモデルは独立した軸で、あるサイトでモデルにチェックしても、他サイトの同名モデルには影響しません。モデル名で重複排除して順に試行し、各モデルは選択したサイト間でフォールバックし、すべて失敗したら次のモデルを試します。利用可能なモデルの設定とは独立しています。",
-      "imageSites": "サイト",
       "imageModels": "画像生成モデル",
       "imageOrder": "順序",
       "imageMoveUp": "上へ",

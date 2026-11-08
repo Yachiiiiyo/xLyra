@@ -13,12 +13,9 @@
     "attachmentReadFailed": "Failed to read attachment"
   },
   "credential": {
-    "keyLabel": "Downstream key",
-    "keyPlaceholder": "Select a key",
     "modelPlaceholder": "Select a model"
   },
   "picker": {
-    "model": "Model",
     "reasoning": "Reasoning",
     "noModels": "No models available",
     "selectModel": "Select model",

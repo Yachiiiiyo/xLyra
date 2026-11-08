@@ -344,7 +344,7 @@ func (h Handler) serveEndpoint(
 				inflight.AddTokens(requestID, inflightTokenAmount(result))
 				h.clearCooldownAfterRecovery(ctx, candidate)
 				if !request.Stream {
-					copyUpstreamResponse(w, result, candidate.Site.Name, h.exposeRouteSite)
+					copyUpstreamResponse(w, result)
 				}
 				flowPhase = inflight.PhaseCompleted
 				return

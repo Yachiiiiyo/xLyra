@@ -1,18 +1,10 @@
 /**
  * agent 页关键 UI 状态的 localStorage 缓存：
- * - 最近会话 id：刷新后直接恢复上次会话，transcript 请求与 sessions/settings 并行发出
+ * - 最近会话 id：清理与写入（恢复逻辑已移除）
  */
 
 const LAST_SESSION_KEY = 'xlyra-agent-last-session-id'
 const CAPABILITY_NOTICE_DISMISSED_KEY = 'xlyra-agent-capability-notice-dismissed'
-
-export function loadLastSessionId(): string | null {
-  try {
-    return window.localStorage.getItem(LAST_SESSION_KEY)
-  } catch {
-    return null
-  }
-}
 
 export function loadCapabilityNoticeDismissed(): boolean {
   try {

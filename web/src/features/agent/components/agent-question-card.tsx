@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CircleHelp, LoaderCircle } from 'lucide-react'
+import { CircleHelp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { QUESTION_OTHER } from '@/features/agent/api/agent'
@@ -284,7 +284,3 @@ export function AgentQuestionSummary({ question }: { question: AgentQuestion }) 
   )
 }
 
-/** 加载图标单独导出供测试占位（保持与 Button 的 loading 视觉一致） */
-export function QuestionSubmittingIcon() {
-  return <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden />
-}

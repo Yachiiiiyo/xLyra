@@ -1,7 +1,5 @@
 import type { ReactNode } from 'react'
-import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { ConfirmPopover } from '@/components/common/confirm-popover'
 
 const ACTION_BUTTON_CLASS =
   'flex h-7 w-7 items-center justify-center rounded-md text-label-2 transition-colors hover:bg-fill-3 hover:text-label disabled:opacity-40'
@@ -35,32 +33,3 @@ export function MessageAction({
   )
 }
 
-type RegenerateActionProps = {
-  label: string
-  message: string
-  disabled?: boolean
-  className?: string
-  onConfirm: () => void
-}
-
-export function RegenerateAction({
-  label,
-  message,
-  disabled,
-  className,
-  onConfirm,
-}: RegenerateActionProps) {
-  return (
-    <ConfirmPopover message={message} confirmLabel={label} onConfirm={onConfirm} side="top" align="end">
-      <button
-        type="button"
-        className={cn(ACTION_BUTTON_CLASS, className)}
-        disabled={disabled}
-        aria-label={label}
-        title={label}
-      >
-        <RefreshCw className="h-3.5 w-3.5" />
-      </button>
-    </ConfirmPopover>
-  )
-}

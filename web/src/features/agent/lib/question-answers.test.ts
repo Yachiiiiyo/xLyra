@@ -1,17 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { QUESTION_OTHER, type AgentQuestionAnswer, type AgentQuestionItem } from '@/features/agent/api/agent'
-import { buildAnswers, emptyDraft, optionIndexForDigit, shouldSubmitOnEnter, summarizeAnswers, validateAnswers, validateQuestionDraft, type QuestionDraftState } from '@/features/agent/lib/question-answers'
-
-const t = (key: string) => {
-  const map: Record<string, string> = {
-    'question.skippedLabel': '已跳过',
-    'question.cancelledLabel': '已中断',
-    'question.timedOutSkipped': '已超时自动跳过',
-    'question.otherLabel': '其他',
-    'question.summaryJoin': '、',
-  }
-  return map[key] ?? key
-}
+import { QUESTION_OTHER, type AgentQuestionItem } from '@/features/agent/api/agent'
+import { buildAnswers, emptyDraft, optionIndexForDigit, shouldSubmitOnEnter, validateAnswers, validateQuestionDraft, type QuestionDraftState } from '@/features/agent/lib/question-answers'
 
 const items: AgentQuestionItem[] = [
   { header: '风格', question: '选哪种风格？', multiSelect: false, options: [{ label: '简约' }, { label: '复古', description: '怀旧感' }] },
@@ -74,22 +63,6 @@ describe('validateAnswers', () => {
 
   it('全部通过返回 null', () => {
     expect(validateAnswers(items, draft({ 0: { selected: ['简约'] }, 1: { selected: ['A'] } }))).toBeNull()
-  })
-})
-
-describe('summarizeAnswers', () => {
-  it('选中标签以顿号连接，其他写成「其他：文本」', () => {
-    const answers: AgentQuestionAnswer[] = [
-      { selected: [QUESTION_OTHER], other: '加个暗色模式' },
-      { selected: ['A', 'B'] },
-    ]
-    expect(summarizeAnswers(items, answers, 'answered', false, t)).toBe('选哪种风格？ → 其他：加个暗色模式\n需要哪些模块？ → A、B')
-  })
-
-  it('跳过/超时自动跳过/中断给对应状态词', () => {
-    expect(summarizeAnswers(items, undefined, 'skipped', false, t)).toBe('已跳过')
-    expect(summarizeAnswers(items, undefined, 'skipped', true, t)).toBe('已超时自动跳过')
-    expect(summarizeAnswers(items, undefined, 'cancelled', false, t)).toBe('已中断')
   })
 })
 

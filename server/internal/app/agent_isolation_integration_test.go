@@ -41,7 +41,7 @@ func makeWorkdirTraversable(t *testing.T, dir string) {
 }
 
 // buildIsolationWorkdir 搭建一个故意权限宽松的 WORKDIR:conf/master.key、
-// logs/、playground/ 与 README.md 对其他用户可读;Agent 数据目录含一个权限
+// logs/ 与 README.md 对其他用户可读;Agent 数据目录含一个权限
 // 过严的技能(考验 FixPermissions);Pi 入口与扩展放在 WORKDIR/agent-runtime
 // 下(考验收紧排除规则)。返回就绪的 pi 引擎配置。
 func buildIsolationWorkdir(t *testing.T, isolationMode string) config.Config {
@@ -54,7 +54,7 @@ func buildIsolationWorkdir(t *testing.T, isolationMode string) config.Config {
 	t.Setenv("WORKDIR", workdir)
 
 	// 敏感内容:目录 0777、文件 0666,故意让其他用户可读
-	sensitiveDirs := []string{"conf", "logs", "playground"}
+	sensitiveDirs := []string{"conf", "logs"}
 	for _, name := range sensitiveDirs {
 		if err := os.MkdirAll(filepath.Join(workdir, name), 0o777); err != nil {
 			t.Fatal(err)
@@ -64,9 +64,6 @@ func buildIsolationWorkdir(t *testing.T, isolationMode string) config.Config {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workdir, "logs", "x.log"), []byte("log"), 0o666); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workdir, "playground", "data.db"), []byte("db"), 0o666); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workdir, "README.md"), []byte("readme"), 0o666); err != nil {
@@ -99,7 +96,6 @@ func buildIsolationWorkdir(t *testing.T, isolationMode string) config.Config {
 	makeWorkdirTraversable(t, workdir)
 
 	cfg := testConfig()
-	cfg.AgentEngine = "pi"
 	cfg.AgentNodeBin = os.Args[0]
 	cfg.AgentPiEntry = entry
 	cfg.AgentDataDir = dataDir
@@ -153,11 +149,11 @@ func TestAgentIsolationIntegrationOn(t *testing.T) {
 	}
 
 	// 敏感子项被收紧(目录 0700、文件 0600)
-	for _, name := range []string{"conf", "logs", "playground"} {
+	for _, name := range []string{"conf", "logs"} {
 		assertPerm(t, filepath.Join(workdir, name), 0o700)
 	}
 	// 配置目录里的文件本身也收紧(密钥所在,第二层防御);其他目录只收紧顶层,
-	// 目录 0700 已挡住其他用户,不递归 chmod(playground 等可能有大量文件)。
+	// 目录 0700 已挡住其他用户,不递归 chmod。
 	assertPerm(t, filepath.Join(workdir, "conf", "master.key"), 0o600)
 	assertPerm(t, filepath.Join(workdir, "README.md"), 0o600)
 

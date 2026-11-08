@@ -9,10 +9,8 @@ import type { AgentArtifactFile, AgentArtifacts } from '@/features/agent/api/age
 import zhAgent from '@/locales/zh/agent.json'
 
 const downloadSessionFileMock = vi.hoisted(() => vi.fn())
-const downloadArtifactsZipMock = vi.hoisted(() => vi.fn())
 vi.mock('@/features/agent/api/agent', () => ({
   downloadSessionFile: downloadSessionFileMock,
-  downloadSessionArtifactsZip: downloadArtifactsZipMock,
   fetchSessionFile: vi.fn(),
 }))
 
@@ -45,7 +43,6 @@ describe('AgentArtifactFiles 渲染', () => {
     expect(html).toContain('out.bin')
     expect(html).toContain('2 KB')
     expect(html).toContain('1 MB')
-    expect(html).not.toContain(zhAgent.files.downloadAll)
     expect(html).toContain(zhAgent.files.preview)
     expect(html).toContain(zhAgent.files.download)
   })

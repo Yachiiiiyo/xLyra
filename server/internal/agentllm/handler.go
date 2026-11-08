@@ -68,13 +68,6 @@ type credentialRequest struct {
 	Reason          string `json:"reason"`
 }
 
-type runRequest struct {
-	AgentInstanceID string `json:"agent_instance_id"`
-	SessionID       string `json:"session_id"`
-	RunID           string `json:"run_id"`
-	Model           string `json:"model"`
-}
-
 type credentialResponse struct {
 	Active    bool   `json:"active"`
 	Token     string `json:"token,omitempty"`
@@ -106,9 +99,9 @@ func (h Handler) Credential(w http.ResponseWriter, r *http.Request) {
 	run, err := h.repo.FindRun(r.Context(), runInput)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// This endpoint is unauthenticated: admission is anchored on the run
-		// being registered by the runner (runner-key authenticated). Unknown
-		// runs are rejected; the agent retries briefly on active:false while
-		// its first issuance races with registration.
+		// being registered in-process by the built-in agent. Unknown runs are
+		// rejected; the agent retries briefly on active:false while its first
+		// issuance races with registration.
 		h.writeCredential(w, credentialResponse{Active: false})
 		return
 	}
@@ -183,20 +176,6 @@ func (h Handler) issueRunToken(ctx context.Context, runInput store.AgentRunInput
 	return value, expiresAt, nil
 }
 
-func (h Handler) Register(w http.ResponseWriter, r *http.Request) {
-	h.runMutation(w, r, false)
-}
-
-func (h Handler) RegisterRun(ctx context.Context, agentInstanceID, sessionID, runID, model string) error {
-	_, err := h.repo.Register(ctx, store.AgentRunInput{
-		AgentInstanceID: agentInstanceID,
-		SessionID:       sessionID,
-		RunID:           runID,
-		Model:           model,
-	}, h.now())
-	return err
-}
-
 // IssueRunToken 登记 run(幂等)并签发/轮换绑定该 run 与 model 的短期令牌,
 // 供内置 Pi 进程使用:进程内调用,不经过 /credential 的 HTTP 路径。
 func (h Handler) IssueRunToken(ctx context.Context, sessionID, runID, model string) (string, time.Time, error) {
@@ -223,31 +202,6 @@ func (h Handler) EndRun(ctx context.Context, sessionID, runID, model string) err
 		RunID:           runID,
 		Model:           model,
 	}, h.now())
-}
-
-func (h Handler) End(w http.ResponseWriter, r *http.Request) {
-	h.runMutation(w, r, true)
-}
-
-func (h Handler) runMutation(w http.ResponseWriter, r *http.Request, ending bool) {
-	var input runRequest
-	if err := decode(r, &input); err != nil || !validIdentifiers(input.AgentInstanceID, input.SessionID, input.RunID, input.Model) {
-		h.fail(w, r, http.StatusBadRequest, "invalid_request", "agent_instance_id, session_id, run_id and model are required")
-		return
-	}
-	runInput := store.AgentRunInput{AgentInstanceID: input.AgentInstanceID, SessionID: input.SessionID, RunID: input.RunID, Model: input.Model}
-	var err error
-	if ending {
-		h.clearImageRun(input.SessionID, input.RunID)
-		err = h.repo.End(r.Context(), runInput, h.now())
-	} else {
-		_, err = h.repo.Register(r.Context(), runInput, h.now())
-	}
-	if err != nil {
-		h.fail(w, r, http.StatusConflict, "agent_run_conflict", "agent run identity or state conflict")
-		return
-	}
-	h.writeCredential(w, map[string]any{"ok": true})
 }
 
 // ModelMemory serves the admin UI: last-used model overall and per session,

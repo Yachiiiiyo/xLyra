@@ -27,10 +27,6 @@ const (
 	maxBackupInspectBodyBytes = 8 << 20
 )
 
-type backupPassphraseRequest struct {
-	Passphrase string `json:"passphrase"`
-}
-
 // backupExportRequest 是导出备份的请求体;sections 省略(nil)时导出全部
 // 默认类别,指定时按所选类别导出。
 type backupExportRequest struct {

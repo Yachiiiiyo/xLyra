@@ -127,11 +127,6 @@ func agentRouter(h *Handler) http.Handler {
 	r.Route("/api/v1/agent", func(g chi.Router) {
 		g.Get("/health", h.Health)
 		g.Get("/model-memory", h.ModelMemory)
-		g.Get("/version", h.FeatureRemoved)
-		g.Post("/upgrade", h.FeatureRemoved)
-		g.Get("/memory", h.FeatureRemoved)
-		g.Put("/memory/{target}", h.FeatureRemoved)
-		g.Get("/learning/status", h.FeatureRemoved)
 		g.Get("/skills", h.ListSkills)
 		g.Get("/skills/{name}", h.GetSkill)
 		g.Get("/skills/{name}/file", h.GetSkillFile)
@@ -152,7 +147,6 @@ func agentRouter(h *Handler) http.Handler {
 		g.Get("/sessions/{id}/changes", h.SessionChanges)
 		g.Get("/sessions/{id}/changes/{turnID}/diff", h.SessionChangeDiff)
 		g.Get("/sessions/{id}/artifacts", h.SessionArtifacts)
-		g.Get("/sessions/{id}/artifacts.zip", h.SessionArtifactsZip)
 		g.Post("/sessions/{id}/retry", h.RetrySession)
 		g.Post("/sessions/{id}/stop", h.StopSession)
 		g.Post("/sessions/{id}/suggestion", h.Suggestion)
@@ -799,27 +793,6 @@ func TestModelMemoryDelegates(t *testing.T) {
 
 func TestUnsupportedEndpoints(t *testing.T) {
 	handler, _, _ := newTestHandler(t, &fakeRunner{})
-
-	removed := []struct{ method, path string }{
-		{http.MethodGet, "/api/v1/agent/version"},
-		{http.MethodPost, "/api/v1/agent/upgrade"},
-		{http.MethodGet, "/api/v1/agent/memory"},
-		{http.MethodPut, "/api/v1/agent/memory/memory"},
-		{http.MethodGet, "/api/v1/agent/learning/status"},
-	}
-	for _, tc := range removed {
-		body := ""
-		if tc.method == http.MethodPost || tc.method == http.MethodPut {
-			body = "{}"
-		}
-		rec := doJSONAgent(t, handler, tc.method, tc.path, body)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s %s: status = %d, want 404", tc.method, tc.path, rec.Code)
-		}
-		if code, message := errorBody(t, rec); code != "agent_feature_unavailable" || message == "" {
-			t.Fatalf("%s %s: code = %s, message = %q", tc.method, tc.path, code, message)
-		}
-	}
 
 	unavailable := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/agent/skills"},

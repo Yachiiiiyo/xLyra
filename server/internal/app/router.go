@@ -37,7 +37,6 @@ import (
 	"xlyra/server/internal/newapi"
 	oauthsvc "xlyra/server/internal/oauth"
 	"xlyra/server/internal/observability"
-	"xlyra/server/internal/playground"
 	routeengine "xlyra/server/internal/router"
 	"xlyra/server/internal/settings"
 	"xlyra/server/internal/site"
@@ -84,7 +83,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 
 	httpClients := httpclient.NewManager(confFile)
 	defaultHTTPClient, _ := httpClients.Client(httpclient.DefaultProfile())
-	streamingHTTPClient, _ := httpClients.Client(httpclient.StreamingProfile(httpclient.DefaultProfile()))
 	newAPIService := newapi.NewServiceWithHTTPClient(defaultHTTPClient)
 	var oauthService *oauthsvc.Service
 	var siteService *site.Service
@@ -196,34 +194,12 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	if siteService != nil {
 		gatewayHandler = gatewayHandler.WithPluginAccountRefresher(pluginAccountRefresher{sites: siteService})
 	}
-	playgroundGatewayHandler := gatewayHandler.WithRouteSiteHeader()
-	playgroundRoot := filepath.Join(config.ResolveWorkdir(), "playground")
-	playgroundService := playground.NewService(logger.With("thread", "playground"), db, gatewayHandler, playgroundRoot)
-	playgroundHandler := playground.NewHandler(playgroundService)
 	agentLLMHandler := agentllm.NewHandler(logger.With("thread", "agent-llm"), db, gatewayHandler)
 	agentLLMHandler.SetImageModelsSource(func() []agentproxy.ImageModelSelection {
 		return agentproxy.ImageModelsFromConfig(confFile)
 	})
 	agentLLMHandler.SetImageGenerationOptions(cfg.AgentImageMaxCalls, cfg.AgentImageTimeout)
-	agentProxyHandler := agentproxy.NewHandler(cfg.AgentRunnerBaseURL, cfg.AgentRunnerToken, streamingHTTPClient, logger.With("thread", "agent-proxy"), config.ResolveWorkdir())
-	if routerService != nil {
-		agentProxyHandler.SetProtocolResolver(agentProtocolResolver(logger, confFile, routerService))
-	}
-	agentProxyHandler.SetOnRunStarted(func(ctx context.Context, run agentproxy.RunRegistration) error {
-		return agentLLMHandler.RegisterRun(ctx, run.AgentInstanceID, run.SessionID, run.RunID, run.Model)
-	})
-	if confFile != nil {
-		if value, ok := confFile.Get("agent.runner_base_url"); ok {
-			if baseURL, valid := value.(string); valid && strings.TrimSpace(baseURL) != "" {
-				agentProxyHandler.SetBaseURL(baseURL)
-			}
-		}
-		if value, ok := confFile.Get("agent.runner_internal_token"); ok {
-			if token, valid := value.(string); valid && strings.TrimSpace(token) != "" {
-				agentProxyHandler.SetToken(token)
-			}
-		}
-	}
+	agentProxyHandler := agentproxy.NewHandler(logger.With("thread", "agent-proxy"), config.ResolveWorkdir())
 	syncAgentAccessPolicy := func() {
 		if db == nil {
 			return
@@ -244,20 +220,17 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		}()
 		go syncAgentAccessPolicy()
 	}
-	// AGENT_ENGINE=pi 时装配内置 Agent；runner 引擎保持原有转发行为不变。
-	var builtin *builtinAgent
-	if cfg.AgentEngine == "pi" {
-		builtin = newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory)
-		if tasks != nil {
-			tasks.Add(1)
-			go func() {
-				defer tasks.Done()
-				<-ctx.Done()
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				builtin.shutdown(shutdownCtx)
-			}()
-		}
+	// 内置 Pi 是唯一引擎，始终装配。
+	builtin := newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory)
+	if tasks != nil {
+		tasks.Add(1)
+		go func() {
+			defer tasks.Done()
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			builtin.shutdown(shutdownCtx)
+		}()
 	}
 	adminHandler := admin.NewHandler(logger.With("thread", "admin"), authService, siteService, catalogService, routerService, usageService, dashboardService, systemStatsService, &gatewayHandler, newAPIService, oauthService, appTimeZone).WithDownloadService(downloadService).WithTrafficFlowStore(db).WithAnalyticsService(analyticsService)
 	if jsPluginManager != nil {
@@ -271,40 +244,19 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
-	agentRestoreGate := builtin != nil && builtin.beginRestore != nil
-	playgroundRestore := playgroundService != nil
-	if agentRestoreGate || playgroundRestore {
-		// 恢复前先拦住 Agent 运行(有进行中的任务则拒绝恢复),再暂停 playground;
+	if builtin.beginRestore != nil {
+		// 恢复前先拦住 Agent 运行(有进行中的任务则拒绝恢复);
 		// 恢复后(含失败收敛)按相反顺序放行。
 		preRestore = func(ctx context.Context) error {
-			if agentRestoreGate {
-				if err := builtin.beginRestore(); err != nil {
-					return err
-				}
-			}
-			if playgroundRestore {
-				if err := playgroundService.QuiesceForRestore(ctx); err != nil {
-					if agentRestoreGate {
-						builtin.endRestore()
-					}
-					return err
-				}
-			}
-			return nil
+			return builtin.beginRestore()
 		}
 		postRestore = func(ctx context.Context) error {
-			var err error
-			if playgroundRestore {
-				err = playgroundService.RecoverAfterRestore(ctx)
-			}
 			// 恢复出的工作区文件属主是 xLyra 进程用户;沙箱开启时放开权限。
-			if builtin != nil && builtin.relaxWorkspace != nil {
+			if builtin.relaxWorkspace != nil {
 				builtin.relaxWorkspace()
 			}
-			if agentRestoreGate {
-				builtin.endRestore()
-			}
-			return err
+			builtin.endRestore()
+			return nil
 		}
 	}
 	if authService != nil || jsPluginManager != nil {
@@ -337,7 +289,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		AllowedOrigins:   cfg.CORSAllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key", "X-Access-Token", "X-CSRF-Token"},
-		ExposedHeaders:   []string{gateway.RouteSiteHeader},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -378,17 +329,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				})
 				protected.Get("/auth/session", adminHandler.CurrentSession)
 				protected.Delete("/auth/session", adminHandler.DeleteSession)
-				protected.Route("/playground", func(playgroundRouter chi.Router) {
-					playgroundRouter.Get("/models", playgroundHandler.Models)
-					playgroundRouter.Get("/conversations", playgroundHandler.List)
-					playgroundRouter.Get("/conversations/{conversationID}", playgroundHandler.Get)
-					playgroundRouter.With(httpx.LimitRequestBody(64*1024*1024)).Post("/conversations/{conversationID}/turns", playgroundHandler.StartTurn)
-					playgroundRouter.Get("/conversations/{conversationID}/events", playgroundHandler.Events)
-					playgroundRouter.Delete("/conversations/{conversationID}", playgroundHandler.Delete)
-					playgroundRouter.Post("/runs/{runID}/cancel", playgroundHandler.Cancel)
-					playgroundRouter.Get("/assets/{assetID}", playgroundHandler.Asset)
-				})
-
 				protected.Get("/profile", adminHandler.GetProfile)
 				protected.Put("/profile/account", adminHandler.UpdateProfileAccount)
 				protected.Put("/profile/password", adminHandler.UpdateProfilePassword)
@@ -629,15 +569,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 
 	r.Route("/internal/agent-llm", func(internal chi.Router) {
 		limitBody := httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)
-		// /credential is unauthenticated: admission is anchored on the run being
-		// registered via /runs/* (runner-key authenticated), see agentllm.Handler.Credential
 		internal.With(limitBody).Post("/credential", agentLLMHandler.Credential)
 		internal.With(limitBody).Post("/credential/renew", agentLLMHandler.Renew)
-		internal.Group(func(runs chi.Router) {
-			runs.Use(agentProxyHandler.RunnerTokenAuth())
-			runs.With(limitBody).Post("/runs/register", agentLLMHandler.Register)
-			runs.With(limitBody).Post("/runs/end", agentLLMHandler.End)
-		})
 		internal.With(limitBody).Post("/images", agentLLMHandler.Images)
 		// 文件摘要的请求体含最多 300KB 文件内容(JSON 转义后会膨胀),用独立的 2 MiB 上限,
 		// 不随全局 MaxRequestBodyBytes 变化,也不影响其它路由。
@@ -646,17 +579,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		internal.With(limitBody).Post("/v1/messages", agentLLMHandler.Messages)
 		internal.With(limitBody).Post("/v1/chat/completions", agentLLMHandler.ChatCompletions)
 		internal.Get("/v1/models", agentLLMHandler.Models)
-	})
-
-	r.Route("/api/playground/v1", func(playground chi.Router) {
-		playground.Use(requireAPIKey(authService))
-		limitBody := httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)
-		playground.With(limitBody).Post("/chat/completions", playgroundGatewayHandler.ChatCompletions)
-		playground.Post("/images/generations", playgroundGatewayHandler.ImagesGenerations)
-		playground.Post("/images/edits", playgroundGatewayHandler.ImagesEdits)
-		playground.With(limitBody).Post("/messages", playgroundGatewayHandler.Messages)
-		playground.With(limitBody).Post("/responses", playgroundGatewayHandler.Responses)
-		playground.Get("/models", playgroundGatewayHandler.Models)
 	})
 
 	return r, &gatewayHandler, pluginMarket
@@ -709,10 +631,9 @@ func agentProtocolResolver(logger *slog.Logger, confFile *config.ConfigFile, rou
 	}
 }
 
-// registerAgentRoutes 注册 /agent 路由组。settings 与 backgrounds 两种引擎都由
-// agentproxy 提供；pi 引擎（builtin 非 nil）下会话/事件/health 与
-// skills/workspace/config 能力接口改走内置 handler，已移除的接口给出明确错误；
-// runner 引擎保持原转发行为。
+// registerAgentRoutes 注册 /agent 路由组。settings 与 backgrounds 由
+// agentproxy 提供;会话/事件/health 与 skills/workspace/config 能力接口走
+// 内置 Pi handler。
 func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *config.ConfigFile, agentProxyHandler *agentproxy.Handler, builtin *builtinAgent) {
 	agentRouter.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
 		agentProxyHandler.GetSettings(w, r, confFile)
@@ -721,43 +642,8 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 		agentProxyHandler.UpdateSettings(w, r, confFile)
 	})
 	agentRouter.Get("/backgrounds/{name}", agentProxyHandler.ServeBackground)
-	if builtin == nil {
-		agentRouter.Get("/health", agentProxyHandler.Forward)
-		agentRouter.Get("/version", agentProxyHandler.Forward)
-		agentRouter.Post("/upgrade", agentProxyHandler.Forward)
-		agentRouter.Get("/memory", agentProxyHandler.Forward)
-		agentRouter.Put("/memory/{target}", agentProxyHandler.Forward)
-		agentRouter.Get("/skills", agentProxyHandler.Forward)
-		agentRouter.Get("/skills/{name}", agentProxyHandler.Forward)
-		agentRouter.Get("/skills/{name}/file", agentProxyHandler.Forward)
-		agentRouter.Put("/skills/{name}", agentProxyHandler.Forward)
-		agentRouter.Delete("/skills/{name}", agentProxyHandler.Forward)
-		agentRouter.Get("/learning/status", agentProxyHandler.Forward)
-		agentRouter.Get("/workspace/file", agentProxyHandler.Forward)
-		agentRouter.Put("/workspace/file", agentProxyHandler.Forward)
-		agentRouter.Delete("/workspace/file", agentProxyHandler.Forward)
-		agentRouter.Get("/model-memory", agentProxyHandler.Forward)
-		agentRouter.Get("/config", agentProxyHandler.Forward)
-		agentRouter.Put("/config", agentProxyHandler.Forward)
-		agentRouter.Get("/sessions", agentProxyHandler.Forward)
-		agentRouter.Post("/sessions", agentProxyHandler.Forward)
-		agentRouter.Get("/sessions/{id}/transcript", agentProxyHandler.Forward)
-		agentRouter.Patch("/sessions/{id}", agentProxyHandler.Forward)
-		agentRouter.Delete("/sessions/{id}", agentProxyHandler.Forward)
-		agentRouter.Post("/sessions/{id}/retry", agentProxyHandler.Forward)
-		agentRouter.Post("/sessions/{id}/stop", agentProxyHandler.Forward)
-		agentRouter.Post("/sessions/{id}/compact-context", agentProxyHandler.Forward)
-		agentRouter.Post("/sessions/{id}/grant-access", agentProxyHandler.Forward)
-		agentRouter.Get("/sessions/{id}/events", agentProxyHandler.Forward)
-		return
-	}
 	h := builtin.handler
 	agentRouter.Get("/health", h.Health)
-	agentRouter.Get("/version", h.FeatureRemoved)
-	agentRouter.Post("/upgrade", h.FeatureRemoved)
-	agentRouter.Get("/memory", h.FeatureRemoved)
-	agentRouter.Put("/memory/{target}", h.FeatureRemoved)
-	agentRouter.Get("/learning/status", h.FeatureRemoved)
 	agentRouter.Get("/skills", h.ListSkills)
 	agentRouter.Get("/skills/{name}", h.GetSkill)
 	agentRouter.Get("/skills/{name}/file", h.GetSkillFile)
@@ -779,7 +665,6 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Get("/sessions/{id}/changes", h.SessionChanges)
 	agentRouter.Get("/sessions/{id}/changes/{turnID}/diff", h.SessionChangeDiff)
 	agentRouter.Get("/sessions/{id}/artifacts", h.SessionArtifacts)
-	agentRouter.Get("/sessions/{id}/artifacts.zip", h.SessionArtifactsZip)
 	agentRouter.Post("/sessions/{id}/retry", h.RetrySession)
 	agentRouter.Post("/sessions/{id}/stop", h.StopSession)
 	agentRouter.Post("/sessions/{id}/suggestion", h.Suggestion)
@@ -869,10 +754,6 @@ func routeAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/playground/conversations/") && strings.HasSuffix(r.URL.Path, "/events") {
-				next.ServeHTTP(w, r)
-				return
-			}
 			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/agent/sessions/") && strings.HasSuffix(r.URL.Path, "/events") {
 				next.ServeHTTP(w, r)
 				return
@@ -881,7 +762,7 @@ func routeAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			gatewayPath := strings.TrimPrefix(r.URL.Path, "/api/playground")
+			gatewayPath := r.URL.Path
 			geminiGatewayPath := strings.HasPrefix(gatewayPath, "/v1beta/models/") && (strings.HasSuffix(gatewayPath, ":generateContent") || strings.HasSuffix(gatewayPath, ":streamGenerateContent"))
 			if r.Method == http.MethodPost && (gatewayPath == "/v1/chat/completions" || gatewayPath == "/v1/responses" || gatewayPath == "/v1/images/generations" || gatewayPath == "/v1/images/edits" || gatewayPath == "/v1/messages" || gatewayPath == "/v1/audio/speech" || geminiGatewayPath) {
 				next.ServeHTTP(w, r)

@@ -39,9 +39,6 @@ type Config struct {
 	SiteHealthTimeout   time.Duration `env:"SITE_HEALTH_TIMEOUT" envDefault:"10s"`
 	SiteHealthWorkers   int           `env:"SITE_HEALTH_WORKERS" envDefault:"4"`
 	StaticDir           string        `env:"STATIC_DIR" envDefault:"/app/dist"`
-	AgentRunnerBaseURL  string        `env:"AGENT_RUNNER_BASE_URL"`
-	AgentRunnerToken    string        `env:"AGENT_RUNNER_INTERNAL_TOKEN"`
-	AgentEngine         string        `env:"AGENT_ENGINE" envDefault:"pi"`
 	AgentNodeBin        string        `env:"AGENT_NODE_BIN"`
 	AgentPiEntry        string        `env:"AGENT_PI_ENTRY"`
 	AgentExtensionPath  string        `env:"AGENT_EXTENSION_PATH"`
@@ -193,12 +190,6 @@ func (c Config) Validate() error {
 
 	if c.SiteHealthWorkers <= 0 {
 		return fmt.Errorf("SITE_HEALTH_WORKERS must be greater than 0")
-	}
-
-	switch c.AgentEngine {
-	case "runner", "pi":
-	default:
-		return fmt.Errorf("AGENT_ENGINE must be one of runner, pi")
 	}
 
 	if c.AgentMaxConcurrent <= 0 {

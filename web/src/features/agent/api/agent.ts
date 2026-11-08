@@ -468,16 +468,6 @@ export async function fetchSessionArtifacts(sessionId: string): Promise<AgentArt
   }
 }
 
-export async function downloadSessionArtifactsZip(sessionId: string) {
-  const { blob } = await apiFetchBlob(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/artifacts.zip`)
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `workspace-${sessionId.slice(0, 8)}.zip`
-  anchor.click()
-  URL.revokeObjectURL(url)
-}
-
 export async function fetchAgentTranscript(sessionId: string) {
   const response = await apiFetch<{ data?: { entries?: AgentTranscriptEntry[] } }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/transcript`)
   return response.data?.entries ?? []

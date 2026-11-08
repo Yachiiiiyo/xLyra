@@ -75,11 +75,6 @@ func asMaps(value any) []map[string]any {
 	return s
 }
 
-func asSlice(value any) []any {
-	s, _ := value.([]any)
-	return s
-}
-
 var fixedTime = time.Date(2026, 10, 29, 8, 0, 0, 0, time.UTC)
 
 // ---- Store ----

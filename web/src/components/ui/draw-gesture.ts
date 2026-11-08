@@ -1,4 +1,3 @@
-export const DRAW_TOP_GAP = 12
 export const DRAW_SNAP_PROGRESS = 0.25
 export const DRAW_SNAP_VELOCITY = 0.5
 export const DRAW_DISMISS_PROGRESS = 0.3
