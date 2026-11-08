@@ -283,7 +283,7 @@ func TestLoadAppliesAgentDefaults(t *testing.T) {
 	if cfg.AgentEngine != "pi" {
 		t.Fatalf("AGENT_ENGINE default = %q, want pi", cfg.AgentEngine)
 	}
-	if cfg.AgentNodeBin != "" || cfg.AgentPiEntry != "" || cfg.AgentExtensionPath != "" || cfg.AgentDataDir != "" || cfg.AgentGatewayBaseURL != "" {
+	if cfg.AgentNodeBin != "" || cfg.AgentPiEntry != "" || cfg.AgentExtensionPath != "" || cfg.AgentDataDir != "" || cfg.AgentWorkspaceDir != "" || cfg.AgentGatewayBaseURL != "" {
 		t.Fatalf("unexpected agent path defaults: %#v", cfg)
 	}
 	if cfg.AgentMaxConcurrent != 4 {

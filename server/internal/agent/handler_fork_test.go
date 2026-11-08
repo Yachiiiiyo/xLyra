@@ -33,9 +33,8 @@ func TestForkSessionHandler(t *testing.T) {
 	}
 	var payload struct {
 		Data struct {
-			SessionID      string `json:"session_id"`
-			Title          string `json:"title"`
-			WorkspaceCopie bool   `json:"workspace_copied"`
+			SessionID string `json:"session_id"`
+			Title     string `json:"title"`
 		} `json:"data"`
 	}
 	decodeBody(t, rec, &payload)
@@ -44,9 +43,6 @@ func TestForkSessionHandler(t *testing.T) {
 	}
 	if payload.Data.Title != "分叉 · 源标题" {
 		t.Fatalf("title = %q", payload.Data.Title)
-	}
-	if payload.Data.WorkspaceCopie {
-		t.Fatalf("workspace_copied 应为 false: %s", rec.Body.String())
 	}
 	forked, err := store.Get(payload.Data.SessionID)
 	if err != nil {

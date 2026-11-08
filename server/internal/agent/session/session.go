@@ -1,13 +1,14 @@
 // Package session 管理 xLyra 的 Agent 会话存储:每个会话一个 UUID 目录,
 // 内含 meta.json(xLyra 元数据:标题、模型、审批记录、用户消息与 Pi 条目的
-// 绑定)、pi/(Pi 的 --session-dir)与 workspace/(Pi 的工作目录),并负责把
-// Pi 会话文件(JSONL,树结构)组装成前端 /agent 页消费的 transcript。
-// 本包只做文件存取,不启动 Pi 进程。
+// 绑定)、pi/(Pi 的 --session-dir)与 workspace/(默认的会话工作目录;也可
+// 配置为所有会话共用的全局目录),并负责把 Pi 会话文件(JSONL,树结构)
+// 组装成前端 /agent 页消费的 transcript。本包只做文件存取,不启动 Pi 进程。
 package session
 
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -182,7 +183,8 @@ func (m *Meta) AppendRunError(entry RunError) {
 // 写入走临时文件 + rename 的原子替换;AssignSlot 额外持 Store 级互斥,
 // 保证并发分配的槽位两两不同。
 type Store struct {
-	root string
+	root      string
+	workspace string
 
 	mu     sync.Mutex
 	locks  map[string]*sessionLock
@@ -199,6 +201,16 @@ type sessionLock struct {
 // NewStore 建立会话存储;root 不存在时在首次写入时创建。
 func NewStore(root string) *Store {
 	return &Store{root: root, locks: map[string]*sessionLock{}}
+}
+
+// SetWorkspace 设置所有会话共用的工作目录;空串恢复按会话使用 workspace/。
+func (s *Store) SetWorkspace(dir string) *Store {
+	if dir == "" {
+		s.workspace = ""
+		return s
+	}
+	s.workspace = filepath.Clean(dir)
+	return s
 }
 
 // lockSession 获取会话级互斥,返回解锁函数(同时递减引用计数)。
@@ -231,7 +243,7 @@ func validID(id string) bool {
 	return err == nil && parsed.String() == id
 }
 
-// Create 新建会话:生成 UUID 目录、pi/ 与 workspace/ 子目录和初始 meta.json。
+// Create 新建会话:生成 UUID 目录、pi/、工作目录和初始 meta.json。
 func (s *Store) Create(model, permissionMode string) (Meta, error) {
 	id := uuid.NewString()
 	now := time.Now().UTC()
@@ -425,7 +437,7 @@ func (s *Store) Preview(meta Meta) string {
 	return previewFromLines(lines)
 }
 
-// Dir/PiDir/WorkDir 返回会话目录路径;id 非法时返回空串
+// Dir/PiDir 返回会话目录路径;id 非法时返回空串
 // (带校验的入口是 Create/Get/Update 等方法,路径助手只做兜底)。
 func (s *Store) Dir(id string) string {
 	if !validID(id) {
@@ -450,9 +462,14 @@ func (m Meta) DisplayTitle() string {
 	return TitleFrom(firstUserText(m))
 }
 
+// WorkDir 返回会话工作目录:设置共享 workspace 后所有会话都返回该目录,
+// 否则返回会话自己的 workspace/;id 非法时返回空串。
 func (s *Store) WorkDir(id string) string {
 	if !validID(id) {
 		return ""
+	}
+	if s.workspace != "" {
+		return s.workspace
 	}
 	return filepath.Join(s.root, id, workDirName)
 }
@@ -465,7 +482,8 @@ func (s *Store) StateDir(id string) string {
 	return filepath.Join(s.root, id, ".xlyra")
 }
 
-// EnsureDirs 创建会话目录及 pi/、workspace/(权限 0o750),已存在则不动。
+// EnsureDirs 创建会话目录、pi/ 与工作目录(权限 0o750),已存在则不动。
+// 设置共享 workspace 后,工作目录就是这个全局目录,不再创建会话内 workspace/。
 func (s *Store) EnsureDirs(id string) error {
 	if !validID(id) {
 		return ErrInvalidID
@@ -476,6 +494,69 @@ func (s *Store) EnsureDirs(id string) error {
 		}
 	}
 	return nil
+}
+
+// MigrateLegacyWorkspaces 把各会话非空的旧 workspace/ 移到共享目录的
+// _legacy/<id> 下;空目录保持原样,已有目标不覆盖。单个会话失败不阻断其它
+// 会话,错误汇总返回。未设置共享 workspace 或 root 不存在时不做处理。
+func (s *Store) MigrateLegacyWorkspaces() (moved int, err error) {
+	if s.workspace == "" {
+		return 0, nil
+	}
+	entries, readErr := os.ReadDir(s.root)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return 0, nil
+	}
+	if readErr != nil {
+		return 0, fmt.Errorf("session: 读取会话根目录 %s: %w", s.root, readErr)
+	}
+
+	legacyRoot := filepath.Join(s.workspace, "_legacy")
+	var errs []error
+	for _, entry := range entries {
+		id := entry.Name()
+		if !entry.IsDir() || !validID(id) {
+			continue
+		}
+		oldDir := filepath.Join(s.root, id, workDirName)
+		info, statErr := os.Stat(oldDir)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			errs = append(errs, fmt.Errorf("session: 检查会话 %s 的旧 workspace: %w", id, statErr))
+			continue
+		}
+		if !info.IsDir() {
+			continue
+		}
+		oldEntries, readErr := os.ReadDir(oldDir)
+		if readErr != nil {
+			errs = append(errs, fmt.Errorf("session: 读取会话 %s 的旧 workspace: %w", id, readErr))
+			continue
+		}
+		if len(oldEntries) == 0 {
+			continue
+		}
+		if mkdirErr := os.MkdirAll(legacyRoot, dirPerm); mkdirErr != nil {
+			errs = append(errs, fmt.Errorf("session: 创建旧 workspace 迁移目录 %s: %w", legacyRoot, mkdirErr))
+			continue
+		}
+		target := filepath.Join(legacyRoot, id)
+		if _, statErr := os.Lstat(target); statErr == nil {
+			errs = append(errs, fmt.Errorf("session: 迁移会话 %s 的旧 workspace: 目标 %s 已存在: %w", id, target, os.ErrExist))
+			continue
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("session: 检查旧 workspace 迁移目标 %s: %w", target, statErr))
+			continue
+		}
+		if renameErr := os.Rename(oldDir, target); renameErr != nil {
+			errs = append(errs, fmt.Errorf("session: 迁移会话 %s 的旧 workspace 到 %s: %w", id, target, renameErr))
+			continue
+		}
+		moved++
+	}
+	return moved, errors.Join(errs...)
 }
 
 // TitleFrom 从第一条用户消息截取标题:折叠空白(含换行)、按 rune 截到

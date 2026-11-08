@@ -1,6 +1,6 @@
 // fork.go 实现会话分叉:把源会话(整个,或到某条用户消息所在轮次结束为止)
 // 复制成一个全新的会话。复制的是 Pi 会话文件的当前分支与对应的 meta 绑定;
-// workspace 不复制(v1 只复制对话历史,避免跨会话身份的属主/权限问题)。
+// 所有会话共用全局 workspace,分叉无需复制文件。
 package session
 
 import (
@@ -24,7 +24,7 @@ import (
 //
 // 新会话沿用源的 Model/PermissionMode,标题为「分叉 · <源标题>」,Pi 会话 id
 // 换成新 UUID 并按 Pi 的文件命名习惯写入新会话的 pi/ 目录;文件头复制源头,
-// 只改 id、timestamp 与 cwd(指向新会话的 workspace)。meta 迁移复制 EntryID
+// 只改 id、timestamp 与 cwd(指向全局 workspace)。meta 迁移复制 EntryID
 // 落在被复制条目里的用户消息与锚点落在被复制条目里的审批记录和 RunChanges;
 // SessionAllow、RunErrors、Slot、StateDir 不复制。任何一步失败都会删除已创建的
 // 新会话目录,不留半成品。

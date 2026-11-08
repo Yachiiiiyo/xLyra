@@ -281,9 +281,8 @@ func (h *Handler) ForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"data": map[string]any{
-		"session_id":       meta.ID,
-		"title":            meta.Title,
-		"workspace_copied": false,
+		"session_id": meta.ID,
+		"title":      meta.Title,
 	}})
 }
 

@@ -288,9 +288,11 @@ func (p *fakePi) floodOutput() {
 	}
 }
 
+// writeWorkspaceFile 把配额填充文件写到 Pi 私有目录(cwd 是 workspace,而
+// 共享工作区不计入会话配额;../pi 是会话的 Pi 目录)。
 func (p *fakePi) writeWorkspaceFile() {
 	data := bytes.Repeat([]byte{'q'}, p.workspaceBytes)
-	if err := os.WriteFile("quota-fill.bin", data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join("..", "pi", "quota-fill.bin"), data, 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 }

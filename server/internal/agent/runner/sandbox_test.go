@@ -146,16 +146,22 @@ func TestXlyraConfigBash(t *testing.T) {
 
 func TestSandboxSystemPrompt(t *testing.T) {
 	r := &Runner{}
-	if got := r.systemPrompt(false, 120*time.Second, false, false, false); !strings.HasPrefix(got, defaultSystemPrompt) || !strings.Contains(got, "当前日期:"+time.Now().Format("2006-01-02")) {
+	if got := r.systemPrompt("", false, 120*time.Second, false, false, false); !strings.HasPrefix(got, defaultSystemPrompt) || !strings.Contains(got, "当前日期:"+time.Now().Format("2006-01-02")) {
 		t.Fatal("默认系统提示缺少默认文本或当前日期")
 	}
-	got := r.systemPrompt(true, 120*time.Second, false, false, false)
+	if got := r.systemPrompt("", false, 120*time.Second, false, false, false); strings.Contains(got, "工作区:") {
+		t.Fatal("workspace 为空时系统提示不应包含工作区行")
+	}
+	if got := r.systemPrompt("/data/agent/workspace", false, 120*time.Second, false, false, false); !strings.Contains(got, "工作区:/data/agent/workspace") || !strings.Contains(got, "所有会话共用") {
+		t.Fatal("系统提示缺少共享工作区行")
+	}
+	got := r.systemPrompt("", true, 120*time.Second, false, false, false)
 	for _, text := range []string{"没有网络", "默认 120 秒", "后台进程都会被清理", "安装依赖", "运行最相关的测试或类型检查"} {
 		if !strings.Contains(got, text) {
 			t.Errorf("系统提示缺少 %q", text)
 		}
 	}
-	image := r.systemPrompt(false, 120*time.Second, true, false, false)
+	image := r.systemPrompt("", false, 120*time.Second, true, false, false)
 	for _, text := range []string{"image_generation", "images/", "图片内容不会返回给你", "Markdown", "调用次数有限"} {
 		if !strings.Contains(image, text) {
 			t.Errorf("生图系统提示缺少 %q", text)
@@ -175,7 +181,7 @@ func TestSandboxSystemPrompt(t *testing.T) {
 	if strings.Contains(got, "question") || strings.Contains(image, "question") {
 		t.Fatal("未启用提问时系统提示不应出现 question 说明")
 	}
-	question := r.systemPrompt(false, 120*time.Second, true, true, false)
+	question := r.systemPrompt("", false, 120*time.Second, true, true, false)
 	for _, text := range []string{"question 工具", "不要猜测", "最多 4 个问题", "2–6 个选项", "「其他」", "次数有限", "image_generation"} {
 		if !strings.Contains(question, text) {
 			t.Errorf("提问系统提示缺少 %q", text)
@@ -184,7 +190,7 @@ func TestSandboxSystemPrompt(t *testing.T) {
 	if strings.ContainsAny(questionSystemPrompt, "{}") {
 		t.Error("提问系统提示不应包含可照抄的 JSON 示例")
 	}
-	custom := (&Runner{cfg: Config{SystemPrompt: "自定义提示"}}).systemPrompt(false, 120*time.Second, false, false, false)
+	custom := (&Runner{cfg: Config{SystemPrompt: "自定义提示"}}).systemPrompt("", false, 120*time.Second, false, false, false)
 	if !strings.HasPrefix(custom, "自定义提示") || !strings.Contains(custom, "# 环境") {
 		t.Error("自定义系统提示缺少自定义文本或环境段")
 	}
@@ -265,13 +271,13 @@ func TestFastTaskToolsAndPrompt(t *testing.T) {
 	if got := r.runTools(false, false, true, false); strings.Contains(got, "summarize_file") {
 		t.Fatal(got)
 	}
-	prompt := r.systemPrompt(false, 120*time.Second, false, true, true)
+	prompt := r.systemPrompt("", false, 120*time.Second, false, true, true)
 	for _, text := range []string{"summarize_file", "日志", "直接用 read", "可能遗漏细节", "read 或 grep 复核"} {
 		if !strings.Contains(prompt, text) {
 			t.Errorf("快速任务系统提示缺少 %q", text)
 		}
 	}
-	if strings.Contains(r.systemPrompt(false, 120*time.Second, false, true, false), "summarize_file") {
+	if strings.Contains(r.systemPrompt("", false, 120*time.Second, false, true, false), "summarize_file") {
 		t.Fatal("未启用快速任务时系统提示不应出现 summarize_file")
 	}
 }

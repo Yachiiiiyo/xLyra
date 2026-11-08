@@ -566,7 +566,6 @@ export type AgentTranscriptEntry = {
 export type AgentForkedSession = {
   session_id: string
   title?: string
-  workspace_copied?: boolean
 }
 
 /** 分叉会话：message_id 为空表示整段会话，否则复制到该用户消息所在一轮结束为止 */

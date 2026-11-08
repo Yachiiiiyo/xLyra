@@ -386,7 +386,8 @@ func (e *Executor) runCommand(conn net.Conn, req request, cwd string, disconnect
 	spec := sandbox.Spec{
 		UID: e.cfg.ExecUID, GID: e.cfg.GID,
 		Workspace: e.cfg.Workspace, Tmp: e.cfg.Tmp, Cwd: cwd,
-		Net: sandbox.NetNone, Umask: 0o002, Limits: e.cfg.Limits,
+		// umask 为 0:共享工作区里不同会话身份创建的文件要互相可写。
+		Net: sandbox.NetNone, Umask: 0, Limits: e.cfg.Limits,
 		Timeout: int(timeout / time.Second),
 		Env: []string{
 			"PATH=" + defaultCommandPath, "HOME=" + e.cfg.Tmp, "TMPDIR=" + e.cfg.Tmp,

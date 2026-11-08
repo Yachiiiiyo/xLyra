@@ -125,7 +125,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	if r.cfg.Sandbox != nil {
 		execDefaultTimeout = r.cfg.Sandbox.ExecDefaultTimeout
 	}
-	systemPrompt := r.systemPrompt(prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled, fastTaskEnabled)
+	systemPrompt := r.systemPrompt(r.cfg.Store.WorkDir(ar.sessionID), prep.executor != nil, execDefaultTimeout, imageEnabled, questionEnabled, fastTaskEnabled)
 	files := map[string][]byte{
 		"settings.json": settingsJSON,
 	}
@@ -223,7 +223,8 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 			Workspace: r.cfg.Store.WorkDir(ar.sessionID), Cwd: r.cfg.Store.WorkDir(ar.sessionID),
 			ReadOnly:  piReadOnlyPaths(r.cfg.Command, piEntry, strings.TrimSpace(r.cfg.ExtensionPath), snap.SkillDirs, r.cfg.PathEnv),
 			ReadWrite: readWrite, Net: sandbox.NetConnectPorts, ConnectPorts: []int{port},
-			Umask: 0o002, Env: env, Limits: sandbox.Limits{NoFile: 4096, Core: 0},
+			// umask 为 0:共享工作区里不同会话身份创建的文件要互相可写。
+			Umask: 0, Env: env, Limits: sandbox.Limits{NoFile: 4096, Core: 0},
 		}
 		argv := append([]string{r.cfg.Command}, args...)
 		cmd, err := sandbox.ChildCommand(r.cfg.Sandbox.Exe, spec, argv)
@@ -347,7 +348,8 @@ func (r *Runner) renewLoop(ar *activeRun, prep *prepared) {
 var quotaCheckInterval = 30 * time.Second
 
 func (r *Runner) sessionQuotaExceeded(sessionID string) (bool, error) {
-	size, err := dirSize(r.cfg.SessionQuotaBytes, r.cfg.Store.WorkDir(sessionID), r.cfg.Store.PiDir(sessionID),
+	// 共享工作区不属于任何会话,不计入会话配额;只统计会话私有目录。
+	size, err := dirSize(r.cfg.SessionQuotaBytes, r.cfg.Store.PiDir(sessionID),
 		filepath.Join(r.cfg.Store.Dir(sessionID), "exec-tmp"), filepath.Join(r.cfg.Store.Dir(sessionID), "pi-agent"))
 	return size > r.cfg.SessionQuotaBytes, err
 }

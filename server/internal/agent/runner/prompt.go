@@ -70,8 +70,9 @@ const fastTaskSystemPrompt = `
 - 需要逐字内容、要编辑或修改文件、或文件不大时,直接用 read。
 - 摘要来自较小的模型,可能遗漏细节;据此得出的关键结论请用 read 或 grep 复核。`
 
-// systemPrompt 返回本次 run 使用的系统提示文本。
-func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGeneration, question, fastTask bool) string {
+// systemPrompt 返回本次 run 使用的系统提示文本;workspace 是共享工作区路径,
+// 非空时在环境段里告知模型(所有会话共用)。
+func (r *Runner) systemPrompt(workspace string, bash bool, defaultTimeout time.Duration, imageGeneration, question, fastTask bool) string {
 	text := strings.TrimSpace(r.cfg.SystemPrompt)
 	if text == "" {
 		text = defaultSystemPrompt
@@ -89,6 +90,9 @@ func (r *Runner) systemPrompt(bash bool, defaultTimeout time.Duration, imageGene
 		text += fastTaskSystemPrompt
 	}
 	text += "\n\n# 环境\n- 当前日期:" + time.Now().Format("2006-01-02")
+	if workspace != "" {
+		text += "\n- 工作区:" + workspace + "(所有会话共用;读写文件一律在此目录内,使用绝对路径,不要自行指定其他位置)"
+	}
 	return text
 }
 

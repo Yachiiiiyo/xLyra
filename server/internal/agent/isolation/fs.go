@@ -85,6 +85,23 @@ func PrepareDataDir(dataDir string) error {
 	return ensureRootDir(filepath.Join(dataDir, "sessions"))
 }
 
+// PrepareWorkspace 创建共享工作区目录并设为 0777(不依赖 umask,目录属主
+// 不动):共享工作区被多个会话身份共用,靠 Landlock+uid 隔离而非目录权限
+// 保护,因此全员可读写。非 root 调用返回 ErrNotRoot。
+func PrepareWorkspace(dir string) error {
+	if os.Geteuid() != 0 {
+		return ErrNotRoot
+	}
+	if dir == "" {
+		return errors.New("isolation: 工作区目录为空")
+	}
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return err
+	}
+	// MkdirAll 受 umask 影响,显式 Chmod 保证 0777。
+	return os.Chmod(dir, 0o777)
+}
+
 // ChownFile 把 runner 以 root 写出的文件(令牌、settings.json 等)移交给会话身份:
 // PiUID:GID、0600。Lchown 不跟随符号链接;
 // 符号链接本身不改权限位(chmod 会作用于链接目标)。

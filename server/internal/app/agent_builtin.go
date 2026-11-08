@@ -70,11 +70,26 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 	dataDir := resolveAgentDataDir(cfg)
 	// 能力存储与 sessions 同级:<dataDir>/skills、AGENTS.md、config.json。
 	caps := capabilities.NewStore(dataDir)
-	store := session.NewStore(filepath.Join(dataDir, "sessions"))
+	workspaceDir := resolveAgentWorkspaceDir(cfg, dataDir)
+	store := session.NewStore(filepath.Join(dataDir, "sessions")).SetWorkspace(workspaceDir)
+	if err := os.MkdirAll(workspaceDir, 0o750); err != nil {
+		logger.Warn("创建共享工作区目录失败", "workspace", workspaceDir, "error", err)
+	}
+	if moved, err := store.MigrateLegacyWorkspaces(); err != nil {
+		logger.Warn("迁移旧会话工作区失败", "error", err)
+	} else if moved > 0 {
+		logger.Info("已把旧会话工作区迁入共享工作区 _legacy 目录", "moved", moved)
+	}
 	runs := runlog.NewRegistry()
 
 	bins := resolveAgentBins(cfg)
 	decision := prepareIsolation(cfg, logger, dataDir, caps, bins)
+	if decision.Isolation != nil {
+		// uid 隔离开启时共享工作区需要全员可读写(靠 Landlock+uid 隔离而非目录权限保护)。
+		if err := isolation.PrepareWorkspace(workspaceDir); err != nil {
+			logger.Warn("共享工作区权限准备失败", "workspace", workspaceDir, "error", err)
+		}
+	}
 
 	run, shutdown := newBuiltinRunner(cfg, logger, confFile, routerService, store, runs, tokens, caps, decision, bins)
 	var suggest func(context.Context, string, string, string, string, int) (string, error)
@@ -111,6 +126,19 @@ func resolveAgentDataDir(cfg config.Config) string {
 		dataDir = filepath.Join(config.ResolveWorkdir(), "agent")
 	}
 	return dataDir
+}
+
+// resolveAgentWorkspaceDir 返回共享工作区目录:配置了 AGENT_WORKSPACE_DIR
+// 则用之,否则 <数据目录>/workspace;用 filepath.Abs 规整(失败则原样返回)。
+func resolveAgentWorkspaceDir(cfg config.Config, dataDir string) string {
+	workspace := strings.TrimSpace(cfg.AgentWorkspaceDir)
+	if workspace == "" {
+		workspace = filepath.Join(dataDir, "workspace")
+	}
+	if abs, err := filepath.Abs(workspace); err == nil {
+		return abs
+	}
+	return workspace
 }
 
 // resolveAgentBins 解析 node 命令、Pi 入口与扩展路径;command 缺省时回退

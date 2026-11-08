@@ -62,7 +62,8 @@ func TestSessionQuotaBeforeStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(env.store.WorkDir(meta.ID), "large.bin"), make([]byte, 2048), 0o600); err != nil {
+	// 共享工作区不计入会话配额,把超限文件写到 Pi 私有目录来触发。
+	if err := os.WriteFile(filepath.Join(env.store.PiDir(meta.ID), "large.bin"), make([]byte, 2048), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	result := sendModel(t, env, meta.ID, "quota-before")

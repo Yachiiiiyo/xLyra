@@ -167,6 +167,42 @@ func TestPrepareDataDirNotRoot(t *testing.T) {
 	}
 }
 
+// TestPrepareWorkspaceNotRoot 非 root 应返回 ErrNotRoot 且不创建任何目录。
+func TestPrepareWorkspaceNotRoot(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("本用例验证非 root 行为,root 环境跳过")
+	}
+	dir := filepath.Join(t.TempDir(), "workspace")
+	if err := PrepareWorkspace(dir); !errors.Is(err, ErrNotRoot) {
+		t.Fatalf("应返回 ErrNotRoot,得到 %v", err)
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("非 root 下不应创建目录: %v", err)
+	}
+}
+
+// TestPrepareWorkspaceRoot(root 才能跑)验证目录被创建且不依赖 umask 地为 0777。
+func TestPrepareWorkspaceRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("需要 root,非 root 环境跳过")
+	}
+	dir := filepath.Join(t.TempDir(), "workspace", "sub")
+	if err := PrepareWorkspace(dir); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o777 {
+		t.Fatalf("权限 = %o,应为 777", fi.Mode().Perm())
+	}
+	// 幂等:再次调用不报错。
+	if err := PrepareWorkspace(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestHarden 验证去权限位、返回修改列表、忽略缺失路径、跳过符号链接。
 func TestHarden(t *testing.T) {
 	tmp := t.TempDir()
