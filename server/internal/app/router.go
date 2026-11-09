@@ -72,6 +72,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	var authService *auth.Service
 	if db != nil {
 		authService = auth.NewService(db.DB(), masterKey, confFile)
+		// 设备令牌闲置失效天数来自环境变量 DEVICE_IDLE_DAYS（0 表示不限）。
+		authService.SetDeviceIdleDays(cfg.DeviceIdleDays)
 		warmCtx, warmCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := authService.WarmBootstrapCache(warmCtx); err != nil {
 			logger.Warn("bootstrap admin cache warmup failed", "error", err)
@@ -313,6 +315,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			v1.Get("/auth/state", adminHandler.AuthState)
 			v1.Post("/bootstrap/register", adminHandler.BootstrapRegister)
 			v1.Post("/auth/session", adminHandler.CreateSession)
+			// App 扫码后的配对兑换: 无需登录, 按 IP 限速。
+			v1.Post("/devices/pair", adminHandler.RedeemDevicePairing)
 			v1.Get("/system/version", func(w http.ResponseWriter, _ *http.Request) {
 				httpx.JSON(w, http.StatusOK, version.Current())
 			})
@@ -329,19 +333,12 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				})
 				protected.Get("/auth/session", adminHandler.CurrentSession)
 				protected.Delete("/auth/session", adminHandler.DeleteSession)
+				registerAdminProfileRoutes(protected, adminHandler)
+				registerAdminDeviceRoutes(protected, adminHandler)
 				protected.Get("/profile", adminHandler.GetProfile)
-				protected.Put("/profile/account", adminHandler.UpdateProfileAccount)
-				protected.Put("/profile/password", adminHandler.UpdateProfilePassword)
 				protected.Get("/profile/sessions", adminHandler.ListProfileSessions)
 				protected.Delete("/profile/sessions", adminHandler.DeleteOtherProfileSessions)
 				protected.Delete("/profile/sessions/{sessionID}", adminHandler.DeleteProfileSession)
-				protected.Get("/profile/access-token", adminHandler.GetProfileAccessToken)
-				protected.Post("/profile/access-token", adminHandler.CreateProfileAccessToken)
-				protected.Put("/profile/access-token/enabled", adminHandler.UpdateProfileAccessTokenEnabled)
-				protected.Delete("/profile/access-token", adminHandler.DeleteProfileAccessToken)
-				protected.Post("/profile/totp/setup", adminHandler.SetupProfileTOTP)
-				protected.Post("/profile/totp/enable", adminHandler.EnableProfileTOTP)
-				protected.Delete("/profile/totp", adminHandler.DisableProfileTOTP)
 				protected.Get("/audit-logs", adminHandler.ListAuditLogs)
 				protected.Get("/js-plugin-trusted-keys", adminHandler.ListJSPluginTrustedKeys)
 				protected.Post("/js-plugin-trusted-keys", adminHandler.CreateJSPluginTrustedKey)
@@ -673,6 +670,34 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Post("/sessions/{id}/answer-question", h.AnswerQuestion)
 	agentRouter.Post("/sessions/{id}/revoke-access", h.RevokeAccess)
 	agentRouter.Get("/sessions/{id}/events", h.SessionEvents)
+}
+
+// registerAdminProfileRoutes 注册会自我扩权的账号安全接口: 设备令牌与管理员
+// 同权, 但这些接口只允许 Web 会话 / Access Token 调用, 因此统一加
+// DenyDeviceActor。
+func registerAdminProfileRoutes(protected chi.Router, adminHandler admin.Handler) {
+	webOnly := protected.With(auth.DenyDeviceActor)
+	webOnly.Put("/profile/account", adminHandler.UpdateProfileAccount)
+	webOnly.Put("/profile/password", adminHandler.UpdateProfilePassword)
+	webOnly.Get("/profile/access-token", adminHandler.GetProfileAccessToken)
+	webOnly.Post("/profile/access-token", adminHandler.CreateProfileAccessToken)
+	webOnly.Put("/profile/access-token/enabled", adminHandler.UpdateProfileAccessTokenEnabled)
+	webOnly.Delete("/profile/access-token", adminHandler.DeleteProfileAccessToken)
+	webOnly.Post("/profile/totp/setup", adminHandler.SetupProfileTOTP)
+	webOnly.Post("/profile/totp/enable", adminHandler.EnableProfileTOTP)
+	webOnly.Delete("/profile/totp", adminHandler.DisableProfileTOTP)
+}
+
+// registerAdminDeviceRoutes 注册设备管理接口: 创建配对码、列出与吊销设备
+// 同样只允许 Web 会话 / Access Token; /devices/self 反而只给设备令牌用。
+func registerAdminDeviceRoutes(protected chi.Router, adminHandler admin.Handler) {
+	webOnly := protected.With(auth.DenyDeviceActor)
+	webOnly.Post("/devices/pairings", adminHandler.CreateDevicePairing)
+	webOnly.Get("/devices", adminHandler.ListDevices)
+	webOnly.Delete("/devices/{id}", adminHandler.RevokeDevice)
+	webOnly.Post("/devices/revoke-all", adminHandler.RevokeAllDevices)
+	protected.Get("/devices/self", adminHandler.GetDeviceSelf)
+	protected.Delete("/devices/self", adminHandler.DeleteDeviceSelf)
 }
 
 func requireAdmin(authService *auth.Service) func(http.Handler) http.Handler {

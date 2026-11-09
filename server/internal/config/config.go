@@ -48,7 +48,9 @@ type Config struct {
 	AgentMaxConcurrent int           `env:"AGENT_MAX_CONCURRENT" envDefault:"16"`
 	AgentRunTimeout    time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
 	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长;默认 0 表示一直等待、不超时。
-	AgentQuestionTimeout  time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"0"`
+	AgentQuestionTimeout time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"0"`
+	// DeviceIdleDays 是设备令牌闲置失效天数;默认 180,0 表示不限。
+	DeviceIdleDays        int           `env:"DEVICE_IDLE_DAYS" envDefault:"180"`
 	AgentGatewayBaseURL   string        `env:"AGENT_GATEWAY_BASE_URL"`
 	AgentImageMaxCalls    int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
 	AgentImageTimeout     time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
@@ -198,6 +200,9 @@ func (c Config) Validate() error {
 
 	if c.AgentQuestionTimeout < 0 {
 		return fmt.Errorf("AGENT_QUESTION_TIMEOUT must not be negative")
+	}
+	if c.DeviceIdleDays < 0 {
+		return fmt.Errorf("DEVICE_IDLE_DAYS must not be negative")
 	}
 	if c.AgentRunTimeout <= 0 || c.AgentRunTimeout > agentRunTimeoutMax {
 		return fmt.Errorf("AGENT_RUN_TIMEOUT must be greater than 0 and at most %s", agentRunTimeoutMax)

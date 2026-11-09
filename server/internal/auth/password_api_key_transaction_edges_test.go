@@ -28,6 +28,7 @@ func TestChangeAdminPasswordSuccessDeletesOtherSessionsOffline(t *testing.T) {
 	queryStep := 0
 	var savedAdmin store.Admin
 	deleteCount := 0
+	deviceRevokes := 0
 	service := authServiceWithGormCallbacks(t, func(tx *gorm.DB) {
 		queryStep++
 		switch dest := tx.Statement.Dest.(type) {
@@ -44,6 +45,16 @@ func TestChangeAdminPasswordSuccessDeletesOtherSessionsOffline(t *testing.T) {
 			tx.AddError(errors.New("unexpected password query destination"))
 		}
 	}, nil, func(tx *gorm.DB) {
+		if updates, ok := tx.Statement.Dest.(map[string]any); ok {
+			// 改密码时吊销全部设备令牌（admin_devices.revoked_at）。
+			if _, ok := updates["revoked_at"]; !ok {
+				tx.AddError(errors.New("unexpected device update destination"))
+				return
+			}
+			deviceRevokes++
+			tx.Statement.RowsAffected = 1
+			return
+		}
 		admin, ok := tx.Statement.Dest.(*store.Admin)
 		if !ok {
 			tx.AddError(errors.New("unexpected password update destination"))
@@ -73,6 +84,9 @@ func TestChangeAdminPasswordSuccessDeletesOtherSessionsOffline(t *testing.T) {
 	}
 	if deleteCount != 1 {
 		t.Fatalf("delete count = %d, want only non-kept session deleted", deleteCount)
+	}
+	if deviceRevokes != 1 {
+		t.Fatalf("device revoke count = %d, want all devices revoked once", deviceRevokes)
 	}
 	if updated.ID != adminID || savedAdmin.ID != adminID {
 		t.Fatalf("updated/saved admin = %#v/%#v, want admin %s", updated, savedAdmin, adminID)

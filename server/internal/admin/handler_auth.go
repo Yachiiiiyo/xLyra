@@ -39,6 +39,7 @@ func (h Handler) AuthState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Add("Vary", "Cookie")
 	w.Header().Add("Vary", "X-Access-Token")
+	w.Header().Add("Vary", "Authorization")
 
 	if h.auth == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "auth_unavailable", "auth service is not available")
@@ -57,6 +58,14 @@ func (h Handler) AuthState(w http.ResponseWriter, r *http.Request) {
 			actor := auth.AdminActor{Type: "access_token", AdminID: accessToken.AdminID, AccessTokenID: accessToken.ID}
 			h.recordAudit(r, actor, "admin_api.access", "", "", true, "", map[string]any{"method": r.Method, "path": r.URL.Path})
 			h.writeAuthenticatedState(w, r, actor, nil)
+			return
+		}
+	}
+
+	// 设备令牌与管理员同权, 但和 Access Token 不同: 不写逐请求访问审计。
+	if token := auth.DeviceTokenFromRequest(r); token != "" {
+		if device, err := h.auth.ValidateDeviceToken(r.Context(), token, r.UserAgent(), r.RemoteAddr); err == nil {
+			h.writeAuthenticatedState(w, r, auth.AdminActor{Type: auth.DeviceActorType, AdminID: device.AdminID, DeviceID: device.ID}, nil)
 			return
 		}
 	}

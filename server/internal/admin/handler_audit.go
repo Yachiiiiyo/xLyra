@@ -3,6 +3,7 @@ package admin
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"xlyra/server/internal/auth"
 )
@@ -37,7 +38,7 @@ func (w *auditResponseWriter) Unwrap() http.ResponseWriter {
 
 func (h Handler) AuditAdminMutation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h.auth == nil || !shouldAuditAdminMutation(r.Method) {
+		if h.auth == nil || !shouldAuditAdminMutation(r.Method) || skipDeviceAgentMutation(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -56,6 +57,17 @@ func (h Handler) AuditAdminMutation(next http.Handler) http.Handler {
 			"query":  r.URL.RawQuery,
 		})
 	})
+}
+
+// skipDeviceAgentMutation 让 App（设备令牌）在 /api/v1/agent/ 下的写请求不产生
+// admin_api.mutation: 这些是日常操作, 逐条记录会把审计表灌满。其它路径的写
+// 请求照旧记录, 设备令牌的自我扩权类接口另有 DenyDeviceActor 拦截。
+func skipDeviceAgentMutation(r *http.Request) bool {
+	actor, ok := auth.AdminActorFromContext(r.Context())
+	if !ok || actor.Type != auth.DeviceActorType {
+		return false
+	}
+	return strings.HasPrefix(r.URL.Path, "/api/v1/agent/")
 }
 
 func shouldAuditAdminMutation(method string) bool {

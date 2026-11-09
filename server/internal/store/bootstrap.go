@@ -701,6 +701,8 @@ func bootstrapModels() []any {
 		&AdminSession{},
 		&AdminAccessToken{},
 		&AdminAuditLog{},
+		&AdminDevice{},
+		&AdminDevicePairing{},
 		&APIKey{},
 		&Site{},
 		&SiteGroup{},
