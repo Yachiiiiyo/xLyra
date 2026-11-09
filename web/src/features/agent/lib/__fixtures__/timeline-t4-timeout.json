@@ -1,0 +1,72 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_timeout",
+      "kind": "tool",
+      "title": "risky_tool",
+      "status": "error",
+      "inputLength": 32,
+      "outputLength": 22,
+      "inputPreview": "{\"mode\":\"timeout\",\"note\":\"slow\"}",
+      "outputPreview": "user denied risky_tool"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 3,
+      "inputPreview": "",
+      "outputPreview": "超时后"
+    }
+  ],
+  "permissions": [
+    {
+      "id": "bed1b607-9f2c-4c48-90dc-3fed1f192b6c",
+      "tool": "risky_tool",
+      "decision": "denied",
+      "detail": null
+    }
+  ],
+  "finalText": "超时后",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_timeout",
+          "kind": "tool",
+          "title": "risky_tool",
+          "status": "error",
+          "inputLength": 32,
+          "outputLength": 22,
+          "inputPreview": "{\"mode\":\"timeout\",\"note\":\"slow\"}",
+          "outputPreview": "user denied risky_tool"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 3,
+          "inputPreview": "",
+          "outputPreview": "超时后"
+        }
+      ],
+      "permissions": [
+        {
+          "id": "bed1b607-9f2c-4c48-90dc-3fed1f192b6c",
+          "tool": "risky_tool",
+          "decision": "denied",
+          "detail": null
+        }
+      ],
+      "finalText": "超时后"
+    }
+  ]
+}

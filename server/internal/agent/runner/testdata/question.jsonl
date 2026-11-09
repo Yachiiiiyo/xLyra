@@ -1,0 +1,8 @@
+{"type":"agent_start"}
+{"type":"session_append","entry":{"type":"message","id":"u-$N","parentId":"$PREV","timestamp":"2026-10-29T08:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"第 $N 轮请求"}],"timestamp":1793246400000}}}
+{"type":"session_append","entry":{"type":"message","id":"a-$N","parentId":"u-$N","timestamp":"2026-10-29T08:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"先问一下"},{"type":"toolCall","id":"call-$N","name":"question","arguments":{}}],"stopReason":"toolUse","timestamp":1793246400001}}}
+{"type":"tool_execution_start","toolCallId":"call-$N","toolName":"question","args":{}}
+{"type":"extension_ui_request","id":"q-$N","method":"editor","title":"xlyra:question:call-$N","prefill":"{\"toolCallId\":\"call-$N\",\"questions\":[{\"header\":\"方案\",\"question\":\"选哪个?\",\"multiSelect\":false,\"options\":[{\"label\":\"A 方案\"},{\"label\":\"B 方案\",\"description\":\"更快\"}]},{\"header\":\"语言\",\"question\":\"用哪些语言?\",\"multiSelect\":true,\"options\":[{\"label\":\"中文\"},{\"label\":\"英文\"}]}]}"}
+{"type":"tool_execution_end","toolCallId":"call-$N","toolName":"question","isError":false,"result":{"content":[{"type":"text","text":"用户已回答"}]}}
+{"type":"session_append","entry":{"type":"message","id":"r-$N","parentId":"a-$N","timestamp":"2026-10-29T08:00:02.000Z","message":{"role":"toolResult","toolCallId":"call-$N","toolName":"question","content":[{"type":"text","text":"用户已回答"}],"isError":false,"timestamp":1793246400002}}}
+{"type":"agent_settled","aborted":false}

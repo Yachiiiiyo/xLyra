@@ -304,3 +304,100 @@ func TestReadAutomaticBackupConfigAndExportMap(t *testing.T) {
 		t.Fatalf("export map lost non-secret storage fields: %#v", storage)
 	}
 }
+
+func TestAutomaticBackupConfigSectionsRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// 旧配置(无 sections)读出 nil。
+	legacy := AutomaticBackupConfigFromRaw(map[string]any{
+		"cron":            "0 3 * * *",
+		"retention_count": float64(7),
+	})
+	if legacy.Sections != nil {
+		t.Fatalf("legacy config sections = %#v, want nil", legacy.Sections)
+	}
+
+	// sections 读入 []any 字符串,规范化去空白/去重(保序)。
+	cfg := AutomaticBackupConfigFromRaw(map[string]any{
+		"sections": []any{" settings ", "", "gateway_sites", "settings", "gateway_keys"},
+	})
+	want := []string{"settings", "gateway_sites", "gateway_keys"}
+	if len(cfg.Sections) != len(want) {
+		t.Fatalf("normalized sections = %#v, want %#v", cfg.Sections, want)
+	}
+	for i := range want {
+		if cfg.Sections[i] != want[i] {
+			t.Fatalf("normalized sections = %#v, want %#v", cfg.Sections, want)
+		}
+	}
+
+	// ToMap 与 ForExport 都写出 sections,nil 时写空数组。
+	asMap := AutomaticBackupConfigToMap(AutomaticBackupConfig{})
+	if got, ok := asMap["sections"].([]string); !ok || len(got) != 0 {
+		t.Fatalf("ToMap sections for nil = %#v, want empty array", asMap["sections"])
+	}
+	forExport := AutomaticBackupConfigForExport(AutomaticBackupConfig{})
+	if got, ok := forExport["sections"].([]string); !ok || len(got) != 0 {
+		t.Fatalf("ForExport sections for nil = %#v, want empty array", forExport["sections"])
+	}
+	saved := AutomaticBackupConfigToMap(cfg)
+	if got, ok := saved["sections"].([]string); !ok || len(got) != len(want) {
+		t.Fatalf("ToMap sections = %#v, want %#v", saved["sections"], want)
+	}
+
+	// 空数组读回视为未设置(nil),避免空集合被当成显式保存。
+	empty := AutomaticBackupConfigFromRaw(map[string]any{"sections": []any{}})
+	if empty.Sections != nil {
+		t.Fatalf("empty sections should read back as nil, got %#v", empty.Sections)
+	}
+}
+
+func TestMergeImportedConfigCarriesSectionsWithAdoptedConfig(t *testing.T) {
+	t.Parallel()
+
+	// 当前配置带存储凭据时整体采用当前配置,sections 一并保留。
+	current := map[string]any{
+		"backup": map[string]any{
+			"automatic": map[string]any{
+				"enabled":         true,
+				"cron":            "0 4 * * *",
+				"retention_count": 9,
+				"sections":        []any{"settings", "gateway_sites"},
+				"storage": map[string]any{
+					"endpoint":                    "https://current.example.com",
+					"bucket":                      "current",
+					"access_key":                  "current-ak",
+					"secret_key_encrypted":        "current-secret",
+					"backup_passphrase_encrypted": "current-passphrase",
+				},
+			},
+		},
+	}
+	imported := map[string]any{
+		"backup": map[string]any{
+			"automatic": map[string]any{
+				"cron":     "0 1 * * *",
+				"sections": []any{"settings"},
+			},
+		},
+	}
+
+	got := MergeImportedConfig(current, imported)
+	cfg, ok := automaticBackupFromMap(got)
+	if !ok {
+		t.Fatal("expected automatic backup config")
+	}
+	if len(cfg.Sections) != 2 || cfg.Sections[0] != "settings" || cfg.Sections[1] != "gateway_sites" {
+		t.Fatalf("current sections should follow adopted config, got %#v", cfg.Sections)
+	}
+
+	// 当前没有存储凭据时采用导入配置(已消毒),sections 跟随导入值。
+	got = MergeImportedConfig(nil, imported)
+	cfg, ok = automaticBackupFromMap(got)
+	if !ok {
+		t.Fatal("expected automatic backup config")
+	}
+	if len(cfg.Sections) != 1 || cfg.Sections[0] != "settings" {
+		t.Fatalf("imported sections should be preserved, got %#v", cfg.Sections)
+	}
+}

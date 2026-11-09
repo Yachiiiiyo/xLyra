@@ -4,6 +4,8 @@ import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LiquidGlass } from '@/components/glass/liquid-glass'
 import { cn } from '@/lib/utils'
+import { prefetchAgentWorkspace } from '@/features/agent/lib/agent-queries'
+import { queryClient } from '@/lib/query-client'
 
 export type MobileDockMenuItem = {
   to: string
@@ -113,6 +115,7 @@ export function MobileDockMenu({ open, items, anchorRef, onOpenChange }: MobileD
                 role="menuitem"
                 aria-current={active ? 'page' : undefined}
                 onClick={() => onOpenChange(false)}
+                onTouchStart={item.to === '/agent' ? () => prefetchAgentWorkspace(queryClient) : undefined}
                 className="group flex h-11 items-center gap-2 rounded-full pl-4 pr-1.5 text-subhead text-label transition-transform duration-150 active:scale-95"
               >
                 <span className={cn('min-w-0 max-w-[52vw] truncate', active && 'font-semibold')}>{item.label}</span>

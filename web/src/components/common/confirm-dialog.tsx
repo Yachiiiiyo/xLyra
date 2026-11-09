@@ -35,12 +35,12 @@ export function ConfirmDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
       {/* 提醒类弹窗（仿 iOS Alert）：始终居中，文字居中，两个按钮等宽并排 */}
       <DialogContent presentation="center" className="w-[min(92vw,380px)]">
-        <DialogHeader className="border-0 px-6 pb-1 pt-6 text-center">
+        <DialogHeader className="border-0 px-6 pb-1 pt-6 text-center max-lg:px-5 max-lg:pt-5">
           <DialogTitle className="text-title-3">{title}</DialogTitle>
           <DialogDescription className="mt-2">{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter
-          className="grid grid-cols-2 border-0 px-6 pb-6 pt-5"
+          className="grid grid-cols-2 border-0 px-6 pb-6 pt-5 max-lg:px-5 max-lg:pb-5 max-lg:pt-4"
           cancel={<Button variant="secondary" onClick={onCancel} disabled={pending}>{t('actions.cancel')}</Button>}
           confirm={(
             <Button variant={destructive ? 'destructive' : 'default'} onClick={onConfirm} loading={pending}>

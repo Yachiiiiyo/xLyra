@@ -1,0 +1,92 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "status-7",
+      "kind": "status",
+      "title": "compacted",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 0,
+      "inputPreview": "",
+      "outputPreview": ""
+    },
+    {
+      "id": "text-8",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 13,
+      "inputPreview": "",
+      "outputPreview": "reply:压缩后的新问题"
+    }
+  ],
+  "permissions": [],
+  "finalText": "reply:压缩后的新问题",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 28,
+          "inputPreview": "",
+          "outputPreview": "reply:OLD-HISTORY-MARKER 第一段"
+        }
+      ],
+      "permissions": [],
+      "finalText": "reply:OLD-HISTORY-MARKER 第一段"
+    },
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "text-5",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 23,
+          "inputPreview": "",
+          "outputPreview": "reply:RECENT-MARKER 第二段"
+        }
+      ],
+      "permissions": [],
+      "finalText": "reply:RECENT-MARKER 第二段"
+    },
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "status-7",
+          "kind": "status",
+          "title": "compacted",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 0,
+          "inputPreview": "",
+          "outputPreview": ""
+        },
+        {
+          "id": "text-8",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 13,
+          "inputPreview": "",
+          "outputPreview": "reply:压缩后的新问题"
+        }
+      ],
+      "permissions": [],
+      "finalText": "reply:压缩后的新问题"
+    }
+  ]
+}

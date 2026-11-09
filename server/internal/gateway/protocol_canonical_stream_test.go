@@ -984,6 +984,77 @@ func TestProxyCanonicalStreamChatToMessagesEmitsLateInputUsage(t *testing.T) {
 	}
 }
 
+func TestProxyCanonicalStreamToAnthropicUsageExcludesCacheTokens(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		prompt      int
+		cacheRead   int
+		cacheCreate int
+		wantInput   int
+	}{
+		{name: "无缓存", prompt: 100, wantInput: 100},
+		{name: "缓存命中", prompt: 100, cacheRead: 30, wantInput: 70},
+		{name: "缓存创建", prompt: 100, cacheCreate: 20, wantInput: 80},
+		{name: "命中与创建", prompt: 100, cacheRead: 30, cacheCreate: 20, wantInput: 50},
+		{name: "命中大于提示", prompt: 10, cacheRead: 30, wantInput: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			usageJSON, err := json.Marshal(map[string]any{
+				"prompt_tokens":               tc.prompt,
+				"completion_tokens":           8,
+				"total_tokens":                tc.prompt + 8,
+				"cache_creation_input_tokens": tc.cacheCreate,
+				"prompt_tokens_details":       map[string]any{"cached_tokens": tc.cacheRead},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, capture, started, err := proxyCanonicalStreamTest(t,
+				"data: {\"id\":\"chatcmpl_cache\",\"created\":1710000000,\"model\":\"deepseek-v4-pro\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"}}]}\n\n"+
+					"data: {\"id\":\"chatcmpl_cache\",\"created\":1710000000,\"model\":\"deepseek-v4-pro\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"+
+					"data: {\"id\":\"chatcmpl_cache\",\"created\":1710000000,\"model\":\"deepseek-v4-pro\",\"choices\":[],\"usage\":"+string(usageJSON)+"}\n\n"+
+					"data: [DONE]\n\n",
+				canonicalProtocolOpenAIChat, canonicalProtocolAnthropicMessages, canonicalStreamOptions{})
+			if err != nil {
+				t.Fatalf("proxyCanonicalStream returned error: %v", err)
+			}
+			if !started || !capture.streamCompleted {
+				t.Fatalf("expected completed stream, started=%v capture=%+v", started, capture)
+			}
+			var usage *anthropicMessageUsageBody
+			for _, line := range strings.Split(rec.Body.String(), "\n") {
+				data, _, ok := sseDataFromLine([]byte(line))
+				if !ok {
+					continue
+				}
+				var event struct {
+					Type  string                    `json:"type"`
+					Usage anthropicMessageUsageBody `json:"usage"`
+				}
+				if json.Unmarshal([]byte(data), &event) == nil && event.Type == "message_delta" {
+					current := event.Usage
+					usage = &current
+				}
+			}
+			if usage == nil {
+				t.Fatalf("message_delta usage not found, body=%q", rec.Body.String())
+			}
+			if usage.InputTokens != tc.wantInput {
+				t.Fatalf("input_tokens = %d, want %d, body=%q", usage.InputTokens, tc.wantInput, rec.Body.String())
+			}
+			if usage.OutputTokens != 8 {
+				t.Fatalf("output_tokens = %d, want 8", usage.OutputTokens)
+			}
+			if capture.usage.PromptTokens != tc.prompt {
+				t.Fatalf("内部 prompt tokens = %d, want %d", capture.usage.PromptTokens, tc.prompt)
+			}
+		})
+	}
+}
+
 func TestProxyCanonicalStreamResponsesToMessagesEmitsLateInputUsage(t *testing.T) {
 	t.Parallel()
 

@@ -226,7 +226,6 @@ export function useDrawGesture(
           state: active.state,
           dy: totalDy,
           scrollTop,
-          scrollable: Boolean(active.mainScroll && active.mainScroll.scrollHeight > active.mainScroll.clientHeight + 1),
           fromHandle: !active.mainScroll || !active.mainScroll.contains(event.target as Element),
           canDismiss: canDismissRef.current,
         })

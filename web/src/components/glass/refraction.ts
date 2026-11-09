@@ -24,6 +24,7 @@ export type RefractionProfile = {
 export const refractionProfiles = {
   regular: { bezel: 26, scale: 64, dispersion: 0.06, blur: 10, saturate: 170, brightness: 1.04 },
   clear: { bezel: 22, scale: 72, dispersion: 0.08, blur: 0.5, saturate: 190, brightness: 1.06 },
+  pane: { bezel: 28, scale: 68, dispersion: 0.07, blur: 3, saturate: 100, brightness: 1 },
 } satisfies Record<string, RefractionProfile>
 
 export type RefractionVariant = keyof typeof refractionProfiles

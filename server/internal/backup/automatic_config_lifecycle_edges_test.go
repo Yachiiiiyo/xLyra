@@ -103,7 +103,7 @@ func TestAutomaticConfigPayloadReportsSecretsAndReadiness(t *testing.T) {
 		},
 	}
 
-	payload := automaticConfigPayload(cfg)
+	payload := NewAutomaticService(Service{}, "master-key").automaticConfigPayload(cfg)
 
 	if !payload.Enabled || !payload.Ready {
 		t.Fatalf("expected enabled ready payload, got %#v", payload)
@@ -203,7 +203,7 @@ func TestServiceReadyAndBackupFilenameUseConfiguredTimezone(t *testing.T) {
 	}
 
 	loc := time.FixedZone("UTC+2", 2*60*60)
-	service := NewService(nil, nil, "master", "", config.TimeZone{Name: "UTC+2", Location: loc})
+	service := NewService(nil, nil, "master", config.TimeZone{Name: "UTC+2", Location: loc})
 	createdAt := time.Date(2026, 6, 21, 23, 30, 5, 0, time.UTC)
 
 	if got := service.backupFilename(createdAt); got != "xlyra-backup-20260622-013005.zip.xlyra" {
@@ -218,7 +218,20 @@ func TestValidateManifestRejectsMismatches(t *testing.T) {
 		FormatVersion: currentFormatVersion,
 		App:           backupAppName,
 		Payload:       backupPayload,
-		Tables:        append([]string(nil), exportTables...),
+		Sections: []string{
+			sectionSettings,
+			sectionGatewaySites,
+			sectionGatewayKeys,
+			sectionGatewayLogs,
+			sectionAgentConfig,
+		},
+		Tables: TablesOf([]string{
+			sectionSettings,
+			sectionGatewaySites,
+			sectionGatewayKeys,
+			sectionGatewayLogs,
+			sectionAgentConfig,
+		}),
 	}
 	if err := validateManifest(valid); err != nil {
 		t.Fatalf("valid manifest: %v", err)
@@ -250,11 +263,13 @@ func TestValidateManifestRejectsMismatches(t *testing.T) {
 		})
 	}
 
+	// v2 旧备份没有 sections 概念,表清单里允许已知表与已废弃的 playground 表。
 	t.Run("older version table subset", func(t *testing.T) {
 		t.Parallel()
 
 		value := valid
 		value.FormatVersion = minImportFormatVersion
+		value.Sections = nil
 		value.Tables = append([]string(nil), exportTables[:len(exportTables)-4]...)
 		if err := validateManifest(value); err != nil {
 			t.Fatalf("expected older table subset to be accepted, got %v", err)
@@ -265,6 +280,7 @@ func TestValidateManifestRejectsMismatches(t *testing.T) {
 
 		value := valid
 		value.FormatVersion = minImportFormatVersion
+		value.Sections = nil
 		value.Tables = append(append([]string(nil), valid.Tables...), "not_a_backup_table")
 		if err := validateManifest(value); err == nil {
 			t.Fatal("expected unknown table to be rejected")

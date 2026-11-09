@@ -1,4 +1,3 @@
-export const DRAW_TOP_GAP = 12
 export const DRAW_SNAP_PROGRESS = 0.25
 export const DRAW_SNAP_VELOCITY = 0.5
 export const DRAW_DISMISS_PROGRESS = 0.3
@@ -13,14 +12,13 @@ type DragStartInput = {
   state: DrawSnap
   dy: number
   scrollTop: number
-  scrollable: boolean
   fromHandle: boolean
   canDismiss: boolean
 }
 
-export function resolveDragStart({ state, dy, scrollTop, scrollable, fromHandle, canDismiss }: DragStartInput): DrawDragMode {
+export function resolveDragStart({ state, dy, scrollTop, fromHandle, canDismiss }: DragStartInput): DrawDragMode {
   if (dy < 0) {
-    if (state === 'medium' && scrollable) return 'expand'
+    if (state === 'medium') return 'expand'
     return 'native'
   }
   if (dy === 0) return 'native'

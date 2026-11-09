@@ -82,11 +82,11 @@ SheetContent.displayName = DialogPrimitive.Content.displayName
 function SheetHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   // 作为 Draw 呈现时，左上角有关闭按钮，标题区左侧要留出位置
   const draw = useOverlayMode() === 'draw'
-  return <div className={cn('border-b border-separator', draw ? DRAW_HEADER_CLASS : 'px-6 py-5', className)} {...props} />
+  return <div className={cn('border-b border-separator', draw ? DRAW_HEADER_CLASS : 'px-6 py-5 max-lg:px-5 max-lg:py-4', className)} {...props} />
 }
 
 function SheetBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5', className)} {...props} />
+  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 max-lg:px-5 max-lg:py-4', className)} {...props} />
 }
 
 type SheetFooterProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -106,7 +106,7 @@ function SheetFooter({ className, confirm, cancel, children, ...props }: SheetFo
   return (
     <div
       className={cn(
-        'border-t border-separator px-6 py-4',
+        'border-t border-separator px-6 py-4 max-lg:px-5 max-lg:py-3',
         draw ? 'flex flex-row-reverse gap-3 [&>*]:flex-1' : 'flex items-center justify-start gap-2',
         className,
       )}

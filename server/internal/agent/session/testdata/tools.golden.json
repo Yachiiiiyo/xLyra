@@ -1,0 +1,109 @@
+[
+  {
+    "message": {
+      "content": "列出目录",
+      "role": "user"
+    },
+    "message_id": "m-001",
+    "timestamp": "2026-10-29T08:00:00.010Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "我来执行 ls",
+      "role": "assistant",
+      "thinking": "先想想",
+      "tool_calls": [
+        {
+          "id": "call_1",
+          "name": "bash",
+          "raw_arguments": "{\"command\":\"ls\",\"timeout\":10}"
+        }
+      ]
+    },
+    "message_id": "a001",
+    "timestamp": "2026-10-29T08:00:00.020Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "file-a\nfile-b",
+      "images": [
+        {
+          "alt": "示意图",
+          "bytes": 123,
+          "mime": "image/png",
+          "model": "gpt-image-2",
+          "path": "images/01-20261103-153012.png",
+          "site": "demo"
+        }
+      ],
+      "is_error": false,
+      "name": "bash",
+      "role": "tool",
+      "tool_call_id": "call_1"
+    },
+    "message_id": "r001",
+    "timestamp": "2026-10-29T08:00:00.030Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "",
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "call_2",
+          "name": "write",
+          "raw_arguments": "{\"path\":\"a.txt\",\"content\":\"x\"}"
+        }
+      ]
+    },
+    "message_id": "a002",
+    "timestamp": "2026-10-29T08:00:00.040Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "写入失败:只读",
+      "is_error": true,
+      "name": "write",
+      "role": "tool",
+      "tool_call_id": "call_2"
+    },
+    "message_id": "r002",
+    "timestamp": "2026-10-29T08:00:00.050Z",
+    "type": "message"
+  },
+  {
+    "escalation_id": "esc-deny",
+    "granted": false,
+    "requested_command": [
+      "write",
+      "a.txt"
+    ],
+    "requested_path": "a.txt",
+    "resolved_path": "/w/a.txt",
+    "timestamp": "2026-10-29T08:00:00.000Z",
+    "tool_name": "write",
+    "type": "escalation"
+  },
+  {
+    "message": {
+      "content": "完成",
+      "role": "assistant"
+    },
+    "message_id": "a003",
+    "timestamp": "2026-10-29T08:00:00.060Z",
+    "type": "message"
+  },
+  {
+    "escalation_id": "esc-open",
+    "granted": null,
+    "requested_path": "",
+    "resolved_path": "",
+    "timestamp": "2026-10-29T08:00:00.000Z",
+    "tool_name": "bash",
+    "type": "escalation"
+  }
+]

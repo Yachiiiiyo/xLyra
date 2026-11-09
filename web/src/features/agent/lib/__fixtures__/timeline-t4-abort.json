@@ -1,0 +1,72 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_abort",
+      "kind": "tool",
+      "title": "risky_tool",
+      "status": "error",
+      "inputLength": 19,
+      "outputLength": 17,
+      "inputPreview": "{\"note\":\"abort-me\"}",
+      "outputPreview": "Operation aborted"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 4,
+      "inputPreview": "",
+      "outputPreview": "继续完成"
+    }
+  ],
+  "permissions": [
+    {
+      "id": "d546b78e-8ed0-4a80-86ff-43adad1371e3",
+      "tool": "risky_tool",
+      "decision": null,
+      "detail": null
+    }
+  ],
+  "finalText": "继续完成",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_abort",
+          "kind": "tool",
+          "title": "risky_tool",
+          "status": "error",
+          "inputLength": 19,
+          "outputLength": 17,
+          "inputPreview": "{\"note\":\"abort-me\"}",
+          "outputPreview": "Operation aborted"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 4,
+          "inputPreview": "",
+          "outputPreview": "继续完成"
+        }
+      ],
+      "permissions": [
+        {
+          "id": "d546b78e-8ed0-4a80-86ff-43adad1371e3",
+          "tool": "risky_tool",
+          "decision": null,
+          "detail": null
+        }
+      ],
+      "finalText": "继续完成"
+    }
+  ]
+}

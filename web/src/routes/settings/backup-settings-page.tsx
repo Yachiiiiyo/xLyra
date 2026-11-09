@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, ReactNode } from 'react'
+
+import { useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import cronstrue from 'cronstrue/i18n'
@@ -16,7 +17,6 @@ import {
   Save,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react'
 import { Notice } from '@/components/common/notice'
 import { PageHeader } from '@/components/common/page-header'
@@ -42,6 +42,7 @@ import {
   fetchActiveAutomaticBackupRestoreTask,
   fetchAutomaticBackupConfig,
   fetchAutomaticBackupRestoreTask,
+  fetchBackupSections,
   listAutomaticBackupFiles,
   runAutomaticBackup,
   testAutomaticBackupConfig,
@@ -50,16 +51,17 @@ import {
   type AutomaticBackupConfigInput,
   type AutomaticBackupFile,
 } from '@/features/settings/api/settings'
-import {
-  type BackgroundRestoreTask,
-  RestoreProgressDialog,
-  type RestoreTask,
-} from '@/features/settings/components/backup/restore-progress-dialog'
+import { RestoreProgressDialog, type BackgroundRestoreTask, type RestoreTask } from '@/features/settings/components/backup/restore-progress-dialog'
+import { AutomaticRestoreDialog } from '@/features/settings/components/backup/automatic-restore-dialog'
+import { ImportBackupDialog } from '@/features/settings/components/backup/import-backup-dialog'
+import { BackupSectionsField } from '@/features/settings/components/backup/backup-sections-field'
+import { normalizeSelection as normalizeBackupSelection } from '@/features/settings/lib/backup-sections'
 import { toast } from '@/lib/toast'
-import { cn } from '@/lib/utils'
 
 const automaticBackupConfigKey = ['settings', 'backup', 'automatic'] as const
 const automaticBackupFilesKey = ['settings', 'backup', 'automatic', 'files'] as const
+const backupSectionsKey = ['settings', 'backup', 'sections'] as const
+const exportSectionsMemoryKey = 'xlyra.backup.export.sections'
 const automaticBackupFilePollMs = 3000
 
 type AutomaticBackupDraft = {
@@ -73,6 +75,7 @@ type AutomaticBackupDraft = {
   cron: string
   retentionCount: string
   backupPassphrase: string
+  sections: string[]
   forcePathStyle: boolean
   useSSL: boolean
   skipTLSVerify: boolean
@@ -89,6 +92,7 @@ const DEFAULT_AUTOMATIC_BACKUP_DRAFT: AutomaticBackupDraft = {
   cron: '0 3 * * *',
   retentionCount: '7',
   backupPassphrase: '',
+  sections: [],
   forcePathStyle: true,
   useSSL: true,
   skipTLSVerify: false,
@@ -99,22 +103,29 @@ export function BackupSettingsPage() {
   const queryClient = useQueryClient()
   const [exportOpen, setExportOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const [exportPassphrase, setExportPassphrase] = useState('')
-  const [exportConfirm, setExportConfirm] = useState('')
-  const [importPassphrase, setImportPassphrase] = useState('')
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [dragging, setDragging] = useState(false)
-  const [automaticDraftOverride, setAutomaticDraftOverride] = useState<AutomaticBackupDraft | null>(null)
+  const [exportSections, setExportSections] = useState<string[] | null>(null)
   const [restoreTarget, setRestoreTarget] = useState<AutomaticBackupFile | null>(null)
+  const [automaticDraftOverride, setAutomaticDraftOverride] = useState<AutomaticBackupDraft | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<AutomaticBackupFile | null>(null)
   const [restoreTask, setRestoreTask] = useState<RestoreTask | null>(null)
   const [backgroundRestoreTask, setBackgroundRestoreTask] = useState<BackgroundRestoreTask | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const [exportPassphrase, setExportPassphrase] = useState('')
+  const [exportConfirm, setExportConfirm] = useState('')
 
   const automaticQuery = useQuery({
     queryKey: automaticBackupConfigKey,
     queryFn: fetchAutomaticBackupConfig,
   })
+  const backupSectionsQuery = useQuery({
+    queryKey: backupSectionsKey,
+    queryFn: ({ signal }) => fetchBackupSections(signal),
+    staleTime: 5000,
+  })
+  const backupSections = backupSectionsQuery.data?.sections
+  useEffect(() => {
+    if (exportOpen) void queryClient.invalidateQueries({ queryKey: backupSectionsKey })
+  }, [exportOpen, queryClient])
   const activeRestoreQuery = useQuery({
     queryKey: ['settings', 'backup', 'automatic', 'restore', 'active'],
     queryFn: ({ signal }) => fetchActiveAutomaticBackupRestoreTask(signal),
@@ -170,9 +181,21 @@ export function BackupSettingsPage() {
     refetchInterval: (query) => query.state.data?.files.some((file) => file.status === 'running') ? automaticBackupFilePollMs : false,
   })
   const automaticFiles = filesQuery.data?.files ?? []
+  const exportSelection = useMemo(() => {
+    if (!backupSectionsQuery.data) return []
+    const fallback = exportSections ?? readExportSectionsMemory() ?? backupSectionsQuery.data.defaults.manual
+    return normalizeBackupSelection(backupSectionsQuery.data.sections, fallback)
+  }, [backupSectionsQuery.data, exportSections])
+  const exportSectionsEmpty = Boolean(backupSectionsQuery.data) && exportSelection.length === 0
+  const automaticSectionsEmpty = useMemo(
+    () => backupSectionsQuery.data
+      ? normalizeBackupSelection(backupSectionsQuery.data.sections, automaticDraft.sections).length === 0
+      : false,
+    [backupSectionsQuery.data, automaticDraft.sections],
+  )
 
   const exportMutation = useMutation({
-    mutationFn: exportBackup,
+    mutationFn: ({ passphrase, sections }: { passphrase: string; sections?: string[] }) => exportBackup(passphrase, sections),
     onSuccess: (ticket) => {
       const link = document.createElement('a')
       link.href = backupDownloadURL(ticket)
@@ -259,14 +282,6 @@ export function BackupSettingsPage() {
     setExportConfirm('')
   }
 
-  function closeImportDialog() {
-    setImportOpen(false)
-    setImportFile(null)
-    setImportPassphrase('')
-    setDragging(false)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
   function handleExport() {
     if (!exportPassphrase.trim()) {
       toast.error(t('backup.validation.passphraseRequired'))
@@ -276,25 +291,12 @@ export function BackupSettingsPage() {
       toast.error(t('backup.validation.passphraseMismatch'))
       return
     }
-    exportMutation.mutate(exportPassphrase)
+    exportMutation.mutate({ passphrase: exportPassphrase, sections: backupSectionsQuery.data ? exportSelection : undefined })
   }
 
-  function handleImport() {
-    if (visibleBackgroundRestoreTask) return
-    if (!importFile) {
-      toast.error(t('backup.validation.fileRequired'))
-      return
-    }
-    if (!isBackupFile(importFile)) {
-      toast.error(t('backup.validation.fileInvalid'))
-      return
-    }
-    if (!importPassphrase.trim()) {
-      toast.error(t('backup.validation.passphraseRequired'))
-      return
-    }
-    setRestoreTask({ type: 'manual', file: importFile, passphrase: importPassphrase })
-    closeImportDialog()
+  function handleExportSectionsChange(next: string[]) {
+    setExportSections(next)
+    saveExportSectionsMemory(next)
   }
 
   function patchAutomaticDraft(patch: Partial<AutomaticBackupDraft>) {
@@ -328,23 +330,12 @@ export function BackupSettingsPage() {
       toast.error(t('backup.automatic.validation.retentionInvalid'), { description: retentionError })
       return
     }
-    saveScheduleMutation.mutate(automaticScheduleDraftToInput(automaticDraft, savedAutomaticDraft))
-  }
-
-  const selectImportFile = useCallback((file: File | null) => {
-    if (!file) return
-    if (!isBackupFile(file)) {
-      toast.error(t('backup.validation.fileInvalid'))
+    if (automaticSectionsEmpty) {
+      toast.error(t('backup.sections.atLeastOne'))
       return
     }
-    setImportFile(file)
-  }, [t])
-
-  const handleDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    setDragging(false)
-    selectImportFile(event.dataTransfer.files.item(0))
-  }, [selectImportFile])
+    saveScheduleMutation.mutate(automaticScheduleDraftToInput(automaticDraft, savedAutomaticDraft))
+  }
 
   return (
     <div className="space-y-7">
@@ -517,12 +508,23 @@ export function BackupSettingsPage() {
                       </>
                     ) : null}
                   </div>
+                  <BackupSectionsField
+                    title={t('backup.automatic.schedule.sectionsTitle')}
+                    hint={t('backup.automatic.schedule.sectionsHint')}
+                    sections={backupSections}
+                    loading={backupSectionsQuery.isLoading}
+                    error={backupSectionsQuery.isError}
+                    value={automaticDraft.sections}
+                    onChange={(sections) => patchAutomaticDraft({ sections })}
+                    disabled={saveScheduleMutation.isPending}
+                    emptyError={automaticSectionsEmpty}
+                  />
                   <Notice items={[
                     t('backup.automatic.noticeNoSecrets'),
                     t('backup.automatic.noticeImportKeepsCurrent'),
                   ]} />
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button onClick={handleSaveAutomaticSchedule} disabled={saveScheduleMutation.isPending}>
+                    <Button onClick={handleSaveAutomaticSchedule} disabled={saveScheduleMutation.isPending || automaticSectionsEmpty}>
                       {saveScheduleMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       {t('common:actions.save', { ns: 'common' })}
                     </Button>
@@ -597,12 +599,22 @@ export function BackupSettingsPage() {
       </div>
 
       <Dialog open={exportOpen} onOpenChange={(open) => (open ? setExportOpen(true) : closeExportDialog())}>
-        <DialogContent className="w-[min(92vw,560px)]">
+        <DialogContent size="sm">
           <DialogHeader>
             <DialogTitle>{t('backup.export.dialogTitle')}</DialogTitle>
             <DialogDescription>{t('backup.export.dialogDescription')}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
+            <BackupSectionsField
+              title={t('backup.export.sectionsTitle')}
+              sections={backupSections}
+              loading={backupSectionsQuery.isLoading}
+              error={backupSectionsQuery.isError}
+              value={exportSelection}
+              onChange={handleExportSectionsChange}
+              disabled={exportMutation.isPending}
+              emptyError={exportSectionsEmpty}
+            />
             <FormField label={t('backup.passphrase')} description={t('backup.passphraseDesc')} required>
               <Input
                 type="password"
@@ -627,7 +639,7 @@ export function BackupSettingsPage() {
               </Button>
             )}
             confirm={(
-              <Button onClick={handleExport} disabled={exportMutation.isPending}>
+              <Button onClick={handleExport} disabled={exportMutation.isPending || exportSectionsEmpty}>
                 {exportMutation.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileArchive className="h-4 w-4" />}
                 {t('backup.export.confirmAction')}
               </Button>
@@ -636,102 +648,22 @@ export function BackupSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={importOpen} onOpenChange={(open) => (open ? setImportOpen(true) : closeImportDialog())}>
-        <DialogContent className="w-[min(92vw,620px)]">
-          <DialogHeader>
-            <DialogTitle>{t('backup.import.dialogTitle')}</DialogTitle>
-            <DialogDescription>{t('backup.import.confirmDescription')}</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-4">
-            <div
-              onDrop={handleDrop}
-              onDragOver={(event) => {
-                event.preventDefault()
-                setDragging(true)
-              }}
-              onDragLeave={(event) => {
-                event.preventDefault()
-                setDragging(false)
-              }}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-inner border-2 border-dashed px-4 py-8 text-center transition-colors',
-                dragging
-                  ? 'border-tint bg-tint/5'
-                  : 'border-separator bg-fill-4 hover:border-tint/50 hover:bg-fill-3',
-              )}
-            >
-              <Upload className="h-8 w-8 text-label-2" />
-              <div className="text-body font-medium text-label">{t('backup.import.dropzone')}</div>
-              <div className="text-footnote text-label-2">{t('backup.import.fileHint')}</div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlyra,application/vnd.xlyra.backup"
-                className="hidden"
-                onChange={(event) => {
-                  selectImportFile(event.target.files?.item(0) ?? null)
-                  event.target.value = ''
-                }}
-              />
-            </div>
+      <ImportBackupDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onConfirm={(file, passphrase) => {
+          setImportOpen(false)
+          setRestoreTask({ type: 'manual', file, passphrase })
+        }}
+        disabled={Boolean(visibleBackgroundRestoreTask)}
+      />
 
-            {importFile ? (
-              <div className="flex items-center gap-3 rounded-control border border-separator bg-fill-4 px-3 py-2">
-                <FileArchive className="h-4 w-4 shrink-0 text-label-2" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-body text-label">{importFile.name}</div>
-                  <div className="text-footnote text-label-2">{formatFileSize(importFile.size)}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setImportFile(null)}
-                  className="shrink-0 rounded p-1 text-label-2 transition-colors hover:bg-fill-3 hover:text-label"
-                  aria-label={t('backup.import.removeFile')}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : null}
-
-            <FormField label={t('backup.passphrase')} description={t('backup.import.passphraseDesc')} required>
-              <Input
-                type="password"
-                autoComplete="current-password"
-                value={importPassphrase}
-                onChange={(event) => setImportPassphrase(event.target.value)}
-              />
-            </FormField>
-          </DialogBody>
-          <DialogFooter
-            cancel={(
-              <Button variant="secondary" onClick={closeImportDialog}>
-                {t('common:actions.cancel', { ns: 'common' })}
-              </Button>
-            )}
-            confirm={(
-              <Button variant="destructive" onClick={handleImport} disabled={Boolean(visibleBackgroundRestoreTask)}>
-                <DatabaseBackup className="h-4 w-4" />
-                {t('backup.import.confirmAction')}
-              </Button>
-            )}
-          />
-        </DialogContent>
-      </Dialog>
-
-      <ConfirmDialog
-        open={Boolean(restoreTarget)}
-        title={t('backup.automatic.restoreConfirmTitle')}
-        description={restoreTarget ? t('backup.automatic.restoreConfirmDescription', { filename: restoreTarget.filename }) : ''}
-        confirmLabel={t('backup.automatic.restoreConfirmAction')}
-        pending={false}
-        destructive
+      <AutomaticRestoreDialog
+        file={restoreTarget}
         onCancel={() => setRestoreTarget(null)}
-        onConfirm={() => {
-          if (restoreTarget) {
-            setRestoreTask({ type: 'automatic', key: restoreTarget.key, filename: restoreTarget.filename })
-            setRestoreTarget(null)
-          }
+        onConfirm={(file) => {
+          setRestoreTask({ type: 'automatic', key: file.key, filename: file.filename })
+          setRestoreTarget(null)
         }}
       />
 
@@ -840,8 +772,25 @@ function ConfirmDialog({
   )
 }
 
-function isBackupFile(file: File) {
-  return file.name.endsWith('.xlyra') || file.type === 'application/vnd.xlyra.backup'
+function readExportSectionsMemory(): string[] | null {
+  try {
+    const raw = localStorage.getItem(exportSectionsMemoryKey)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    const ids = parsed.filter((item): item is string => typeof item === 'string')
+    return ids.length > 0 ? ids : null
+  } catch {
+    return null
+  }
+}
+
+function saveExportSectionsMemory(sections: string[]) {
+  try {
+    localStorage.setItem(exportSectionsMemoryKey, JSON.stringify(sections))
+  } catch {
+    // 存储不可用时不影响导出。
+  }
 }
 
 function formatFileSize(bytes: number) {
@@ -862,6 +811,7 @@ function automaticConfigToDraft(config: AutomaticBackupConfig): AutomaticBackupD
     cron: config.cron,
     retentionCount: String(config.retention_count),
     backupPassphrase: '',
+    sections: config.sections ?? [],
     forcePathStyle: config.force_path_style,
     useSSL: config.use_ssl,
     skipTLSVerify: config.skip_tls_verify,
@@ -898,6 +848,7 @@ function automaticScheduleDraftToInput(draft: AutomaticBackupDraft, saved: Autom
     access_key: saved.accessKey.trim(),
     secret_key: '',
     backup_passphrase: draft.backupPassphrase.trim(),
+    sections: draft.sections,
     force_path_style: saved.forcePathStyle,
     use_ssl: saved.useSSL,
     skip_tls_verify: saved.skipTLSVerify,
@@ -939,7 +890,14 @@ function sameAutomaticSchedule(left: AutomaticBackupDraft, right: AutomaticBacku
     && left.cron === right.cron
     && left.retentionCount === right.retentionCount
     && left.backupPassphrase === right.backupPassphrase
+    && sameSectionIds(left.sections, right.sections)
   )
+}
+
+function sameSectionIds(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  const set = new Set(left)
+  return right.every((id) => set.has(id))
 }
 
 function reconcileAutomaticDraft(current: AutomaticBackupDraft | null, saved: AutomaticBackupDraft, savedPart: 'storage' | 'schedule') {
@@ -960,6 +918,7 @@ function reconcileAutomaticDraft(current: AutomaticBackupDraft | null, saved: Au
     next.cron = saved.cron
     next.retentionCount = saved.retentionCount
     next.backupPassphrase = ''
+    next.sections = [...saved.sections]
   }
   return sameAutomaticStorage(next, saved) && sameAutomaticSchedule(next, saved) ? null : next
 }

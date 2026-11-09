@@ -96,14 +96,14 @@ function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
   const draw = useOverlayMode() === 'draw'
   return (
     <div
-      className={cn('border-b border-separator text-left', draw ? DRAW_HEADER_CLASS : 'px-6 py-5', className)}
+      className={cn('border-b border-separator text-left', draw ? DRAW_HEADER_CLASS : 'px-6 py-5 max-lg:px-5 max-lg:py-4', className)}
       {...props}
     />
   )
 }
 
 function DialogBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5', className)} {...props} />
+  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 max-lg:px-5 max-lg:py-4', className)} {...props} />
 }
 
 type DialogFooterProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -123,7 +123,7 @@ function DialogFooter({ className, cancel, confirm, children, ...props }: Dialog
   return (
     <div
       className={cn(
-        'border-t border-separator px-6 py-4',
+        'border-t border-separator px-6 py-4 max-lg:px-5 max-lg:py-3',
         draw ? 'grid grid-flow-col auto-cols-fr gap-3 [&>*]:w-full' : 'flex items-center justify-end gap-2',
         className,
       )}

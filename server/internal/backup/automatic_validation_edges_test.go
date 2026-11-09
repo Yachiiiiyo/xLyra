@@ -12,7 +12,7 @@ import (
 func TestServiceExportImportRequireReadyDatabase(t *testing.T) {
 	t.Parallel()
 
-	service := NewService(nil, nil, "master-key", "")
+	service := NewService(nil, nil, "master-key")
 	if path, filename, err := service.Export(context.Background(), "secret"); path != "" || filename != "" {
 		t.Fatalf("Export error = %v, path=%q filename=%q; want ready database validation", err, path, filename)
 	} else {

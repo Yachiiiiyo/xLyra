@@ -1,0 +1,38 @@
+[
+  {
+    "message": {
+      "content": "RETRY-A 第一问",
+      "role": "user"
+    },
+    "message_id": "m-101",
+    "timestamp": "2026-10-29T08:30:10.000Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "RETRY-A 的回答",
+      "role": "assistant"
+    },
+    "message_id": "a101",
+    "timestamp": "2026-10-29T08:30:11.000Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "RETRY-B 改写后的重发",
+      "role": "user"
+    },
+    "message_id": "m-102",
+    "timestamp": "2026-10-29T08:35:01.000Z",
+    "type": "message"
+  },
+  {
+    "message": {
+      "content": "fork 之后的回答",
+      "role": "assistant"
+    },
+    "message_id": "a102",
+    "timestamp": "2026-10-29T08:35:02.000Z",
+    "type": "message"
+  }
+]

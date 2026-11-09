@@ -225,7 +225,8 @@ func TestImportDatabaseRunsCommitGuardInsideTransaction(t *testing.T) {
 	})
 	called := false
 	dump := databaseDump{
-		Tables: make(map[string][]map[string]any, len(backupTables)),
+		Tables:  make(map[string][]map[string]any, len(backupTables)),
+		Present: []string{},
 		beforeCommit: func() error {
 			called = true
 			return context.Canceled

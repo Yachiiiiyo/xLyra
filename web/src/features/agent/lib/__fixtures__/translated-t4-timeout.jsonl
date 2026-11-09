@@ -1,0 +1,14 @@
+{"type":"agent_start","data":{}}
+{"type":"tool_call_start","data":{"tool_call":{"id":"call_timeout","name":"risky_tool"}}}
+{"type":"tool_call_delta","data":{"delta":"{\"note\":","tool_call_id":"call_timeout"}}
+{"type":"tool_call_delta","data":{"delta":"\"slow\",\"","tool_call_id":"call_timeout"}}
+{"type":"tool_call_delta","data":{"delta":"mode\":\"t","tool_call_id":"call_timeout"}}
+{"type":"tool_call_delta","data":{"delta":"imeout\"}","tool_call_id":"call_timeout"}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_timeout","name":"risky_tool","raw_arguments":"{\"mode\":\"timeout\",\"note\":\"slow\"}"}}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_timeout","name":"risky_tool","raw_arguments":"{\"mode\":\"timeout\",\"note\":\"slow\"}"}}}
+{"type":"escalation_request","data":{"escalation":{"escalation_id":"bed1b607-9f2c-4c48-90dc-3fed1f192b6c","tool_name":"risky_tool"}}}
+{"type":"permission_result","data":{"allowed":false,"request_id":"bed1b607-9f2c-4c48-90dc-3fed1f192b6c"}}
+{"type":"tool_result","data":{"tool_result":{"is_error":true,"name":"risky_tool","output":"user denied risky_tool","tool_call_id":"call_timeout"}}}
+{"type":"text_delta","data":{"delta":"超时"}}
+{"type":"text_delta","data":{"delta":"后"}}
+{"type":"done","data":{"aborted":false}}

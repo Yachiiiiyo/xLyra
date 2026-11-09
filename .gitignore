@@ -34,6 +34,7 @@ coverage.out
 
 # Frontend dependencies and build output
 web/node_modules/
+agent-runtime/node_modules/
 web/dist/
 web/dist-ssr/
 

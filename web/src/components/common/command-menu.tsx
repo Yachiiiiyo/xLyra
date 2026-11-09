@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { getAppNavSections, type AppNavItem } from '@/lib/navigation'
+import { filterHiddenNavSections, getAppNavSections, type AppNavItem } from '@/lib/navigation'
 import { useMobileDevice, useMobileLayout } from '@/hooks/use-media-query'
 import { useAgentAvailability } from '@/features/agent/lib/use-agent-availability'
+import { useMenuPreferences } from '@/features/appearance/api/appearance'
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ export function CommandMenu({ open: openProp, onOpenChange: onOpenChangeProp }: 
   const isMobileLayout = useMobileLayout()
   const isMobileDevice = useMobileDevice()
   const agentAvailable = useAgentAvailability()
+  const { hiddenMenuItems } = useMenuPreferences()
   const [openState, setOpenState] = useState(false)
   const open = openProp ?? openState
   const setOpen = onOpenChangeProp ?? setOpenState
@@ -33,7 +35,7 @@ export function CommandMenu({ open: openProp, onOpenChange: onOpenChangeProp }: 
   const listRef = useRef<HTMLDivElement>(null)
 
   const allCommandItems = useMemo<CommandItem[]>(() => {
-    const sections = getAppNavSections(t, { agent: agentAvailable })
+    const sections = filterHiddenNavSections(getAppNavSections(t, { agent: agentAvailable }), hiddenMenuItems)
     return sections.flatMap((section) =>
       section.items.filter((item) => !item.desktopOnly || (!isMobileLayout && !isMobileDevice)).flatMap((item) => {
         const self: CommandItem = { ...item, section: section.label }
@@ -43,7 +45,7 @@ export function CommandMenu({ open: openProp, onOpenChange: onOpenChangeProp }: 
         return [self, ...kids]
       }),
     )
-  }, [isMobileDevice, isMobileLayout, t, agentAvailable])
+  }, [isMobileDevice, isMobileLayout, t, agentAvailable, hiddenMenuItems])
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {

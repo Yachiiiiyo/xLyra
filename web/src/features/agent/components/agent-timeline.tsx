@@ -1,36 +1,95 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Copy, FilePenLine, FileText, Globe, Info, LoaderCircle, Pencil, Search, ShieldAlert, TerminalSquare, Wrench } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, CircleCheck, CircleX, Copy, FilePenLine, FileText, GitBranch, Globe, Info, LoaderCircle, Pencil, Search, ShieldAlert, TerminalSquare, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
-import { PlaygroundMessageAction } from '@/features/playground/components/playground-message-actions'
-import { ChatAttachmentItem } from '@/features/playground/components/chat-attachment'
-import { MarkdownMessage } from '@/features/playground/components/markdown-message'
-import type { ChatAttachment } from '@/features/playground/lib/types'
-import type { AgentPermissionRequest, AgentRun, AgentTimelineItem, AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { MessageAction } from '@/components/chat/message-actions'
+import { ChatAttachmentItem } from '@/components/chat/chat-attachment'
+import { MarkdownMessage } from '@/components/chat/markdown-message'
+import type { ChatAttachment } from '@/lib/chat-types'
+import type { AgentQuestionAnswer, AgentSession } from '@/features/agent/api/agent'
+import { shortSessionId, type AgentSessionReference } from '@/features/agent/lib/references'
+import { formatAbsoluteTime, formatMessageTime } from '@/features/agent/lib/relative-time'
+import { canForkFromMessage, pausedForUser, runElapsedMs, type AgentPermissionRequest, type AgentQuestion, type AgentRun, type AgentTimelineItem, type AgentWorkStep } from '@/features/agent/lib/agent-events'
+import { AgentQuestionCard, AgentQuestionSummary } from '@/features/agent/components/agent-question-card'
+import { AgentGeneratedImage } from '@/features/agent/components/agent-generated-image'
+import { isGeneratedImagePath, runGeneratedImages } from '@/features/agent/lib/generated-images'
+import { runDisplayChanges } from '@/features/agent/lib/run-changes'
+import { AgentRunChanges } from '@/features/agent/components/agent-run-changes'
+import { previewKindForPath } from '@/features/agent/lib/preview-kind'
 
 type AgentTimelineProps = {
   items: AgentTimelineItem[]
-  onPermissionDecision?: (request: AgentPermissionRequest, decision: 'allow' | 'deny') => void
+  sessionId?: string
+  /** 当前会话是否在运行：运行中不提供「从这里分叉」入口 */
+  running?: boolean
+  /** 会话列表：判断被引用的会话是否还存在（存在才可点击跳转） */
+  sessions?: AgentSession[]
+  onPermissionDecision?: (request: AgentPermissionRequest, decision: 'allow' | 'deny' | 'allow_session') => void
+  /** 提交/跳过提问：由 workspace 调 answerAgentQuestion */
+  onQuestionAnswer?: (question: AgentQuestion, answers: AgentQuestionAnswer[]) => void
+  onQuestionSkip?: (question: AgentQuestion) => void
   onUserEdit?: (messageId: string, text: string) => void
+  onFork?: (messageId: string) => void
+  onOpenReference?: (sessionId: string) => void
+  onOpenChange?: (runId: string, path: string) => void
+  onOpenFile?: (path: string) => void
 }
 
-export function AgentTimeline({ items, onPermissionDecision, onUserEdit }: AgentTimelineProps) {
+export function AgentTimeline({ items, sessionId, running, sessions, onPermissionDecision, onQuestionAnswer, onQuestionSkip, onUserEdit, onFork, onOpenReference, onOpenChange, onOpenFile }: AgentTimelineProps) {
   const lastUserIndex = items.reduce((index, item, current) => item.kind === 'user' ? current : index, -1)
+  const sessionIds = useMemo(() => new Set((sessions ?? []).map((session) => session.session_id)), [sessions])
+  // 分叉入口需要「这一轮对应的用户消息 id」：取时间线里紧邻当前 run 之前的 user 项
+  const forkMessageIds = useMemo(() => items.map((item, index) => {
+    if (item.kind !== 'run') return undefined
+    for (let i = index - 1; i >= 0; i -= 1) {
+      const candidate = items[i]
+      if (candidate?.kind === 'user') return candidate.messageId
+    }
+    return undefined
+  }), [items])
+  // 时间线里所有 run 的工具结果产出过的图片路径:回复里引用了不在其中的 images/ 路径,
+  // 多半是模型编造的(没调用生图工具也会照着示例写),不显示,免得出一个「文件不存在」的空框
+  // bash/脚本写出的图片不经过生图工具,从后端 run_changes 里补上
+  const knownImagePaths = useMemo(() => new Set(items.flatMap((item) => item.kind === 'run' ? [
+    ...runGeneratedImages(item.run).map((image) => image.path),
+    ...(item.run.changes?.files ?? []).filter((file) => file.kind !== 'deleted' && /\.(?:png|jpe?g|webp|gif)$/i.test(file.path)).map((file) => file.path),
+  ] : [])), [items])
   return (
     <div className="space-y-6">
       {items.map((item, index) => (
         item.kind === 'user'
-          ? <UserMessage key={item.id} text={item.text} attachments={item.attachments} editable={index === lastUserIndex && Boolean(item.messageId) && Boolean(onUserEdit)} onEdit={item.messageId && onUserEdit ? () => onUserEdit(item.messageId!, item.text) : undefined} />
-          : <RunBlock key={item.id} run={item.run} onPermissionDecision={onPermissionDecision} />
+          ? <UserMessage
+              key={item.id}
+              text={item.text}
+              attachments={item.attachments}
+              references={item.references}
+              referenceExists={sessionIds}
+              onOpenReference={onOpenReference}
+              editable={index === lastUserIndex && Boolean(item.messageId) && Boolean(onUserEdit)}
+              onEdit={item.messageId && onUserEdit ? () => onUserEdit(item.messageId!, item.text) : undefined}
+            />
+          : <RunBlock
+              key={item.id}
+              run={item.run}
+              sessionId={sessionId}
+              knownImagePaths={knownImagePaths}
+              forkMessageId={canForkFromMessage(forkMessageIds[index], Boolean(running)) ? forkMessageIds[index] : undefined}
+              onFork={onFork}
+              onPermissionDecision={onPermissionDecision}
+              onQuestionAnswer={onQuestionAnswer}
+              onQuestionSkip={onQuestionSkip}
+              onOpenChange={onOpenChange}
+              onOpenFile={onOpenFile}
+            />
       ))}
     </div>
   )
 }
 
-function UserMessage({ text, attachments, editable, onEdit }: { text: string; attachments?: ChatAttachment[]; editable?: boolean; onEdit?: () => void }) {
-  const { t } = useTranslation(['agent', 'playground'])
+function UserMessage({ text, attachments, references, referenceExists, onOpenReference, editable, onEdit }: { text: string; attachments?: ChatAttachment[]; references?: AgentSessionReference[]; referenceExists?: Set<string>; onOpenReference?: (sessionId: string) => void; editable?: boolean; onEdit?: () => void }) {
+  const { t } = useTranslation(['agent', 'chat'])
   return (
     <div className="group flex flex-col items-end gap-1">
       {attachments?.length ? (
@@ -38,15 +97,42 @@ function UserMessage({ text, attachments, editable, onEdit }: { text: string; at
           {attachments.map((attachment) => <ChatAttachmentItem key={attachment.id} attachment={attachment} />)}
         </div>
       ) : null}
-      <div className="agent-liquid-user-message max-w-[82%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6">
+      <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl bg-[hsl(var(--surface-selected))] px-4 py-3 text-sm leading-6 text-foreground">
         {text}
       </div>
+      {references?.length ? (
+        <div className="flex max-w-[82%] flex-wrap justify-end gap-1.5">
+          {references.map((reference) => {
+            const label = t('agent:chat.referencedTag', { title: reference.title || shortSessionId(reference.sessionId) })
+            const openable = Boolean(onOpenReference) && (referenceExists?.has(reference.sessionId) ?? false)
+            return openable ? (
+              <button
+                key={reference.sessionId}
+                type="button"
+                title={reference.sessionId}
+                onClick={() => onOpenReference?.(reference.sessionId)}
+                className="max-w-64 truncate rounded-full border border-separator bg-fill-3 px-2.5 py-0.5 text-xs text-label-2 transition-colors hover:text-label"
+              >
+                {label}
+              </button>
+            ) : (
+              <span
+                key={reference.sessionId}
+                title={reference.sessionId}
+                className="max-w-64 truncate rounded-full border border-separator bg-fill-3 px-2.5 py-0.5 text-xs text-label-3"
+              >
+                {label}
+              </span>
+            )
+          })}
+        </div>
+      ) : null}
       <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
         <CopyMessageAction text={text} />
         {editable && onEdit ? (
-          <PlaygroundMessageAction label={t('playground:actions.edit')} onClick={onEdit}>
+          <MessageAction label={t('chat:actions.edit')} onClick={onEdit}>
             <Pencil className="h-3.5 w-3.5" />
-          </PlaygroundMessageAction>
+          </MessageAction>
         ) : null}
       </div>
     </div>
@@ -54,7 +140,7 @@ function UserMessage({ text, attachments, editable, onEdit }: { text: string; at
 }
 
 function CopyMessageAction({ text }: { text: string }) {
-  const { t } = useTranslation('playground')
+  const { t } = useTranslation('chat')
   const [copied, setCopied] = useState(false)
   const timerRef = useRef<number | null>(null)
 
@@ -71,9 +157,27 @@ function CopyMessageAction({ text }: { text: string }) {
   }
 
   return (
-    <PlaygroundMessageAction label={copied ? t('actions.copied') : t('actions.copy')} onClick={() => void copy()}>
+    <MessageAction label={copied ? t('actions.copied') : t('actions.copy')} onClick={() => void copy()}>
       {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-    </PlaygroundMessageAction>
+    </MessageAction>
+  )
+}
+
+/** 回复底部的时间:12 小时内相对时间(每半分钟刷新),之后显示具体时间;悬停显示完整时间。 */
+function MessageTime({ at }: { at?: number }) {
+  const { i18n } = useTranslation()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  if (!at) return null
+  const label = formatMessageTime(at, i18n.language, now)
+  if (!label) return null
+  return (
+    <span className="px-1 text-[11px] text-muted-soft tabular-nums" title={formatAbsoluteTime(at, i18n.language, now)}>
+      {label}
+    </span>
   )
 }
 
@@ -101,7 +205,8 @@ function buildRunFlow(run: AgentRun): RunFlowItem[] {
     }
     pendingPermissions.delete(position)
   }
-  run.steps.forEach((step, index) => {
+  const steps = run.steps.filter((step) => !(step.kind === 'tool' && step.title.toLowerCase() === 'question'))
+  steps.forEach((step, index) => {
     // position === 到达时已有的步骤数，即排在第 index 步之前的请求先出列
     flushPermissions(index)
     if (step.kind === 'text') {
@@ -120,11 +225,25 @@ function buildRunFlow(run: AgentRun): RunFlowItem[] {
   return items
 }
 
-function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDecision?: AgentTimelineProps['onPermissionDecision'] }) {
+function ForkMessageAction({ messageId, onFork }: { messageId: string; onFork?: (messageId: string) => void }) {
+  const { t } = useTranslation('agent')
+  if (!onFork) return null
+  return (
+    <MessageAction label={t('chat.forkFromHere')} onClick={() => onFork(messageId)}>
+      <GitBranch className="h-3.5 w-3.5" />
+    </MessageAction>
+  )
+}
+
+function RunBlock({ run, sessionId, knownImagePaths, forkMessageId, onFork, onPermissionDecision, onQuestionAnswer, onQuestionSkip, onOpenChange, onOpenFile }: { run: AgentRun; sessionId?: string; knownImagePaths?: Set<string>; forkMessageId?: string; onFork?: (messageId: string) => void; onPermissionDecision?: AgentTimelineProps['onPermissionDecision']; onQuestionAnswer?: AgentTimelineProps['onQuestionAnswer']; onQuestionSkip?: AgentTimelineProps['onQuestionSkip']; onOpenChange?: AgentTimelineProps['onOpenChange']; onOpenFile?: AgentTimelineProps['onOpenFile'] }) {
   const { t } = useTranslation('agent')
   const done = run.status !== 'running'
-  const pausedForPermission = run.status === 'cancelled' && run.permissions.length > 0
+  // 等待用户（审批或提问）的取消是暂停而非停止：隐藏「已取消」误导文案
+  const pausedForPermission = run.status === 'cancelled' && pausedForUser(run)
+  const questions = run.questions ?? []
+  const [questionSubmitting, setQuestionSubmitting] = useState(false)
   const flow = buildRunFlow(run)
+  const changes = useMemo(() => sessionId ? runDisplayChanges(run) : [], [run, sessionId])
   const lastTextIndex = flow.reduce((found, item, index) => (item.kind === 'text' ? index : found), -1)
   // 有最终回复的完成 run 才把工作过程自动折叠进「用时」行；纯状态步骤的 run
   // （如手动压缩）没有回复文本，保持展开让「已压缩上下文」直接可见
@@ -140,12 +259,27 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
   const finalItem = tailIndex >= 0 ? flow[tailIndex] : undefined
   // 复制内容与展示口径一致：只复制作为回复展示的最后一段，不带中间输出
   const replyText = finalItem?.kind === 'text' ? finalItem.text : run.finalText
+  const galleryImages = run.status === 'done' && sessionId
+    ? runGeneratedImages(run).filter((image) => !replyText.includes(image.path))
+    : []
+  const renderImage = sessionId
+    ? ({ src, alt }: { src?: string; alt?: string }) => {
+        if (!isGeneratedImagePath(src) || !src) return <img src={src} alt={alt} />
+        return knownImagePaths?.has(src) ? <AgentGeneratedImage sessionId={sessionId} path={src} alt={alt} /> : null
+      }
+    : undefined
+  const renderLink = ({ href, children }: { href?: string; children: ReactNode }) => {
+    const workspacePath = href && !/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith('/') && !href.startsWith('#') && !href.includes('..') && previewKindForPath(href) !== 'binary' ? href : null
+    return workspacePath ? (
+      <button type="button" className="inline text-label underline decoration-label-3 underline-offset-2 hover:text-label-2" onClick={() => onOpenFile?.(workspacePath)}>{children}</button>
+    ) : <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+  }
   const [override, setOverride] = useState<boolean | null>(null)
   const processExpanded = override ?? !settled
   const now = useTickingNow(!done)
   const elapsedMs = done
     ? (run.elapsedMs ?? Math.max(0, (run.endedAt ?? now) - run.startedAt))
-    : (run.elapsedMs ?? 0) + Math.max(0, now - run.startedAt)
+    : runElapsedMs(run, now)
   const hasProcess = processItems.length > 0
   // 纯状态 run（如手动压缩）：没有用时行、没有折叠区，状态行直接顶层显示
   const onlyStatus = flow.length > 0 && flow.every((item) => item.kind === 'status')
@@ -154,7 +288,10 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
       <div className="space-y-1">
         {flow.map((item) => item.kind === 'status' ? <StatusStepLine key={item.id} step={item.step} /> : null)}
         {run.status === 'error' ? (
-          <p className="px-1.5 text-xs text-red-500">{t('work.failed')}</p>
+          <div className="space-y-1 px-1.5 text-xs text-red-500">
+            <p>{t('work.failed')}</p>
+            {run.errorMessage ? <p className="whitespace-pre-wrap break-words">{run.errorMessage}</p> : null}
+          </div>
         ) : null}
       </div>
     )
@@ -179,7 +316,7 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
           <div className="mt-1.5 space-y-3 border-l-2 border-[hsl(var(--glass-divider))] pl-3">
             {processItems.map((item, index) => {
               if (item.kind === 'text') {
-                return <MarkdownMessage key={item.id} content={item.text} className="text-[15px] leading-7" />
+                return <MarkdownMessage key={item.id} content={item.text} className="text-[15px] leading-7" renderImage={renderImage} renderLink={renderLink} />
               }
               if (item.kind === 'permission') {
                 return <PermissionCard key={item.id} request={item.request} onDecision={onPermissionDecision} />
@@ -189,20 +326,41 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
               }
               // 末尾文本段被提升为实时回复时，它前面的工具组不再是流式尾部，
               // 保持完成汇总标签，不要在文本流式期间跳回「运行中」
-              return <StepGroup key={item.id} steps={item.steps} active={!done && liveTailIndex < 0 && index === processItems.length - 1} />
+              return <StepGroup key={item.id} steps={item.steps} sessionId={sessionId} active={!done && liveTailIndex < 0 && index === processItems.length - 1} />
             })}
           </div>
         ) : null}
       </div>
 
+      {/* 问答卡片与摘要：过程区之后、画廊之前、最终回复文字之前 */}
+      {questions.map((question) => (
+        question.status === 'pending'
+          ? <AgentQuestionCard
+              key={question.id}
+              question={question}
+              submitting={questionSubmitting}
+              onSubmit={(answers) => { setQuestionSubmitting(true); onQuestionAnswer?.(question, answers) }}
+              onSkip={() => { setQuestionSubmitting(true); onQuestionSkip?.(question) }}
+            />
+          : <AgentQuestionSummary key={question.id} question={question} />
+      ))}
+
+      {galleryImages.length ? (
+        <div data-generated-gallery className={cn('grid gap-3', galleryImages.length > 1 && 'sm:grid-cols-2')}>
+          {galleryImages.map((image) => <AgentGeneratedImage key={image.path} sessionId={sessionId!} {...image} />)}
+        </div>
+      ) : null}
+
       {finalItem?.kind === 'text' ? (
         <div className="group space-y-1">
-          <MarkdownMessage content={finalItem.text} className="text-[15px] leading-7" />
+          <MarkdownMessage content={finalItem.text} className="text-[15px] leading-7" renderImage={renderImage} renderLink={renderLink} />
           {done && !pausedForPermission && replyText ? (
             // 复制入口常驻布局（opacity 切换，不占位消失），避免 hover 时下方内容跳动；
             // 桌面端 hover 回复文本时显现，移动端无 hover 保持常显
             <div className="flex items-center gap-2 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
               <CopyMessageAction text={replyText} />
+              {forkMessageId ? <ForkMessageAction messageId={forkMessageId} onFork={onFork} /> : null}
+              <MessageTime at={run.endedAt ?? run.startedAt} />
             </div>
           ) : null}
         </div>
@@ -210,14 +368,23 @@ function RunBlock({ run, onPermissionDecision }: { run: AgentRun; onPermissionDe
         // 回复文本未能提升为最终输出时（如出错 run 的部分输出在过程区），复制入口单独常显
         <div className="flex items-center gap-2">
           <CopyMessageAction text={replyText} />
+          {forkMessageId ? <ForkMessageAction messageId={forkMessageId} onFork={onFork} /> : null}
+          <MessageTime at={run.endedAt ?? run.startedAt} />
         </div>
       ) : null}
 
+      {done && changes.length > 0 && onOpenChange ? (
+        <AgentRunChanges changes={changes} total={run.changes?.total} incomplete={run.changes?.incomplete} onOpen={(path) => onOpenChange(run.id, path)} />
+      ) : null}
+
       {run.status === 'error' ? (
-        <p className="text-xs text-red-500">{t('work.failed')}</p>
+        <div className="space-y-1 text-xs text-red-500">
+          <p>{t('work.failed')}</p>
+          {run.errorMessage ? <p className="whitespace-pre-wrap break-words">{run.errorMessage}</p> : null}
+        </div>
       ) : null}
       {/* A cancellation caused by a pending escalation is a pause, not a stop — hide the label to avoid misleading. */}
-      {run.status === 'cancelled' && run.permissions.length === 0 ? (
+      {run.status === 'cancelled' && !pausedForPermission ? (
         <p className="text-xs text-muted-soft">{t('work.cancelled')}</p>
       ) : null}
     </div>
@@ -264,7 +431,7 @@ function measureStepDetail(container: HTMLElement | null, stepId: string): numbe
   return body ? body.scrollHeight : 0
 }
 
-function StepGroup({ steps, active }: { steps: AgentWorkStep[]; active?: boolean }) {
+function StepGroup({ steps, sessionId, active }: { steps: AgentWorkStep[]; sessionId?: string; active?: boolean }) {
   const { t } = useTranslation('agent')
   const [expanded, setExpanded] = useState(false)
   // 互斥展开：同组最多一个详情展开，点开新行自动收起上一行
@@ -277,7 +444,9 @@ function StepGroup({ steps, active }: { steps: AgentWorkStep[]; active?: boolean
   const contentRef = useRef<HTMLDivElement | null>(null)
   const runningStep = [...steps].reverse().find((step) => step.status === 'running')
   const statusLabel = runningStep
-    ? t(runningStep.argsDone === false ? 'work.preparingTool' : 'work.runningTool', { tool: runningStep.title })
+    ? runningStep.title === 'image_generation'
+      ? t('chat.image.generating')
+      : t(runningStep.argsDone === false ? 'work.preparingTool' : 'work.runningTool', { tool: runningStep.title })
     : active
       ? t('work.running', { count: steps.length })
       : summarizeSteps(steps, t)
@@ -332,6 +501,7 @@ function StepGroup({ steps, active }: { steps: AgentWorkStep[]; active?: boolean
               <StepRow
                 key={step.id}
                 step={step}
+                sessionId={sessionId}
                 open={openStepId === step.id}
                 onToggle={handleRowToggle}
               />
@@ -422,7 +592,7 @@ const STATUS_TITLE_KEYS: Record<string, string> = {
 }
 
 /** open/onToggle 由组内受控（互斥展开）；脱离组单独渲染时退回本地自持状态 */
-function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open?: boolean; onToggle?: (stepId: string) => void }) {
+function StepRow({ step, sessionId, open: openProp, onToggle }: { step: AgentWorkStep; sessionId?: string; open?: boolean; onToggle?: (stepId: string) => void }) {
   const { t } = useTranslation('agent')
   const [localOpen, setLocalOpen] = useState(false)
   const open = openProp ?? localOpen
@@ -437,7 +607,7 @@ function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open
   const inputPreview = step.kind === 'tool' ? previewToolInput(step.input) : ''
   const inputDetail = step.kind === 'tool' ? summarizeToolInput(step.input) : ''
   const detail = step.kind === 'tool' ? (step.output ?? step.detail ?? '') : (step.detail ?? '')
-  const canExpand = Boolean(inputDetail || detail)
+  const canExpand = Boolean(inputDetail || detail || (sessionId && step.images?.length))
 
   const toggle = () => {
     if (onToggle) {
@@ -481,12 +651,17 @@ function StepRow({ step, open: openProp, onToggle }: { step: AgentWorkStep; open
           open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
         )}>
           <div className="min-h-0 min-w-0 overflow-hidden">
-            <div data-step-body className="agent-step-detail mx-1 mb-1 min-w-0 rounded-md px-2 py-1.5">
+            <div data-step-body className="mx-1 mb-1 min-w-0 rounded-md bg-[hsl(var(--surface-subtle))] px-2 py-1.5">
               {inputPreview ? (
                 <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[10px] leading-4 text-muted-soft">{inputDetail}</pre>
               ) : null}
               {detail ? (
                 <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all border-t border-[hsl(var(--glass-divider))] pt-1 font-mono text-[10px] leading-4 text-muted-soft">{detail}</pre>
+              ) : null}
+              {sessionId && step.images?.length ? (
+                <div className={cn('mt-2 grid gap-2', step.images.length > 1 && 'grid-cols-2')}>
+                  {step.images.map((image) => <AgentGeneratedImage key={image.path} sessionId={sessionId} {...image} compact />)}
+                </div>
               ) : null}
             </div>
           </div>
@@ -532,6 +707,43 @@ function previewText(value: string | undefined, limit: number): string {
 
 function PermissionCard({ request, onDecision }: { request: AgentPermissionRequest; onDecision?: AgentTimelineProps['onPermissionDecision'] }) {
   const { t } = useTranslation('agent')
+  // bash 审批带「命中规则」的 note 是高风险命令提示，后端不会自动放行，故不提供会话内允许
+  const allowSession = !(request.tool.toLowerCase() === 'bash' && (request.note ?? '').includes('命中规则'))
+  const autoReason = request.auto ? request.reason : undefined
+  const decisionLabel = request.decision === 'denied'
+    ? autoReason
+      ? t('permission.autoDenied')
+      : t('permission.denied')
+    : request.auto
+      ? autoReason
+        ? t('permission.autoApproved')
+        : t('permission.autoAllowed')
+      : request.scope === 'session'
+        ? t('permission.allowedSession')
+        : t('permission.allowed')
+
+  // 已处理(允许/拒绝)的请求收成一行:工具名 + 命令/路径首行 + 结果;完整内容放在悬停提示里
+  if (request.decision) {
+    const summary = (request.detail ?? '').split('\n').find((line) => line.trim()) ?? ''
+    return (
+      <div
+        className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs"
+        title={[request.detail, request.note].filter(Boolean).join('\n')}
+      >
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <span className="shrink-0 font-medium text-foreground">{toolDisplayName(request.tool, t)}</span>
+          {summary ? <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-soft">{summary}</code> : <span className="flex-1" />}
+          <span className={cn('shrink-0 font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>{decisionLabel}</span>
+        </div>
+        {autoReason ? (
+          <p className="mt-1 whitespace-pre-wrap break-words pl-5 text-[11px] leading-4 text-muted-soft">
+            {t('permission.autoReason', { reason: autoReason })}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
@@ -547,16 +759,27 @@ function PermissionCard({ request, onDecision }: { request: AgentPermissionReque
           {request.detail}
         </pre>
       ) : null}
-      {request.decision ? (
-        <p className={cn('mt-2 text-xs font-medium', request.decision === 'allowed' ? 'text-emerald-500' : 'text-red-500')}>
-          {request.decision === 'allowed' ? t('permission.allowed') : t('permission.denied')}
-        </p>
-      ) : (
-        <div className="mt-3 flex gap-2">
-          <Button size="sm" onClick={() => onDecision?.(request, 'allow')}>{t('permission.allow')}</Button>
-          <Button size="sm" variant="outline" onClick={() => onDecision?.(request, 'deny')}>{t('permission.deny')}</Button>
-        </div>
-      )}
+      {request.note ? (
+        <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted-soft">{request.note}</p>
+      ) : null}
+      <div className="mt-3 flex gap-2">
+        <Button size="sm" onClick={() => onDecision?.(request, 'allow')}>{t('permission.allow')}</Button>
+        {allowSession ? (
+          <Button size="sm" variant="outline" title={t('permission.allowSessionHint', { tool: toolDisplayName(request.tool, t) })} onClick={() => onDecision?.(request, 'allow_session')}>
+            {t('permission.allowSession')}
+          </Button>
+        ) : null}
+        <Button size="sm" variant="outline" onClick={() => onDecision?.(request, 'deny')}>{t('permission.deny')}</Button>
+      </div>
     </div>
   )
+}
+
+/** 权限卡片里的工具显示名：write/edit/bash 用可读名称，其余直接用工具名 */
+function toolDisplayName(tool: string, t: (key: string) => string): string {
+  const name = tool.toLowerCase()
+  if (name === 'write') return t('permission.tool.write')
+  if (name === 'edit') return t('permission.tool.edit')
+  if (name === 'bash') return t('permission.tool.bash')
+  return tool
 }

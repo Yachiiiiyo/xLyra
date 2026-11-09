@@ -24,6 +24,7 @@ import (
 	"xlyra/server/internal/analytics"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/catalog"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/dashboard"
 	"xlyra/server/internal/downloads"
@@ -31,13 +32,11 @@ import (
 	"xlyra/server/internal/health"
 	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
 	oauthsvc "xlyra/server/internal/oauth"
 	"xlyra/server/internal/observability"
-	"xlyra/server/internal/playground"
 	routeengine "xlyra/server/internal/router"
 	"xlyra/server/internal/settings"
 	"xlyra/server/internal/site"
@@ -84,7 +83,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 
 	httpClients := httpclient.NewManager(confFile)
 	defaultHTTPClient, _ := httpClients.Client(httpclient.DefaultProfile())
-	streamingHTTPClient, _ := httpClients.Client(httpclient.StreamingProfile(httpclient.DefaultProfile()))
 	newAPIService := newapi.NewServiceWithHTTPClient(defaultHTTPClient)
 	var oauthService *oauthsvc.Service
 	var siteService *site.Service
@@ -196,67 +194,12 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	if siteService != nil {
 		gatewayHandler = gatewayHandler.WithPluginAccountRefresher(pluginAccountRefresher{sites: siteService})
 	}
-	playgroundGatewayHandler := gatewayHandler.WithRouteSiteHeader()
-	playgroundRoot := filepath.Join(config.ResolveWorkdir(), "playground")
-	playgroundService := playground.NewService(logger.With("thread", "playground"), db, gatewayHandler, playgroundRoot)
-	playgroundHandler := playground.NewHandler(playgroundService)
 	agentLLMHandler := agentllm.NewHandler(logger.With("thread", "agent-llm"), db, gatewayHandler)
-	agentProxyHandler := agentproxy.NewHandler(cfg.AgentRunnerBaseURL, cfg.AgentRunnerToken, streamingHTTPClient, logger.With("thread", "agent-proxy"), config.ResolveWorkdir())
-	if routerService != nil {
-		agentProxyHandler.SetProtocolResolver(func(ctx context.Context, model string) (string, error) {
-			policy, modelPolicy, siteIDs, siteModelIDs := agentproxy.AccessPolicyFromConfig(confFile)
-			query := routeengine.CandidateQuery{ModelKey: model}
-			if policy == "allow_list" {
-				query.AllowedSiteIDs = parseAgentUUIDs(siteIDs)
-			}
-			if modelPolicy == "allow_list" {
-				query.AllowedSiteModelIDs = parseAgentUUIDs(siteModelIDs)
-			}
-			candidates, err := routerService.Candidates(ctx, query)
-			if err != nil {
-				// 解析失败（如模型未归一到 canonical、路由服务异常）不能阻断会话创建：
-				// 降级为 openai-responses，由网关在实际调用时做协议转换或报出真实路由错误
-				logger.Warn("agent protocol resolution failed, falling back to openai-responses", "model", model, "error", err)
-				return "openai-responses", nil
-			}
-			protocol := ""
-			for _, candidate := range candidates.Items {
-				for _, endpointType := range candidate.Model.SupportedEndpointTypes {
-					switch strings.ToLower(strings.TrimSpace(endpointType)) {
-					case "anthropic-messages", "messages":
-						return "anthropic-messages", nil
-					case "openai-response", "openai-responses", "responses":
-						protocol = "openai-responses"
-					case "openai", "chat", "chat-completions", "openai-chat-completions":
-						if protocol == "" {
-							protocol = "openai-chat-completions"
-						}
-					}
-				}
-			}
-			if protocol == "" {
-				// 候选为空（冷却/无可用凭证/白名单过滤）同样降级：错误应发生在实际 LLM 调用时，而不是会话创建时
-				logger.Warn("no supported agent protocol from candidates, falling back to openai-responses", "model", model, "candidates", len(candidates.Items))
-				return "openai-responses", nil
-			}
-			return protocol, nil
-		})
-	}
-	agentProxyHandler.SetOnRunStarted(func(ctx context.Context, run agentproxy.RunRegistration) error {
-		return agentLLMHandler.RegisterRun(ctx, run.AgentInstanceID, run.SessionID, run.RunID, run.Model)
+	agentLLMHandler.SetImageModelsSource(func() []agentproxy.ImageModelSelection {
+		return agentproxy.ImageModelsFromConfig(confFile)
 	})
-	if confFile != nil {
-		if value, ok := confFile.Get("agent.runner_base_url"); ok {
-			if baseURL, valid := value.(string); valid && strings.TrimSpace(baseURL) != "" {
-				agentProxyHandler.SetBaseURL(baseURL)
-			}
-		}
-		if value, ok := confFile.Get("agent.runner_internal_token"); ok {
-			if token, valid := value.(string); valid && strings.TrimSpace(token) != "" {
-				agentProxyHandler.SetToken(token)
-			}
-		}
-	}
+	agentLLMHandler.SetImageGenerationOptions(cfg.AgentImageMaxCalls, cfg.AgentImageTimeout)
+	agentProxyHandler := agentproxy.NewHandler(logger.With("thread", "agent-proxy"), config.ResolveWorkdir())
 	syncAgentAccessPolicy := func() {
 		if db == nil {
 			return
@@ -277,6 +220,18 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		}()
 		go syncAgentAccessPolicy()
 	}
+	// 内置 Pi 是唯一引擎，始终装配。
+	builtin := newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory)
+	if tasks != nil {
+		tasks.Add(1)
+		go func() {
+			defer tasks.Done()
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			builtin.shutdown(shutdownCtx)
+		}()
+	}
 	adminHandler := admin.NewHandler(logger.With("thread", "admin"), authService, siteService, catalogService, routerService, usageService, dashboardService, systemStatsService, &gatewayHandler, newAPIService, oauthService, appTimeZone).WithDownloadService(downloadService).WithTrafficFlowStore(db).WithAnalyticsService(analyticsService)
 	if jsPluginManager != nil {
 		adminHandler = adminHandler.WithJSPlugins(jsPluginManager)
@@ -289,20 +244,39 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
-	if playgroundService != nil {
-		preRestore = playgroundService.QuiesceForRestore
-		postRestore = playgroundService.RecoverAfterRestore
+	if builtin.beginRestore != nil {
+		// 恢复前先拦住 Agent 运行(有进行中的任务则拒绝恢复);
+		// 恢复后(含失败收敛)按相反顺序放行。
+		preRestore = func(ctx context.Context) error {
+			return builtin.beginRestore()
+		}
+		postRestore = func(ctx context.Context) error {
+			// 恢复出的工作区文件属主是 xLyra 进程用户;沙箱开启时放开权限。
+			if builtin.relaxWorkspace != nil {
+				builtin.relaxWorkspace()
+			}
+			builtin.endRestore()
+			return nil
+		}
 	}
-	if authService != nil {
+	if authService != nil || jsPluginManager != nil {
 		databaseRestored = func(ctx context.Context) error {
-			if err := authService.RefreshBootstrapCache(ctx); err != nil {
-				authService.ClearBootstrapCache()
-				logger.Warn("bootstrap admin cache refresh after restore failed", "error", err)
+			if authService != nil {
+				if err := authService.RefreshBootstrapCache(ctx); err != nil {
+					authService.ClearBootstrapCache()
+					logger.Warn("bootstrap admin cache refresh after restore failed", "error", err)
+				}
+			}
+			// 插件类别恢复后,运行时需要按库里的新内容重新加载。
+			if jsPluginManager != nil {
+				if err := jsPluginManager.Reload(ctx); err != nil {
+					logger.Warn("js plugin reload after restore failed", "error", err)
+				}
 			}
 			return nil
 		}
 	}
-	settingsHandler := settings.NewHandlerWithBackup(logger.With("thread", "settings"), confFile, db, masterKey, downloadService, playgroundRoot, preRestore, postRestore, databaseRestored, appTimeZone)
+	settingsHandler := settings.NewHandlerWithBackup(logger.With("thread", "settings"), confFile, db, masterKey, downloadService, resolveAgentDataDir(cfg), resolveAgentWorkspaceDir(cfg, resolveAgentDataDir(cfg)), preRestore, postRestore, databaseRestored, appTimeZone)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -315,7 +289,6 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		AllowedOrigins:   cfg.CORSAllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-API-Key", "X-Access-Token", "X-CSRF-Token"},
-		ExposedHeaders:   []string{gateway.RouteSiteHeader},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -352,54 +325,10 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Use(requireAdminCSRF(authService))
 				protected.Use(adminHandler.AuditAdminMutation)
 				protected.Route("/agent", func(agentRouter chi.Router) {
-					agentRouter.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
-						agentProxyHandler.GetSettings(w, r, confFile)
-					})
-					agentRouter.With(httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)).Put("/settings", func(w http.ResponseWriter, r *http.Request) {
-						agentProxyHandler.UpdateSettings(w, r, confFile)
-					})
-					agentRouter.Get("/backgrounds/{name}", agentProxyHandler.ServeBackground)
-					agentRouter.Get("/health", agentProxyHandler.Forward)
-					agentRouter.Get("/version", agentProxyHandler.Forward)
-					agentRouter.Post("/upgrade", agentProxyHandler.Forward)
-					agentRouter.Get("/memory", agentProxyHandler.Forward)
-					agentRouter.Put("/memory/{target}", agentProxyHandler.Forward)
-					agentRouter.Get("/skills", agentProxyHandler.Forward)
-					agentRouter.Get("/skills/{name}", agentProxyHandler.Forward)
-					agentRouter.Get("/skills/{name}/file", agentProxyHandler.Forward)
-					agentRouter.Put("/skills/{name}", agentProxyHandler.Forward)
-					agentRouter.Delete("/skills/{name}", agentProxyHandler.Forward)
-					agentRouter.Get("/learning/status", agentProxyHandler.Forward)
-					agentRouter.Get("/workspace/file", agentProxyHandler.Forward)
-					agentRouter.Put("/workspace/file", agentProxyHandler.Forward)
-					agentRouter.Delete("/workspace/file", agentProxyHandler.Forward)
-					agentRouter.Get("/model-memory", agentProxyHandler.Forward)
-					agentRouter.Get("/config", agentProxyHandler.Forward)
-					agentRouter.Put("/config", agentProxyHandler.Forward)
-					agentRouter.Get("/sessions", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions", agentProxyHandler.Forward)
-					agentRouter.Get("/sessions/{id}/transcript", agentProxyHandler.Forward)
-					agentRouter.Patch("/sessions/{id}", agentProxyHandler.Forward)
-					agentRouter.Delete("/sessions/{id}", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/retry", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/stop", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/compact-context", agentProxyHandler.Forward)
-					agentRouter.Post("/sessions/{id}/grant-access", agentProxyHandler.Forward)
-					agentRouter.Get("/sessions/{id}/events", agentProxyHandler.Forward)
+					registerAgentRoutes(agentRouter, cfg, confFile, agentProxyHandler, builtin)
 				})
 				protected.Get("/auth/session", adminHandler.CurrentSession)
 				protected.Delete("/auth/session", adminHandler.DeleteSession)
-				protected.Route("/playground", func(playgroundRouter chi.Router) {
-					playgroundRouter.Get("/models", playgroundHandler.Models)
-					playgroundRouter.Get("/conversations", playgroundHandler.List)
-					playgroundRouter.Get("/conversations/{conversationID}", playgroundHandler.Get)
-					playgroundRouter.With(httpx.LimitRequestBody(64*1024*1024)).Post("/conversations/{conversationID}/turns", playgroundHandler.StartTurn)
-					playgroundRouter.Get("/conversations/{conversationID}/events", playgroundHandler.Events)
-					playgroundRouter.Delete("/conversations/{conversationID}", playgroundHandler.Delete)
-					playgroundRouter.Post("/runs/{runID}/cancel", playgroundHandler.Cancel)
-					playgroundRouter.Get("/assets/{assetID}", playgroundHandler.Asset)
-				})
-
 				protected.Get("/profile", adminHandler.GetProfile)
 				protected.Put("/profile/account", adminHandler.UpdateProfileAccount)
 				protected.Put("/profile/password", adminHandler.UpdateProfilePassword)
@@ -515,6 +444,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Delete("/sites/{siteID}/accounts/{credentialID}", adminHandler.DeleteAccount)
 				protected.Post("/sites/{siteID}/accounts/{credentialID}/refresh", adminHandler.RefreshAccount)
 				protected.Get("/sites/{siteID}/models", adminHandler.ListSiteModels)
+				protected.Get("/site-models", adminHandler.ListAllSiteModels)
 				protected.Post("/sites/{siteID}/models", adminHandler.CreateSiteModel)
 				protected.Get("/sites/{siteID}/pricing", adminHandler.ListSitePricing)
 				protected.Put("/sites/{siteID}/models/status", adminHandler.UpdateSiteModelsStatus)
@@ -572,17 +502,23 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Post("/settings/system-proxy/test", settingsHandler.TestSystemProxy)
 				protected.Get("/settings/general", settingsHandler.GetGeneral)
 				protected.Put("/settings/general", settingsHandler.UpdateGeneral)
+				protected.Get("/settings/appearance", settingsHandler.GetAppearance)
+				protected.With(httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)).Put("/settings/appearance", settingsHandler.UpdateAppearance)
+				protected.Get("/appearance/backgrounds/{name}", settingsHandler.ServeAppearanceBackground)
 				protected.Get("/settings/portal", settingsHandler.GetPortal)
 				protected.Put("/settings/portal", settingsHandler.UpdatePortal)
 				protected.Get("/settings/rate-limits", settingsHandler.GetRateLimits)
 				protected.Put("/settings/rate-limits", settingsHandler.UpdateRateLimits)
 				protected.Post("/settings/backup/export", settingsHandler.ExportBackup)
 				protected.Post("/settings/backup/import", settingsHandler.ImportBackup)
+				protected.Post("/settings/backup/inspect", settingsHandler.InspectBackup)
+				protected.Get("/settings/backup/sections", settingsHandler.GetBackupSections)
 				protected.Get("/settings/backup/automatic", settingsHandler.GetAutomaticBackup)
 				protected.Put("/settings/backup/automatic", settingsHandler.UpdateAutomaticBackup)
 				protected.Post("/settings/backup/automatic/test", settingsHandler.TestAutomaticBackup)
 				protected.Get("/settings/backup/automatic/files", settingsHandler.ListAutomaticBackupFiles)
 				protected.Post("/settings/backup/automatic/run", settingsHandler.RunAutomaticBackup)
+				protected.Post("/settings/backup/automatic/files/inspect", settingsHandler.InspectAutomaticBackupFile)
 				protected.Post("/settings/backup/automatic/files/restore", settingsHandler.RestoreAutomaticBackupFile)
 				protected.Get("/settings/backup/automatic/files/restore/active", settingsHandler.GetActiveAutomaticBackupRestoreTask)
 				protected.Get("/settings/backup/automatic/files/restore/{taskID}", settingsHandler.GetAutomaticBackupRestoreTask)
@@ -633,33 +569,110 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 
 	r.Route("/internal/agent-llm", func(internal chi.Router) {
 		limitBody := httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)
-		// /credential is unauthenticated: admission is anchored on the run being
-		// registered via /runs/* (runner-key authenticated), see agentllm.Handler.Credential
 		internal.With(limitBody).Post("/credential", agentLLMHandler.Credential)
 		internal.With(limitBody).Post("/credential/renew", agentLLMHandler.Renew)
-		internal.Group(func(runs chi.Router) {
-			runs.Use(agentProxyHandler.RunnerTokenAuth())
-			runs.With(limitBody).Post("/runs/register", agentLLMHandler.Register)
-			runs.With(limitBody).Post("/runs/end", agentLLMHandler.End)
-		})
+		internal.With(limitBody).Post("/images", agentLLMHandler.Images)
+		// 文件摘要的请求体含最多 300KB 文件内容(JSON 转义后会膨胀),用独立的 2 MiB 上限,
+		// 不随全局 MaxRequestBodyBytes 变化,也不影响其它路由。
+		internal.With(httpx.LimitRequestBody(agentllm.FastTaskMaxRequestBytes)).Post("/fast-task", agentLLMHandler.FastTask)
 		internal.With(limitBody).Post("/v1/responses", agentLLMHandler.Responses)
 		internal.With(limitBody).Post("/v1/messages", agentLLMHandler.Messages)
 		internal.With(limitBody).Post("/v1/chat/completions", agentLLMHandler.ChatCompletions)
 		internal.Get("/v1/models", agentLLMHandler.Models)
 	})
 
-	r.Route("/api/playground/v1", func(playground chi.Router) {
-		playground.Use(requireAPIKey(authService))
-		limitBody := httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)
-		playground.With(limitBody).Post("/chat/completions", playgroundGatewayHandler.ChatCompletions)
-		playground.Post("/images/generations", playgroundGatewayHandler.ImagesGenerations)
-		playground.Post("/images/edits", playgroundGatewayHandler.ImagesEdits)
-		playground.With(limitBody).Post("/messages", playgroundGatewayHandler.Messages)
-		playground.With(limitBody).Post("/responses", playgroundGatewayHandler.Responses)
-		playground.Get("/models", playgroundGatewayHandler.Models)
-	})
-
 	return r, &gatewayHandler, pluginMarket
+}
+
+// agentProtocolResolver 返回「模型 → 上游协议」的解析闭包，runner 转发与内置
+// Pi 引擎共用。解析失败或候选为空时降级为 openai-responses：错误应发生在实际
+// LLM 调用时，而不是会话创建时。
+func agentProtocolResolver(logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service) func(ctx context.Context, model string) (string, error) {
+	return func(ctx context.Context, model string) (string, error) {
+		if routerService == nil {
+			return "openai-responses", nil
+		}
+		policy, modelPolicy, siteIDs, siteModelIDs := agentproxy.AccessPolicyFromConfig(confFile)
+		query := routeengine.CandidateQuery{ModelKey: model}
+		if policy == "allow_list" {
+			query.AllowedSiteIDs = parseAgentUUIDs(siteIDs)
+		}
+		if modelPolicy == "allow_list" {
+			query.AllowedSiteModelIDs = parseAgentUUIDs(siteModelIDs)
+		}
+		candidates, err := routerService.Candidates(ctx, query)
+		if err != nil {
+			// 解析失败（如模型未归一到 canonical、路由服务异常）不能阻断会话创建：
+			// 降级为 openai-responses，由网关在实际调用时做协议转换或报出真实路由错误
+			logger.Warn("agent protocol resolution failed, falling back to openai-responses", "model", model, "error", err)
+			return "openai-responses", nil
+		}
+		protocol := ""
+		for _, candidate := range candidates.Items {
+			for _, endpointType := range candidate.Model.SupportedEndpointTypes {
+				switch strings.ToLower(strings.TrimSpace(endpointType)) {
+				case "anthropic-messages", "messages":
+					return "anthropic-messages", nil
+				case "openai-response", "openai-responses", "responses":
+					protocol = "openai-responses"
+				case "openai", "chat", "chat-completions", "openai-chat-completions":
+					if protocol == "" {
+						protocol = "openai-chat-completions"
+					}
+				}
+			}
+		}
+		if protocol == "" {
+			// 候选为空（冷却/无可用凭证/白名单过滤）同样降级
+			logger.Warn("no supported agent protocol from candidates, falling back to openai-responses", "model", model, "candidates", len(candidates.Items))
+			return "openai-responses", nil
+		}
+		return protocol, nil
+	}
+}
+
+// registerAgentRoutes 注册 /agent 路由组。settings 与 backgrounds 由
+// agentproxy 提供;会话/事件/health 与 skills/workspace/config 能力接口走
+// 内置 Pi handler。
+func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *config.ConfigFile, agentProxyHandler *agentproxy.Handler, builtin *builtinAgent) {
+	agentRouter.Get("/settings", func(w http.ResponseWriter, r *http.Request) {
+		agentProxyHandler.GetSettings(w, r, confFile)
+	})
+	agentRouter.With(httpx.LimitRequestBody(cfg.MaxRequestBodyBytes)).Put("/settings", func(w http.ResponseWriter, r *http.Request) {
+		agentProxyHandler.UpdateSettings(w, r, confFile)
+	})
+	agentRouter.Get("/backgrounds/{name}", agentProxyHandler.ServeBackground)
+	h := builtin.handler
+	agentRouter.Get("/health", h.Health)
+	agentRouter.Get("/skills", h.ListSkills)
+	agentRouter.Get("/skills/{name}", h.GetSkill)
+	agentRouter.Get("/skills/{name}/file", h.GetSkillFile)
+	agentRouter.Put("/skills/{name}", h.PutSkill)
+	agentRouter.Delete("/skills/{name}", h.DeleteSkill)
+	agentRouter.Get("/workspace/file", h.GetWorkspaceFile)
+	agentRouter.Put("/workspace/file", h.PutWorkspaceFile)
+	agentRouter.Delete("/workspace/file", h.DeleteWorkspaceFile)
+	agentRouter.Get("/config", h.GetConfig)
+	agentRouter.Put("/config", h.PutConfig)
+	agentRouter.Get("/model-memory", h.ModelMemory)
+	agentRouter.Get("/sessions", h.ListSessions)
+	agentRouter.Post("/sessions", h.CreateSession)
+	agentRouter.Get("/sessions/{id}/transcript", h.SessionTranscript)
+	agentRouter.Get("/sessions/{id}/stats", h.SessionStats)
+	agentRouter.Delete("/sessions/{id}", h.DeleteSession)
+	agentRouter.Post("/sessions/{id}/fork", h.ForkSession)
+	agentRouter.Get("/sessions/{id}/files", h.SessionFile)
+	agentRouter.Head("/sessions/{id}/files", h.SessionFile)
+	agentRouter.Get("/sessions/{id}/changes", h.SessionChanges)
+	agentRouter.Get("/sessions/{id}/changes/{turnID}/diff", h.SessionChangeDiff)
+	agentRouter.Get("/sessions/{id}/artifacts", h.SessionArtifacts)
+	agentRouter.Post("/sessions/{id}/retry", h.RetrySession)
+	agentRouter.Post("/sessions/{id}/stop", h.StopSession)
+	agentRouter.Post("/sessions/{id}/suggestion", h.Suggestion)
+	agentRouter.Post("/sessions/{id}/grant-access", h.GrantAccess)
+	agentRouter.Post("/sessions/{id}/answer-question", h.AnswerQuestion)
+	agentRouter.Post("/sessions/{id}/revoke-access", h.RevokeAccess)
+	agentRouter.Get("/sessions/{id}/events", h.SessionEvents)
 }
 
 func requireAdmin(authService *auth.Service) func(http.Handler) http.Handler {
@@ -742,19 +755,15 @@ func routeAwareTimeout(timeout time.Duration) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/playground/conversations/") && strings.HasSuffix(r.URL.Path, "/events") {
-				next.ServeHTTP(w, r)
-				return
-			}
 			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/agent/sessions/") && strings.HasSuffix(r.URL.Path, "/events") {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/internal/agent-llm/v1/") {
+			if r.Method == http.MethodPost && (r.URL.Path == "/internal/agent-llm/images" || r.URL.Path == "/internal/agent-llm/fast-task" || strings.HasPrefix(r.URL.Path, "/internal/agent-llm/v1/")) {
 				next.ServeHTTP(w, r)
 				return
 			}
-			gatewayPath := strings.TrimPrefix(r.URL.Path, "/api/playground")
+			gatewayPath := r.URL.Path
 			geminiGatewayPath := strings.HasPrefix(gatewayPath, "/v1beta/models/") && (strings.HasSuffix(gatewayPath, ":generateContent") || strings.HasSuffix(gatewayPath, ":streamGenerateContent"))
 			if r.Method == http.MethodPost && (gatewayPath == "/v1/chat/completions" || gatewayPath == "/v1/responses" || gatewayPath == "/v1/images/generations" || gatewayPath == "/v1/images/edits" || gatewayPath == "/v1/messages" || gatewayPath == "/v1/audio/speech" || geminiGatewayPath) {
 				next.ServeHTTP(w, r)
@@ -777,7 +786,7 @@ func spaHandler(staticDir string) http.Handler {
 }
 
 func newSPAHandler(staticDir string, authService *auth.Service) http.Handler {
-	fs := http.FileServer(http.Dir(staticDir))
+	fs := newCompressedFileServer(staticDir, http.FileServer(http.Dir(staticDir)))
 	index := filepath.Join(staticDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := filepath.Join(staticDir, filepath.Clean("/"+r.URL.Path))

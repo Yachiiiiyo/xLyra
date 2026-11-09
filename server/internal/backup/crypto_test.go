@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -164,17 +165,13 @@ func TestBackupTablesIncludeRequestUsageSummaries(t *testing.T) {
 	if _, ok := backupTableByName(summaryDays); !ok {
 		t.Fatalf("expected backup table %s to be registered", summaryDays)
 	}
-	playgroundFirst := []string{"playground_assets", "playground_turn_indexes", "playground_runs", "playground_conversations"}
-	if len(importDeleteOrder) < len(playgroundFirst)+2 {
-		t.Fatalf("delete order too short: %#v", importDeleteOrder)
+	if importDeleteOrder[0] != summaryDays || importDeleteOrder[1] != dailySummary {
+		t.Fatalf("expected summary tables to be cleared first, got %#v", importDeleteOrder[:min(len(importDeleteOrder), 2)])
 	}
-	for i, table := range playgroundFirst {
-		if importDeleteOrder[i] != table {
-			t.Fatalf("expected playground tables to be cleared first, got %#v", importDeleteOrder[:min(len(importDeleteOrder), 6)])
+	for _, table := range importDeleteOrder {
+		if strings.HasPrefix(table, "playground_") {
+			t.Fatalf("playground table %q should not be imported", table)
 		}
-	}
-	if importDeleteOrder[4] != summaryDays || importDeleteOrder[5] != dailySummary {
-		t.Fatalf("expected summary tables to follow playground tables, got %#v", importDeleteOrder[:min(len(importDeleteOrder), 6)])
 	}
 }
 

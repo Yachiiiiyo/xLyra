@@ -1,0 +1,58 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_bash",
+      "kind": "tool",
+      "title": "bash",
+      "status": "error",
+      "inputLength": 158,
+      "outputLength": 19,
+      "inputPreview": "{\"command\":\"touch /private/tmp/claude-501/-Users-nanako-WorkSpace-Yachiyo-xlyra-",
+      "outputPreview": "Tool bash not found"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 2,
+      "inputPreview": "",
+      "outputPreview": "收尾"
+    }
+  ],
+  "permissions": [],
+  "finalText": "收尾",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_bash",
+          "kind": "tool",
+          "title": "bash",
+          "status": "error",
+          "inputLength": 158,
+          "outputLength": 19,
+          "inputPreview": "{\"command\":\"touch /private/tmp/claude-501/-Users-nanako-WorkSpace-Yachiyo-xlyra-",
+          "outputPreview": "Tool bash not found"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 2,
+          "inputPreview": "",
+          "outputPreview": "收尾"
+        }
+      ],
+      "permissions": [],
+      "finalText": "收尾"
+    }
+  ]
+}

@@ -22,24 +22,45 @@ const (
 	maxBackupUploadBytes     = backup.MaxImportBytes
 	maxBackupUploadBodyBytes = maxBackupUploadBytes + 1<<20
 	maxBackupUploadMemory    = 32 << 20
+	// 预览接口只上传备份文件开头一段(前端 File.slice(0, 4MiB)),请求体
+	// 上限 8MiB。
+	maxBackupInspectBodyBytes = 8 << 20
 )
 
-type backupPassphraseRequest struct {
-	Passphrase string `json:"passphrase"`
+// backupExportRequest 是导出备份的请求体;sections 省略(nil)时导出全部
+// 默认类别,指定时按所选类别导出。
+type backupExportRequest struct {
+	Passphrase string   `json:"passphrase"`
+	Sections   []string `json:"sections"`
 }
 
 func (h Handler) ExportBackup(w http.ResponseWriter, r *http.Request) {
-	var req backupPassphraseRequest
+	var req backupExportRequest
 	if err := httpx.DecodeJSONBody(r, &req); err != nil {
 		httpx.Error(w, r, http.StatusBadRequest, "invalid_body", err.Error())
 		return
+	}
+	if req.Sections != nil {
+		// 先行校验类别集合,未知/重复/缺依赖/为空直接返回 400。
+		if err := backup.ValidateSelection(req.Sections); err != nil {
+			httpx.Error(w, r, http.StatusBadRequest, "invalid_backup_sections", err.Error())
+			return
+		}
 	}
 
 	if h.downloads == nil {
 		httpx.Error(w, r, http.StatusServiceUnavailable, "download_service_unavailable", "download service is not available")
 		return
 	}
-	filePath, filename, err := h.backups.Export(r.Context(), req.Passphrase)
+	var (
+		filePath, filename string
+		err                error
+	)
+	if req.Sections == nil {
+		filePath, filename, err = h.backups.Export(r.Context(), req.Passphrase)
+	} else {
+		filePath, filename, err = h.backups.ExportSections(r.Context(), req.Passphrase, req.Sections)
+	}
 	if err != nil {
 		h.writeBackupError(w, r, err)
 		return
@@ -58,6 +79,18 @@ func (h Handler) ExportBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, map[string]any{"download": ticket})
+}
+
+// GetBackupSections 返回备份类别目录:全部类别的可用性与估算体积/行数,
+// 以及手动导出与自动备份的默认勾选(过滤掉当前不可用的类别)。
+func (h Handler) GetBackupSections(w http.ResponseWriter, r *http.Request) {
+	sections := h.backups.SectionInfos(r.Context())
+	manual := h.backups.AvailableDefaultSections(false)
+	auto := h.backups.AvailableDefaultSections(true)
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"sections": sections,
+		"defaults": map[string]any{"manual": manual, "auto": auto},
+	})
 }
 
 func (h Handler) ImportBackup(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +126,34 @@ func (h Handler) ImportBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"backup": summary})
+}
+
+// InspectBackup 是恢复前预览:multipart 上传备份文件的开头一段与口令,
+// 返回备份包含的类别与恢复会清空的数据;不解密整个文件。
+func (h Handler) InspectBackup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBackupInspectBodyBytes)
+	if err := r.ParseMultipartForm(maxBackupUploadMemory); err != nil {
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_backup_upload", err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+
+	passphrase := strings.TrimSpace(r.FormValue("passphrase"))
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		httpx.Error(w, r, http.StatusBadRequest, "backup_file_required", "backup file is required")
+		return
+	}
+	defer file.Close()
+
+	result, err := h.backups.InspectReader(r.Context(), passphrase, file)
+	if err != nil {
+		h.writeBackupError(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"backup": result})
 }
 
 func (h Handler) importBackupSSE(w http.ResponseWriter, r *http.Request, passphrase string, file io.Reader) {

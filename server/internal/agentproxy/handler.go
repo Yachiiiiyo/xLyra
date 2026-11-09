@@ -1,64 +1,71 @@
 package agentproxy
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/httpx"
 )
 
-var (
-	errEmptyRunnerURL   = errors.New("runner URL must not be empty")
-	errInvalidRunnerURL = errors.New("runner URL must be an HTTP or HTTPS URL without credentials")
-)
-
 type Handler struct {
 	mu                    sync.RWMutex
-	baseURL               string
-	token                 string
-	client                *http.Client
 	logger                *slog.Logger
 	workdir               string
 	backgroundDirFallback string
 
 	onSettingsUpdated func()
-	onRunStarted      func(context.Context, RunRegistration) error
-	resolveProtocol   func(context.Context, string) (string, error)
 }
 
-type RunRegistration struct {
-	AgentInstanceID string `json:"agent_instance_id"`
-	SessionID       string `json:"session_id"`
-	RunID           string `json:"run_id"`
-	Model           string `json:"model"`
+type ImageModelSelection struct {
+	Model   string   `json:"model"`
+	SiteIDs []string `json:"site_ids"`
+}
+
+// UnmarshalJSON 同时接受旧版模型名字符串和新版模型、站点选择对象。
+func (s *ImageModelSelection) UnmarshalJSON(data []byte) error {
+	var model string
+	if err := json.Unmarshal(data, &model); err == nil {
+		s.Model = model
+		s.SiteIDs = []string{}
+		return nil
+	}
+	type selection ImageModelSelection
+	var value selection
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*s = ImageModelSelection(value)
+	if s.SiteIDs == nil {
+		s.SiteIDs = []string{}
+	}
+	return nil
 }
 
 type Settings struct {
-	RunnerBaseURL         string             `json:"runner_base_url"`
-	RunnerTokenConfigured bool               `json:"runner_token_configured"`
-	AllowedSiteIDs        []string           `json:"allowed_site_ids"`
-	AllowedSiteModelIDs   []string           `json:"allowed_site_model_ids"`
-	SitePolicy            string             `json:"site_policy"`
-	ModelPolicy           string             `json:"model_policy"`
-	Appearance            AppearanceSettings `json:"appearance"`
+	AllowedSiteIDs          []string              `json:"allowed_site_ids"`
+	AllowedSiteModelIDs     []string              `json:"allowed_site_model_ids"`
+	ImageModels             []ImageModelSelection `json:"image_models"`
+	PromptSuggestionEnabled bool                  `json:"prompt_suggestion_enabled"`
+	FastModel               string                `json:"fast_model"`
+	ClassifierModel         string                `json:"classifier_model"`
+	SitePolicy              string                `json:"site_policy"`
+	ModelPolicy             string                `json:"model_policy"`
+	Appearance              AppearanceSettings    `json:"appearance"`
 }
 
 type AppearanceSettings struct {
@@ -97,145 +104,26 @@ func defaultAppearanceSettings() AppearanceSettings {
 }
 
 // settingsInput uses partial-update semantics: absent fields are left unchanged,
-// so runner connection and site/model scope can be saved independently.
+// so site/model scope can be saved independently.
 type settingsInput struct {
-	RunnerBaseURL       *string             `json:"runner_base_url"`
-	RunnerToken         *string             `json:"runner_token"`
-	ClearRunner         bool                `json:"clear_runner"`
-	AllowedSiteIDs      *[]string           `json:"allowed_site_ids"`
-	AllowedSiteModelIDs *[]string           `json:"allowed_site_model_ids"`
-	SitePolicy          *string             `json:"site_policy"`
-	ModelPolicy         *string             `json:"model_policy"`
-	Appearance          *AppearanceSettings `json:"appearance"`
+	ClearRunner             bool                   `json:"clear_runner"`
+	AllowedSiteIDs          *[]string              `json:"allowed_site_ids"`
+	AllowedSiteModelIDs     *[]string              `json:"allowed_site_model_ids"`
+	ImageModels             *[]ImageModelSelection `json:"image_models"`
+	PromptSuggestionEnabled *bool                  `json:"prompt_suggestion_enabled"`
+	FastModel               *string                `json:"fast_model"`
+	ClassifierModel         *string                `json:"classifier_model"`
+	SitePolicy              *string                `json:"site_policy"`
+	ModelPolicy             *string                `json:"model_policy"`
+	Appearance              *AppearanceSettings    `json:"appearance"`
 }
 
-func NewHandler(baseURL, token string, client *http.Client, logger *slog.Logger, workdirs ...string) *Handler {
+func NewHandler(logger *slog.Logger, workdirs ...string) *Handler {
 	workdir := ""
 	if len(workdirs) > 0 {
 		workdir = strings.TrimSpace(workdirs[0])
 	}
-	return &Handler{baseURL: normalizeBaseURL(baseURL), token: strings.TrimSpace(token), client: client, logger: logger, workdir: workdir}
-}
-
-func (h *Handler) Forward(w http.ResponseWriter, r *http.Request) {
-	baseURL, token, client := h.snapshot()
-	if baseURL == "" {
-		httpx.Error(w, r, http.StatusServiceUnavailable, "agent_unavailable", "agent runner URL is not configured")
-		return
-	}
-	if token == "" {
-		httpx.Error(w, r, http.StatusServiceUnavailable, "agent_unavailable", "agent runner internal token is not configured")
-		return
-	}
-	if client == nil {
-		httpx.Error(w, r, http.StatusServiceUnavailable, "agent_unavailable", "agent runner is not configured")
-		return
-	}
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/agent")
-	if path == "" {
-		path = "/"
-	}
-	registerRun := r.Method == http.MethodPost && isRunStartPath(path)
-	h.mu.RLock()
-	resolveProtocol := h.resolveProtocol
-	h.mu.RUnlock()
-	body := r.Body
-	if registerRun && (path == "/sessions" || strings.HasSuffix(path, "/retry")) && resolveProtocol != nil {
-		encoded, err := h.injectProtocol(r.Context(), r.Body, resolveProtocol)
-		if err != nil {
-			httpx.Error(w, r, http.StatusBadRequest, "invalid_agent_request", err.Error())
-			return
-		}
-		body = io.NopCloser(bytes.NewReader(encoded))
-	}
-	// Public xLyra paths that differ from the runner's internal paths are mapped here.
-	switch path {
-	case "/config":
-		path = "/internal/agent/config"
-	case "/version":
-		path = "/internal/agent/version"
-	case "/upgrade":
-		path = "/internal/agent/upgrade"
-	case "/skills":
-		path = "/internal/agent/skills"
-	case "/memory":
-		path = "/internal/agent/memory"
-	case "/learning/status":
-		path = "/internal/agent/learning/status"
-	case "/workspace/file":
-		path = "/internal/agent/workspace/file"
-	default:
-		if strings.HasPrefix(path, "/skills/") || strings.HasPrefix(path, "/memory/") {
-			path = "/internal/agent" + path
-		}
-	}
-	target, err := url.Parse(baseURL + path)
-	if err != nil {
-		httpx.Error(w, r, http.StatusBadGateway, "agent_runner_unavailable", "agent runner URL is invalid")
-		return
-	}
-	target.RawQuery = r.URL.RawQuery
-	request, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), body)
-	if err != nil {
-		httpx.Error(w, r, http.StatusBadGateway, "agent_runner_unavailable", "unable to create runner request")
-		return
-	}
-	copyRequestHeaders(request.Header, r.Header)
-	request.Header.Set("Authorization", "Bearer "+token)
-	response, err := client.Do(request)
-	if err != nil {
-		httpx.Error(w, r, http.StatusBadGateway, "agent_runner_unavailable", "unable to reach agent runner")
-		return
-	}
-	defer response.Body.Close()
-	copyResponseHeaders(w.Header(), response.Header)
-	if registerRun && response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices && !strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") {
-		body, readErr := io.ReadAll(response.Body)
-		if readErr == nil {
-			_ = response.Body.Close()
-			h.notifyRunStarted(r.Context(), body)
-			response.Body = io.NopCloser(bytes.NewReader(body))
-		}
-	}
-	w.WriteHeader(response.StatusCode)
-	if strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") {
-		w.Header().Set("Cache-Control", "no-cache, no-transform")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("X-Accel-Buffering", "no")
-		// SSE must flush per write; io.Copy's buffer batches small events and
-		// reads as stutter on the client.
-		flushCopy(w, response.Body)
-		return
-	}
-	_, _ = io.Copy(w, response.Body)
-}
-
-func (h *Handler) injectProtocol(ctx context.Context, body io.Reader, resolveProtocol func(context.Context, string) (string, error)) ([]byte, error) {
-	if body == nil {
-		return nil, errors.New("Agent request body is required")
-	}
-	encoded, err := io.ReadAll(body)
-	if err != nil {
-		return nil, errors.New("unable to read Agent request")
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(encoded, &payload); err != nil {
-		return nil, errors.New("Agent request body must be JSON")
-	}
-	if err := validateAgentAttachments(payload["attachments"]); err != nil {
-		return nil, err
-	}
-	model, _ := payload["model"].(string)
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return encoded, nil
-	}
-	protocol, err := resolveProtocol(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-	payload["protocol"] = protocol
-	return json.Marshal(payload)
+	return &Handler{logger: logger, workdir: workdir}
 }
 
 func validateAgentAttachments(value any) error {
@@ -282,6 +170,12 @@ func validateAgentAttachments(value any) error {
 	return nil
 }
 
+// ValidateAttachments 导出附件限额校验（≤4 个、单文件 5MB、总 20MB、base64
+// data URL），供内置 Agent 的 HTTP 层复用同一套规则。
+func ValidateAttachments(value any) error {
+	return validateAgentAttachments(value)
+}
+
 // decodedBase64Size 返回 base64 载荷的解码后字节数；字符集非法时 ok=false（不分配解码缓冲）
 func decodedBase64Size(encoded string) (int, bool) {
 	for i := 0; i < len(encoded); i++ {
@@ -301,70 +195,18 @@ func decodedBase64Size(encoded string) (int, bool) {
 	return len(encoded)/4*3 - padding, true
 }
 
-func isRunStartPath(path string) bool {
-	return path == "/sessions" || strings.HasSuffix(path, "/retry") || strings.HasSuffix(path, "/grant-access")
-}
-
-func (h *Handler) notifyRunStarted(ctx context.Context, body []byte) {
-	var payload struct {
-		Data RunRegistration `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return
-	}
-	if payload.Data.AgentInstanceID == "" || payload.Data.SessionID == "" || payload.Data.RunID == "" || payload.Data.Model == "" {
-		return
-	}
-	h.mu.RLock()
-	hook := h.onRunStarted
-	h.mu.RUnlock()
-	if hook == nil {
-		return
-	}
-	if err := hook(ctx, payload.Data); err != nil && h.logger != nil {
-		h.logger.Warn("failed to register Agent run", "session_id", payload.Data.SessionID, "run_id", payload.Data.RunID, "error", err)
-	}
-}
-
-// flushCopy streams src to w, flushing after every write so SSE events reach
-// the client as they arrive instead of accumulating in buffers.
-func flushCopy(w io.Writer, src io.Reader) {
-	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 4096)
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-				return
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
 func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request, confFile *config.ConfigFile) {
 	if confFile != nil {
 		h.backgroundDir(confFile)
 	}
-	settings := Settings{RunnerBaseURL: h.snapshotBaseURL(), RunnerTokenConfigured: h.snapshotToken() != "", AllowedSiteIDs: []string{}, AllowedSiteModelIDs: []string{}, SitePolicy: "allow_all", ModelPolicy: "allow_all", Appearance: defaultAppearanceSettings()}
+	settings := Settings{AllowedSiteIDs: []string{}, AllowedSiteModelIDs: []string{}, ImageModels: []ImageModelSelection{}, PromptSuggestionEnabled: true, SitePolicy: "allow_all", ModelPolicy: "allow_all", Appearance: defaultAppearanceSettings()}
 	if confFile != nil {
-		if value, ok := confFile.Get("agent.runner_base_url"); ok {
-			if baseURL, valid := value.(string); valid && strings.TrimSpace(baseURL) != "" {
-				settings.RunnerBaseURL = normalizeBaseURL(baseURL)
-			}
-		}
-		if value, ok := confFile.Get("agent.runner_internal_token"); ok {
-			if token, valid := value.(string); valid && strings.TrimSpace(token) != "" {
-				settings.RunnerTokenConfigured = true
-			}
-		}
 		settings.AllowedSiteIDs = readStringList(confFile, "agent.allowed_site_ids")
 		settings.AllowedSiteModelIDs = readStringList(confFile, "agent.allowed_site_model_ids")
+		settings.ImageModels = ImageModelsFromConfig(confFile)
+		settings.PromptSuggestionEnabled = PromptSuggestionEnabledFromConfig(confFile)
+		settings.FastModel = FastModelFromConfig(confFile)
+		settings.ClassifierModel = ClassifierModelFromConfig(confFile)
 		if value, ok := confFile.Get("agent.site_policy"); ok {
 			if policy, valid := value.(string); valid && (policy == "allow_all" || policy == "allow_list") {
 				settings.SitePolicy = policy
@@ -391,6 +233,7 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request, confFil
 		return
 	}
 	if input.ClearRunner {
+		// 旧 runner 连接键已无消费者,更新设置时顺手清理,避免旧部署升级后残留。
 		if err := confFile.Delete("agent.runner_base_url"); err != nil {
 			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to clear Agent runner settings")
 			return
@@ -398,29 +241,6 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request, confFil
 		if err := confFile.Delete("agent.runner_internal_token"); err != nil {
 			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to clear Agent runner settings")
 			return
-		}
-		h.SetBaseURL("")
-		h.SetToken("")
-	}
-	if input.RunnerBaseURL != nil {
-		baseURL, err := validateBaseURL(*input.RunnerBaseURL)
-		if err != nil {
-			httpx.Error(w, r, http.StatusBadRequest, "invalid_runner_url", err.Error())
-			return
-		}
-		if err := confFile.Set("agent.runner_base_url", baseURL); err != nil {
-			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent runner settings")
-			return
-		}
-		h.SetBaseURL(baseURL)
-	}
-	if input.RunnerToken != nil {
-		if token := strings.TrimSpace(*input.RunnerToken); token != "" {
-			if err := confFile.Set("agent.runner_internal_token", token); err != nil {
-				httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent runner token")
-				return
-			}
-			h.SetToken(token)
 		}
 	}
 	scopeUpdated := false
@@ -437,6 +257,46 @@ func (h *Handler) UpdateSettings(w http.ResponseWriter, r *http.Request, confFil
 			return
 		}
 		scopeUpdated = true
+	}
+	if input.ImageModels != nil {
+		for _, selection := range *input.ImageModels {
+			if utf8.RuneCountInString(strings.TrimSpace(selection.Model)) > 200 {
+				httpx.Error(w, r, http.StatusBadRequest, "invalid_image_models", "each image model must not exceed 200 characters")
+				return
+			}
+		}
+		if err := confFile.Set("agent.image_models", normalizeImageModels(*input.ImageModels)); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent image model settings")
+			return
+		}
+	}
+	if input.PromptSuggestionEnabled != nil {
+		if err := confFile.Set("agent.prompt_suggestion_enabled", *input.PromptSuggestionEnabled); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent prompt suggestion setting")
+			return
+		}
+	}
+	if input.FastModel != nil {
+		fastModel := strings.TrimSpace(*input.FastModel)
+		if utf8.RuneCountInString(fastModel) > 200 {
+			httpx.Error(w, r, http.StatusBadRequest, "invalid_fast_model", "fast model must not exceed 200 characters")
+			return
+		}
+		if err := confFile.Set("agent.fast_model", fastModel); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent fast model setting")
+			return
+		}
+	}
+	if input.ClassifierModel != nil {
+		classifierModel := strings.TrimSpace(*input.ClassifierModel)
+		if utf8.RuneCountInString(classifierModel) > 200 {
+			httpx.Error(w, r, http.StatusBadRequest, "invalid_classifier_model", "classifier model must not exceed 200 characters")
+			return
+		}
+		if err := confFile.Set("agent.classifier_model", classifierModel); err != nil {
+			httpx.Error(w, r, http.StatusInternalServerError, "config_write_error", "failed to save Agent classifier model setting")
+			return
+		}
 	}
 	if input.SitePolicy != nil {
 		sitePolicy := *input.SitePolicy
@@ -727,18 +587,6 @@ func (h *Handler) SetOnSettingsUpdated(fn func()) {
 	h.mu.Unlock()
 }
 
-func (h *Handler) SetOnRunStarted(fn func(context.Context, RunRegistration) error) {
-	h.mu.Lock()
-	h.onRunStarted = fn
-	h.mu.Unlock()
-}
-
-func (h *Handler) SetProtocolResolver(fn func(context.Context, string) (string, error)) {
-	h.mu.Lock()
-	h.resolveProtocol = fn
-	h.mu.Unlock()
-}
-
 func (h *Handler) notifySettingsUpdated() {
 	h.mu.RLock()
 	fn := h.onSettingsUpdated
@@ -769,6 +617,109 @@ func AccessPolicyFromConfig(confFile *config.ConfigFile) (sitePolicy, modelPolic
 		}
 	}
 	return sitePolicy, modelPolicy, siteIDs, siteModelIDs
+}
+
+// FastModelFromConfig 读取输入预测快速模型;未配置时返回空串。
+func FastModelFromConfig(confFile *config.ConfigFile) string {
+	if confFile == nil {
+		return ""
+	}
+	value, ok := confFile.Get("agent.fast_model")
+	if !ok {
+		return ""
+	}
+	model, _ := value.(string)
+	return strings.TrimSpace(model)
+}
+
+// ClassifierModelFromConfig 读取审批分类器模型;未配置时返回空串。
+func ClassifierModelFromConfig(confFile *config.ConfigFile) string {
+	if confFile == nil {
+		return ""
+	}
+	value, ok := confFile.Get("agent.classifier_model")
+	if !ok {
+		return ""
+	}
+	model, _ := value.(string)
+	return strings.TrimSpace(model)
+}
+
+// PromptSuggestionEnabledFromConfig 读取输入预测开关;未配置时默认开启。
+func PromptSuggestionEnabledFromConfig(confFile *config.ConfigFile) bool {
+	if confFile == nil {
+		return true
+	}
+	value, ok := confFile.Get("agent.prompt_suggestion_enabled")
+	if !ok {
+		return true
+	}
+	enabled, valid := value.(bool)
+	return !valid || enabled
+}
+
+func ImageModelsFromConfig(confFile *config.ConfigFile) []ImageModelSelection {
+	if confFile == nil {
+		return []ImageModelSelection{}
+	}
+	value, ok := confFile.Get("agent.image_models")
+	if !ok {
+		return []ImageModelSelection{}
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return []ImageModelSelection{}
+	}
+	var models []ImageModelSelection
+	if err := json.Unmarshal(data, &models); err != nil {
+		return []ImageModelSelection{}
+	}
+	return normalizeImageModels(models)
+}
+
+func normalizeImageModels(models []ImageModelSelection) []ImageModelSelection {
+	result := make([]ImageModelSelection, 0, len(models))
+	indexes := make(map[string]int, len(models))
+	for _, selection := range models {
+		selection.Model = strings.TrimSpace(selection.Model)
+		if selection.Model == "" {
+			continue
+		}
+		siteIDs := make([]string, 0, len(selection.SiteIDs))
+		seenSites := make(map[string]struct{}, len(selection.SiteIDs))
+		for _, rawSiteID := range selection.SiteIDs {
+			siteID, err := uuid.Parse(strings.TrimSpace(rawSiteID))
+			if err != nil {
+				continue
+			}
+			text := siteID.String()
+			if _, exists := seenSites[text]; exists {
+				continue
+			}
+			seenSites[text] = struct{}{}
+			siteIDs = append(siteIDs, text)
+		}
+		if index, exists := indexes[selection.Model]; exists {
+			current := &result[index]
+			if len(current.SiteIDs) == 0 || len(siteIDs) == 0 {
+				current.SiteIDs = []string{}
+				continue
+			}
+			seenSites = make(map[string]struct{}, len(current.SiteIDs)+len(siteIDs))
+			for _, siteID := range current.SiteIDs {
+				seenSites[siteID] = struct{}{}
+			}
+			for _, siteID := range siteIDs {
+				if _, exists := seenSites[siteID]; !exists {
+					current.SiteIDs = append(current.SiteIDs, siteID)
+				}
+			}
+			continue
+		}
+		indexes[selection.Model] = len(result)
+		result = append(result, ImageModelSelection{Model: selection.Model, SiteIDs: siteIDs})
+	}
+	return result
 }
 
 func readStringList(confFile *config.ConfigFile, key string) []string {
@@ -807,97 +758,4 @@ func normalizeStringList(values []string) []string {
 		result = append(result, value)
 	}
 	return result
-}
-
-func (h *Handler) SetBaseURL(baseURL string) {
-	h.mu.Lock()
-	h.baseURL = normalizeBaseURL(baseURL)
-	h.mu.Unlock()
-}
-
-func (h *Handler) SetToken(token string) {
-	h.mu.Lock()
-	h.token = strings.TrimSpace(token)
-	h.mu.Unlock()
-}
-
-func (h *Handler) snapshot() (string, string, *http.Client) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.baseURL, h.token, h.client
-}
-
-func (h *Handler) snapshotBaseURL() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.baseURL
-}
-
-func (h *Handler) snapshotToken() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.token
-}
-
-// RunnerTokenAuth authenticates runner-originated control calls
-// (/internal/agent-llm/runs/*) against the configured runner internal token.
-// The token is read from the handler snapshot on every request, so updates via
-// the settings page take effect without a restart. A missing configuration
-// fails closed: these endpoints stay unusable until a token is set.
-func (h *Handler) RunnerTokenAuth() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			expected := h.snapshotToken()
-			if expected == "" {
-				httpx.Error(w, r, http.StatusServiceUnavailable, "agent_unavailable", "agent runner internal token is not configured")
-				return
-			}
-			provided := bearerToken(r.Header.Get("Authorization"))
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
-				httpx.Error(w, r, http.StatusUnauthorized, "unauthorized", "invalid agent runner token")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-func bearerToken(header string) string {
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
-		return ""
-	}
-	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
-}
-
-func normalizeBaseURL(value string) string {
-	return strings.TrimRight(strings.TrimSpace(value), "/")
-}
-
-func validateBaseURL(value string) (string, error) {
-	baseURL := normalizeBaseURL(value)
-	if baseURL == "" {
-		return "", &url.Error{Op: "parse", URL: value, Err: errEmptyRunnerURL}
-	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return "", &url.Error{Op: "parse", URL: value, Err: errInvalidRunnerURL}
-	}
-	return baseURL, nil
-}
-
-func copyRequestHeaders(dst, src http.Header) {
-	for _, key := range []string{"Accept", "Content-Type", "Last-Event-ID", "User-Agent"} {
-		if values := src.Values(key); len(values) > 0 {
-			dst[key] = append([]string(nil), values...)
-		}
-	}
-}
-
-func copyResponseHeaders(dst, src http.Header) {
-	for _, key := range []string{"Content-Type", "Cache-Control", "Connection", "X-Accel-Buffering", "Last-Event-ID"} {
-		if values := src.Values(key); len(values) > 0 {
-			dst[key] = append([]string(nil), values...)
-		}
-	}
 }

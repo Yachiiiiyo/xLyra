@@ -1,0 +1,62 @@
+import { isValidElement, memo, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Copy } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
+import 'katex/dist/katex.min.css'
+import { cn } from '@/lib/utils'
+import { copyToClipboard } from '@/components/common/copy-to-clipboard'
+
+type MarkdownMessageProps = {
+  content: string
+  className?: string
+  renderImage?: (props: { src?: string; alt?: string }) => ReactNode
+  renderLink?: (props: { href?: string; children: ReactNode }) => ReactNode
+}
+
+function reactNodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(reactNodeText).join('')
+  if (isValidElement<{ children?: ReactNode }>(node)) return reactNodeText(node.props.children)
+  return ''
+}
+
+function MarkdownCodeBlock({ children }: ComponentPropsWithoutRef<'pre'>) {
+  const { t } = useTranslation('chat')
+  const code = reactNodeText(children)
+
+  return (
+    <div className="chat-code-block">
+      <button
+        type="button"
+        onClick={() => void copyToClipboard(code, t('actions.copied'), t('actions.copyFailed'))}
+        className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-md text-label-2 transition-colors hover:text-label"
+        aria-label={t('actions.copy')}
+        title={t('actions.copy')}
+      >
+        <Copy className="h-3.5 w-3.5" />
+      </button>
+      <pre>{children}</pre>
+    </div>
+  )
+}
+
+function normalizeMathDelimiters(content: string): string {
+  return content
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expression: string) => `\n$$\n${expression.trim()}\n$$\n`)
+    .replace(/\\\(([^\n]*?)\\\)/g, (_, expression: string) => `$${expression}$`)
+}
+
+function MarkdownMessageImpl({ content, className, renderImage, renderLink }: MarkdownMessageProps) {
+  return (
+    <div className={cn('chat-markdown text-body leading-6 text-label', className)}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={{ pre: MarkdownCodeBlock, ...(renderImage ? { img: ({ src, alt }) => renderImage({ src, alt }) } : {}), ...(renderLink ? { a: ({ href, children }) => renderLink({ href, children }) } : {}) }}>
+        {normalizeMathDelimiters(content)}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+export const MarkdownMessage = memo(MarkdownMessageImpl)

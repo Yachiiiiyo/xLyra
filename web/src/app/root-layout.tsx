@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { useAgentPrefetch } from '@/app/use-agent-prefetch'
 import { ProtectedRoute } from '@/components/auth/auth-guard'
 import { inferStatusCode } from '@/components/auth/auth-utils'
 import { StatusPageScreen } from '@/components/common/status-page-screen'
@@ -8,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
 
 export function RootLayout() {
+  useAgentPrefetch()
   const status = useAuthStore((state) => state.status)
   const errorMessage = useAuthStore((state) => state.errorMessage)
   const errorStatus = useAuthStore((state) => state.errorStatus)

@@ -58,6 +58,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Test
+        run: npm test
+
       - name: Lint
         run: npm run lint
 
@@ -66,3 +69,121 @@ jobs:
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+  agent-runtime:
+    name: Agent runtime
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-runtime
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent-runtime/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test
+
+  # 隔离与沙箱需要 root + 真实内核能力(setuid、Landlock、seccomp),且 Pi 的
+  # 真实集成要用 node;amd64/arm64 都跑,镜像两种架构都发布。-p 1 串行跑各包:
+  # 这些测试共用 uid 段并会清理残留进程,并行会互相误杀。
+  agent-linux:
+    name: Agent isolation (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install agent runtime
+        run: npm ci --ignore-scripts --prefix agent-runtime
+
+      - name: Run isolation and sandbox integration tests as root
+        working-directory: server
+        run: |
+          sudo --preserve-env=PATH,HOME,GOPATH,GOCACHE,GOMODCACHE,GOFLAGS env "PATH=$PATH" \
+            ISOLATION_INTEGRATION=1 SANDBOX_INTEGRATION=1 \
+            AGENT_ISOLATION_INTEGRATION=1 AGENT_SANDBOX_INTEGRATION=1 \
+            AGENT_REAL_NODE="$(command -v node)" \
+            AGENT_REAL_PI_ENTRY="$GITHUB_WORKSPACE/agent-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
+            AGENT_REAL_EXTENSION="$GITHUB_WORKSPACE/agent-runtime/extension/xlyra.ts" \
+            "$(command -v go)" test -p 1 -count=1 -timeout 900s ./internal/agent/... ./internal/app/
+
+  # 构建正式镜像并真实启动:确认镜像内的 node/Pi 入口齐全,隔离与沙箱自检在容器里通过。
+  image-smoke:
+    name: Image smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: xlyra:ci
+          cache-from: type=gha,scope=smoke
+          cache-to: type=gha,scope=smoke,mode=max
+
+      - name: Start with Postgres and check Agent isolation
+        shell: bash
+        run: |
+          docker network create xl
+          docker run -d --name pg --network xl \
+            -e POSTGRES_DB=xlyra -e POSTGRES_USER=xlyra -e POSTGRES_PASSWORD=pw \
+            postgres:17-alpine
+          sleep 8
+          smoke_data="$(mktemp -d)"
+          mkdir -p "${smoke_data}/agent"
+          printf '{"sandbox_enabled":true}\n' > "${smoke_data}/agent/config.json"
+          docker run -d --name xlyra --network xl -p 5801:5801 \
+            -v "${smoke_data}:/data" \
+            --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN \
+            --cap-add KILL --cap-add FOWNER --cap-add DAC_OVERRIDE \
+            -e DB_HOST=pg -e DB_NAME=xlyra -e DB_USER=xlyra -e DB_PASSWORD=pw \
+            xlyra:ci
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5801/api/v1/bootstrap/status >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:5801/api/v1/bootstrap/status
+          logs="$(docker logs xlyra 2>&1)"
+          echo "${logs}" | grep -E "uid 隔离决策完成|沙箱决策完成|内置 Agent"
+          echo "${logs}" | grep -q "uid 隔离决策完成 mode=on" || { echo "isolation not on" >&2; exit 1; }
+          echo "${logs}" | grep -q "沙箱决策完成 bash=true mode=on" || { echo "sandbox not on" >&2; exit 1; }
+          ! echo "${logs}" | grep -q "内置 Agent 不可用" || { echo "agent unavailable" >&2; exit 1; }
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker logs xlyra || true

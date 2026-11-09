@@ -61,6 +61,41 @@ func TestExportBackupRejectsInvalidBodyAndUnavailableService(t *testing.T) {
 
 		assertSettingsErrorCode(t, rec, http.StatusServiceUnavailable, "backup_unavailable")
 	})
+
+	t.Run("invalid sections", func(t *testing.T) {
+		t.Parallel()
+
+		h := settingsBackupHandler(nil, downloads.NewService())
+		cases := []struct {
+			name     string
+			body     string
+			wantCode string
+		}{
+			{name: "unknown section", body: `{"passphrase":"secret","sections":["not_a_section"]}`, wantCode: "invalid_backup_sections"},
+			{name: "duplicate section", body: `{"passphrase":"secret","sections":["settings","settings"]}`, wantCode: "invalid_backup_sections"},
+			{name: "missing requirement", body: `{"passphrase":"secret","sections":["gateway_keys"]}`, wantCode: "invalid_backup_sections"},
+			{name: "empty sections", body: `{"passphrase":"secret","sections":[]}`, wantCode: "invalid_backup_sections"},
+		}
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				rec := settingsPerform(h.ExportBackup, settingsRawJSONRequest(http.MethodPost, "/settings/backup/export", tc.body))
+
+				assertSettingsErrorCode(t, rec, http.StatusBadRequest, tc.wantCode)
+			})
+		}
+	})
+
+	t.Run("unsupported section maps to backup failure", func(t *testing.T) {
+		t.Parallel()
+
+		h := settingsBackupHandler(nil, downloads.NewService())
+		rec := settingsPerform(h.ExportBackup, settingsRawJSONRequest(http.MethodPost, "/settings/backup/export", `{"passphrase":"secret","sections":["agent_sessions"]}`))
+
+		assertSettingsErrorCode(t, rec, http.StatusBadRequest, "backup_failed")
+	})
 }
 
 func TestImportBackupValidatesMultipartFileAndServiceAvailability(t *testing.T) {

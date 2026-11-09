@@ -1,4 +1,33 @@
 {
+  "appearance": {
+    "title": "Appearance",
+    "description": "Configure the global background image and navigation menu for the whole instance, applied to every page.",
+    "loading": "Loading settings...",
+    "saved": "Appearance settings saved",
+    "saveFailed": "Failed to save",
+    "background": {
+      "title": "Background image",
+      "hint": "Pick or upload a background image; leave unselected to keep the default starfield.",
+      "none": "None (starfield)",
+      "custom": "Custom {{index}}",
+      "upload": "Upload image",
+      "remove": "Remove custom {{index}}",
+      "imageTooLarge": "Image must be 8MB or smaller",
+      "imageReadFailed": "Failed to read image"
+    },
+    "tabs": {
+      "background": "Background",
+      "menu": "Menu"
+    },
+    "menu": {
+      "homeTitle": "Home Page",
+      "homeHint": "The page opened by default when the app starts",
+      "homeDashboard": "Dashboard",
+      "homeAgent": "Agent",
+      "itemsTitle": "Menu Items",
+      "itemsHint": "Turned-off entries are hidden from the sidebar, mobile menu and command palette; the settings menu cannot be hidden"
+    }
+  },
   "general": {
     "title": "General Settings",
     "description": "Basic runtime options.",
@@ -251,7 +280,8 @@
       "failed": "Export failed",
       "noticeSensitive": "Includes sites, models, credentials, OAuth accounts, downstream API keys, request logs, and usage records.",
       "noticePassphrase": "Keep the passphrase safe. You will need it again when importing.",
-      "noticeUsersExcluded": "Does not include admin accounts, sessions, 2FA, admin access tokens, or audit logs."
+      "noticeUsersExcluded": "Does not include admin accounts, sessions, 2FA, admin access tokens, or audit logs.",
+      "sectionsTitle": "Backup contents"
     },
     "import": {
       "title": "Import Data",
@@ -270,11 +300,84 @@
       "noticeRestart": "Health state, route cooldowns, and rate limit windows are not restored; the system will rebuild them.",
       "confirmTitle": "Confirm import",
       "confirmDescription": "Import replaces current sites, models, credentials, downstream API keys, request logs, usage records, and the config file.",
-      "confirmAction": "Import and overwrite"
+      "confirmAction": "Import and overwrite",
+      "previewAction": "Next: Preview",
+      "backAction": "Back",
+      "inspectFailed": "Unable to read the backup contents"
+    },
+    "restorePreview": {
+      "createdAt": "Backup created",
+      "formatVersion": "Format version",
+      "legacy": "This is a legacy backup; it will be restored with the full legacy contents",
+      "restoreTitle": "Will restore",
+      "clearTitle": "The following existing data will be cleared after the restore",
+      "clearHint": "This data depends on the restored contents and cannot be kept separately. To keep it, cancel and export it first.",
+      "partial": " (partial data)",
+      "unavailableTitle": "This instance cannot restore the following contents. Resolve them before continuing",
+      "loading": "Reading backup contents..."
     },
     "tabs": {
       "manual": "Manual Backup",
       "automatic": "Automatic Backup"
+    },
+    "sections": {
+      "groups": {
+        "system": "System",
+        "gateway": "Gateway Data",
+        "agent": "Agent"
+      },
+      "items": {
+        "settings": {
+          "label": "System Settings",
+          "description": "Global settings, appearance, notifications, backup settings, etc."
+        },
+        "gateway_sites": {
+          "label": "Sites & Models",
+          "description": "Sites, groups, credentials, OAuth connections, models and pricing, proxy settings"
+        },
+        "gateway_keys": {
+          "label": "API Keys & Permissions",
+          "description": "API keys, site permissions, rate-limit rules"
+        },
+        "gateway_logs": {
+          "label": "Request Logs & Usage",
+          "description": "Request logs, usage records and statistics; usually the largest in size"
+        },
+        "plugins": {
+          "label": "Plugins",
+          "description": "Installed plugin packages, bindings, trusted public keys, marketplace subscriptions"
+        },
+        "agent_config": {
+          "label": "Agent Settings",
+          "description": "Agent's model selection, appearance and access policy"
+        },
+        "agent_capabilities": {
+          "label": "Agent Capability Files",
+          "description": "Skills, AGENTS.md and capability configuration"
+        },
+        "agent_sessions": {
+          "label": "Agent Sessions",
+          "description": "Conversation history and file-change records of all agent sessions"
+        },
+        "agent_workspace": {
+          "label": "Agent Workspace",
+          "description": "All files in the shared workspace (excluding rebuildable directories such as node_modules); can be very large"
+        }
+      },
+      "requiredBy": "Required by \"{{names}}\"; cancel them first",
+      "recommends": "Recommended to also back up: {{names}}",
+      "unavailable": "Currently unavailable: {{reason}}",
+      "sizeRows": "About {{count}} rows",
+      "sizeBytes": "{{size}}",
+      "atLeastOne": "Select at least one backup item",
+      "loading": "Loading backup contents...",
+      "loadFailed": "Failed to load backup contents; the export will use server defaults.",
+      "choose": "Choose contents",
+      "summary": "Selected {{count}} items: {{names}}",
+      "summaryNone": "None selected",
+      "dialogTitle": "Choose backup contents",
+      "dialogDescription": "Select the contents to back up. Dependent contents will be selected automatically.",
+      "done": "Done"
     },
     "automatic": {
       "title": "Automatic Backup",
@@ -298,6 +401,8 @@
         "description": "Restoring data from {{filename}} in a background server task.",
         "completeTitle": "Restore complete",
         "completeDescription": "Successfully imported {{rows}} rows across {{tables}} tables.",
+        "completeDescriptionSections": "Restored {{count}} content categories — {{tables}} tables / {{rows}} rows in the database.",
+        "clearedNote": "Cleared dependent data: {{names}}",
         "canceledTitle": "Restore canceled",
         "canceledDescription": "The restore transaction was rolled back and the database was returned to its pre-restore state.",
         "errorTitle": "Restore failed",
@@ -306,7 +411,9 @@
         "stepDecrypt": "Decrypt backup file",
         "stepParse": "Validate backup contents",
         "stepImport": "Write backup data",
-        "stepFiles": "Write session files",
+        "stepAgent": "Write agent configuration",
+        "stepAgentSessions": "Write agent sessions",
+        "stepAgentWorkspace": "Write agent workspace",
         "status": {
           "pending": "Waiting",
           "in_progress": "In progress",
@@ -356,7 +463,9 @@
         "retention": "Retention count",
         "passphrase": "Backup file passphrase",
         "passphraseDesc": "The generated .xlyra files are encrypted with this passphrase.",
-        "passphraseSaved": "Saved: {{value}}. Leave blank to keep it unchanged."
+        "passphraseSaved": "Saved: {{value}}. Leave blank to keep it unchanged.",
+        "sectionsTitle": "Backup contents",
+        "sectionsHint": "Automatic backups are generated from the contents selected here. Everything except the Agent workspace is included by default; uncheck large items as needed."
       },
       "files": {
         "title": "Remote Backup Files",
@@ -491,96 +600,13 @@
     "description": "Manage global settings by category.",
     "nav": {
       "general": "General",
+      "appearance": "Appearance",
       "profile": "Profile",
       "systemProxy": "System Proxy",
       "rateLimit": "Rate Limit",
       "siteGroups": "Site Groups",
       "backup": "Import / Export",
       "portal": "Key portal"
-    }
-  },
-  "agent": {
-    "eyebrow": "Settings",
-    "title": "Agent Settings",
-    "description": "Configure the Agent runtime and control which sites and models the workspace can use.",
-    "loading": "Loading Agent settings…",
-    "save": "Save",
-    "saving": "Saving…",
-    "saveSuccess": "Agent settings saved",
-    "saveFailed": "Failed to save Agent settings",
-    "status": {
-      "stateHealthy": "Healthy",
-      "stateUnhealthy": "Unhealthy",
-      "stateUnreachable": "Unreachable",
-      "stateUnknown": "Unknown",
-      "refresh": "Refresh status",
-      "agentSelfManaged": "Self-managed",
-      "allModels": "All models",
-      "allSites": "All sites",
-      "siteCount": "{{count}} sites",
-      "modelCount": "{{count}} models"
-    },
-    "runner": {
-      "title": "Runner Connection",
-      "description": "The runner executes Agent tasks. Configure how the gateway connects to it.",
-      "urlLabel": "Runner URL",
-      "urlPlaceholder": "http://127.0.0.1:3211",
-      "tokenLabel": "Runner Token",
-      "tokenConfigured": "Configured. Leave empty to keep the current value.",
-      "tokenNotConfigured": "Used to secure the connection between the gateway and the runner.",
-      "tokenPlaceholder": "Enter the runner token",
-      "tokenReplacePlaceholder": "Enter a new value to replace it",
-      "clear": "Clear configuration",
-      "clearTitle": "Clear Runner connection",
-      "clearDescription": "This removes the runner URL and token. Agent features will be unavailable until reconfigured.",
-      "clearCancel": "Cancel",
-      "clearConfirm": "Clear",
-      "clearing": "Clearing…",
-      "cleared": "Runner connection cleared",
-      "clearFailed": "Failed to clear runner configuration"
-    },
-    "upgrade": {
-      "available": "{{version}} available",
-      "action": "Upgrade",
-      "retry": "Retry upgrade",
-      "upgrading": "Upgrading…",
-      "title": "Upgrade Agent",
-      "description": "Upgrade Agent from {{current}} to {{target}}. The agent restarts during the upgrade, which takes a few minutes.",
-      "confirm": "Upgrade",
-      "cancel": "Cancel",
-      "forceTitle": "Sessions in progress",
-      "forceDescription": "{{count}} session(s) are still running and will be interrupted by the upgrade. Continue?",
-      "forceConfirm": "Force upgrade",
-      "starting": "Starting…",
-      "started": "Agent upgrade started",
-      "startFailed": "Failed to start upgrade",
-      "succeeded": "Agent upgraded to {{version}}",
-      "failed": "Agent upgrade failed"
-    },
-    "scope": {
-      "title": "Site & Model Scope",
-      "description": "Control which sites and models the Agent workspace can select.",
-      "siteAccess": "Site scope",
-      "allowAllSites": "All sites",
-      "allowListedSites": "Selected sites only",
-      "searchSites": "Search sites",
-      "noSites": "No matching sites",
-      "modelAccess": "Model scope",
-      "allowAllModels": "All models",
-      "allowListedModels": "Selected models only",
-      "searchModels": "Search models",
-      "noModels": "No matching models",
-      "selectAll": "Select all",
-      "clearAll": "Clear all",
-      "selectedCount": "{{count}} selected",
-      "selectSitesFirst": "Select sites on the left first",
-      "configure": "Configure scope",
-      "availableSites": "Available sites",
-      "availableSitesHint": "Click to view the site list",
-      "availableModels": "Available models",
-      "availableModelsHint": "Click to view the model list",
-      "disabled": "Disabled",
-      "cancel": "Cancel"
     }
   },
   "siteGroups": {
@@ -845,8 +871,16 @@
     "previewPricingFailed": "Preview failed",
     "pricingPreviewSummary": "Parsed {{items}} model prices and {{groups}} groups.",
     "pricingReviewConfirm": "I have reviewed the result and allow this plugin to provide prices for this site.",
-    "bindSiteHint": {"model_list": "When this site syncs models, this plugin fetches the model list.", "credential_check": "This plugin validates keys and runs health checks for this site.", "error_classifier": "Upstream errors of this site are classified by this plugin (it only picks a class and cannot change cooldown length).", "pricing_parse": "When this site refreshes its models, this plugin reads and saves the prices. It changes the prices shown for the site, so preview and review them first."},
-    "globalKindHint": {"site_detect": "Once enabled, this plugin also runs when xLyra detects a site type; it can only point to site types xLyra already supports.", "model_metadata": "Once enabled, it applies to every site. It only fills in missing model names and capabilities and never overrides existing values."},
+    "bindSiteHint": {
+      "model_list": "When this site syncs models, this plugin fetches the model list.",
+      "credential_check": "This plugin validates keys and runs health checks for this site.",
+      "error_classifier": "Upstream errors of this site are classified by this plugin (it only picks a class and cannot change cooldown length).",
+      "pricing_parse": "When this site refreshes its models, this plugin reads and saves the prices. It changes the prices shown for the site, so preview and review them first."
+    },
+    "globalKindHint": {
+      "site_detect": "Once enabled, this plugin also runs when xLyra detects a site type; it can only point to site types xLyra already supports.",
+      "model_metadata": "Once enabled, it applies to every site. It only fills in missing model names and capabilities and never overrides existing values."
+    },
     "trialPassed": "Trial passed",
     "trialFailed": "Trial failed",
     "siteBinding": {

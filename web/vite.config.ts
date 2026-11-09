@@ -61,6 +61,17 @@ export default defineConfig(({ command, mode }) => {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           globIgnores: ['**/node_modules/**/*', '**/version.json', '**/index.html'],
+          runtimeCaching: [
+            {
+              urlPattern: ({ url }) => url.pathname.startsWith('/api/v1/appearance/backgrounds/'),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'xlyra-backgrounds',
+                expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 30 },
+                cacheableResponse: { statuses: [200] },
+              },
+            },
+          ],
           manifestTransforms: [
             async (entries) => ({
               manifest: entries.map((entry) =>
@@ -102,7 +113,6 @@ export default defineConfig(({ command, mode }) => {
       port: 5173,
       strictPort: false,
       proxy: {
-        '/api/playground': proxyTarget,
         '/api/v1': proxyTarget,
         '/v1': proxyTarget,
         '/healthz': proxyTarget,

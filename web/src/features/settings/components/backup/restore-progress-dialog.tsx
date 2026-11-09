@@ -23,7 +23,7 @@ import {
   type RestoreProgressEvent,
 } from '@/features/settings/api/settings'
 
-type StepId = 'download' | 'decrypt' | 'parse' | 'import' | 'files'
+type StepId = 'download' | 'decrypt' | 'parse' | 'import' | 'agent' | 'agent_sessions' | 'agent_workspace'
 type StepState = 'pending' | 'in_progress' | 'complete' | 'error' | 'canceled'
 type Outcome = 'running' | 'success' | 'error' | 'canceled'
 
@@ -38,7 +38,9 @@ const STEPS: { id: StepId; tKey: string }[] = [
   { id: 'decrypt', tKey: 'backup.automatic.restoreProgress.stepDecrypt' },
   { id: 'parse', tKey: 'backup.automatic.restoreProgress.stepParse' },
   { id: 'import', tKey: 'backup.automatic.restoreProgress.stepImport' },
-  { id: 'files', tKey: 'backup.automatic.restoreProgress.stepFiles' },
+  { id: 'agent', tKey: 'backup.automatic.restoreProgress.stepAgent' },
+  { id: 'agent_sessions', tKey: 'backup.automatic.restoreProgress.stepAgentSessions' },
+  { id: 'agent_workspace', tKey: 'backup.automatic.restoreProgress.stepAgentWorkspace' },
 ]
 
 type RestoreProgressDialogProps = {
@@ -60,8 +62,31 @@ function initialSteps(task: RestoreTask): Record<StepId, StepState> {
     decrypt: 'pending',
     parse: 'pending',
     import: 'pending',
-    files: 'pending',
+    agent: 'pending',
+    agent_sessions: 'pending',
+    agent_workspace: 'pending',
   }
+}
+
+/** Agent 相关步骤动态出现：只有收到过对应事件的步骤才显示。 */
+function initialSeen(task: RestoreTask): Record<StepId, boolean> {
+  return {
+    download: task.type === 'automatic',
+    decrypt: true,
+    parse: true,
+    import: false,
+    agent: false,
+    agent_sessions: false,
+    agent_workspace: false,
+  }
+}
+
+function markSeenStepsComplete(current: Record<StepId, StepState>, seen: Record<StepId, boolean>): Record<StepId, StepState> {
+  const next = { ...current }
+  for (const step of STEPS) {
+    if (seen[step.id]) next[step.id] = 'complete'
+  }
+  return next
 }
 
 export function RestoreProgressDialog({ task, onClose, onBackground }: RestoreProgressDialogProps) {
@@ -92,6 +117,13 @@ export function RestoreProgressDialog({ task, onClose, onBackground }: RestorePr
 function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestoreProgressRunProps) {
   const { t, i18n } = useTranslation('settings')
   const [steps, setSteps] = useState<Record<StepId, StepState>>(() => initialSteps(task))
+  const [seenSteps, setSeenSteps] = useState<Record<StepId, boolean>>(() => initialSeen(task))
+  const seenRef = useRef<Record<StepId, boolean>>(initialSeen(task))
+
+  function markStepSeen(step: StepId) {
+    seenRef.current[step] = true
+    setSeenSteps((current) => (current[step] ? current : { ...current, [step]: true }))
+  }
   const [rows, setRows] = useState(0)
   const [totalRows, setTotalRows] = useState(0)
   const [currentTable, setCurrentTable] = useState('')
@@ -117,12 +149,13 @@ function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestorePro
           if (event.step === 'complete') {
             setSummary(event.summary ?? null)
             setRows(event.summary?.rows ?? event.rows ?? 0)
-            setSteps({ download: 'complete', decrypt: 'complete', parse: 'complete', import: 'complete', files: 'complete' })
+            setSteps((current) => markSeenStepsComplete(current, seenRef.current))
             setOutcome('success')
             return true
           }
 
           const activeEventStep = event.step
+          markStepSeen(activeEventStep)
           const stepIndex = STEPS.findIndex((step) => step.id === activeEventStep)
           if (stepIndex < activeStepIndex) return false
           activeStep = activeEventStep
@@ -147,11 +180,15 @@ function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestorePro
 
         const applyTerminalStep = (event: RestoreProgressEvent, state: Extract<StepState, 'error' | 'canceled'>) => {
           const terminalStep = event.step === 'complete' ? activeStep : event.step
+          if (event.step !== 'complete') markStepSeen(event.step)
           activeStep = terminalStep
           const stepIndex = STEPS.findIndex((step) => step.id === terminalStep)
           setSteps((current) => {
             const next = { ...current }
-            for (let index = 0; index < stepIndex; index += 1) next[STEPS[index].id] = 'complete'
+            for (let index = 0; index < stepIndex; index += 1) {
+              const id = STEPS[index].id
+              if (seenRef.current[id]) next[id] = 'complete'
+            }
             next[terminalStep] = state
             return next
           })
@@ -170,7 +207,7 @@ function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestorePro
             if (restore.status === 'completed') {
               setSummary(restore.summary ?? null)
               setRows(restore.summary?.rows ?? 0)
-              setSteps({ download: 'complete', decrypt: 'complete', parse: 'complete', import: 'complete', files: 'complete' })
+              setSteps((current) => markSeenStepsComplete(current, seenRef.current))
               setOutcome('success')
               return
             }
@@ -235,7 +272,7 @@ function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestorePro
     onBackground({ ...task, taskID: automaticRestore.id })
   }
 
-  const visibleSteps = task.type === 'manual' ? STEPS.filter((step) => step.id !== 'download') : STEPS
+  const visibleSteps = STEPS.filter((step) => (task.type === 'manual' ? step.id !== 'download' : true) && seenSteps[step.id])
   const displayedRows = useAnimatedInteger(rows)
   const filename = task.type === 'automatic' ? task.filename : task.file.name
   const title = outcome === 'success'
@@ -245,11 +282,27 @@ function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestorePro
     : outcome === 'error'
       ? t('backup.automatic.restoreProgress.errorTitle')
       : t('backup.automatic.restoreProgress.title')
-  const description = outcome === 'success' && summary
-    ? t('backup.automatic.restoreProgress.completeDescription', {
+  const successDescription = outcome === 'success' && summary
+    ? (summary.sections
+      ? t('backup.automatic.restoreProgress.completeDescriptionSections', {
+        count: summary.sections.length,
         tables: summary.tables.toLocaleString(i18n.language),
         rows: summary.rows.toLocaleString(i18n.language),
       })
+      : t('backup.automatic.restoreProgress.completeDescription', {
+        tables: summary.tables.toLocaleString(i18n.language),
+        rows: summary.rows.toLocaleString(i18n.language),
+      }))
+    : ''
+  const clearedNote = outcome === 'success' && summary?.cleared_sections?.length
+    ? t('backup.automatic.restoreProgress.clearedNote', {
+      names: summary.cleared_sections
+        .map((item) => t(`backup.sections.items.${item.id}.label`, { defaultValue: item.id }))
+        .join('、'),
+    })
+    : ''
+  const description = outcome === 'success' && summary
+    ? successDescription
     : outcome === 'error'
       ? t('backup.automatic.restoreProgress.errorDescription')
       : outcome === 'canceled'
@@ -262,6 +315,7 @@ function RestoreProgressRun({ task, onClose, onRetry, onBackground }: RestorePro
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
+          {clearedNote ? <p className="mt-1 text-footnote text-label-2">{clearedNote}</p> : null}
         </DialogHeader>
 
         <DialogBody className="space-y-4">

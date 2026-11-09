@@ -1,0 +1,30 @@
+/**
+ * Agent 页残留的布局样式（迁移自 liquid-glass/agent-liquid-glass.css）。
+ *
+ * 页面视觉已统一到主程序：玻璃用 components/glass 的 LiquidGlass（.lg-*），
+ * 颜色一律使用主程序 token，这里不再做任何重新着色。
+ * 输入区外层是 LiquidGlass 面板，内层 Composer 自带的 .composer-surface
+ * 底色 / 描边 / 聚焦环要去掉，避免玻璃里再叠一层实心表面。
+ */
+.agent-composer [data-chat-composer='true'],
+.agent-composer [data-chat-composer='true']:focus-within {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-composer-on-background textarea::placeholder {
+  color: hsl(var(--label-secondary));
+}
+
+.agent-composer-on-background .text-label-3 {
+  color: hsl(var(--label-secondary));
+}
+
+/* 进入会话时的页面遮罩：高斯模糊 + 半透明压暗，隐约透出底层背景图，正文不被打扰。
+   独立成层，backdrop-filter 只作用于其后的背景图，不模糊上层正文（数值沿用旧版 --dull） */
+.agent-backdrop-dull {
+  -webkit-backdrop-filter: blur(10px) saturate(1) brightness(0.78);
+  backdrop-filter: blur(10px) saturate(1) brightness(0.78);
+  background: rgb(15 15 16 / 0.38);
+}

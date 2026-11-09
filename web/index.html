@@ -8,6 +8,22 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <script>
+      try {
+        var cachedAppearance = JSON.parse(localStorage.getItem('xlyra:appearance') || 'null')
+        var cachedBackground = cachedAppearance && cachedAppearance.background_image
+        // 登录/注册/门户/流量图不显示背景图，也未登录，不预加载（受保护接口会 401）
+        var onPublicPage = /^\/(login|register|portal|traffic-flow|status)(\/|$)/.test(location.pathname)
+        if (!onPublicPage && typeof cachedBackground === 'string' && cachedBackground.charAt(0) === '/') {
+          var backgroundPreload = document.createElement('link')
+          backgroundPreload.rel = 'preload'
+          backgroundPreload.as = 'image'
+          backgroundPreload.href = cachedBackground
+          backgroundPreload.setAttribute('fetchpriority', 'high')
+          document.head.appendChild(backgroundPreload)
+        }
+      } catch {}
+    </script>
+    <script>
       ;(function () {
         var varName = '--app-viewport-height'
         function isStandalone() {

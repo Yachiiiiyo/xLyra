@@ -27,3 +27,5 @@ npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 lerna-debug.log*
+
+agent-runtime/node_modules/

@@ -1,456 +1,9 @@
-/**
- * Agent 页自持暗色主题 —— 与主程序的 html.light / html.dark 注入彻底解耦。
- *
- * 主程序把主题 token（--surface-* / --glass-* / --foreground 等）声明在 <html> 上，
- * 浅色模式下整组翻成亮色值；而 Agent 页是恒暗的液态玻璃视觉，页面里大量共享组件
- * （Button 各 variant、Dialog、Slider、MarkdownMessage、ChatAttachmentItem、时间线
- * 展开块、popover 菜单……）依旧消费这些 token。这里把 body:has(.agent-page) 整体
- * 钉回 index.css :root 的暗色默认值：custom property 按元素就近解析，body 上的声明
- * 会遮蔽 html.light 的继承值，页面本体 + 所有挂在 body 下的 Radix portal
- * （对话框 / Popover / Toast）全部拿到暗色值，不再随主题翻转。
- * /agent 路由下 AppShell 已剥掉全部应用外壳，body 里可见内容均属于本页，
- * 因此 body 级钉死不会误伤其它页面。增删 token 时与 :root 块保持同步。
- */
-body:has(.agent-page) {
-  color-scheme: dark;
-  --background: 222 30% 8%;
-  --foreground: 0 0% 96%;
-  --card: 222 25% 11%;
-  --card-foreground: 0 0% 96%;
-  --popover: 222 22% 14%;
-  --popover-foreground: 0 0% 96%;
-  --primary: 220 10% 72%;
-  --primary-foreground: 222 30% 8%;
-  --secondary: 222 18% 15%;
-  --secondary-foreground: 0 0% 94%;
-  --muted: 220 18% 14%;
-  --muted-foreground: 220 10% 74%;
-  --accent: 222 16% 18%;
-  --accent-foreground: 0 0% 96%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 0 0% 100% / 0.07;
-  --input: 0 0% 100% / 0.06;
-  --ring: 220 10% 72%;
-  --ring-soft: 220 10% 72% / 0.16;
-  --ring-strong: 220 10% 72% / 0.34;
-  --surface-base: 222 30% 8%;
-  --surface-panel: 222 24% 11%;
-  --surface-elevated: 222 22% 12% / 0.8;
-  --surface-field: 222 18% 13% / 0.64;
-  --surface-selected: 222 16% 17%;
-  --surface-soft: 222 22% 12% / 0.54;
-  --surface-soft-hover: 222 22% 15% / 0.68;
-  --surface-subtle: 222 18% 16% / 0.34;
-  --surface-strong: 222 22% 12% / 0.76;
-  --glass-border: 0 0% 100% / 0.07;
-  --glass-border-strong: 0 0% 100% / 0.1;
-  --glass-divider: 0 0% 100% / 0.05;
-  --shell-border: 0 0% 100% / 0.05;
-  --field-border-focus: 0 0% 100% / 0.14;
-  --input-placeholder: 220 8% 52%;
-  --text-muted-soft: 220 10% 74%;
-  --text-faint: 220 8% 58%;
-  --ambient-left: 221 38% 30%;
-  --ambient-right: 236 34% 28%;
-  --ambient-base: 222 24% 12%;
-  --ambient-bottom: 252 24% 18%;
-  --badge-neutral-bg: 0 0% 100% / 0.06;
-  --badge-neutral-border: 0 0% 100% / 0.1;
-  --badge-neutral-text: 220 12% 86%;
-  --badge-success-bg: 145 70% 44% / 0.14;
-  --badge-success-border: 145 70% 44% / 0.24;
-  --badge-success-text: 145 70% 78%;
-  --badge-info-bg: 205 84% 58% / 0.14;
-  --badge-info-border: 205 84% 58% / 0.24;
-  --badge-info-text: 205 90% 80%;
-  --badge-warning-bg: 38 92% 56% / 0.14;
-  --badge-warning-border: 38 92% 56% / 0.24;
-  --badge-warning-text: 38 96% 78%;
-  --badge-accent-bg: 220 10% 72% / 0.12;
-  --badge-accent-border: 220 10% 72% / 0.22;
-  --badge-accent-text: 220 18% 88%;
-  --request-tpm-badge-bg: 262 84% 67% / 0.15;
-  --request-tpm-badge-border: 262 84% 67% / 0.3;
-  --request-tpm-badge-text: 262 100% 90%;
-  --request-failover-badge-bg: 220 14% 72% / 0.1;
-  --request-failover-badge-border: 220 14% 72% / 0.18;
-  --request-failover-badge-text: 220 14% 76%;
-  --button-soft-border: 0 0% 100% / 0;
-  --button-soft-shadow: 0 0 #0000;
-  --button-secondary-border: 220 10% 72% / 0.18;
-  --button-secondary-shadow: 0 0 #0000;
-  --button-hover-shadow: 0 12px 26px rgba(4, 8, 18, 0.18);
-  --button-hover-translate: -2px;
-  --card-hover-shadow: 0 18px 36px rgba(4, 8, 18, 0.18);
-  --card-hover-translate: -3px;
-  --switch-checked-shadow: 0 0 0 4px hsl(220 10% 72% / 0.16);
-  --shadow-dialog: 0 24px 60px rgba(0, 0, 0, 0.26);
-  --dialog-surface: 222 22% 12% / 0.48;
-  --dialog-overlay: 10 14 24 / 0.22;
-}
-
-.agent-liquid-shell {
-  position: relative;
-  isolation: isolate;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  --agent-text-primary: 0 0% 98%;
-  --agent-text-muted: 220 14% 84%;
-  --agent-text-faint: 220 12% 74%;
-  /* 工具调用最深层详情块底色：半透明深色，透出「模糊 + 压暗」后的页面背景图 */
-  --agent-step-detail-backdrop: rgb(15 15 16 / 0.52);
-  color: hsl(var(--agent-text-primary));
-}
-
-.agent-mobile-header {
-  position: absolute;
-  inset: 0 0 auto;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  padding-inline: 1rem;
-  pointer-events: none;
-}
-
-/* 进入会话（有标题）时的顶栏玻璃底：压在滚动内容上，透出会话背景；
-   首页展示 logo 时是透明条，不加这一层 */
-.agent-mobile-header--session {
-  background: rgb(15 15 16 / 0.5);
-  border-bottom: 1px solid hsl(var(--glass-divider));
-  -webkit-backdrop-filter: blur(12px) saturate(120%);
-  backdrop-filter: blur(12px) saturate(120%);
-}
-
-.agent-mobile-header > div {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  pointer-events: auto;
-}
-
-.agent-mobile-header__button,
-.agent-mobile-header__logo {
-  display: grid;
-  place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border: 1px solid rgb(255 255 255 / 0.16);
-  border-radius: 999px;
-  background: rgb(10 14 28 / 0.42);
-  color: rgb(255 255 255 / 0.94);
-  box-shadow: 0 14px 34px rgb(0 0 0 / 0.2), inset 0 1px 0 rgb(255 255 255 / 0.16);
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  backdrop-filter: blur(22px) saturate(140%);
-}
-
-.agent-mobile-header__button {
-  transition: background-color 150ms ease, transform 150ms ease;
-}
-
-/* 汉堡按钮：去掉胶囊底与边框，作为纯图标和标题同一行；只保留圆形点击热区 */
-.agent-mobile-header__button {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.agent-mobile-header__button:hover,
-.agent-mobile-header__button:focus-visible {
-  background: rgb(255 255 255 / 0.14) !important;
-}
-
-.agent-mobile-header__button:active {
-  transform: scale(0.94);
-}
-
-.agent-mobile-header__title {
-  max-width: min(70vw, 20rem);
-  overflow: hidden;
-  color: rgb(255 255 255 / 0.94);
-  font-size: 0.9rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-shadow: 0 1px 3px rgb(0 0 0 / 0.55);
-}
-
-.agent-mobile-header__logo {
-  width: 2.5rem;
-  height: 2.5rem;
-  padding: 0;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-.agent-mobile-header__logo > span {
-  background: transparent !important;
-}
-
-.agent-mobile-header__button {
-  width: 2.25rem;
-  height: 2.25rem;
-}
-
-.agent-mobile-drawer__overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  cursor: default;
-  border: 0;
-  background: rgb(3 6 14 / 0.46);
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
-}
-
-.agent-mobile-drawer {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 50;
-  width: min(84vw, 320px);
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-  animation: agent-mobile-drawer-in 220ms cubic-bezier(.22,.75,.25,1) both;
-}
-
-.agent-mobile-drawer__panel {
-  height: 100%;
-  border-radius: 0 24px 24px 0;
-  box-shadow: 18px 0 54px rgb(0 0 0 / 0.28);
-}
-
-.agent-mobile-drawer .agent-liquid-surface__content {
-  overflow: hidden;
-}
-
-.agent-mobile-sidebar {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-}
-
-.agent-mobile-sidebar > button {
-  height: 2.25rem;
-  padding-inline: 0.625rem;
-  font-size: 0.8rem;
-}
-
-.agent-mobile-sidebar > p {
-  margin-top: 0.5rem;
-  padding-inline: 0.625rem;
-  padding-bottom: 0.35rem;
-  font-size: 0.68rem;
-}
-
-.agent-mobile-sidebar [data-agent-session-row] {
-  min-height: 2.25rem;
-  padding: 0.35rem 0.625rem;
-  font-size: 0.78rem;
-}
-
-@keyframes agent-mobile-drawer-in {
-  from { opacity: 0; transform: translateX(-1.25rem); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-.agent-liquid-shell[data-agent-visual='bright'],
-.agent-liquid-surface--bright {
-  --agent-text-primary: 0 0% 98%;
-  --agent-text-muted: 220 14% 88%;
-  --agent-text-faint: 220 12% 78%;
-  --agent-control-scrim: rgb(18 22 42 / 0.18);
-  --agent-control-hover: rgb(255 255 255 / 0.16);
-  --agent-glass-fallback: rgb(26 31 58 / 0.28);
-}
-
-.agent-liquid-shell[data-agent-visual='dark'],
 .agent-liquid-surface--dark {
   --agent-text-primary: 0 0% 98%;
   --agent-text-muted: 220 16% 84%;
   --agent-text-faint: 220 14% 72%;
   --agent-control-scrim: rgb(255 255 255 / 0.055);
   --agent-control-hover: rgb(255 255 255 / 0.1);
-  --agent-glass-fallback: rgb(20 29 54 / 0.3);
-}
-
-.agent-liquid-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: #080d1b url('/agent-backdrop.png') center / cover no-repeat;
-}
-
-/* 进入会话时的页面遮罩：高斯模糊 + 半透明压暗，隐约透出底层背景图，正文不被打扰。
-   独立成层，backdrop-filter 只作用于其后的背景图，不模糊上层正文 */
-.agent-liquid-backdrop--dull {
-  -webkit-backdrop-filter: blur(10px) saturate(1) brightness(0.78);
-  backdrop-filter: blur(10px) saturate(1) brightness(0.78);
-  background: rgb(15 15 16 / 0.38);
-}
-
-/* 工具调用最深层详情块：半透明深色，透出「模糊 + 压暗」后的页面背景图，与页面底色一致 */
-.agent-step-detail {
-  background: var(--agent-step-detail-backdrop);
-}
-
-.agent-page button.bg-primary,
-.agent-liquid-dialog-host button.bg-primary,
-.agent-liquid-access-dialog-host button.bg-primary,
-.agent-liquid-picker-host button.bg-primary {
-  background-color: #fff !important;
-  color: #0b0d12 !important;
-  border-color: rgb(255 255 255 / 0.82) !important;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 0.2), inset 0 1px 0 rgb(255 255 255 / 0.8) !important;
-}
-
-.agent-liquid-shell .text-foreground,
-.agent-liquid-surface .text-foreground,
-.agent-liquid-dialog .text-foreground,
-.agent-liquid-access-dialog .text-foreground {
-  color: hsl(var(--agent-text-primary)) !important;
-}
-
-.agent-liquid-shell .text-muted-soft,
-.agent-liquid-surface .text-muted-soft,
-.agent-liquid-dialog .text-muted-soft,
-.agent-liquid-access-dialog .text-muted-soft {
-  color: hsl(var(--agent-text-muted)) !important;
-}
-
-.agent-liquid-shell .text-faint,
-.agent-liquid-surface .text-faint,
-.agent-liquid-dialog .text-faint,
-.agent-liquid-access-dialog .text-faint {
-  color: hsl(var(--agent-text-faint)) !important;
-}
-
-.agent-liquid-shell .text-foreground,
-.agent-liquid-surface .text-foreground {
-  text-shadow: 0 1px 3px rgb(0 0 0 / 0.55);
-}
-
-.agent-liquid-picker-panel,
-.agent-liquid-picker-subpanel {
-  border: 1px solid hsl(var(--glass-border-strong)) !important;
-  background: hsl(var(--surface-panel) / 0.76) !important;
-  box-shadow: 0 18px 46px rgb(2 6 18 / 0.24), inset 0 1px 0 hsl(var(--glass-border) / 0.75) !important;
-  -webkit-backdrop-filter: blur(24px) saturate(145%);
-  backdrop-filter: blur(24px) saturate(145%);
-  color: hsl(var(--foreground));
-}
-
-.agent-liquid-picker-host {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-}
-
-.agent-liquid-picker-surface {
-  width: 13rem;
-  min-height: 8rem;
-  border-radius: 14px;
-  animation: agent-liquid-popover-in 220ms cubic-bezier(.22,.75,.25,1) both;
-  color: rgb(245 247 255 / 0.96);
-}
-
-.agent-liquid-picker-surface--sub {
-  width: max-content;
-  min-width: 10rem;
-  max-width: min(20rem, calc(100vw - 1.5rem));
-}
-
-.agent-liquid-picker-surface__content {
-  height: auto;
-  min-height: inherit;
-  padding: 0.375rem;
-}
-
-.agent-liquid-picker-surface .agent-liquid-picker-panel,
-.agent-liquid-picker-surface .agent-liquid-picker-subpanel {
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-  padding: 0 !important;
-}
-
-.agent-liquid-dialog-host {
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  backdrop-filter: none !important;
-}
-
-.agent-liquid-picker-surface button {
-  color: rgb(226 230 242 / 0.82);
-}
-
-.agent-liquid-picker-surface button:hover,
-.agent-liquid-picker-surface button:focus-visible {
-  color: rgb(255 255 255 / 0.98);
-  background: rgb(255 255 255 / 0.1);
-}
-
-/* 会话删除菜单：picker 玻璃表面的紧凑变体（去掉 13rem 宽与 8rem 最小高） */
-.agent-liquid-picker-surface--menu {
-  width: max-content;
-  min-width: 9rem;
-  min-height: 0;
-}
-
-/* 删除项用主题 destructive 红；普通态略降透明融入玻璃，hover 提亮+红色衬底 */
-.agent-liquid-picker-surface--menu [data-agent-delete] {
-  color: hsl(var(--destructive) / 0.92);
-}
-
-.agent-liquid-picker-surface--menu [data-agent-delete]:hover,
-.agent-liquid-picker-surface--menu [data-agent-delete]:focus-visible {
-  color: hsl(var(--destructive));
-  background: hsl(var(--destructive) / 0.12);
-}
-
-.agent-liquid-picker-panel button,
-.agent-liquid-picker-subpanel button {
-  color: hsl(var(--text-muted-soft));
-}
-
-.agent-liquid-picker-panel button:hover,
-.agent-liquid-picker-subpanel button:hover,
-.agent-liquid-picker-panel button:focus-visible,
-.agent-liquid-picker-subpanel button:focus-visible {
-  background: hsl(var(--surface-subtle) / 0.72);
-  color: hsl(var(--foreground));
-}
-
-.agent-liquid-access-dialog {
-  width: 100%;
-  border-radius: 26px;
-}
-
-.agent-liquid-access-dialog__content {
-  overflow: hidden;
-}
-
-@media (min-width: 1024px) {
-  .agent-mobile-header,
-  .agent-mobile-drawer,
-  .agent-mobile-drawer__overlay {
-    display: none;
-  }
-  .agent-liquid-access-dialog-host {
-    border: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-  }
 }
 
 .agent-liquid-surface {
@@ -459,7 +12,9 @@ body:has(.agent-page) {
   overflow: hidden;
   min-width: 0;
   min-height: 0;
-  background: transparent;
+  background: rgb(24 26 33 / 0.4);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
   border: 0;
   box-shadow: 0 22px 56px rgba(2, 6, 18, 0.28), 0 4px 18px rgba(2, 6, 18, 0.18);
 }
@@ -506,42 +61,14 @@ body:has(.agent-page) {
   border-radius: inherit;
 }
 
-.agent-liquid-sidebar {
-  height: 100%;
-  border-radius: 24px;
-  box-shadow: none;
-  text-shadow: 0 1px 3px rgb(0 0 0 / 0.7);
-}
-
-.agent-liquid-sidebar .agent-liquid-surface__content {
-  padding: 12px;
-}
-
-.agent-liquid-sidebar button,
-.agent-liquid-sidebar [data-agent-session-row] {
-  transition: background-color 150ms ease, color 150ms ease;
-}
-
-.agent-liquid-sidebar button:hover,
-.agent-liquid-sidebar [data-agent-session-row]:hover {
-  background: hsl(var(--surface-subtle) / 0.68);
-}
-
-.agent-liquid-sidebar [data-agent-session-row][data-active='true'] {
-  background: #282829;
-  box-shadow: none;
-}
-
-.agent-liquid-sidebar .agent-liquid-surface__content::before {
-  box-shadow: none;
-}
-
 .agent-liquid-composer {
+  /* 输入框右上角的小螃蟹趴在面板外沿，不能被 surface 的 overflow:hidden 裁掉；canvas 自带圆角裁切 */
+  overflow: visible;
   border-radius: 26px;
   box-shadow: 0 26px 64px rgb(2 6 18 / 0.34), 0 4px 18px rgb(2 6 18 / 0.24);
 }
 
-.agent-liquid-composer [data-playground-composer='true'] {
+.agent-liquid-composer [data-chat-composer='true'] {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
@@ -550,54 +77,43 @@ body:has(.agent-page) {
   flex-direction: column;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea {
+.agent-liquid-composer [data-chat-composer='true'] textarea {
   flex: 1;
   min-height: 2.5rem;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea + div {
+.agent-liquid-composer [data-chat-composer='true'] textarea + div {
   margin-top: auto;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea,
-.agent-liquid-composer [data-playground-composer='true'] textarea::placeholder {
+.agent-liquid-composer [data-chat-composer='true'] textarea,
+.agent-liquid-composer [data-chat-composer='true'] textarea::placeholder {
   color: hsl(var(--agent-text-primary)) !important;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] textarea::placeholder {
+.agent-liquid-composer [data-chat-composer='true'] textarea::placeholder {
   opacity: 0.58;
 }
 
-.agent-liquid-composer [data-playground-composer='true'] button {
+.agent-liquid-composer [data-chat-composer='true'] button {
   color: hsl(var(--agent-text-muted));
 }
 
-.agent-liquid-composer [data-playground-composer='true'] button:hover {
+.agent-liquid-composer [data-chat-composer='true'] button:hover {
   background: var(--agent-control-hover);
   color: hsl(var(--agent-text-primary));
 }
 
-.agent-liquid-composer [data-playground-composer='true'] button.agent-stop-button,
-.agent-liquid-composer [data-playground-composer='true'] button.agent-stop-button:hover {
+.agent-liquid-composer [data-chat-composer='true'] button.agent-stop-button,
+.agent-liquid-composer [data-chat-composer='true'] button.agent-stop-button:hover {
   background: #fff;
   color: #000;
 }
 
-/* 发送按钮禁用态（输入为空）：别吃主题的 --surface-subtle（浅色主题下是奶白半透明，
-   浅灰箭头落上去几乎不可见），统一为玻璃 scrim + 弱化文字。
-   启用态已由 .agent-page button.bg-primary 固定为白底黑箭头。 */
-.agent-liquid-composer [data-playground-composer='true'] button[aria-label='send']:disabled {
+.agent-liquid-composer [data-chat-composer='true'] button[aria-label='send']:disabled {
   background: var(--agent-control-scrim);
   color: hsl(var(--agent-text-faint)) !important;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-}
-
-.agent-liquid-user-message {
-  background: #282829;
-  border: 0;
-  color: rgb(255 255 255 / 0.98);
-  box-shadow: none;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
 }
 
 .agent-liquid-composer .agent-liquid-surface__content {
@@ -606,178 +122,4 @@ body:has(.agent-page) {
 
 .agent-liquid-composer .agent-liquid-surface__content::before {
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -1px 0 rgb(0 0 0 / 0.22);
-}
-
-.agent-liquid-dialog {
-  width: 100%;
-  height: 100%;
-  border-radius: 28px;
-}
-
-.agent-liquid-dialog .agent-liquid-surface__content {
-  overflow: hidden;
-}
-
-.agent-liquid-dialog__body {
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-.agent-mobile-settings__layout {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  color: hsl(var(--agent-text-primary));
-}
-
-.agent-mobile-settings__layout--menu {
-  height: min(52svh, 420px);
-}
-
-.agent-mobile-settings__header {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.75rem;
-  min-height: 3.5rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid hsl(var(--glass-divider));
-}
-
-.agent-mobile-settings__back {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 0.35rem;
-  min-height: 2.25rem;
-  padding: 0 0.25rem;
-  color: hsl(var(--agent-text-muted));
-  font-size: 0.8rem;
-}
-
-.agent-mobile-settings__back:hover,
-.agent-mobile-settings__back:focus-visible {
-  color: hsl(var(--agent-text-primary));
-}
-
-.agent-mobile-settings__title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.95rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-mobile-settings__menu,
-.agent-mobile-settings__content {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
-}
-
-.agent-mobile-settings__menu {
-  padding: 0.75rem 1rem;
-}
-
-.agent-mobile-settings__menu-item {
-  display: flex;
-  width: 100%;
-  min-height: 3rem;
-  align-items: center;
-  gap: 0.75rem;
-  border-bottom: 1px solid hsl(var(--glass-divider));
-  padding: 0.75rem 0.25rem;
-  color: hsl(var(--agent-text-primary));
-  font-size: 0.9rem;
-  text-align: left;
-}
-
-.agent-mobile-settings__menu-item:hover,
-.agent-mobile-settings__menu-item:focus-visible {
-  color: hsl(var(--agent-text-primary));
-  background: hsl(var(--surface-subtle) / 0.45);
-}
-
-.agent-mobile-settings__content {
-  padding: 1rem;
-}
-
-.agent-mobile-settings__footer {
-  display: flex;
-  flex-shrink: 0;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid hsl(var(--glass-divider));
-}
-
-.agent-liquid-dialog__sidebar {
-  background: rgb(20 26 49 / 0.16);
-  border-right: 1px solid hsl(var(--glass-divider));
-}
-
-.agent-liquid-dialog__nav {
-  background: transparent;
-}
-
-.agent-liquid-dialog__nav--active {
-  background: var(--agent-control-scrim);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 -1px 0 rgb(0 0 0 / 0.16);
-}
-
-.agent-liquid-dialog input,
-.agent-liquid-dialog textarea {
-  background: var(--agent-control-scrim) !important;
-  border-color: rgb(255 255 255 / 0.14) !important;
-  color: hsl(var(--agent-text-primary)) !important;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-}
-
-.agent-liquid-dialog input::placeholder,
-.agent-liquid-dialog textarea::placeholder {
-  color: hsl(var(--agent-text-muted)) !important;
-  opacity: 0.7;
-}
-
-@keyframes agent-liquid-popover-in {
-  from { opacity: 0; transform: translateY(4px) scale(.97); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@media (max-width: 1023px) {
-  .agent-liquid-dialog__nav svg {
-    display: none;
-  }
-
-  .appearance-background-preview > div {
-    background: rgb(0 0 0 / 0.42);
-  }
-
-  .appearance-background-change {
-    opacity: 1;
-  }
-
-  .appearance-background-list {
-    display: flex;
-    overflow-x: auto;
-    padding-bottom: 0.25rem;
-    overscroll-behavior-inline: contain;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .appearance-background-card {
-    width: 8.25rem;
-    flex: 0 0 auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-liquid-sidebar button,
-  .agent-liquid-sidebar [data-agent-session-row] {
-    transition: none;
-  }
 }

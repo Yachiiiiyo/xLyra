@@ -91,6 +91,46 @@ func TestCanonicalResponseFromAnthropicMessagesBody(t *testing.T) {
 	}
 }
 
+func TestEncodeAnthropicMessageUsageExcludesCacheTokens(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		usage     gatewayUsage
+		wantInput int
+	}{
+		{name: "无缓存", usage: gatewayUsage{PromptTokens: 100, CompletionTokens: 8}, wantInput: 100},
+		{name: "缓存命中", usage: gatewayUsage{PromptTokens: 100, CompletionTokens: 8, CachedPromptTokens: 30}, wantInput: 70},
+		{name: "缓存创建", usage: gatewayUsage{PromptTokens: 100, CompletionTokens: 8, CacheCreationInputTokens: 20}, wantInput: 80},
+		{name: "命中与创建", usage: gatewayUsage{PromptTokens: 100, CompletionTokens: 8, CachedPromptTokens: 30, CacheCreationInputTokens: 20}, wantInput: 50},
+		{name: "命中大于提示", usage: gatewayUsage{PromptTokens: 10, CompletionTokens: 8, CachedPromptTokens: 30}, wantInput: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, recorded, err := encodeCanonicalResponseAsAnthropicMessage(canonicalResponse{Usage: tc.usage})
+			if err != nil {
+				t.Fatalf("encodeCanonicalResponseAsAnthropicMessage returned error: %v", err)
+			}
+			var out struct {
+				Usage anthropicMessageUsageBody `json:"usage"`
+			}
+			if err := json.Unmarshal(body, &out); err != nil {
+				t.Fatalf("decode Anthropic response: %v", err)
+			}
+			if out.Usage.InputTokens != tc.wantInput {
+				t.Fatalf("input_tokens = %d, want %d", out.Usage.InputTokens, tc.wantInput)
+			}
+			if out.Usage.OutputTokens != 8 {
+				t.Fatalf("output_tokens = %d, want 8", out.Usage.OutputTokens)
+			}
+			// 输出侧的扣减不能反向改变网关内部记录/计费用量。
+			if recorded.PromptTokens != tc.usage.PromptTokens {
+				t.Fatalf("内部 prompt tokens = %d, want %d", recorded.PromptTokens, tc.usage.PromptTokens)
+			}
+		})
+	}
+}
+
 func TestAnthropicMessagesTransformBufferedResponseToResponses(t *testing.T) {
 	t.Parallel()
 

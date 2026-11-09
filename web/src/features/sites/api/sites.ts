@@ -696,6 +696,7 @@ export const sitesQueryKeys = {
     [...sitesQueryKeys.all, 'detail', siteId] as const,
   models: (siteId: string) =>
     [...sitesQueryKeys.all, 'models', siteId] as const,
+  allModels: () => [...sitesQueryKeys.all, 'models', 'all'] as const,
   accounts: (siteId: string) =>
     [...sitesQueryKeys.detail(siteId), 'accounts'] as const,
   accountRegions: (siteId: string) =>
@@ -706,11 +707,12 @@ export type SiteOAuthFilter = 'all' | 'exclude' | 'only'
 export type SiteDeletedFilter = 'exclude' | 'with_requests'
 
 export async function listSites(
-  options: { oauth?: SiteOAuthFilter; deleted?: SiteDeletedFilter } = {},
+  options: { oauth?: SiteOAuthFilter; deleted?: SiteDeletedFilter; lite?: boolean } = {},
 ) {
   const oauth = options.oauth ?? 'exclude'
   const deleted = options.deleted ?? 'exclude'
   const params = new URLSearchParams({ oauth, deleted })
+  if (options.lite) params.set('lite', '1')
   return apiFetch<{ items: Site[]; meta: { count: number } }>(
     `/api/v1/sites?${params.toString()}`,
   )
@@ -718,6 +720,10 @@ export async function listSites(
 
 export async function listSitesWithOAuth() {
   return listSites({ oauth: 'all' })
+}
+
+export async function listSitesLite() {
+  return listSites({ oauth: 'all', lite: true })
 }
 
 export async function listSiteTypes() {
@@ -814,6 +820,15 @@ export async function refreshAllSites() {
   return apiFetch<RefreshAllSitesResponse>('/api/v1/sites/refresh', {
     method: 'POST',
   })
+}
+
+export async function listAllSiteModels() {
+  const response = await apiFetch<{ items: Array<{ site_id: string; models: SiteModel[] }>; meta?: { count?: number } }>(
+    '/api/v1/site-models',
+  )
+  const modelsBySite: Record<string, SiteModel[]> = {}
+  for (const item of response.items ?? []) modelsBySite[item.site_id] = item.models ?? []
+  return modelsBySite
 }
 
 export async function listSiteModels(siteId: string) {

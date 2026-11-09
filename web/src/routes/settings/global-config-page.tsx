@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Gauge, Network as SystemProxyIcon, SlidersHorizontal, Tags, UserRound } from 'lucide-react'
+import { ExternalLink, Gauge, Network as SystemProxyIcon, Palette, SlidersHorizontal, Tags, UserRound } from 'lucide-react'
 import { PageHeader } from '@/components/common/page-header'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,7 @@ export function GlobalConfigPage() {
 
   const globalSettingsNav = [
     { to: '/settings/global/general', label: t('global.nav.general'), icon: SlidersHorizontal },
+    { to: '/settings/global/appearance', label: t('global.nav.appearance'), icon: Palette },
     { to: '/settings/global/profile', label: t('global.nav.profile'), icon: UserRound },
     { to: '/settings/global/system-proxy', label: t('global.nav.systemProxy'), icon: SystemProxyIcon },
     { to: '/settings/global/rate-limit', label: t('global.nav.rateLimit'), icon: Gauge },

@@ -1,0 +1,41 @@
+{
+  "actions": {
+    "copy": "コピー",
+    "copied": "コピーしました",
+    "copyFailed": "コピーに失敗しました",
+    "edit": "編集"
+  },
+  "chat": {
+    "attach": "添付ファイルを追加",
+    "removeAttachment": "添付ファイルを削除",
+    "attachmentLimit": "添付できるファイルは最大 {{count}} 件です",
+    "attachmentTooLarge": "{{name}} は 5 MB を超えています",
+    "attachmentReadFailed": "添付ファイルを読み込めませんでした"
+  },
+  "credential": {
+    "modelPlaceholder": "モデルを選択"
+  },
+  "picker": {
+    "reasoning": "推論強度",
+    "noModels": "利用可能なモデルがありません",
+    "selectModel": "モデルを選択",
+    "reset": "デフォルトに戻す",
+    "back": "戻る"
+  },
+  "effort": {
+    "none": "オフ",
+    "minimal": "極低",
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "xhigh": "極高",
+    "max": "最高",
+    "ultra": "超高"
+  },
+  "attach": {
+    "menu": "追加",
+    "photo": "写真",
+    "camera": "写真を撮る",
+    "file": "ファイル"
+  }
+}

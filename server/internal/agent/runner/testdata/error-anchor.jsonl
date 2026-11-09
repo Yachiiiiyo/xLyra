@@ -1,0 +1,6 @@
+{"type":"agent_start"}
+{"type":"session_append","entry":{"type":"message","id":"u-$N","parentId":"$PREV","timestamp":"2026-10-29T08:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"会出错的请求"}],"timestamp":1793246400000}}}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"500: 上游挂了","timestamp":1793246400001}}
+{"type":"session_append","entry":{"type":"message","id":"a-$N","parentId":"u-$N","timestamp":"2026-10-29T08:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"出错的回答"}],"stopReason":"error","errorMessage":"500: 上游挂了","timestamp":1793246400001}}}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled","aborted":false}

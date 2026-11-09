@@ -1,0 +1,27 @@
+{"type":"agent_start","data":{}}
+{"type":"tool_call_start","data":{"tool_call":{"id":"call_bash","name":"bash"}}}
+{"type":"tool_call_delta","data":{"delta":"{\"comman","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"d\":\"touc","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"h /priva","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"te/tmp/c","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"laude-50","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"1/-Users","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"-nanako-","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"WorkSpac","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"e-Yachiy","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"o-xlyra-","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"test/bda","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"5fffb-a4","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"fb-4e65-","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"97a2-059","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"c0013058","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"2/scratc","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"hpad/poc","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"/results","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"/T3/bash","tool_call_id":"call_bash"}}
+{"type":"tool_call_delta","data":{"delta":"-ran\"}","tool_call_id":"call_bash"}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_bash","name":"bash","raw_arguments":"{\"command\":\"touch /private/tmp/claude-501/-Users-nanako-WorkSpace-Yachiyo-xlyra-test/bda5fffb-a4fb-4e65-97a2-059c00130582/scratchpad/poc/results/T3/bash-ran\"}"}}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_bash","name":"bash","raw_arguments":"{\"command\":\"touch /private/tmp/claude-501/-Users-nanako-WorkSpace-Yachiyo-xlyra-test/bda5fffb-a4fb-4e65-97a2-059c00130582/scratchpad/poc/results/T3/bash-ran\"}"}}}
+{"type":"tool_result","data":{"tool_result":{"is_error":true,"name":"bash","output":"Tool bash not found","tool_call_id":"call_bash"}}}
+{"type":"text_delta","data":{"delta":"收尾"}}
+{"type":"done","data":{"aborted":false}}

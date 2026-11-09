@@ -201,7 +201,7 @@ export function MultiSelect({
                     ) : null}
                     <label
                       className={cn(
-                        'flex min-h-[var(--control-h-sm)] cursor-pointer items-center gap-2.5 rounded-[14px] px-2.5 py-1.5 transition-colors duration-100 hover:bg-fill-3',
+                        'flex min-h-[var(--control-h-sm)] max-lg:min-h-11 cursor-pointer items-center gap-2.5 rounded-[14px] px-2.5 py-1.5 transition-colors duration-100 hover:bg-fill-3',
                         option.disabled && 'cursor-not-allowed opacity-40',
                       )}
                     >

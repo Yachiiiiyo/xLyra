@@ -1,0 +1,84 @@
+{
+  "run": {
+    "status": "done"
+  },
+  "steps": [
+    {
+      "id": "call_dual",
+      "kind": "tool",
+      "title": "risky_tool",
+      "status": "error",
+      "inputLength": 29,
+      "outputLength": 19,
+      "inputPreview": "{\"mode\":\"dual\",\"note\":\"pair\"}",
+      "outputPreview": "dual a=false b=true"
+    },
+    {
+      "id": "text-3",
+      "kind": "text",
+      "title": "text",
+      "status": "done",
+      "inputLength": 0,
+      "outputLength": 6,
+      "inputPreview": "",
+      "outputPreview": "双对话框结束"
+    }
+  ],
+  "permissions": [
+    {
+      "id": "e4eed413-c119-478d-b401-817c27fcf11f",
+      "tool": "dual-A",
+      "decision": "denied",
+      "detail": null
+    },
+    {
+      "id": "a85e1736-1653-4b70-92aa-43a57a123a3a",
+      "tool": "dual-B",
+      "decision": "allowed",
+      "detail": null
+    }
+  ],
+  "finalText": "双对话框结束",
+  "runs": [
+    {
+      "status": "done",
+      "steps": [
+        {
+          "id": "call_dual",
+          "kind": "tool",
+          "title": "risky_tool",
+          "status": "error",
+          "inputLength": 29,
+          "outputLength": 19,
+          "inputPreview": "{\"mode\":\"dual\",\"note\":\"pair\"}",
+          "outputPreview": "dual a=false b=true"
+        },
+        {
+          "id": "text-3",
+          "kind": "text",
+          "title": "text",
+          "status": "done",
+          "inputLength": 0,
+          "outputLength": 6,
+          "inputPreview": "",
+          "outputPreview": "双对话框结束"
+        }
+      ],
+      "permissions": [
+        {
+          "id": "e4eed413-c119-478d-b401-817c27fcf11f",
+          "tool": "dual-A",
+          "decision": "denied",
+          "detail": null
+        },
+        {
+          "id": "a85e1736-1653-4b70-92aa-43a57a123a3a",
+          "tool": "dual-B",
+          "decision": "allowed",
+          "detail": null
+        }
+      ],
+      "finalText": "双对话框结束"
+    }
+  ]
+}

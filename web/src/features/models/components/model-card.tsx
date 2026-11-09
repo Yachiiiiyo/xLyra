@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card'
 import { BrandMark } from '@/components/common/brand-mark'
 import { buildModelGlyph } from '@/components/common/brand-utils'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
+import { DataTableHeader, dataTableHeadTextClass } from '@/components/common/data-table-header'
 import { OTHER_BRAND_KEY } from '@/lib/brands'
 import { formatEndpointTypeLabel, isNewAPISite } from '../lib/model-helpers'
 import {
@@ -89,7 +90,7 @@ export function ModelCard({ model, expanded, onToggle }: ModelCardProps) {
         <div className="border-t border-separator px-5 py-4">
           <div className="overflow-hidden rounded-control border border-separator">
             <table className="min-w-full table-fixed border-collapse text-left text-body">
-              <thead className="bg-fill-3 text-footnote font-semibold text-label-2">
+              <DataTableHeader className={dataTableHeadTextClass}>
                 <tr>
                   <th className="w-[10%] px-4 py-3 font-medium">
                     {t('card.headers.site')}
@@ -122,7 +123,7 @@ export function ModelCard({ model, expanded, onToggle }: ModelCardProps) {
                     {t('card.headers.groupRatio')}
                   </th>
                 </tr>
-              </thead>
+              </DataTableHeader>
               <tbody>
                 {model.supportedSites.flatMap((site) => {
                   const rows = site.pricingRows.length

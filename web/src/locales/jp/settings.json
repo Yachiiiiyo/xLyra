@@ -1,4 +1,33 @@
 {
+  "appearance": {
+    "title": "外観設定",
+    "description": "インスタンス全体のグローバル背景画像とナビゲーションメニューを設定します。すべてのページに適用されます。",
+    "loading": "設定を読み込み中...",
+    "saved": "外観設定を保存しました",
+    "saveFailed": "保存に失敗しました",
+    "background": {
+      "title": "背景画像",
+      "hint": "背景画像を選択またはアップロードします。未選択の場合はデフォルトの星景背景を使用します。",
+      "none": "なし（星景背景）",
+      "custom": "カスタム {{index}}",
+      "upload": "画像をアップロード",
+      "remove": "カスタム {{index}} を削除",
+      "imageTooLarge": "画像は 8MB 以内にしてください",
+      "imageReadFailed": "画像の読み込みに失敗しました"
+    },
+    "tabs": {
+      "background": "背景画像",
+      "menu": "メニュー設定"
+    },
+    "menu": {
+      "homeTitle": "ホームページ",
+      "homeHint": "アプリを開いたときに既定で表示されるページ",
+      "homeDashboard": "ダッシュボード",
+      "homeAgent": "Agent",
+      "itemsTitle": "メニュー項目",
+      "itemsHint": "オフにするとサイドバー、モバイルメニュー、コマンドパレットから非表示になります。設定メニューは非表示にできません"
+    }
+  },
   "general": {
     "title": "一般設定",
     "description": "基本的な実行時オプション。",
@@ -251,7 +280,8 @@
       "failed": "エクスポートに失敗しました",
       "noticeSensitive": "サイト、モデル、認証情報、OAuth アカウント、下流 API Key、リクエストログ、使用量記録を含みます。",
       "noticePassphrase": "パスフレーズは安全に保管してください。インポート時にもう一度必要です。",
-      "noticeUsersExcluded": "管理者アカウント、セッション、2FA、管理者アクセストークン、監査ログは含まれません。"
+      "noticeUsersExcluded": "管理者アカウント、セッション、2FA、管理者アクセストークン、監査ログは含まれません。",
+      "sectionsTitle": "バックアップ内容"
     },
     "import": {
       "title": "データをインポート",
@@ -270,11 +300,84 @@
       "noticeRestart": "ヘルス状態、ルートクールダウン、レート制限ウィンドウは復元されず、システムが再作成します。",
       "confirmTitle": "インポートの確認",
       "confirmDescription": "現在のサイト、モデル、認証情報、下流 API Key、リクエストログ、使用量記録、設定ファイルを置き換えます。",
-      "confirmAction": "インポートして上書き"
+      "confirmAction": "インポートして上書き",
+      "previewAction": "次へ：プレビュー",
+      "backAction": "戻る",
+      "inspectFailed": "バックアップ内容を読み取れません"
+    },
+    "restorePreview": {
+      "createdAt": "バックアップ作成日時",
+      "formatVersion": "フォーマットバージョン",
+      "legacy": "旧形式のバックアップのため、旧形式の全内容で復元されます",
+      "restoreTitle": "復元される内容",
+      "clearTitle": "復元後、以下の既存データは削除されます",
+      "clearHint": "これらのデータは復元される内容に依存しているため、個別に保持できません。保持したい場合はキャンセルして先に書き出してください。",
+      "partial": "（一部のデータ）",
+      "unavailableTitle": "現在のインスタンスでは以下の内容を復元できません。先に対処してください",
+      "loading": "バックアップ内容を読み込み中..."
     },
     "tabs": {
       "manual": "手動バックアップ",
       "automatic": "自動バックアップ"
+    },
+    "sections": {
+      "groups": {
+        "system": "システム",
+        "gateway": "ゲートウェイデータ",
+        "agent": "Agent"
+      },
+      "items": {
+        "settings": {
+          "label": "システム設定",
+          "description": "グローバル設定、外観、通知、バックアップ設定など"
+        },
+        "gateway_sites": {
+          "label": "サイトとモデル",
+          "description": "サイト、グループ、認証情報、OAuth 接続、モデルと価格、プロキシ設定"
+        },
+        "gateway_keys": {
+          "label": "API キーと権限",
+          "description": "API キー、サイト権限、レート制限ルール"
+        },
+        "gateway_logs": {
+          "label": "リクエストログと使用量",
+          "description": "リクエストログ、使用量記録と統計。通常もっとも大きい"
+        },
+        "plugins": {
+          "label": "プラグイン",
+          "description": "インストール済みプラグイン、バインディング、信頼済み公開鍵、マーケット購読"
+        },
+        "agent_config": {
+          "label": "Agent 設定",
+          "description": "Agent のモデル選択、外観、アクセスポリシー"
+        },
+        "agent_capabilities": {
+          "label": "Agent 能力ファイル",
+          "description": "スキル(skills)、AGENTS.md と能力設定"
+        },
+        "agent_sessions": {
+          "label": "Agent セッション記録",
+          "description": "すべての Agent セッションの会話履歴とファイル変更記録"
+        },
+        "agent_workspace": {
+          "label": "Agent ワークスペース",
+          "description": "共有ワークスペース内の全ファイル(node_modules など再構築可能なディレクトリを除く)。サイズが大きくなる可能性があります"
+        }
+      },
+      "requiredBy": "「{{names}}」から依存されています。先にそれらの選択を解除してください",
+      "recommends": "一緒にバックアップすることを推奨: {{names}}",
+      "unavailable": "現在利用できません: {{reason}}",
+      "sizeRows": "約 {{count}} 行",
+      "sizeBytes": "{{size}}",
+      "atLeastOne": "バックアップ内容を1つ以上選択してください",
+      "loading": "バックアップ内容を読み込み中...",
+      "loadFailed": "バックアップ内容の取得に失敗しました。サーバーの既定内容でエクスポートします。",
+      "choose": "内容を選択",
+      "summary": "{{count}} 項目を選択済み：{{names}}",
+      "summaryNone": "未選択",
+      "dialogTitle": "バックアップ内容を選択",
+      "dialogDescription": "バックアップする内容を選択してください。依存関係のある内容は自動的に一緒に選択されます。",
+      "done": "完了"
     },
     "automatic": {
       "title": "自動バックアップ",
@@ -298,6 +401,8 @@
         "description": "{{filename}} からサーバーのバックグラウンドタスクでデータを復元しています。",
         "completeTitle": "復元完了",
         "completeDescription": "{{tables}} テーブル、{{rows}} 行を正常にインポートしました。",
+        "completeDescriptionSections": "{{count}} 個のカテゴリを復元しました。データベースは {{tables}} テーブル / {{rows}} 行。",
+        "clearedNote": "依存データを削除しました：{{names}}",
         "canceledTitle": "復元をキャンセルしました",
         "canceledDescription": "復元トランザクションはロールバックされ、データベースは復元開始前の状態に戻りました。",
         "errorTitle": "復元失敗",
@@ -306,7 +411,9 @@
         "stepDecrypt": "バックアップファイルを復号",
         "stepParse": "バックアップ内容を検証",
         "stepImport": "バックアップデータを書き込み",
-        "stepFiles": "セッションファイルを書き込み",
+        "stepAgent": "Agent 設定を書き込み",
+        "stepAgentSessions": "Agent セッションを書き込み",
+        "stepAgentWorkspace": "Agent ワークスペースを書き込み",
         "status": {
           "pending": "待機中",
           "in_progress": "進行中",
@@ -356,7 +463,9 @@
         "retention": "保持数",
         "passphrase": "バックアップファイル用パスフレーズ",
         "passphraseDesc": "生成される .xlyra ファイルはこのパスフレーズで暗号化されます。",
-        "passphraseSaved": "保存済み：{{value}}。空欄なら変更しません。"
+        "passphraseSaved": "保存済み：{{value}}。空欄なら変更しません。",
+        "sectionsTitle": "バックアップ内容",
+        "sectionsHint": "自動バックアップはここで選択した内容で生成されます。既定では Agent ワークスペース以外のすべてを含みます。容量が大きい場合は必要に応じて選択を解除できます。"
       },
       "files": {
         "title": "リモートバックアップファイル",
@@ -491,96 +600,13 @@
     "description": "カテゴリ別にグローバル設定を管理します。",
     "nav": {
       "general": "一般",
+      "appearance": "外観",
       "profile": "プロフィール",
       "systemProxy": "システムプロキシ",
       "rateLimit": "レート制限",
       "siteGroups": "グループ設定",
       "backup": "インポート / エクスポート",
       "portal": "キーポータル"
-    }
-  },
-  "agent": {
-    "eyebrow": "設定",
-    "title": "Agent 設定",
-    "description": "Agent の実行環境を設定し、ワークスペースで利用できるサイトとモデルを管理します。",
-    "loading": "Agent 設定を読み込み中…",
-    "save": "保存",
-    "saving": "保存中…",
-    "saveSuccess": "Agent 設定を保存しました",
-    "saveFailed": "Agent 設定の保存に失敗しました",
-    "status": {
-      "stateHealthy": "正常",
-      "stateUnhealthy": "異常",
-      "stateUnreachable": "到達不能",
-      "stateUnknown": "不明",
-      "refresh": "状態を更新",
-      "agentSelfManaged": "自己管理",
-      "allModels": "すべてのモデル",
-      "allSites": "すべてのサイト",
-      "siteCount": "{{count}} サイト",
-      "modelCount": "{{count}} モデル"
-    },
-    "runner": {
-      "title": "Runner 接続",
-      "description": "Runner は Agent タスクを実行するコンポーネントです。ゲートウェイとの接続方法を設定します。",
-      "urlLabel": "Runner アドレス",
-      "urlPlaceholder": "http://127.0.0.1:3211",
-      "tokenLabel": "Runner トークン",
-      "tokenConfigured": "設定済み。空欄の場合は現在の値を保持します。",
-      "tokenNotConfigured": "ゲートウェイと Runner 間の安全な接続に使用します。",
-      "tokenPlaceholder": "Runner トークンを入力",
-      "tokenReplacePlaceholder": "新しい値で置き換え",
-      "clear": "設定をクリア",
-      "clearTitle": "Runner 接続設定をクリア",
-      "clearDescription": "Runner のアドレスとトークンを削除します。再設定するまで Agent 機能は利用できません。",
-      "clearCancel": "キャンセル",
-      "clearConfirm": "クリア",
-      "clearing": "クリア中…",
-      "cleared": "Runner 接続設定をクリアしました",
-      "clearFailed": "クリアに失敗しました"
-    },
-    "upgrade": {
-      "available": "{{version}} に更新可能",
-      "action": "更新",
-      "retry": "再試行",
-      "upgrading": "更新中…",
-      "title": "Agent の更新",
-      "description": "Agent を {{current}} から {{target}} に更新します。更新中は Agent が再起動し、数分かかります。",
-      "confirm": "更新する",
-      "cancel": "キャンセル",
-      "forceTitle": "実行中のセッションがあります",
-      "forceDescription": "{{count}} 件のセッションが実行中で、更新により中断されます。続行しますか？",
-      "forceConfirm": "強制的に更新",
-      "starting": "送信中…",
-      "started": "Agent の更新を開始しました",
-      "startFailed": "更新リクエストに失敗しました",
-      "succeeded": "Agent を {{version}} に更新しました",
-      "failed": "Agent の更新に失敗しました"
-    },
-    "scope": {
-      "title": "サイトとモデルの範囲",
-      "description": "Agent ワークスペースで選択できるサイトとモデルを制御します。",
-      "siteAccess": "サイト範囲",
-      "allowAllSites": "すべてのサイト",
-      "allowListedSites": "指定サイトのみ",
-      "searchSites": "サイトを検索",
-      "noSites": "一致するサイトがありません",
-      "modelAccess": "モデル範囲",
-      "allowAllModels": "すべてのモデル",
-      "allowListedModels": "指定モデルのみ",
-      "searchModels": "モデルを検索",
-      "noModels": "一致するモデルがありません",
-      "selectAll": "すべて選択",
-      "clearAll": "選択解除",
-      "selectedCount": "{{count}} 件選択中",
-      "selectSitesFirst": "先に左側でサイトを選択してください",
-      "configure": "範囲を設定",
-      "availableSites": "利用可能なサイト",
-      "availableSitesHint": "クリックしてサイト一覧を表示",
-      "availableModels": "利用可能なモデル",
-      "availableModelsHint": "クリックしてモデル一覧を表示",
-      "disabled": "無効",
-      "cancel": "キャンセル"
     }
   },
   "siteGroups": {
@@ -845,8 +871,16 @@
     "previewPricingFailed": "プレビューに失敗しました",
     "pricingPreviewSummary": "モデル価格 {{items}} 件、グループ {{groups}} 件を解析しました。",
     "pricingReviewConfirm": "結果を確認し、このプラグインがこのサイトの価格を提供することを許可します。",
-    "bindSiteHint": {"model_list": "このサイトのモデル同期で、このプラグインがモデル一覧を取得します。", "credential_check": "このサイトのキー検証とヘルスチェックにこのプラグインを使います。", "error_classifier": "このサイトのアップストリームエラーをこのプラグインが分類します（クールダウン時間は変更できません）。", "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。"},
-    "globalKindHint": {"site_detect": "有効にすると、サイト種別の判別時にこのプラグインも実行されます。xLyra が対応済みの種別のみ指定できます。", "model_metadata": "有効にすると全サイトに適用されます。不足しているモデル名と機能を補うだけで、既存の値は上書きしません。"},
+    "bindSiteHint": {
+      "model_list": "このサイトのモデル同期で、このプラグインがモデル一覧を取得します。",
+      "credential_check": "このサイトのキー検証とヘルスチェックにこのプラグインを使います。",
+      "error_classifier": "このサイトのアップストリームエラーをこのプラグインが分類します（クールダウン時間は変更できません）。",
+      "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。"
+    },
+    "globalKindHint": {
+      "site_detect": "有効にすると、サイト種別の判別時にこのプラグインも実行されます。xLyra が対応済みの種別のみ指定できます。",
+      "model_metadata": "有効にすると全サイトに適用されます。不足しているモデル名と機能を補うだけで、既存の値は上書きしません。"
+    },
     "trialPassed": "試行に成功",
     "trialFailed": "試行に失敗",
     "siteBinding": {

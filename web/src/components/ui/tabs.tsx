@@ -77,11 +77,22 @@ function useActiveIndicator(listRef: React.RefObject<HTMLElement | null>, enable
       setBox(active ? { left: active.offsetLeft, width: active.offsetWidth } : null)
     }
 
-    measure()
-    const mutationObserver = new MutationObserver(measure)
-    mutationObserver.observe(list, { subtree: true, attributes: true, attributeFilter: ['data-state'] })
+    // 触发器内容变化（如标签里的计数 1/9 → 10/9）只改变触发器自身宽度，列表宽度可能不变，
+    // 所以要同时观察每个触发器；标签增减/文字变化时重新登记
     const resizeObserver = new ResizeObserver(measure)
-    resizeObserver.observe(list)
+    const observeTabs = () => {
+      resizeObserver.disconnect()
+      resizeObserver.observe(list)
+      list.querySelectorAll('[role="tab"]').forEach((tab) => resizeObserver.observe(tab))
+    }
+    const mutationObserver = new MutationObserver((records) => {
+      if (records.some((record) => record.type !== 'attributes')) observeTabs()
+      measure()
+    })
+
+    measure()
+    observeTabs()
+    mutationObserver.observe(list, { subtree: true, attributes: true, attributeFilter: ['data-state'], childList: true, characterData: true })
 
     return () => {
       mutationObserver.disconnect()

@@ -3,12 +3,15 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { getAppNavSections } from '@/lib/navigation'
+import { filterHiddenNavSections, getAppNavSections } from '@/lib/navigation'
+import { useMenuPreferences } from '@/features/appearance/api/appearance'
 import { useMobileDevice } from '@/hooks/use-media-query'
 import { AppLogo } from '@/components/common/app-logo'
 import { SystemVersionText } from '@/components/layout/system-version-text'
 import { UserAccountMenu } from '@/components/layout/user-account-menu'
 import { useAgentAvailability } from '@/features/agent/lib/use-agent-availability'
+import { prefetchAgentWorkspace } from '@/features/agent/lib/agent-queries'
+import { queryClient } from '@/lib/query-client'
 
 type AppSidebarProps = {
   className?: string
@@ -20,6 +23,7 @@ export function AppSidebar({ className, onNavigate }: AppSidebarProps) {
   const location = useLocation()
   const isMobileDevice = useMobileDevice()
   const agentAvailable = useAgentAvailability()
+  const { hiddenMenuItems } = useMenuPreferences()
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({})
 
   function handleNavigate() {
@@ -34,7 +38,10 @@ export function AppSidebar({ className, onNavigate }: AppSidebarProps) {
   const navItemIdleClass = 'text-label-2 hover:bg-fill-4 hover:text-label'
   const navLabelClass = 'truncate text-sm font-medium leading-5'
 
-  const navSections = getAppNavSections(t, { agent: agentAvailable }).map((section) => ({
+  const navSections = filterHiddenNavSections(
+    getAppNavSections(t, { agent: agentAvailable }),
+    hiddenMenuItems,
+  ).map((section) => ({
     ...section,
     items: section.items.filter((item) => !item.desktopOnly || !isMobileDevice),
   }))
@@ -126,6 +133,8 @@ export function AppSidebar({ className, onNavigate }: AppSidebarProps) {
                       key={item.to}
                       to={item.to}
                       onClick={handleNavigate}
+                      onPointerEnter={item.to === '/agent' ? () => prefetchAgentWorkspace(queryClient) : undefined}
+                      onFocus={item.to === '/agent' ? () => prefetchAgentWorkspace(queryClient) : undefined}
                       className={({ isActive }) => cn(navItemClass, isActive ? navItemActiveClass : navItemIdleClass)}
                     >
                       {({ isActive }) => (

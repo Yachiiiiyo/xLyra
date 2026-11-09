@@ -25,8 +25,9 @@ export const buttonVariants = cva(
         default: 'h-[var(--control-h)] px-4 text-body [&_svg]:size-4',
         sm: 'h-[var(--control-h-sm)] px-3 text-callout [&_svg]:size-3.5',
         lg: 'h-[var(--control-h-lg)] px-5 text-body [&_svg]:size-[18px]',
-        icon: 'size-[var(--control-h)] [&_svg]:size-[18px]',
-        'icon-sm': 'size-[var(--control-h-sm)] [&_svg]:size-4',
+        // 图标按钮：视觉随 --control-h 缩，用一层透明伪元素把点击热区补到 44×44
+        icon: 'relative size-[var(--control-h)] [&_svg]:size-[18px] after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2',
+        'icon-sm': 'relative size-[var(--control-h-sm)] after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 [&_svg]:size-4',
       },
     },
     defaultVariants: {

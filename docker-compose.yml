@@ -23,6 +23,10 @@ services:
       DB_NAME: xlyra
       DB_USER: xlyra
       DB_PASSWORD: postgres_password
+      # 内置 Agent(Pi)已打进镜像并默认启用,需要 root 与下面的 cap_add,
+      # /data 须在支持 uid 权限的文件系统上(Linux 本地盘/命名卷;macOS 绑定挂载不支持)。
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, CHOWN, KILL, FOWNER, DAC_OVERRIDE]
     volumes:
       - ./data:/data
     ports:

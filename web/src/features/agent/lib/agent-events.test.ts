@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   appendUserMessage,
+  canForkFromMessage,
   canReconcileTimeline,
+  decidePermission,
   extractEventText,
+  extractTextChunk,
   replaceFromUserMessage,
   reduceAgentEvent,
   reconcileTimeline,
+  runElapsedMs,
   settleRunningRuns,
   timelineFromTranscript,
   type AgentTimeline,
@@ -31,7 +35,36 @@ describe('extractEventText', () => {
   })
 })
 
+describe('extractTextChunk', () => {
+  it('保留纯空白的流式增量,有正文时行为与 extractEventText 一致', () => {
+    expect(extractTextChunk({ delta: '\n\n' })).toBe('\n\n')
+    expect(extractTextChunk({ delta: ' ' })).toBe(' ')
+    expect(extractTextChunk('\n')).toBe('\n')
+    expect(extractTextChunk({ text: 'a', delta: '\n' })).toBe('a')
+    expect(extractTextChunk({ delta: '' })).toBe('')
+    expect(extractTextChunk(null)).toBe('')
+  })
+})
+
 describe('reduceAgentEvent', () => {
+  it('流式正文里纯空白的增量(段落空行、换行)不能丢,否则 Markdown 实时渲染会糊成一坨', () => {
+    const timeline = reduceAll([
+      { type: 'text_delta', data: { delta: '## 标题' } },
+      { type: 'text_delta', data: { delta: '\n\n' } },
+      { type: 'text_delta', data: { delta: '- 项一' } },
+      { type: 'text_delta', data: { delta: '\n' } },
+      { type: 'text_delta', data: { delta: '- 项二' } },
+      { type: 'text_delta', data: { delta: ' ' } },
+      { type: 'text_delta', data: { delta: 'end' } },
+    ])
+    const item = timeline[0]
+    expect(item?.kind).toBe('run')
+    if (item?.kind !== 'run') return
+    expect(item.run.finalText).toBe('## 标题\n\n- 项一\n- 项二 end')
+    expect(item.run.steps).toHaveLength(1)
+    expect(item.run.steps[0]?.detail).toBe('## 标题\n\n- 项一\n- 项二 end')
+  })
+
   it('accumulates assistant text into the active run', () => {
     const timeline = reduceAll([
       { type: 'message', data: { delta: '你好' } },
@@ -90,6 +123,19 @@ describe('reduceAgentEvent', () => {
     expect(item.run.status).toBe('done')
   })
 
+  it('maps edit patches on new and backfilled tool steps', () => {
+    const patch = '--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n'
+    const timeline = reduceAll([
+      { type: 'tool_call', data: { tool_call: { id: 'edit-call', name: 'edit', raw_arguments: '{"path":"a"}' } } },
+      { type: 'tool_result', data: { tool_result: { tool_call_id: 'edit-call', name: 'edit', details_patch: patch } } },
+      { type: 'tool_result', data: { tool_result: { tool_call_id: 'orphan-call', name: 'edit', details_patch: patch } } },
+    ])
+    const item = timeline[0]
+    if (item?.kind !== 'run') throw new Error('expected run')
+    expect(item.run.steps[0]?.patch).toBe(patch)
+    expect(item.run.steps[1]?.patch).toBe(patch)
+  })
+
   it('uses user-send → completion wall-clock duration on completed runs', () => {
     // 用户消息在 t=1_000 发出，agent_done 在 t=3_500 收到：用时 = 2_500ms（墙钟间隔，
     // 与 runner 的 elapsed_ms 无关）
@@ -135,6 +181,18 @@ describe('reduceAgentEvent', () => {
     const item = timeline[0]
     if (item.kind !== 'run') throw new Error('expected run')
     expect(item.run.steps[0]).toMatchObject({ input: '{"path":"/a.ts"}', argsDone: false, status: 'running' })
+  })
+
+  it('maps generated images from nested SSE tool results by tool_call_id', () => {
+    const timeline = reduceAll([
+      { type: 'tool_call', data: { tool_call: { id: 'image-call', name: 'image_generation', raw_arguments: '{}' } } },
+      { type: 'tool_call', data: { tool_call: { id: 'other-call', name: 'read_file', raw_arguments: '{}' } } },
+      { type: 'tool_result', data: { tool_result: { tool_call_id: 'image-call', name: 'image_generation', output: 'done', images: [{ path: 'images/a.png', mime: 'image/png', bytes: 12, model: 'gpt-image', site: 'site-a', alt: 'cat' }] } } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.steps[0]?.images).toEqual([{ path: 'images/a.png', mime: 'image/png', bytes: 12, model: 'gpt-image', site: 'site-a', alt: 'cat' }])
+    expect(item.run.steps[1]?.images).toBeUndefined()
   })
 
   it('marks tool errors from nested tool_result payloads', () => {
@@ -321,6 +379,79 @@ describe('reduceAgentEvent', () => {
     expect(item.run.permissions[0].resolvedPath).toBe('capability://exec_command')
   })
 
+  it('records terminal error and cancellation messages', () => {
+    const failed = reduceAll([
+      { type: 'message', data: 'partial' },
+      { type: 'agent_error', data: { message: '模型返回错误' } },
+    ])
+    const failedRun = failed[0]
+    if (failedRun.kind !== 'run') throw new Error('expected failed run')
+    expect(failedRun.run.status).toBe('error')
+    expect(failedRun.run.errorMessage).toBe('模型返回错误')
+
+    const cancelled = reduceAll([
+      { type: 'message', data: 'partial' },
+      { type: 'agent_cancelled', data: { message: '用户停止了任务' } },
+    ])
+    const cancelledRun = cancelled[0]
+    if (cancelledRun.kind !== 'run') throw new Error('expected cancelled run')
+    expect(cancelledRun.run.errorMessage).toBe('用户停止了任务')
+  })
+
+  it('denies unresolved permissions when a run errors or is cancelled', () => {
+    const events = [
+      { type: 'permission_request', data: { request_id: 'p1', tool: 'bash', input: 'ls' } },
+      { type: 'permission_request', data: { request_id: 'p2', tool: 'read', input: '/tmp/a' } },
+      { type: 'permission_result', data: { request_id: 'p2', decision: 'allow' } },
+    ]
+    const cancelled = reduceAll([...events, { type: 'agent_cancelled', data: {} }])
+    const cancelledRun = cancelled[0]
+    if (cancelledRun.kind !== 'run') throw new Error('expected cancelled run')
+    expect(cancelledRun.run.permissions.map((request) => request.decision)).toEqual(['denied', 'allowed'])
+
+    const failed = reduceAll([...events, { type: 'agent_error', data: {} }])
+    const failedRun = failed[0]
+    if (failedRun.kind !== 'run') throw new Error('expected failed run')
+    expect(failedRun.run.permissions.map((request) => request.decision)).toEqual(['denied', 'allowed'])
+  })
+
+  it('does not reopen a cancelled run with unresolved permissions for a new message', () => {
+    let timeline = reduceAll([
+      { type: 'escalation_request', data: { escalation: { escalation_id: 'esc-1', requested_path: '/tmp/a' } } },
+      { type: 'agent_cancelled', data: {} },
+    ], appendUserMessage([], '第一问', 'message-1', 1_000))
+    timeline = appendUserMessage(timeline, '第二问', 'message-2', 2_000)
+    timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'message', data: '新的回答' },
+      { type: 'agent_done', data: {} },
+    ], timeline)
+    expect(timeline).toHaveLength(4)
+    const oldRun = timeline[1]
+    const newRun = timeline[3]
+    if (oldRun.kind !== 'run' || newRun.kind !== 'run') throw new Error('expected runs')
+    expect(oldRun.run.status).toBe('cancelled')
+    expect(oldRun.run.finalText).toBe('')
+    expect(newRun.run.status).toBe('done')
+    expect(newRun.run.finalText).toBe('新的回答')
+  })
+
+  it('preserves the complete bash command and note on approval requests', () => {
+    const command = 'printf "first line\\nsecond line"\nfind /tmp -name "*.log"'
+    const timeline = reduceAll([
+      { type: 'escalation_request', data: { escalation: {
+        escalation_id: 'esc-bash',
+        tool_name: 'bash',
+        requested_command: [command],
+        resolved_path: 'capability://exec_command',
+        note: '工作目录：/workspace',
+      } } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.permissions[0]).toMatchObject({ detail: command, note: '工作目录：/workspace' })
+  })
+
   it('closes open steps on cancel', () => {
     const timeline = reduceAll([
       { type: 'tool_call', data: { name: 'bash' } },
@@ -330,6 +461,17 @@ describe('reduceAgentEvent', () => {
     if (item.kind !== 'run') throw new Error('expected run')
     expect(item.run.status).toBe('cancelled')
     expect(item.run.steps[0].status).toBe('done')
+  })
+})
+
+describe('canForkFromMessage', () => {
+  it('需要这一轮对应的用户消息 id，且会话不在运行中', () => {
+    expect(canForkFromMessage('message-1', false)).toBe(true)
+    expect(canForkFromMessage(undefined, false)).toBe(false)
+    expect(canForkFromMessage('', false)).toBe(false)
+    expect(canForkFromMessage(null, false)).toBe(false)
+    expect(canForkFromMessage('message-1', true)).toBe(false)
+    expect(canForkFromMessage(undefined, true)).toBe(false)
   })
 })
 
@@ -376,6 +518,67 @@ describe('timelineFromTranscript', () => {
     })
   })
 
+  it('maps user message references from the transcript', () => {
+    const timeline = timelineFromTranscript([
+      {
+        type: 'message',
+        message_id: 'message-ref',
+        message: { role: 'user', content: '结合那个会话看看' },
+        references: [
+          { session_id: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' },
+          { session_id: 'fedcba98-7654-3210-fedc-ba9876543210' },
+          { title: '缺 session_id 的条目被丢弃' },
+        ],
+      },
+    ])
+    expect(timeline[0]).toMatchObject({
+      kind: 'user',
+      references: [
+        { sessionId: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' },
+        { sessionId: 'fedcba98-7654-3210-fedc-ba9876543210', title: '' },
+      ],
+    })
+  })
+
+  it('maps references nested under message (the backend shape)', () => {
+    const timeline = timelineFromTranscript([
+      {
+        type: 'message',
+        message_id: 'message-ref-nested',
+        message: { role: 'user', content: '看看另一个会话', references: [{ session_id: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' }] },
+      },
+    ])
+    expect(timeline[0]).toMatchObject({
+      kind: 'user',
+      references: [{ sessionId: '01234567-89ab-cdef-0123-456789abcdef', title: '部署问题' }],
+    })
+  })
+
+  it('keeps references when appending a live user message', () => {
+    const timeline = appendUserMessage([], '问题', 'message-1', 1_000, undefined, [{ sessionId: 'session-a', title: '会话 A' }])
+    expect(timeline[0]).toMatchObject({ kind: 'user', references: [{ sessionId: 'session-a', title: '会话 A' }] })
+    // 无引用时不落字段
+    expect(appendUserMessage([], '问题')[0]).not.toHaveProperty('references')
+  })
+
+  it('preserves references when replacing a user message for replay', () => {
+    const initial = timelineFromTranscript([{
+      type: 'message',
+      message_id: 'message-ref',
+      message: { role: 'user', content: '原始问题' },
+      references: [{ session_id: 'session-a', title: '会话 A' }],
+    }])
+    // 未显式传 references：沿用原消息的引用
+    const preserved = replaceFromUserMessage(initial, 'message-ref', '重放问题')
+    expect(preserved[0]).toMatchObject({ kind: 'user', references: [{ sessionId: 'session-a', title: '会话 A' }] })
+    // 显式传空数组：编辑态移除了全部引用
+    const removed = replaceFromUserMessage(initial, 'message-ref', '重放问题', undefined, [])
+    expect(removed[0]).not.toHaveProperty('references')
+    // 显式传新引用：覆盖原消息的引用
+    const replaced = replaceFromUserMessage(initial, 'message-ref', '重放问题', undefined, [{ sessionId: 'session-b', title: '会话 B' }])
+    expect(replaced[0]).toMatchObject({ references: [{ sessionId: 'session-b', title: '会话 B' }] })
+  })
+
   it('maps transcript entries to a closed timeline', () => {
     const timeline = timelineFromTranscript([
       { role: 'user', content: '问题' },
@@ -417,6 +620,27 @@ describe('timelineFromTranscript', () => {
     expect(tool?.detail).toBe('file body')
     expect(tool?.status).toBe('done')
     expect(run.run.status).toBe('done')
+  })
+
+  it('restores generated images on the matching transcript tool step', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', message: { role: 'assistant', tool_calls: [{ id: 'image-call', name: 'image_generation', raw_arguments: '{}' }] } },
+      { type: 'message', message: { role: 'tool', tool_call_id: 'image-call', name: 'image_generation', content: 'done', images: [{ path: 'images/a.png', mime: 'image/png', bytes: 12 }] } },
+    ])
+    const run = timeline[0]
+    if (run?.kind !== 'run') throw new Error('expected run')
+    expect(run.run.steps[0]?.images).toEqual([{ path: 'images/a.png', mime: 'image/png', bytes: 12 }])
+  })
+
+  it('restores edit patches from transcript tool messages', () => {
+    const patch = '--- a\n+++ a\n@@ -1 +1 @@\n-a\n+b\n'
+    const timeline = timelineFromTranscript([
+      { type: 'message', message: { role: 'assistant', tool_calls: [{ id: 'edit-call', name: 'edit', raw_arguments: '{"path":"a"}' }] } },
+      { type: 'message', message: { role: 'tool', tool_call_id: 'edit-call', name: 'edit', content: 'done', details_patch: patch } },
+    ])
+    const run = timeline[0]
+    if (run?.kind !== 'run') throw new Error('expected run')
+    expect(run.run.steps[0]?.patch).toBe(patch)
   })
 
   it('restores text before tool calls within one assistant message', () => {
@@ -476,9 +700,8 @@ describe('timelineFromTranscript', () => {
     if (compactRun?.kind !== 'run') throw new Error('expected compact run')
     expect(compactRun.run.steps.find((step) => step.kind === 'status')).toMatchObject({ title: 'compacted', detail: undefined })
     expect(compactRun.run.permissions[0]).toMatchObject({ id: 'e1', tool: 'bash', detail: 'rm -rf /tmp/x', decision: 'denied' })
-    // An undecided escalation (granted: null) stays interactive and must not render as denied.
-    expect(compactRun.run.permissions[1]).toMatchObject({ id: 'e2', tool: 'read_file', resolvedPath: '/Users/x/secrets' })
-    expect(compactRun.run.permissions[1].decision).toBeUndefined()
+    // Closing a historical run with an undecided escalation denies the stale request so it is no longer interactive.
+    expect(compactRun.run.permissions[1]).toMatchObject({ id: 'e2', tool: 'read_file', resolvedPath: '/Users/x/secrets', decision: 'denied' })
   })
 
   it('downgrades legacy interrupted seal receipts to neutral when an escalation paused the run', () => {
@@ -652,5 +875,321 @@ describe('上下文压缩状态', () => {
     expect(replyRun.run.steps.some((s) => s.kind === 'status')).toBe(false)
     expect(compactRun.run.steps).toHaveLength(1)
     expect(compactRun.run.steps[0]).toMatchObject({ title: 'compacted', status: 'done', detail: undefined })
+  })
+})
+
+describe('审批等待期间的计时', () => {
+  const lastRunOf = (timeline: AgentTimeline) => {
+    const item = timeline[timeline.length - 1]
+    if (item?.kind !== 'run') throw new Error('no run')
+    return item.run
+  }
+
+  it('等待审批期间用时冻结,审批后继续累加,收尾时不含等待时长', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(10_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    expect(runElapsedMs(lastRunOf(timeline), 10_000)).toBe(10_000)
+    // 用户 30 秒后才点:用时仍停在 10s
+    expect(runElapsedMs(lastRunOf(timeline), 40_000)).toBe(10_000)
+    vi.setSystemTime(40_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed')
+    expect(runElapsedMs(lastRunOf(timeline), 40_000)).toBe(10_000)
+    expect(runElapsedMs(lastRunOf(timeline), 45_000)).toBe(15_000)
+    vi.setSystemTime(47_000)
+    timeline = reduceAgentEvent(timeline, { type: 'agent_done', data: {} })
+    expect(lastRunOf(timeline).elapsedMs).toBe(17_000)
+  })
+
+  it('乐观更新之后再收到服务端 permission_result 是幂等的(不重复计入等待时长)', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(5_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    vi.setSystemTime(20_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed')
+    vi.setSystemTime(21_000)
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]?.decision).toBe('allowed')
+    expect(run.pausedMs).toBe(15_000)
+    expect(runElapsedMs(run, 21_000)).toBe(6_000)
+  })
+
+  it('多条权限请求:全部处理完才恢复计时;中途取消时未决的等待也不计入', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(2_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e2', tool_name: 'write', requested_path: 'b.txt' } } })
+    vi.setSystemTime(8_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed')
+    expect(runElapsedMs(lastRunOf(timeline), 20_000)).toBe(2_000)
+    vi.setSystemTime(12_000)
+    timeline = reduceAgentEvent(timeline, { type: 'agent_cancelled', data: {} })
+    expect(lastRunOf(timeline).elapsedMs).toBe(2_000)
+  })
+})
+
+describe('会话内允许与自动放行', () => {
+  const lastRunOf = (timeline: AgentTimeline) => {
+    const item = timeline[timeline.length - 1]
+    if (item?.kind !== 'run') throw new Error('no run')
+    return item.run
+  }
+
+  it('会话内允许的乐观更新立刻标记 scope,并结算这段等待', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(4_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write', requested_path: 'a.txt' } } })
+    vi.setSystemTime(9_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed', { scope: 'session' })
+    const run = lastRunOf(timeline)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session' })
+    expect(run.pausedMs).toBe(5_000)
+    expect(runElapsedMs(run, 9_000)).toBe(4_000)
+  })
+
+  it('拒绝时不记录会话内允许', () => {
+    let timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } },
+    ])
+    timeline = decidePermission(timeline, 'e1', 'denied', { scope: 'session' })
+    expect(lastRunOf(timeline).permissions[0]).toMatchObject({ decision: 'denied' })
+    expect(lastRunOf(timeline).permissions[0]?.scope).toBeUndefined()
+  })
+
+  it('自动放行的 permission_result 标记 auto,等待时长只扣一次', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(3_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    // 自动放行紧跟着到达:卡片刚出现就已决
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', auto: true, scope: 'session' })
+    expect(run.pendingSince).toBeUndefined()
+    // 重复的重放事件不应再次扣减等待时长
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true } })
+    expect(lastRunOf(timeline).pausedMs).toBe(0)
+    expect(runElapsedMs(lastRunOf(timeline), 8_000)).toBe(8_000)
+  })
+
+  it('替我审批自动放行记录理由且不带会话内 scope,重复事件保持幂等', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(3_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    const result = { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true, reason: '仅写入工作区内的文件' } }
+    timeline = reduceAgentEvent(timeline, result)
+    timeline = reduceAgentEvent(timeline, result)
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', auto: true, reason: '仅写入工作区内的文件' })
+    expect(run.permissions[0]?.scope).toBeUndefined()
+    expect(run.pausedMs).toBe(0)
+    expect(run.pendingSince).toBeUndefined()
+  })
+
+  it('替我审批自动拒绝记录理由且不带 scope,重复事件保持幂等', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(3_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    const result = { type: 'permission_result', data: { request_id: 'e1', allowed: false, auto: true, reason: '目标路径在工作区外' } }
+    timeline = reduceAgentEvent(timeline, result)
+    timeline = reduceAgentEvent(timeline, result)
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'denied', auto: true, reason: '目标路径在工作区外' })
+    expect(run.permissions[0]?.scope).toBeUndefined()
+    expect(run.pausedMs).toBe(0)
+    expect(run.pendingSince).toBeUndefined()
+  })
+
+  it('带理由的服务端结果清除乐观更新的会话内 scope,仍保持同一条权限', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(2_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    vi.setSystemTime(5_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed', { scope: 'session' })
+    vi.setSystemTime(6_000)
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true, reason: '操作明确安全' } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', auto: true, reason: '操作明确安全' })
+    expect(run.permissions[0]?.scope).toBeUndefined()
+    expect(run.pausedMs).toBe(3_000)
+    expect(runElapsedMs(run, 6_000)).toBe(3_000)
+  })
+
+  it('用户先乐观更新、随后收到带 auto 的服务端结果时仍是同一条权限且幂等', () => {
+    vi.setSystemTime(0)
+    let timeline = reduceAll([{ type: 'agent_start', data: {} }])
+    vi.setSystemTime(2_000)
+    timeline = reduceAgentEvent(timeline, { type: 'escalation_request', data: { escalation: { escalation_id: 'e1', tool_name: 'write' } } })
+    vi.setSystemTime(5_000)
+    timeline = decidePermission(timeline, 'e1', 'allowed', { scope: 'session' })
+    vi.setSystemTime(6_000)
+    timeline = reduceAgentEvent(timeline, { type: 'permission_result', data: { request_id: 'e1', allowed: true, auto: true } })
+    const run = lastRunOf(timeline)
+    expect(run.permissions).toHaveLength(1)
+    expect(run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session', auto: true })
+    expect(run.pausedMs).toBe(3_000)
+    expect(runElapsedMs(run, 6_000)).toBe(3_000)
+  })
+
+  it('转录的 escalation scope/auto/reason 映射到同样的展示字段', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', message: { role: 'user', content: '写两个文件' } },
+      { type: 'escalation', escalation_id: 'e1', tool_name: 'write', granted: true, scope: 'session' },
+      { type: 'escalation', escalation_id: 'e2', tool_name: 'write', granted: true, scope: 'session', auto: true },
+      { type: 'escalation', escalation_id: 'e3', tool_name: 'write', granted: true, scope: 'session', auto: true, reason: '仅修改目标文件' },
+      { type: 'escalation', escalation_id: 'e4', tool_name: 'write', granted: false, scope: 'session', reason: '目标路径在工作区外' },
+    ])
+    const run = timeline[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.permissions[0]).toMatchObject({ decision: 'allowed', scope: 'session' })
+    expect(run.run.permissions[1]).toMatchObject({ decision: 'allowed', scope: 'session', auto: true })
+    expect(run.run.permissions[2]).toMatchObject({ decision: 'allowed', auto: true, reason: '仅修改目标文件' })
+    expect(run.run.permissions[2]?.scope).toBeUndefined()
+    expect(run.run.permissions[3]).toMatchObject({ decision: 'denied', auto: true, reason: '目标路径在工作区外' })
+    expect(run.run.permissions[3]?.scope).toBeUndefined()
+  })
+})
+
+describe('run_error 转录条目', () => {
+  it('把当前 run 收束为 error 并带上错误文案', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:01.000Z', message: { role: 'user', content: '跑一下' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:02.000Z', message: { role: 'assistant', content: '开始' } },
+      { type: 'run_error', timestamp: '1970-01-01T00:00:05.000Z', message: '上游 500' },
+    ])
+    const run = timeline[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.status).toBe('error')
+    expect(run.run.errorMessage).toBe('上游 500')
+  })
+
+  it('这一轮还没写入任何内容时补一个空 run 承载错误', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:01.000Z', message: { role: 'user', content: '跑一下' } },
+      { type: 'run_error', timestamp: '1970-01-01T00:00:03.000Z', message: '模型不可用' },
+    ])
+    const run = timeline[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.status).toBe('error')
+    expect(run.run.errorMessage).toBe('模型不可用')
+    expect(run.run.steps).toHaveLength(0)
+  })
+
+  it('实时 error 在 reconcile 后不会被转录的完成状态覆盖', () => {
+    vi.setSystemTime(0)
+    let current = reduceAll([{ type: 'agent_start', data: {} }], appendUserMessage([], '问题', 'message-1', 0))
+    vi.setSystemTime(2_000)
+    current = reduceAgentEvent(current, { type: 'agent_error', data: { message: '上游中断' } })
+    // 旧服务端的转录没有 run_error：对应 run 是正常完成
+    const transcript = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:00.000Z', message_id: 'message-1', message: { role: 'user', content: '问题' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:01.000Z', message: { role: 'assistant', content: '回答' } },
+    ])
+    const reconciled = reconcileTimeline(current, transcript)
+    const run = reconciled[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.status).toBe('error')
+    expect(run.run.errorMessage).toBe('上游中断')
+    expect(run.run.elapsedMs).toBe(2_000)
+  })
+})
+
+describe('run_changes(后端清单差)', () => {
+  const changesPayload = {
+    turn_id: 'turn-1',
+    run_ids: ['run-1'],
+    total: 1,
+    files: [{ path: 'images/out.png', kind: 'added' as const, size: 2048, additions: 0, deletions: 0, has_diff: true }],
+  }
+
+  it('终态之后到达的 run_changes 挂到最后一个 run:不新开 run、不改状态', () => {
+    const timeline = reduceAll([
+      { type: 'text_delta', data: { delta: '回复' } },
+      { type: 'agent_done', data: {} },
+      { type: 'run_changes', data: changesPayload },
+    ])
+    expect(timeline).toHaveLength(1)
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.status).toBe('done')
+    expect(item.run.changes).toMatchObject({ turnId: 'turn-1', total: 1, incomplete: false })
+    expect(item.run.changes?.files[0]?.path).toBe('images/out.png')
+  })
+
+  it('挂在已取消/出错的 run 上也生效,后到的 run_changes 替换旧值', () => {
+    const timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'agent_error', data: { message: '出错' } },
+      { type: 'run_changes', data: changesPayload },
+      { type: 'run_changes', data: { ...changesPayload, turn_id: 'turn-2' } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.status).toBe('error')
+    expect(item.run.changes?.turnId).toBe('turn-2')
+  })
+
+  it('时间线里没有任何 run 时忽略', () => {
+    expect(reduceAll([{ type: 'run_changes', data: changesPayload }])).toEqual([])
+  })
+
+  it('total 小于 files.length 时以 files.length 为准,incomplete 透传', () => {
+    const timeline = reduceAll([
+      { type: 'agent_start', data: {} },
+      { type: 'agent_done', data: {} },
+      { type: 'run_changes', data: { ...changesPayload, total: 0, incomplete: true } },
+    ])
+    const item = timeline[0]
+    if (item.kind !== 'run') throw new Error('expected run')
+    expect(item.run.changes?.total).toBe(1)
+    expect(item.run.changes?.incomplete).toBe(true)
+  })
+
+  it('timelineFromTranscript 把 run_changes 条目挂到当前最后一个 run', () => {
+    const timeline = timelineFromTranscript([
+      { type: 'message', message_id: 'message-1', timestamp: '1970-01-01T00:00:00.000Z', message: { role: 'user', content: '第一问' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:02.000Z', message: { role: 'assistant', content: '第一答' } },
+      { type: 'run_changes', timestamp: '1970-01-01T00:00:02.500Z', ...changesPayload },
+      { type: 'message', message_id: 'message-2', timestamp: '1970-01-01T00:01:00.000Z', message: { role: 'user', content: '第二问' } },
+      { type: 'message', timestamp: '1970-01-01T00:01:02.000Z', message: { role: 'assistant', content: '第二答' } },
+    ])
+    expect(timeline).toHaveLength(4)
+    const first = timeline[1]
+    const second = timeline[3]
+    if (first.kind !== 'run' || second.kind !== 'run') throw new Error('expected runs')
+    expect(first.run.changes?.turnId).toBe('turn-1')
+    expect(second.run.changes).toBeUndefined()
+  })
+
+  it('reconcileTimeline 保留实时收到的 changes(转录尚未写入)', () => {
+    vi.setSystemTime(0)
+    let current = reduceAll([{ type: 'agent_start', data: {} }], appendUserMessage([], '问题', 'message-1', 0))
+    vi.setSystemTime(2_000)
+    current = reduceAll([
+      { type: 'agent_done', data: {} },
+      { type: 'run_changes', data: changesPayload },
+    ], current)
+    // 终态瞬间拉到的转录还没写入 run_changes 条目
+    const transcript = timelineFromTranscript([
+      { type: 'message', timestamp: '1970-01-01T00:00:00.000Z', message_id: 'message-1', message: { role: 'user', content: '问题' } },
+      { type: 'message', timestamp: '1970-01-01T00:00:02.000Z', message: { role: 'assistant', content: '回答' } },
+    ])
+    const reconciled = reconcileTimeline(current, transcript)
+    const run = reconciled[1]
+    if (run.kind !== 'run') throw new Error('expected run')
+    expect(run.run.changes?.turnId).toBe('turn-1')
   })
 })

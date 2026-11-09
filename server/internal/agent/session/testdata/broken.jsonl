@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"brokensess1","timestamp":"2026-10-29T06:00:00.000Z","cwd":"/tmp/x"}
+{"type":"model_change","id":"k001","parentId":null,"timestamp":"2026-10-29T06:00:00.001Z","provider":"xlyra","modelId":"mock-1"}
+
+{"type":"message","id":"u301","parentId":"k001","timestamp":"2026-10-29T06:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"第一条"}],"timestamp":1793239201000}}
+{这是坏行 不是 JSON
+{"type":"message","id":"a301","parentId":"u301","timestamp":"2026-10-29T06:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"被截断的回答"
+{"type":"message","id":"u302","parentId":"u301","timestamp":"2026-10-29T06:00:03.000Z","message":{"role":"user","content":[{"type":"text","text":"最后一条(无换行结尾)"}],"timestamp":1793239203000}}

@@ -187,12 +187,11 @@ Concurrency queue timeouts (`upstream_concurrency_wait_timeout`) never trigger a
 - Usage channel-split: aggregate usage broken down by downstream key, model, and site
 - Dashboard: RPM, token throughput, cost, active key heatmap, and cooldown summary
 - Real-time traffic flow graph: live in-flight requests visualized as a node-link topology
-- Model playground: multi-protocol interactive testing (Chat, Responses, Messages) with attachment support
 
 ### Agent
 
 - `/agent` workspace: conversational agent that reads and writes files, runs commands, and searches the web, with a step-by-step timeline, permission prompts, and attachments
-- `/settings/agent`: connect the Runner container, limit which sites and models the agent may use, and upgrade the agent
+- `/settings/agent`: limit which sites and models the agent may use, and configure skills and capabilities
 - Skills, memory, AGENTS.md, and context-compaction settings are managed from the workspace
 - Setup guide: [docs/agent](./docs/agent/README.md) (Chinese)
 

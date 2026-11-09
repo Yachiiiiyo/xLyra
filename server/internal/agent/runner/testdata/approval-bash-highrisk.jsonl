@@ -1,0 +1,4 @@
+{"type":"agent_start"}
+{"type":"tool_execution_start","toolCallId":"call_b1","toolName":"bash","args":{"command":"rm -rf /"}}
+{"type":"extension_ui_request","id":"esc-hr","method":"confirm","title":"允许执行命令?","message":"{\"toolCallId\":\"call_b1\",\"toolName\":\"bash\",\"command\":[\"rm -rf /\"],\"note\":\"工作目录: .;命中规则: rm 递归删除高危目标\"}"}
+{"type":"agent_settled","aborted":false}

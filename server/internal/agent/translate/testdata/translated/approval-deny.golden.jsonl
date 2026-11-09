@@ -1,0 +1,12 @@
+{"type":"agent_start","data":{}}
+{"type":"tool_call_start","data":{"tool_call":{"id":"call_deny","name":"risky_tool"}}}
+{"type":"tool_call_delta","data":{"delta":"{\"note\":","tool_call_id":"call_deny"}}
+{"type":"tool_call_delta","data":{"delta":"\"nope\"}","tool_call_id":"call_deny"}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_deny","name":"risky_tool","raw_arguments":"{\"note\":\"nope\"}"}}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_deny","name":"risky_tool","raw_arguments":"{\"note\":\"nope\"}"}}}
+{"type":"escalation_request","data":{"escalation":{"escalation_id":"06bb688c-31a0-4268-ae98-96493102622d","tool_name":"risky_tool"}}}
+{"type":"permission_result","data":{"allowed":false,"request_id":"06bb688c-31a0-4268-ae98-96493102622d"}}
+{"type":"tool_result","data":{"tool_result":{"is_error":true,"name":"risky_tool","output":"user denied risky_tool","tool_call_id":"call_deny"}}}
+{"type":"text_delta","data":{"delta":"已拒"}}
+{"type":"text_delta","data":{"delta":"绝"}}
+{"type":"agent_done","data":{}}

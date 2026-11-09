@@ -39,7 +39,7 @@ export function DashboardMetricCard({
   className,
 }: DashboardMetricCardProps) {
   return (
-    <Card className={cn('@container/metric flex flex-col gap-4 p-5', className)}>
+    <Card className={cn('@container/metric flex flex-col gap-4 p-5 max-lg:gap-3 max-lg:p-4', className)}>
       <div className="flex items-center gap-2">
         {icon ? <span className="flex size-4 items-center justify-center text-label-3 [&>svg]:size-4">{icon}</span> : null}
         <p className="text-footnote font-medium text-label-2">{title}</p>
@@ -66,8 +66,8 @@ function MetricValue({ label, value, tokenUsage, tokenUsageLabels }: { label: st
   const content = (
     <div className="flex min-w-0 flex-col" aria-label={`${label} ${value}`}>
       <p className="min-w-0 truncate text-caption-1 text-label-3">{label}</p>
-      <p className="mt-1.5 flex min-w-0 items-baseline gap-1.5 whitespace-nowrap font-mono tabular-nums">
-        <span className="truncate text-[22px] font-semibold leading-7 text-label @[26rem]/metric:text-kpi">{main}</span>
+      <p className="mt-1.5 flex min-w-0 items-baseline gap-1.5 whitespace-nowrap font-mono tabular-nums max-lg:mt-1">
+        <span className="truncate text-[22px] font-semibold leading-7 text-label max-lg:text-[20px] max-lg:leading-6 @[26rem]/metric:text-kpi">{main}</span>
         {rest ? <span className="shrink-0 text-callout text-label-3">{rest}</span> : null}
       </p>
     </div>

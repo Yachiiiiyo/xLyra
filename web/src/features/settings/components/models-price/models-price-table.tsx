@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, LoaderCircle, RotateCcw, Save } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/confirm-dialog'
+import { dataTableGridHeaderClass } from '@/components/common/data-table-header'
 import { EmptyState } from '@/components/common/empty-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -191,7 +192,7 @@ export function ModelsPriceTable({
       ) : (
         <>
           <div
-            className="grid shrink-0 border-y border-separator bg-elevated-1 px-3 py-3 text-footnote font-medium text-label-2"
+            className={cn('grid shrink-0 px-3 py-3', dataTableGridHeaderClass)}
             style={{ gridTemplateColumns: tableColumns }}
           >
             <div />
@@ -520,7 +521,7 @@ function SiteView({
   return (
     <>
       <div
-        className="grid shrink-0 border-y border-separator bg-elevated-1 px-3 py-3 text-footnote font-medium text-label-2"
+        className={cn('grid shrink-0 px-3 py-3', dataTableGridHeaderClass)}
         style={{ gridTemplateColumns: tableColumns }}
       >
         <div />
@@ -719,7 +720,7 @@ function CredentialPricingRows({ row }: { row: ModelPriceItem }) {
   const { t } = useTranslation('settings')
   if (!row.credential_pricings?.length) return null
   return (
-    <div className="border-t border-separator bg-elevated-1/60">
+    <div className="border-t border-separator bg-fill-4">
       {row.credential_pricings.map((credential) => (
         <div
           key={`${row.site_model_id}:${credential.credential_id}`}

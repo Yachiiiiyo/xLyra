@@ -11,6 +11,7 @@ import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
 import { AvatarUpload } from '@/components/common/avatar-upload'
 import { copyToClipboard } from '@/components/common/copy-to-clipboard'
+import { DataTableHeader } from '@/components/common/data-table-header'
 import { toast } from '@/lib/toast'
 import { useAuthStore } from '@/stores/auth-store'
 import {
@@ -380,7 +381,7 @@ export function ProfileSettingsPage() {
                 <col key={index} style={{ width: `${width}%` }} />
               ))}
             </colgroup>
-            <thead className="bg-fill-3 text-label-2">
+            <DataTableHeader className="text-label-2">
               <tr>
                 <th className="overflow-hidden text-ellipsis whitespace-nowrap px-2 py-3 font-medium sm:px-3">{t('profile.sessions.status')}</th>
                 <th className="overflow-hidden text-ellipsis whitespace-nowrap px-2 py-3 font-medium sm:px-3">{t('profile.sessions.device')}</th>
@@ -389,7 +390,7 @@ export function ProfileSettingsPage() {
                 <th className="overflow-hidden text-ellipsis whitespace-nowrap px-2 py-3 font-medium sm:px-3">{t('profile.sessions.expires')}</th>
                 <th className="overflow-hidden text-ellipsis whitespace-nowrap px-2 py-3 text-right font-medium sm:px-3">{t('profile.sessions.actions')}</th>
               </tr>
-            </thead>
+            </DataTableHeader>
             <tbody className="divide-y divide-separator">
               {(sessionsQuery.data?.items ?? []).map((item) => (
                 <tr key={item.id}>

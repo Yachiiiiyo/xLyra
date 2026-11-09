@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ErrorState } from '@/components/common/error-state'
+import { DataTableHeader, dataTableHeadTextClass } from '@/components/common/data-table-header'
 import { Button } from '@/components/ui/button'
 import { DatePicker } from '@/components/ui/date-picker'
 import { Input } from '@/components/ui/input'
@@ -305,7 +306,7 @@ function SplitMetricCard({ compact, label, value }: { compact: boolean; label: s
       compact ? 'px-3 py-2.5' : 'px-4 py-3',
     )}>
       <div className="text-footnote text-label-2">{label}</div>
-      <div className={cn('mt-1 truncate font-semibold tabular-nums text-label', compact ? 'text-title-3' : 'text-xl')} title={value}>
+      <div className={cn('mt-1 truncate font-semibold tabular-nums text-label', compact ? 'text-title-3' : 'text-xl max-lg:text-title-3')} title={value}>
         {value}
       </div>
     </div>
@@ -410,8 +411,8 @@ function SplitTable({
   return (
     <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden rounded-inner">
       <table className="w-full table-fixed border-collapse text-left">
-        <thead className="sticky top-0 z-10 bg-fill-3 shadow-[0_1px_0_var(--separator)]">
-          <tr className="text-footnote font-semibold text-label-2">
+        <DataTableHeader sticky="container" className={dataTableHeadTextClass}>
+          <tr>
             <th className="w-[30%] overflow-hidden text-ellipsis whitespace-nowrap px-3 py-3 font-medium">{t('split.table.apiKey')}</th>
             <th className="w-[16%] overflow-hidden text-ellipsis whitespace-nowrap px-3 py-3 text-right font-medium">{t('split.table.cost')}</th>
             <th className="w-[12%] overflow-hidden text-ellipsis whitespace-nowrap px-3 py-3 text-right font-medium">{t('split.table.share')}</th>
@@ -419,7 +420,7 @@ function SplitTable({
             <th className="w-[16%] overflow-hidden text-ellipsis whitespace-nowrap px-3 py-3 text-right font-medium">{t('split.table.tokens')}</th>
             <th className="w-[10%] overflow-hidden text-ellipsis whitespace-nowrap px-3 py-3 text-right font-medium">{t('split.table.requests')}</th>
           </tr>
-        </thead>
+        </DataTableHeader>
         <tbody>
           {items.map((item) => {
             const name = item.api_key_name || item.api_key_id

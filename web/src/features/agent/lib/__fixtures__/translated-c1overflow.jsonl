@@ -1,0 +1,22 @@
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"ov"}}
+{"type":"text_delta","data":{"delta":"er"}}
+{"type":"text_delta","data":{"delta":"fl"}}
+{"type":"text_delta","data":{"delta":"ow"}}
+{"type":"text_delta","data":{"delta":"-o"}}
+{"type":"text_delta","data":{"delta":"k-"}}
+{"type":"text_delta","data":{"delta":"1"}}
+{"type":"done","data":{"aborted":false}}
+{"type":"agent_start","data":{}}
+{"type":"error","data":{"error":"400: {\"message\":\"context_length_exceeded\",\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\"}","message":"400: {\"message\":\"context_length_exceeded\",\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\"}","stopReason":"error"}}
+{"type":"compacting","data":{"manual":false}}
+{"type":"compacted","data":{"compaction":{"details":{"modifiedFiles":[],"readFiles":[]},"estimatedTokensAfter":564,"firstKeptEntryId":"b4ddbc9c","summary":"SUMMARY-OVERFLOW\n\n---\n\n**Turn Context (split turn):**\n\nSUMMARY-OVERFLOW","tokensBefore":560,"usage":{"cacheRead":0,"cacheWrite":0,"cost":{"cacheRead":0,"cacheWrite":0,"input":0,"output":0,"total":0},"input":16,"output":4,"reasoning":0,"totalTokens":20}}}}
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"ov"}}
+{"type":"text_delta","data":{"delta":"er"}}
+{"type":"text_delta","data":{"delta":"fl"}}
+{"type":"text_delta","data":{"delta":"ow"}}
+{"type":"text_delta","data":{"delta":"-o"}}
+{"type":"text_delta","data":{"delta":"k-"}}
+{"type":"text_delta","data":{"delta":"3"}}
+{"type":"done","data":{"aborted":false}}

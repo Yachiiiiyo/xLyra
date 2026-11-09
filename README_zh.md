@@ -187,12 +187,11 @@ xLyra 在下游和上游协议格式之间透明转换。Failover 只允许发�
 - 用量分账统计：按下游 Key、模型、站点聚合拆分
 - 仪表盘：RPM、Token 吞吐、成本、活跃 Key 热力图和冷却摘要
 - 实时请求流图：在途请求以节点连线拓扑形式实时可视化
-- 模型体验工作台：多协议交互测试（Chat、Responses、Messages），支持附件对话
 
 ### Agent
 
 - `/agent` 工作台：对话式 Agent，可读写文件、运行命令、搜索网页，带步骤时间线、权限确认和附件
-- `/settings/agent`：连接 Runner 容器、限定 Agent 可用的站点与模型、升级 Agent
+- `/settings/agent`：限定 Agent 可用的站点与模型、配置技能与能力
 - 在工作台里管理 Skills、记忆、AGENTS.md 和上下文压缩设置
 - 配置说明：[docs/agent](./docs/agent/README.md)
 

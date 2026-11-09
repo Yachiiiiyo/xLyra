@@ -8,6 +8,7 @@ import {
   type CurrentAdminSession,
 } from '@/features/auth/api/auth'
 import { rememberBootstrapInitialized } from '@/lib/bootstrap-state'
+import { clearQuerySnapshots } from '@/lib/query-snapshot'
 import { APIError, setCSRFToken as setHTTPCSRFToken } from '@/lib/http'
 
 type AuthUser = {
@@ -72,6 +73,17 @@ function buildUserFromCurrentSession(session: CurrentAdminSession): AuthUser {
   return buildUserFromAdmin(session.admin)
 }
 
+const SNAPSHOT_USER_STORAGE_KEY = 'xlyra:snapshot-user'
+
+function clearStaleQuerySnapshots(userId: string) {
+  try {
+    const snapshotUser = localStorage.getItem(SNAPSHOT_USER_STORAGE_KEY)
+    if (snapshotUser && snapshotUser !== userId) {
+      clearQuerySnapshots()
+    }
+  } catch { /* storage unavailable */ }
+}
+
 function syncCSRFToken(csrfToken: string | null) {
   setHTTPCSRFToken(csrfToken)
   return csrfToken
@@ -117,15 +129,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
 
         if (authState.authenticated && authState.session) {
+          const user = buildUserFromCurrentSession(authState.session)
           set({
             status: 'authenticated',
             initialized: true,
-            user: buildUserFromCurrentSession(authState.session),
+            user,
             expiresAt: authState.session.expiresAt,
             csrfToken: syncCSRFToken(authState.session.csrfToken),
             errorMessage: null,
             errorStatus: null,
           })
+          clearStaleQuerySnapshots(user.id)
           return
         }
 
@@ -162,6 +176,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       errorMessage: null,
       errorStatus: null,
     })
+    clearStaleQuerySnapshots(session.admin.id)
   },
   setAdmin: (admin) => {
     set((state) => ({
@@ -171,11 +186,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       errorMessage: null,
       errorStatus: null,
     }))
+    clearStaleQuerySnapshots(admin.id)
   },
   setCSRFToken: (csrfToken) => {
     set({ csrfToken: syncCSRFToken(csrfToken) })
   },
   clearSession: () => {
+    clearQuerySnapshots()
     set({
       status: 'unauthenticated',
       initialized: true,

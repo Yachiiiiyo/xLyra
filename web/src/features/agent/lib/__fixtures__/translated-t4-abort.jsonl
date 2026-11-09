@@ -1,0 +1,15 @@
+{"type":"agent_start","data":{}}
+{"type":"tool_call_start","data":{"tool_call":{"id":"call_abort","name":"risky_tool"}}}
+{"type":"tool_call_delta","data":{"delta":"{\"note\":","tool_call_id":"call_abort"}}
+{"type":"tool_call_delta","data":{"delta":"\"abort-m","tool_call_id":"call_abort"}}
+{"type":"tool_call_delta","data":{"delta":"e\"}","tool_call_id":"call_abort"}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_abort","name":"risky_tool","raw_arguments":"{\"note\":\"abort-me\"}"}}}
+{"type":"tool_call","data":{"tool_call":{"id":"call_abort","name":"risky_tool","raw_arguments":"{\"note\":\"abort-me\"}"}}}
+{"type":"escalation_request","data":{"escalation":{"escalation_id":"d546b78e-8ed0-4a80-86ff-43adad1371e3","tool_name":"risky_tool"}}}
+{"type":"tool_result","data":{"tool_result":{"is_error":true,"name":"risky_tool","output":"Operation aborted","tool_call_id":"call_abort"}}}
+{"type":"error","data":{"error":"This operation was aborted","message":"This operation was aborted","stopReason":"error"}}
+{"type":"cancelled","data":{"aborted":true}}
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"继续"}}
+{"type":"text_delta","data":{"delta":"完成"}}
+{"type":"done","data":{"aborted":false}}

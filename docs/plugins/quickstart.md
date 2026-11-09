@@ -1,16 +1,18 @@
 # 快速开始
 
-目标：给一个虚构的中转站写额度探测插件，并让管理员装上它。如果你要做的不是额度探测，先看[选择插件类型](./kinds.md)，并在 `init` 时用 `--kind` 指定。
+目标：给一个虚构的中转站写额度探测插件，测试、签名，并发布给管理员或上架市场。如果你要做的不是额度探测，先看[选择插件类型](./kinds.md)，并在 `init` 时用 `--kind` 指定。
 
 ## 1. 准备
 
 只需要 `xlyra-plugin` 一个可执行文件，不需要 Node。
 
-> 预编译版本还没有提供下载。目前请从源码构建（需要 Go）：
+> 预编译版本还没有提供下载。目前请从 xLyra 仓库源码构建（需要 Go），`publish` 子命令要用包含它的版本（1.15.1 起）：
 >
 > ```bash
 > cd server && go build -o xlyra-plugin ./cmd/xlyra-plugin
 > ```
+>
+> 把生成的 `xlyra-plugin` 放进 `PATH`，或在 `server` 目录下用 `go run ./cmd/xlyra-plugin <子命令> <插件目录>` 代替。
 
 确认可用：
 
@@ -100,8 +102,21 @@ xlyra-plugin pack --sign my-key.pem       # 生成 dist/<id>-<version>.xlp
 xlyra-plugin verify dist/my-relay-probe-0.1.0.xlp
 ```
 
-`pack` 在写文件前会做和服务端上传相同的检查，不合格不会生成包。签名是可选的，区别见[发布与安装](./publishing.md)。
+`pack` 在写文件前会做和服务端上传相同的检查，不合格不会生成包。签名对私下分发是可选的（`site_provider` 除外，必须由受信公钥签名），上架市场则必须签名，区别见[发布与安装](./publishing.md)。
 
-## 7. 交给管理员
+每次发布前先提高 `manifest.json` 里的 `version`。
 
-把 `.xlp` 文件（以及你的公钥）发给 xLyra 管理员。管理员在后台"开发者"页面上传并启用。额度探测插件还需要由管理员绑定到站点，详见[发布、签名与安装](./publishing.md)。
+## 7. 发布
+
+有两条路，详见[发布、签名与安装](./publishing.md)。
+
+**私下分发。** 把 `.xlp`（以及 `public_key`）交给 xLyra 管理员。管理员在 **设置 → 插件** 里导入公钥、上传、启用，需要绑定的类型再由管理员绑定（额度探测要绑定到站点）。
+
+**上架 xLyra Cloud 市场。** 一次性准备好开发者身份、公钥和命名空间后（见[前置条件](./publishing.md#上架市场的前置条件一次性)），插件 id 要改成 `<命名空间>.<名字>`，然后：
+
+```bash
+export XLYRA_CLOUD_TOKEN='xlh_…'
+xlyra-plugin publish dist/<id>-<version>.xlp --changelog "说明这一版改了什么"
+```
+
+审核通过后，管理员在 **设置 → 插件 → 市场** 里安装，不需要再导入你的公钥。

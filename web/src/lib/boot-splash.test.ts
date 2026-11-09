@@ -59,7 +59,7 @@ describe('waitBootSplashReady', () => {
     const watcher = await settle(waitBootSplashReady({ isReady: () => true, subscribe, now, timers }))
 
     notify()
-    await vi.advanceTimersByTimeAsync(999)
+    await vi.advanceTimersByTimeAsync(299)
     expect(watcher.value).toBeUndefined()
     await vi.advanceTimersByTimeAsync(1)
     expect(watcher.value).toBe('ready')
@@ -90,7 +90,7 @@ describe('waitBootSplashReady', () => {
 
     ready = true
     notify()
-    await vi.advanceTimersByTimeAsync(1000)
+    await vi.advanceTimersByTimeAsync(300)
     expect(watcher.value).toBe('ready')
   })
 

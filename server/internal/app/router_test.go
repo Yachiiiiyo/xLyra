@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,9 +15,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"xlyra/server/internal/agentproxy"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/config"
-	"xlyra/server/internal/gateway"
 )
 
 func TestHealthzIncludesRequestIDHeader(t *testing.T) {
@@ -34,21 +35,6 @@ func TestHealthzIncludesRequestIDHeader(t *testing.T) {
 
 	if got := rec.Header().Get("X-Request-ID"); got == "" {
 		t.Fatal("expected X-Request-ID header to be set")
-	}
-}
-
-func TestCORSExposesGatewayRouteSiteHeader(t *testing.T) {
-	t.Parallel()
-
-	router := NewRouter(testConfig(), slog.Default(), nil, nil, "test-master-key")
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	req.Header.Set("Origin", "http://localhost:5173")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, gateway.RouteSiteHeader) {
-		t.Fatalf("Access-Control-Expose-Headers = %q, want %s", got, gateway.RouteSiteHeader)
 	}
 }
 
@@ -217,7 +203,7 @@ func TestGatewayRoutesAreRegisteredAndProtected(t *testing.T) {
 	}
 }
 
-func TestContentEncodingMiddlewareDoesNotReachPlaygroundOrResponsesWebSocket(t *testing.T) {
+func TestContentEncodingMiddlewareDoesNotReachResponsesWebSocket(t *testing.T) {
 	t.Parallel()
 
 	router := NewRouter(testConfig(), slog.Default(), nil, nil, "test-master-key")
@@ -227,7 +213,7 @@ func TestContentEncodingMiddlewareDoesNotReachPlaygroundOrResponsesWebSocket(t *
 	}
 	middlewareCounts := map[string]int{}
 	if err := chi.Walk(routes, func(method string, route string, _ http.Handler, middlewares ...func(http.Handler) http.Handler) error {
-		if route == "/v1/responses" || route == "/api/playground/v1/responses" {
+		if route == "/v1/responses" {
 			middlewareCounts[method+" "+route] = len(middlewares)
 		}
 		return nil
@@ -237,15 +223,11 @@ func TestContentEncodingMiddlewareDoesNotReachPlaygroundOrResponsesWebSocket(t *
 	if middlewareCounts["POST /v1/responses"] != middlewareCounts["GET /v1/responses"]+2 {
 		t.Fatalf("main responses middleware count = %d, websocket count = %d", middlewareCounts["POST /v1/responses"], middlewareCounts["GET /v1/responses"])
 	}
-	if middlewareCounts["POST /api/playground/v1/responses"] != middlewareCounts["GET /v1/responses"]+1 {
-		t.Fatalf("playground responses middleware count = %d, websocket count = %d", middlewareCounts["POST /api/playground/v1/responses"], middlewareCounts["GET /v1/responses"])
-	}
 	for _, tc := range []struct {
 		name   string
 		method string
 		path   string
 	}{
-		{name: "playground responses", method: http.MethodPost, path: "/api/playground/v1/responses"},
 		{name: "responses websocket", method: http.MethodGet, path: "/v1/responses"},
 	} {
 		tc := tc
@@ -281,34 +263,6 @@ func TestAnalyticsRoutesHaveResponseCompressionMiddleware(t *testing.T) {
 	}
 	if middlewareCounts["/api/v1/analytics/dataset"] != middlewareCounts["/api/v1/traffic-flow/topology"]+1 {
 		t.Fatalf("analytics middleware count = %d, regular protected route count = %d", middlewareCounts["/api/v1/analytics/dataset"], middlewareCounts["/api/v1/traffic-flow/topology"])
-	}
-}
-
-func TestPlaygroundGatewayRoutesAreRegisteredAndProtected(t *testing.T) {
-	t.Parallel()
-
-	router := NewRouter(testConfig(), slog.Default(), nil, nil, "test-master-key")
-	for _, tc := range []struct {
-		method string
-		path   string
-	}{
-		{method: http.MethodPost, path: "/api/playground/v1/chat/completions"},
-		{method: http.MethodPost, path: "/api/playground/v1/responses"},
-		{method: http.MethodPost, path: "/api/playground/v1/messages"},
-		{method: http.MethodPost, path: "/api/playground/v1/images/generations"},
-		{method: http.MethodPost, path: "/api/playground/v1/images/edits"},
-		{method: http.MethodGet, path: "/api/playground/v1/models"},
-	} {
-		tc := tc
-		t.Run(tc.path, func(t *testing.T) {
-			t.Parallel()
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			rec := httptest.NewRecorder()
-
-			router.ServeHTTP(rec, req)
-
-			assertAuthUnavailable(t, rec)
-		})
 	}
 }
 
@@ -568,11 +522,6 @@ func TestRouteAwareTimeoutLeavesStreamingRoutesWithoutDeadline(t *testing.T) {
 		{method: http.MethodPost, path: "/v1/messages"},
 		{method: http.MethodPost, path: "/v1beta/models/gemini-3.1-flash-image:generateContent"},
 		{method: http.MethodPost, path: "/v1beta/models/gemini-3.1-flash-image:streamGenerateContent"},
-		{method: http.MethodPost, path: "/api/playground/v1/chat/completions"},
-		{method: http.MethodPost, path: "/api/playground/v1/responses"},
-		{method: http.MethodPost, path: "/api/playground/v1/images/generations"},
-		{method: http.MethodPost, path: "/api/playground/v1/images/edits"},
-		{method: http.MethodPost, path: "/api/playground/v1/messages"},
 	} {
 		tc := tc
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
@@ -596,6 +545,98 @@ func TestRouteAwareTimeoutLeavesStreamingRoutesWithoutDeadline(t *testing.T) {
 				t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
 			}
 		})
+	}
+}
+
+// fakeBuiltinTokenIssuer 满足 runner.TokenIssuer，仅用于 pi 引擎的接线测试。
+type fakeBuiltinTokenIssuer struct{}
+
+func (fakeBuiltinTokenIssuer) IssueRunToken(context.Context, string, string, string) (string, time.Time, error) {
+	return "token", time.Now(), nil
+}
+
+func (fakeBuiltinTokenIssuer) EndRun(context.Context, string, string, string) error {
+	return nil
+}
+
+func newAgentOnlyRouter(cfg config.Config, builtin *builtinAgent) http.Handler {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	proxy := agentproxy.NewHandler(logger)
+	router := chi.NewRouter()
+	router.Route("/api/v1/agent", func(agentRouter chi.Router) {
+		registerAgentRoutes(agentRouter, cfg, nil, proxy, builtin)
+	})
+	return router
+}
+
+// AGENT_ENGINE=pi 且未配置 Pi 入口时，health 应报告不可用而非启动失败。
+func TestAgentRoutesBuiltinEngineReportsUnavailableHealth(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.AgentDataDir = t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	builtin := newBuiltinAgent(cfg, logger, nil, nil, fakeBuiltinTokenIssuer{}, nil)
+
+	router := newAgentOnlyRouter(cfg, builtin)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/agent/health", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Status string `json:"status"`
+		Runner string `json:"runner"`
+		Agent  string `json:"agent"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "unhealthy" || body.Runner != "builtin" || body.Agent != "pi" || body.Reason == "" {
+		t.Fatalf("health body = %+v", body)
+	}
+
+	// 会话命令在缺配置的降级 runner 上返回 503 agent_unavailable。
+	sessions := httptest.NewRequest(http.MethodPost, "/api/v1/agent/sessions", strings.NewReader(`{"content":"hi","model":"m"}`))
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, sessions)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("sessions status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "agent_unavailable") {
+		t.Fatalf("sessions body = %s", rec.Body.String())
+	}
+
+	// 图片读取接口只在 builtin 分支注册;会话不存在时返回 JSON 404。
+	image := httptest.NewRequest(http.MethodGet, "/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/files?path=images/a.png", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, image)
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_found") {
+		t.Fatalf("files status/body = %d/%s", rec.Code, rec.Body.String())
+	}
+
+	for _, path := range []string{
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/changes",
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/changes/turn-1/diff?path=a.txt",
+		"/api/v1/agent/sessions/11111111-1111-4111-8111-111111111111/artifacts",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "not_found") {
+			t.Fatalf("%s status/body = %d/%s", path, rec.Code, rec.Body.String())
+		}
+	}
+
+	// runner 专属的 compact-context 在 pi 引擎下不注册。
+	compact := httptest.NewRequest(http.MethodPost, "/api/v1/agent/sessions/11111111-1111-1111-1111-111111111111/compact-context", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, compact)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("compact-context status = %d, want 404", rec.Code)
 	}
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isChromiumEngine } from '@/components/glass/refraction'
+import { isChromiumEngine, refractionProfiles } from '@/components/glass/refraction'
 
 const IPHONE_SAFARI =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
@@ -29,5 +29,16 @@ describe('isChromiumEngine', () => {
 
   it('rejects WebKit-based browser shells on iOS', () => {
     expect(isChromiumEngine({ userAgent: IOS_CHROME, hasChromeObject: true, hasUserAgentData: false })).toBe(false)
+  })
+})
+
+describe('refractionProfiles', () => {
+  it('pane 只折射不改色调：不提饱和、不提亮，轻微模糊承托文字', () => {
+    expect(refractionProfiles.pane.saturate).toBe(100)
+    expect(refractionProfiles.pane.brightness).toBe(1)
+    expect(refractionProfiles.pane.blur).toBe(3)
+    // 折射强度与 regular 相当或略强
+    expect(refractionProfiles.pane.bezel).toBeGreaterThanOrEqual(refractionProfiles.regular.bezel)
+    expect(refractionProfiles.pane.scale).toBeGreaterThanOrEqual(refractionProfiles.regular.scale)
   })
 })

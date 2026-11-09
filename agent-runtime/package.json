@@ -1,0 +1,13 @@
+{
+  "name": "xlyra-agent-runtime",
+  "private": true,
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  }
+}

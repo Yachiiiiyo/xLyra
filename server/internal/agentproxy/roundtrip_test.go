@@ -23,9 +23,8 @@ func TestUpdateSettingsPersistsPoliciesAndLists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("http://old.example", "runner-secret", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 	payload := map[string]any{
-		"runner_base_url":        "http://new.example:8787",
 		"site_policy":            "allow_list",
 		"model_policy":           "allow_list",
 		"allowed_site_ids":       []string{"s1", "s2"},
@@ -59,7 +58,7 @@ func TestUpdateSettingsPersistsPoliciesAndLists(t *testing.T) {
 	}
 
 	// simulate restart: fresh handler reading same conf file
-	h2 := NewHandler("", "", http.DefaultClient, slog.Default())
+	h2 := NewHandler(slog.Default())
 	getResp2 := httptest.NewRecorder()
 	h2.GetSettings(getResp2, getReq, confFile)
 	t.Logf("GET after restart: %s", getResp2.Body.String())
@@ -70,7 +69,7 @@ func TestUpdateSettingsPersistsAppearance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("http://runner.example", "runner-secret", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/agent/settings", bytes.NewBufferString(`{"appearance":{"background_image":"data:image/png;base64,AA==","custom_background_images":["data:image/png;base64,AA==","data:image/png;base64,AQ=="],"side_transparency":41,"side_brightness":55,"side_thickness":24,"backdrop_blur":18,"backdrop_dim":62}}`))
 	resp := httptest.NewRecorder()
 	h.UpdateSettings(resp, req, confFile)
@@ -116,7 +115,7 @@ func TestServeBackgroundUsesConfigDerivedDirectoryWithoutWorkdir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("http://runner.example", "runner-secret", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/agent/settings", bytes.NewBufferString(`{"appearance":{"background_image":"data:image/png;base64,AA==","custom_background_images":["data:image/png;base64,AA=="]}}`))
 	resp := httptest.NewRecorder()
 	h.UpdateSettings(resp, req, confFile)
@@ -148,7 +147,7 @@ func TestUpdateSettingsRejectsInvalidAppearance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("http://runner.example", "runner-secret", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/agent/settings", bytes.NewBufferString(`{"appearance":{"side_transparency":101}}`))
 	resp := httptest.NewRecorder()
 	h.UpdateSettings(resp, req, confFile)
@@ -162,7 +161,7 @@ func TestUpdateSettingsRejectsOversizedDataURLBeforeDecoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler("http://runner.example", "runner-secret", http.DefaultClient, slog.Default())
+	h := NewHandler(slog.Default())
 	encoded := strings.Repeat("A", ((maxBackgroundImageBytes/3)+1)*4)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/agent/settings", bytes.NewBufferString(fmt.Sprintf(`{"appearance":{"background_image":"data:image/png;base64,%s"}}`, encoded)))
 	resp := httptest.NewRecorder()

@@ -124,7 +124,7 @@ function KpiCard({
         <span className="text-label-3 [&>svg]:size-4">{icon}</span>
         <span className="truncate text-footnote font-medium text-label-2">{title}</span>
       </div>
-      <div className={cn('truncate font-mono font-semibold tabular-nums text-label', compact ? 'text-[22px] leading-7' : 'text-kpi')}>{value}</div>
+      <div className={cn('truncate font-mono font-semibold tabular-nums text-label', compact ? 'text-[20px] leading-6' : 'text-kpi')}>{value}</div>
       <div className="flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1 text-caption-1 text-label-3">
         {note}
         {delta ? <DeltaBadge delta={delta} label={t('kpis.vsPrevious')} /> : null}

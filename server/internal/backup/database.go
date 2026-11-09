@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,8 +25,12 @@ import (
 )
 
 type databaseDump struct {
-	Tables       map[string][]map[string]any `json:"tables"`
-	TotalRows    int
+	Tables    map[string][]map[string]any `json:"tables"`
+	TotalRows int
+	// Present 是备份包里实际存在的表(nil 表示全部备份表,零值保持旧行为)。
+	Present []string
+	// Clear 是导入前需要清空的表(nil 表示按 importDeleteOrder 全部清空)。
+	Clear        []string
 	beforeCommit func() error
 	// archivePath, when set, points at the on-disk archive so the large detail
 	// tables (streamedImportTables) can be streamed from it during import instead
@@ -60,6 +65,7 @@ var exportTables = []string{
 	"api_key_site_permissions",
 	"api_key_site_group_permissions",
 	"site_models",
+	"site_model_endpoint_overrides",
 	"api_key_site_model_permissions",
 	"canonical_model_aliases",
 	"site_api_key_models",
@@ -70,10 +76,12 @@ var exportTables = []string{
 	"usage_records",
 	"request_usage_daily_summaries",
 	"request_usage_summary_days",
-	"playground_conversations",
-	"playground_runs",
-	"playground_turn_indexes",
-	"playground_assets",
+	"js_plugins",
+	"js_plugin_versions",
+	"js_plugin_trusted_keys",
+	"js_plugin_bindings",
+	"js_plugin_binding_inputs",
+	"js_plugin_market_subscriptions",
 }
 
 type backupTable struct {
@@ -95,6 +103,7 @@ var backupTables = []backupTable{
 	{Name: "api_key_site_permissions", Model: &store.APIKeySitePermission{}, NewSlice: func() any { return &[]store.APIKeySitePermission{} }},
 	{Name: "api_key_site_group_permissions", Model: &store.APIKeySiteGroupPermission{}, NewSlice: func() any { return &[]store.APIKeySiteGroupPermission{} }},
 	{Name: "site_models", Model: &store.SiteModel{}, NewSlice: func() any { return &[]store.SiteModel{} }},
+	{Name: "site_model_endpoint_overrides", Model: &store.SiteModelEndpointOverride{}, NewSlice: func() any { return &[]store.SiteModelEndpointOverride{} }},
 	{Name: "api_key_site_model_permissions", Model: &store.APIKeySiteModelPermission{}, NewSlice: func() any { return &[]store.APIKeySiteModelPermission{} }},
 	{Name: "canonical_model_aliases", Model: &store.CanonicalModelAlias{}, NewSlice: func() any { return &[]store.CanonicalModelAlias{} }},
 	{Name: "site_api_key_models", Model: &store.SiteAPIKeyModel{}, NewSlice: func() any { return &[]store.SiteAPIKeyModel{} }},
@@ -105,23 +114,22 @@ var backupTables = []backupTable{
 	{Name: "usage_records", Model: &store.UsageRecord{}, NewSlice: func() any { return &[]store.UsageRecord{} }},
 	{Name: "request_usage_daily_summaries", Model: &store.RequestUsageDailySummary{}, NewSlice: func() any { return &[]store.RequestUsageDailySummary{} }},
 	{Name: "request_usage_summary_days", Model: &store.RequestUsageSummaryDay{}, NewSlice: func() any { return &[]store.RequestUsageSummaryDay{} }},
-	{Name: "playground_conversations", Model: &store.PlaygroundConversation{}, NewSlice: func() any { return &[]store.PlaygroundConversation{} }},
-	{Name: "playground_runs", Model: &store.PlaygroundRun{}, NewSlice: func() any { return &[]store.PlaygroundRun{} }},
-	{Name: "playground_turn_indexes", Model: &store.PlaygroundTurnIndex{}, NewSlice: func() any { return &[]store.PlaygroundTurnIndex{} }},
-	{Name: "playground_assets", Model: &store.PlaygroundAsset{}, NewSlice: func() any { return &[]store.PlaygroundAsset{} }},
+	{Name: "js_plugins", Model: &store.JSPlugin{}, NewSlice: func() any { return &[]store.JSPlugin{} }},
+	{Name: "js_plugin_versions", Model: &store.JSPluginVersion{}, NewSlice: func() any { return &[]store.JSPluginVersion{} }},
+	{Name: "js_plugin_trusted_keys", Model: &store.JSPluginTrustedKey{}, NewSlice: func() any { return &[]store.JSPluginTrustedKey{} }},
+	{Name: "js_plugin_bindings", Model: &store.JSPluginBinding{}, NewSlice: func() any { return &[]store.JSPluginBinding{} }},
+	{Name: "js_plugin_binding_inputs", Model: &store.JSPluginBindingInput{}, NewSlice: func() any { return &[]store.JSPluginBindingInput{} }},
+	{Name: "js_plugin_market_subscriptions", Model: &store.JSPluginMarketSubscription{}, NewSlice: func() any { return &[]store.JSPluginMarketSubscription{} }},
 }
 
 var importDeleteOrder = []string{
-	"playground_assets",
-	"playground_turn_indexes",
-	"playground_runs",
-	"playground_conversations",
 	"request_usage_summary_days",
 	"request_usage_daily_summaries",
 	"usage_records",
 	"request_logs",
 	"gateway_rate_limits",
 	"site_model_pricings",
+	"site_model_endpoint_overrides",
 	"site_pricing_groups",
 	"site_api_key_models",
 	"canonical_model_aliases",
@@ -138,6 +146,13 @@ var importDeleteOrder = []string{
 	"site_group_sites",
 	"site_groups",
 	"sites",
+	// 插件表与站点表没有外键,子表在前、父表在后。
+	"js_plugin_binding_inputs",
+	"js_plugin_bindings",
+	"js_plugin_versions",
+	"js_plugin_market_subscriptions",
+	"js_plugin_trusted_keys",
+	"js_plugins",
 }
 
 var textSecretColumns = map[string][]string{
@@ -146,31 +161,47 @@ var textSecretColumns = map[string][]string{
 	"oauth_connections": {"encrypted_access_token", "encrypted_refresh_token", "encrypted_id_token"},
 }
 
-func exportDatabase(ctx context.Context, db *gorm.DB, masterKey string, playgroundRoot string, zw *zip.Writer) (map[string]int, error) {
+// binaryColumns 列出二进制(BYTEA)列:导出时编码为 base64 字符串,导入时解码
+// 回字节,保证经 JSONL 往返后字节完全一致(JSON 无法无损携带任意二进制)。
+var binaryColumns = map[string][]string{
+	"js_plugin_versions": {"package"},
+}
+
+// adminReferenceColumns 列出引用 admins 表的外键列:管理员账号不在备份里,
+// 导入时一律置空(参照 api_keys.created_by_admin_id 的做法)。
+var adminReferenceColumns = map[string][]string{
+	"js_plugin_versions":     {"uploaded_by"},
+	"js_plugin_trusted_keys": {"created_by"},
+}
+
+// exportDatabase 只导出 tables 里列出的表(按 backupTables 顺序);tables 为空
+// 时不开启事务,直接返回空 row_counts。
+func exportDatabase(ctx context.Context, db *gorm.DB, masterKey string, tables []string, zw *zip.Writer) (map[string]int, error) {
+	if len(tables) == 0 {
+		return map[string]int{}, nil
+	}
 	var rowCounts map[string]int
-	var conversations []store.PlaygroundConversation
-	var assets []store.PlaygroundAsset
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		rowCounts, err = exportDatabaseSnapshot(ctx, tx, masterKey, zw)
-		if err != nil {
-			return err
-		}
-		conversations, assets, err = listPlaygroundFileRefs(ctx, tx)
+		rowCounts, err = exportDatabaseSnapshot(ctx, tx, masterKey, tables, zw)
 		return err
 	}, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
 		return nil, err
 	}
-	if _, _, err := exportPlaygroundFileEntries(ctx, db, zw, playgroundRoot, conversations, assets); err != nil {
-		return nil, err
-	}
 	return rowCounts, nil
 }
 
-func exportDatabaseSnapshot(ctx context.Context, db *gorm.DB, masterKey string, zw *zip.Writer) (map[string]int, error) {
-	rowCounts := make(map[string]int, len(backupTables))
+func exportDatabaseSnapshot(ctx context.Context, db *gorm.DB, masterKey string, tables []string, zw *zip.Writer) (map[string]int, error) {
+	wanted := make(map[string]struct{}, len(tables))
+	for _, table := range tables {
+		wanted[table] = struct{}{}
+	}
+	rowCounts := make(map[string]int, len(wanted))
 	for _, table := range backupTables {
+		if _, ok := wanted[table.Name]; !ok {
+			continue
+		}
 		rows, err := exportTable(ctx, db, table, masterKey, zw)
 		if err != nil {
 			return nil, err
@@ -183,6 +214,26 @@ func exportDatabaseSnapshot(ctx context.Context, db *gorm.DB, masterKey string, 
 func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump databaseDump, adminID uuid.UUID, progress ...ProgressFunc) (int, int, error) {
 	if err := validateDumpTables(dump); err != nil {
 		return 0, 0, err
+	}
+	// 要插入的表 = Present(nil 表示全部);要清空的表 = Clear(nil 表示全部)。
+	// 每个要插入的表必须在清空集合里,否则插入后会与库内旧数据主键冲突。
+	present := importPresentTables(dump)
+	presentSet := make(map[string]struct{}, len(present))
+	for _, table := range present {
+		presentSet[table] = struct{}{}
+	}
+	clear := importClearTables(dump)
+	clearSet := make(map[string]struct{}, len(clear))
+	for _, table := range clear {
+		if _, ok := backupTableByName(table); !ok {
+			return 0, 0, fmt.Errorf("backup table %s was not registered", table)
+		}
+		clearSet[table] = struct{}{}
+	}
+	for _, table := range present {
+		if _, ok := clearSet[table]; !ok {
+			return 0, 0, fmt.Errorf("backup table %s is present but not cleared", table)
+		}
 	}
 	streaming := dump.archivePath != ""
 	if !streaming {
@@ -240,8 +291,17 @@ func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump dat
 	total := 0
 	skippedTotal := 0
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&store.CacheObservation{}).Error; err != nil {
-			return fmt.Errorf("clear cache observations: %w", err)
+		// 清空与插入都为空(例如只恢复配置)时,不动库内任何数据。
+		if len(clear) == 0 && len(present) == 0 {
+			if dump.beforeCommit != nil {
+				return dump.beforeCommit()
+			}
+			return nil
+		}
+		if _, ok := clearSet["request_logs"]; ok {
+			if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&store.CacheObservation{}).Error; err != nil {
+				return fmt.Errorf("clear cache observations: %w", err)
+			}
 		}
 		// Clear every backup table before reloading. A single TRUNCATE (vs a
 		// per-table DELETE) reclaims storage immediately instead of leaving dead
@@ -250,18 +310,20 @@ func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump dat
 		// via ON DELETE CASCADE foreign keys (route_cooldowns, health_snapshots,
 		// site_health_states, oauth_sessions) — matching the DELETE's prior cascade
 		// behavior. TRUNCATE has no GORM API, so it is issued directly; table names
-		// come from the fixed importDeleteOrder list, never user input.
-		quoted := make([]string, 0, len(importDeleteOrder))
-		for _, table := range importDeleteOrder {
-			if _, ok := backupTableByName(table); !ok {
-				return fmt.Errorf("backup table %s was not registered", table)
+		// come from the fixed Clear/importDeleteOrder list, never user input.
+		if len(clear) > 0 {
+			quoted := make([]string, 0, len(clear))
+			for _, table := range clear {
+				quoted = append(quoted, `"`+table+`"`)
 			}
-			quoted = append(quoted, `"`+table+`"`)
-		}
-		if err := tx.Exec("TRUNCATE TABLE " + strings.Join(quoted, ", ") + " CASCADE").Error; err != nil {
-			return fmt.Errorf("clear backup tables: %w", err)
+			if err := tx.Exec("TRUNCATE TABLE " + strings.Join(quoted, ", ") + " CASCADE").Error; err != nil {
+				return fmt.Errorf("clear backup tables: %w", err)
+			}
 		}
 		for _, table := range backupTables {
+			if _, ok := presentSet[table.Name]; !ok {
+				continue
+			}
 			switch table.Name {
 			case "request_logs", "usage_records":
 				transform := requestLogTransform
@@ -279,6 +341,9 @@ func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump dat
 				skippedTotal += skipped
 			default:
 				rows := cloneRows(dump.Tables[table.Name])
+				if err := decodeBinaryColumns(table.Name, rows); err != nil {
+					return err
+				}
 				if err := encryptTableSecrets(table.Name, rows, masterKey); err != nil {
 					return err
 				}
@@ -287,8 +352,11 @@ func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump dat
 						row["created_by_admin_id"] = nil
 					}
 				}
-				if table.Name == "playground_conversations" && adminID != uuid.Nil {
-					reownPlaygroundConversations(rows, adminID)
+				// 管理员账号不在备份里,引用管理员的外键列导入时一律置空。
+				for _, column := range adminReferenceColumns[table.Name] {
+					for _, row := range rows {
+						row[column] = nil
+					}
 				}
 				if err := importTable(ctx, tx, table, rows, func(imported int) {
 					emit(ProgressEvent{Step: "import", Status: "in_progress", Rows: total + imported, TotalRows: progressTotal - skippedTotal, Table: table.Name})
@@ -303,6 +371,11 @@ func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump dat
 				total += len(rows)
 			}
 		}
+		// 站点/密钥/OAuth 连接被替换后,备份之外的插件自动化输入可能还引用着已不存在
+		// 的对象(文本 id,没有外键):只清理这些悬空引用,不动仍然有效的输入。
+		if err := pruneDanglingPluginInputs(tx, clearSet, presentSet); err != nil {
+			return err
+		}
 		if dump.beforeCommit != nil {
 			if err := dump.beforeCommit(); err != nil {
 				return err
@@ -311,6 +384,33 @@ func importDatabase(ctx context.Context, db *gorm.DB, masterKey string, dump dat
 		return nil
 	})
 	return total, progressTotal - skippedTotal, err
+}
+
+// pluginInputEntityTables 是插件自动化输入(js_plugin_binding_inputs.entity_type)
+// 引用的对象类型与其所在的表。
+var pluginInputEntityTables = map[string]string{
+	"site":             "sites",
+	"api_key":          "api_keys",
+	"oauth_connection": "oauth_connections",
+}
+
+// pruneDanglingPluginInputs 在恢复替换了站点/密钥/OAuth 连接之后,删除插件自动化
+// 输入里指向已不存在对象的行。备份本身带了插件输入表(present)时不处理——备份内
+// 容自洽;没带时(只恢复站点等)才清理悬空引用。
+func pruneDanglingPluginInputs(tx *gorm.DB, clearSet map[string]struct{}, presentSet map[string]struct{}) error {
+	if _, ok := presentSet["js_plugin_binding_inputs"]; ok {
+		return nil
+	}
+	for entityType, table := range pluginInputEntityTables {
+		if _, replaced := clearSet[table]; !replaced {
+			continue
+		}
+		query := "DELETE FROM js_plugin_binding_inputs WHERE entity_type = ? AND entity_id NOT IN (SELECT id::text FROM " + table + ")"
+		if err := tx.Exec(query, entityType).Error; err != nil {
+			return fmt.Errorf("prune plugin inputs referencing %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 // importStreamedTable imports a large detail table. With an archive path it
@@ -448,6 +548,7 @@ func exportTableRows(ctx context.Context, db *gorm.DB, table backupTable, master
 		if table.Name == "request_logs" {
 			stripCacheObservationRows(rows)
 		}
+		encodeBinaryColumns(table.Name, rows)
 		if err := decryptTableSecrets(table.Name, rows, masterKey); err != nil {
 			return err
 		}
@@ -613,7 +714,17 @@ func validateDumpTables(dump databaseDump) error {
 	if dump.Tables == nil {
 		return fmt.Errorf("backup database payload is missing tables")
 	}
+	// Present 为 nil 时视为全部备份表(旧行为);否则只为 present 的表补空切片。
+	presentSet := make(map[string]struct{}, len(dump.Present))
+	for _, table := range dump.Present {
+		presentSet[table] = struct{}{}
+	}
 	for _, table := range backupTables {
+		if dump.Present != nil {
+			if _, ok := presentSet[table.Name]; !ok {
+				continue
+			}
+		}
 		if _, streamed := streamedImportTables[table.Name]; streamed {
 			// Streamed tables are validated against the archive in parseArchive.
 			continue
@@ -625,19 +736,56 @@ func validateDumpTables(dump databaseDump) error {
 	return nil
 }
 
+// importPresentTables 返回要插入的表:Present 为 nil 时视为全部备份表(旧行为)。
+func importPresentTables(dump databaseDump) []string {
+	if dump.Present == nil {
+		present := make([]string, 0, len(backupTables))
+		for _, table := range backupTables {
+			present = append(present, table.Name)
+		}
+		return present
+	}
+	return dump.Present
+}
+
+// importClearTables 返回导入前要清空的表:Clear 为 nil 时视为 importDeleteOrder
+// 全部(旧行为);否则逐个校验必须是已知备份表。
+func importClearTables(dump databaseDump) []string {
+	if dump.Clear == nil {
+		return importDeleteOrder
+	}
+	return dump.Clear
+}
+
 func normalizeImportDump(dump databaseDump) databaseDump {
-	dump.Tables["request_logs"] = rowsWithValidNullableReferences(dump.Tables["request_logs"], map[string]map[string]struct{}{
-		"api_key_id":         rowIDSet(dump.Tables["api_keys"]),
-		"site_id":            rowIDSet(dump.Tables["sites"]),
-		"canonical_model_id": rowIDSet(dump.Tables["canonical_models"]),
-		"site_model_id":      rowIDSet(dump.Tables["site_models"]),
-	})
-	dump.Tables["usage_records"] = rowsWithExistingParent(dump.Tables["usage_records"], "request_log_id", rowIDSet(dump.Tables["request_logs"]))
-	dump.Tables["usage_records"] = rowsWithValidNullableReferences(dump.Tables["usage_records"], map[string]map[string]struct{}{
-		"api_key_id":         rowIDSet(dump.Tables["api_keys"]),
-		"site_id":            rowIDSet(dump.Tables["sites"]),
-		"canonical_model_id": rowIDSet(dump.Tables["canonical_models"]),
-	})
+	// 只归一化 present 的大表明细;Present 为 nil 时视为全部(旧行为)。
+	presentSet := make(map[string]struct{}, len(dump.Present))
+	for _, table := range dump.Present {
+		presentSet[table] = struct{}{}
+	}
+	isPresent := func(table string) bool {
+		if dump.Present == nil {
+			return true
+		}
+		_, ok := presentSet[table]
+		return ok
+	}
+	if isPresent("request_logs") {
+		dump.Tables["request_logs"] = rowsWithValidNullableReferences(dump.Tables["request_logs"], map[string]map[string]struct{}{
+			"api_key_id":         rowIDSet(dump.Tables["api_keys"]),
+			"site_id":            rowIDSet(dump.Tables["sites"]),
+			"canonical_model_id": rowIDSet(dump.Tables["canonical_models"]),
+			"site_model_id":      rowIDSet(dump.Tables["site_models"]),
+		})
+	}
+	if isPresent("usage_records") {
+		dump.Tables["usage_records"] = rowsWithExistingParent(dump.Tables["usage_records"], "request_log_id", rowIDSet(dump.Tables["request_logs"]))
+		dump.Tables["usage_records"] = rowsWithValidNullableReferences(dump.Tables["usage_records"], map[string]map[string]struct{}{
+			"api_key_id":         rowIDSet(dump.Tables["api_keys"]),
+			"site_id":            rowIDSet(dump.Tables["sites"]),
+			"canonical_model_id": rowIDSet(dump.Tables["canonical_models"]),
+		})
+	}
 	return dump
 }
 
@@ -759,6 +907,42 @@ func encryptTableSecrets(table string, rows []map[string]any, masterKey string) 
 
 func plainSecretColumn(column string) string {
 	return strings.TrimPrefix(column, "encrypted_")
+}
+
+// encodeBinaryColumns 把二进制列编码为 base64 字符串:任意二进制无法经 JSON
+// 字符串无损往返(非法 UTF-8 会被替换),base64 保证字节完全一致。zip 包不是
+// 合法 JSON,decodeJSONValue 的回退分支返回原始字符串,这里统一编码。
+func encodeBinaryColumns(table string, rows []map[string]any) {
+	for _, column := range binaryColumns[table] {
+		for _, row := range rows {
+			switch value := row[column].(type) {
+			case nil:
+			case []byte:
+				row[column] = base64.StdEncoding.EncodeToString(value)
+			case string:
+				row[column] = base64.StdEncoding.EncodeToString([]byte(value))
+			}
+		}
+	}
+}
+
+// decodeBinaryColumns 把 base64 字符串解码回字节;非字符串值(已解码的字节)
+// 原样保留,供直接构造 dump 的测试使用。
+func decodeBinaryColumns(table string, rows []map[string]any) error {
+	for _, column := range binaryColumns[table] {
+		for _, row := range rows {
+			encoded, ok := row[column].(string)
+			if !ok {
+				continue
+			}
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return fmt.Errorf("decode %s.%s: %w", table, column, err)
+			}
+			row[column] = decoded
+		}
+	}
+	return nil
 }
 
 func backupTableByName(name string) (backupTable, bool) {
@@ -935,10 +1119,4 @@ func cloneRows(rows []map[string]any) []map[string]any {
 		out = append(out, next)
 	}
 	return out
-}
-
-func reownPlaygroundConversations(rows []map[string]any, adminID uuid.UUID) {
-	for _, row := range rows {
-		row["admin_id"] = adminID.String()
-	}
 }

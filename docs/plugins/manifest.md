@@ -21,7 +21,7 @@
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `id` | 是 | 3–64 位，只能含小写字母、数字、`.`、`-`，首尾必须是字母或数字。**不能以 `xlyra.` 开头**（保留给内置插件），不能是 `builtins` |
+| `id` | 是 | 3–64 位，只能含小写字母、数字、`.`、`-`，首尾必须是字母或数字。**不能以 `xlyra.` 开头**（保留给内置插件），不能是 `builtins`。上架市场的插件必须写成 `<命名空间>.<名字>`，命名空间是你在 xLyra Cloud 申请批准的那个，见[发布](./publishing.md#上架市场的前置条件一次性) |
 | `kind` | 是 | 十种之一：`quota_probe`、`protocol`、`model_list`、`credential_check`、`site_detect`、`error_classifier`、`model_metadata`、`pricing_parse`、`automation`、`site_provider`，详见[选择类型](./kinds.md)。不支持自定义类型 |
 | `version` | 是 | 语义化版本，如 `0.1.0`。同一个 id 的同一个版本号不能用不同内容重复上传 |
 | `apiVersion` | 是 | 钩子契约版本，目前只能是 `1` |

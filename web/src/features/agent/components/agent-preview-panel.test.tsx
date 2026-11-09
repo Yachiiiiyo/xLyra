@@ -1,0 +1,417 @@
+import * as React from 'react'
+import { act } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createInstance } from 'i18next'
+import { I18nextProvider } from 'react-i18next'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-panel'
+import type { AgentFileChange } from '@/features/agent/lib/run-changes'
+import zhAgent from '@/locales/zh/agent.json'
+
+const fetchSessionDiffMock = vi.hoisted(() => vi.fn())
+vi.mock('@/features/agent/api/agent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/agent/api/agent')>()),
+  fetchSessionDiff: fetchSessionDiffMock,
+}))
+
+vi.mock('@/features/agent/components/agent-file-preview', () => ({
+  AgentFilePreview: ({ path }: { path: string }) => <div data-file-preview={path} />,
+}))
+vi.mock('@/components/glass/liquid-glass', () => ({
+  LiquidGlass: ({ as: Tag = 'div', variant: _variant, children, ...props }: React.ComponentPropsWithoutRef<'div'> & { as?: 'div' | 'aside'; variant?: string }) => {
+    void _variant
+    return <Tag {...props}>{children}</Tag>
+  },
+}))
+vi.mock('@/components/ui/button', () => ({
+  Button: React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(function Button({ children, ...props }, ref) {
+    return <button ref={ref} type="button" {...props}>{children}</button>
+  }),
+}))
+
+const i18n = createInstance()
+beforeAll(async () => {
+  await i18n.init({ lng: 'zh', defaultNS: 'agent', resources: { zh: { agent: zhAgent } } })
+})
+
+/** react-query 的取数与重渲染需要几个微任务/定时器周期才落定 */
+async function flush() {
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+  }
+}
+
+const patch = '--- edit.txt\n+++ edit.txt\n@@ -1 +1 @@\n-old\n+new\n'
+const changes: AgentFileChange[] = [
+  { path: 'write.txt', kind: 'write', additions: 2, deletions: 1, patches: [patch], content: 'alpha\nbeta' },
+  { path: 'edit.txt', kind: 'edit', additions: 1, deletions: 1, patches: [patch] },
+]
+
+describe('AgentPreviewPanel 桌面版', () => {
+  it('按文件类型选择默认标签，切换文件重置标签，Esc 关闭', async () => {
+    const mounted = await mountPanel()
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabSource)
+      expect(mounted.container.textContent).toContain('alpha')
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabDiff)
+      const select = findAll(mounted.container, (node) => node.tagName === 'SELECT')[0]!
+      await act(async () => {
+        select.value = 'edit.txt'
+        select.dispatchEvent(inputEvent('change'))
+      })
+      expect(mounted.path).toBe('edit.txt')
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabDiff)
+      await act(async () => { mounted.keydown?.({ key: 'Escape' }) })
+      expect(mounted.onClose).toHaveBeenCalledOnce()
+    } finally {
+      await mounted.unmount()
+    }
+  })
+  it('无 patches/content 但有 sessionId 时显示预览标签', async () => {
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'notes.md', changes: [] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+      expect(findAll(mounted.container, (node) => node.getAttribute('data-file-preview') === 'notes.md')).toHaveLength(1)
+      expect(mounted.container.textContent).not.toContain(zhAgent.preview.notInRun)
+    } finally {
+      await mounted.unmount()
+    }
+  })
+})
+
+describe('AgentPreviewPanel 后端变更项', () => {
+  const serverChange = (over: Partial<AgentFileChange> = {}): AgentFileChange => ({
+    path: 'src/a.txt', kind: 'edit', additions: 1, deletions: 1, patches: [],
+    status: 'modified', turnId: 'turn-1', size: 10, binary: false, hasDiff: true, truncated: false, source: 'server', ...over,
+  })
+  const patchText = '--- a.txt\n+++ a.txt\n@@ -1 +1 @@\n-old\n+new\n'
+
+  it('added 且可预览时默认「预览」，切换到「变更」后取后端 diff', async () => {
+    fetchSessionDiffMock.mockReset().mockResolvedValue(patchText)
+    const added = serverChange({ status: 'added', path: 'src/a.txt', kind: 'write' })
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [added] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(fetchSessionDiffMock).toHaveBeenCalledWith('session-1', 'turn-1', 'src/a.txt')
+      expect(mounted.container.textContent).toContain('@@ -1 +1 @@')
+      expect(mounted.container.textContent).toContain('+new')
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('deleted 默认「变更」，空 diff 显示「文件已删除」，无「源码」标签', async () => {
+    fetchSessionDiffMock.mockReset().mockResolvedValue('')
+    const deleted = serverChange({ status: 'deleted', path: 'gone.txt' })
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'gone.txt', changes: [deleted] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabDiff)
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.fileDeleted)
+      expect(findAll(mounted.container, (node) => node.getAttribute('role') === 'tab').map((node) => node.textContent)).toEqual([zhAgent.preview.tabDiff])
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('有 sessionId 且能预览的变更文件默认显示预览,删除的文件默认显示变更', async () => {
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'write.txt' })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+    } finally {
+      await mounted.unmount()
+    }
+    const removed = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [serverChange({ path: 'src/a.txt', status: 'deleted' })] })
+    try {
+      expect(selectedTab(removed.container)).toBe(zhAgent.preview.tabDiff)
+    } finally {
+      await removed.unmount()
+    }
+  })
+  it('410 显示「更早轮次的 diff 不再保留」，404 显示文件不存在', async () => {
+    const { APIError } = await import('@/lib/http')
+    fetchSessionDiffMock.mockReset().mockRejectedValueOnce(new APIError('gone', 410))
+    const modified = serverChange({ path: 'src/a.txt' })
+    let mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [modified] })
+    try {
+      expect(selectedTab(mounted.container)).toBe(zhAgent.preview.tabPreview)
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.diffGone)
+    } finally {
+      await mounted.unmount()
+    }
+    fetchSessionDiffMock.mockReset().mockRejectedValueOnce(new APIError('missing', 404))
+    mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [modified] })
+    try {
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.missing)
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('truncated 的 diff 底部提示已截断', async () => {
+    fetchSessionDiffMock.mockReset().mockResolvedValue(patchText)
+    const truncated = serverChange({ path: 'src/a.txt', truncated: true })
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'src/a.txt', changes: [truncated] })
+    try {
+      await act(async () => { tab(mounted.container, zhAgent.preview.tabDiff).dispatchEvent(inputEvent('click')) })
+      await flush()
+      expect(mounted.container.textContent).toContain(zhAgent.preview.diffTruncated)
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('文件列表模式使用自定义标题与内容，返回按钮只在从列表进入的预览上显示', async () => {
+    fetchSessionDiffMock.mockReset()
+    const { AgentPreviewPanel } = await import('@/features/agent/components/agent-preview-panel')
+    const { createRoot } = await import('react-dom/client')
+    const doc = new MiniDocument()
+    const container = doc.createElement('div')
+    doc.body.appendChild(container)
+    const globals = globalThis as unknown as { window: unknown; document: unknown; IS_REACT_ACT_ENVIRONMENT?: boolean }
+    const previous = { window: globals.window, document: globals.document }
+    globals.window = {
+      document: doc,
+      HTMLIFrameElement: class {},
+      addEventListener() {},
+      removeEventListener() {},
+    }
+    doc.defaultView = globals.window
+    globals.document = doc
+    globals.IS_REACT_ACT_ENVIRONMENT = true
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const root = createRoot(container as unknown as Element)
+    try {
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <I18nextProvider i18n={i18n}>
+              <AgentPreviewPanel
+                sessionId="session-1"
+                changes={[]}
+                path=""
+                onSelectPath={() => {}}
+                onClose={() => {}}
+                mobile={false}
+                filesList={{ title: zhAgent.files.title, children: <div>列表内容</div> }}
+              />
+            </I18nextProvider>
+          </QueryClientProvider>,
+        )
+      })
+      expect(container.textContent).toContain(zhAgent.files.title)
+      expect(container.textContent).toContain('列表内容')
+      expect(findAll(container, (node) => node.getAttribute('title') === zhAgent.preview.backToFiles)).toHaveLength(0)
+      await act(async () => {
+        root.render(
+          <QueryClientProvider client={client}>
+            <I18nextProvider i18n={i18n}>
+              <AgentPreviewPanel
+                sessionId="session-1"
+                changes={[]}
+                path="images/a.png"
+                onSelectPath={() => {}}
+                onClose={() => {}}
+                mobile={false}
+                onBackToFiles={() => {}}
+              />
+            </I18nextProvider>
+          </QueryClientProvider>,
+        )
+      })
+      expect(findAll(container, (node) => node.getAttribute('title') === zhAgent.preview.backToFiles)).toHaveLength(1)
+    } finally {
+      await act(async () => { root.unmount() })
+      globals.window = previous.window
+      globals.document = previous.document
+    }
+  })
+})
+
+function selectedTab(container: MiniNode) {
+  return findAll(container, (node) => node.getAttribute('role') === 'tab' && node.getAttribute('aria-selected') === 'true')[0]?.textContent
+}
+
+function tab(container: MiniNode, label: string) {
+  return findAll(container, (node) => node.getAttribute('role') === 'tab' && node.textContent === label)[0]!
+}
+
+async function mountPanel(options: { sessionId?: string; path?: string; changes?: AgentFileChange[] } = {}) {
+  const doc = new MiniDocument()
+  const container = doc.createElement('div')
+  doc.body.appendChild(container)
+  const globals = globalThis as unknown as { window: unknown; document: unknown; IS_REACT_ACT_ENVIRONMENT?: boolean }
+  const previous = { window: globals.window, document: globals.document }
+  let keydown: ((event: { key: string }) => void) | null = null
+  globals.window = {
+    document: doc,
+    HTMLIFrameElement: class {},
+    addEventListener(type: string, listener: (event: { key: string }) => void) { if (type === 'keydown') keydown = listener },
+    removeEventListener(type: string) { if (type === 'keydown') keydown = null },
+  }
+  doc.defaultView = globals.window
+  globals.document = doc
+  globals.IS_REACT_ACT_ENVIRONMENT = true
+  const onClose = vi.fn()
+  let path = options.path ?? 'write.txt'
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const { createRoot } = await import('react-dom/client')
+  const root = createRoot(container as unknown as Element)
+  const render = () => root.render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <AgentPreviewPanel sessionId={options.sessionId} changes={options.changes ?? changes} path={path} onSelectPath={(next) => { path = next; render() }} onClose={onClose} mobile={false} />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  )
+  await act(async () => { render() })
+  return {
+    container,
+    onClose,
+    get path() { return path },
+    get keydown() { return keydown },
+    async rerender() { await act(async () => { render() }) },
+    async unmount() {
+      await act(async () => { root.unmount() })
+      globals.window = previous.window
+      globals.document = previous.document
+    },
+  }
+}
+
+type MiniListener = (event: MiniEvent) => void
+const miniListeners = new WeakMap<object, Map<string, Set<MiniListener>>>()
+function trackListener(target: object, type: string, listener: MiniListener) {
+  const byType = miniListeners.get(target) ?? new Map<string, Set<MiniListener>>()
+  const set = byType.get(type) ?? new Set<MiniListener>()
+  set.add(listener)
+  byType.set(type, set)
+  miniListeners.set(target, byType)
+}
+interface MiniEvent {
+  type: string
+  target: MiniNode | null
+  currentTarget: MiniNode | MiniDocument | null
+  bubbles: boolean
+  cancelable: boolean
+  defaultPrevented: boolean
+  button: number
+  ctrlKey: boolean
+  eventPhase: number
+  timeStamp: number
+  stopped: boolean
+  preventDefault: () => void
+  stopPropagation: () => void
+}
+class MiniNode {
+  nodeType = 1
+  nodeName: string
+  tagName: string
+  namespaceURI = 'http://www.w3.org/1999/xhtml'
+  ownerDocument: MiniDocument
+  parentNode: MiniNode | null = null
+  childNodes: MiniNode[] = []
+  nodeValue: string | null = null
+  attributes: Record<string, string> = {}
+  value = ''
+  style = { setProperty: () => {} }
+  constructor(tag: string, ownerDocument: MiniDocument) {
+    this.tagName = tag.toUpperCase()
+    this.nodeName = this.tagName
+    this.ownerDocument = ownerDocument
+  }
+  get firstChild() { return this.childNodes[0] ?? null }
+  get options() { return this.childNodes }
+  get lastChild() { return this.childNodes[this.childNodes.length - 1] ?? null }
+  get nextSibling(): MiniNode | null {
+    if (!this.parentNode) return null
+    return this.parentNode.childNodes[this.parentNode.childNodes.indexOf(this) + 1] ?? null
+  }
+  get textContent(): string {
+    if (this.nodeType === 3 || this.nodeType === 8) return this.nodeValue ?? ''
+    return this.childNodes.map((child) => child.textContent).join('')
+  }
+  set textContent(value: string) {
+    this.childNodes = []
+    if (value) this.appendChild(this.ownerDocument.createTextNode(value))
+  }
+  setAttribute(name: string, value: string) { this.attributes[name] = String(value) }
+  getAttribute(name: string) { return this.attributes[name] ?? null }
+  removeAttribute(name: string) { delete this.attributes[name] }
+  hasAttribute(name: string) { return Object.prototype.hasOwnProperty.call(this.attributes, name) }
+  setAttributeNS(_namespace: string, name: string, value: string) { this.setAttribute(name, value) }
+  appendChild<T extends MiniNode>(child: T) { return this.insertBefore(child, null) }
+  insertBefore<T extends MiniNode>(child: T, before: MiniNode | null) {
+    if (child.parentNode) child.parentNode.removeChild(child)
+    child.parentNode = this
+    if (!before) this.childNodes.push(child)
+    else {
+      const index = this.childNodes.indexOf(before)
+      if (index < 0) throw new Error('insertBefore target is not a child')
+      this.childNodes.splice(index, 0, child)
+    }
+    return child
+  }
+  removeChild<T extends MiniNode>(child: T) {
+    const index = this.childNodes.indexOf(child)
+    if (index < 0) throw new Error('removeChild target is not a child')
+    this.childNodes.splice(index, 1)
+    child.parentNode = null
+    return child
+  }
+  addEventListener(type: string, listener: MiniListener) { trackListener(this, type, listener) }
+  removeEventListener(type: string, listener: MiniListener) { miniListeners.get(this)?.get(type)?.delete(listener) }
+  dispatchEvent(event: MiniEvent) {
+    event.target = this
+    const chain: Array<MiniNode | MiniDocument> = [this]
+    let parent = this.parentNode
+    while (parent) { chain.push(parent); parent = parent.parentNode }
+    chain.push(this.ownerDocument)
+    for (const current of chain) {
+      event.currentTarget = current
+      for (const listener of miniListeners.get(current)?.get(event.type) ?? []) listener.call(current, event)
+      if (event.stopped) break
+    }
+    return true
+  }
+}
+class MiniDocument {
+  nodeType = 9
+  nodeName = '#document'
+  documentElement: MiniNode
+  body: MiniNode
+  defaultView: unknown = globalThis
+  activeElement = null
+  constructor() {
+    this.documentElement = new MiniNode('html', this)
+    this.body = new MiniNode('body', this)
+    this.documentElement.appendChild(this.body)
+  }
+  createElement(tag: string) {
+    const node = new MiniNode(tag, this)
+    if (tag === '#text') { node.nodeType = 3; node.nodeName = '#text'; node.tagName = '#text' }
+    return node
+  }
+  createElementNS(_namespace: string, tag: string) { return this.createElement(tag) }
+  createTextNode(text: string) { const node = this.createElement('#text'); node.nodeValue = text; return node }
+  addEventListener(type: string, listener: MiniListener) { trackListener(this, type, listener) }
+  removeEventListener(type: string, listener: MiniListener) { miniListeners.get(this)?.get(type)?.delete(listener) }
+}
+function inputEvent(type: string): MiniEvent {
+  return {
+    type, target: null, currentTarget: null, bubbles: true, cancelable: true, defaultPrevented: false,
+    button: 0, ctrlKey: false, eventPhase: 2, timeStamp: 0, stopped: false,
+    preventDefault() { this.defaultPrevented = true }, stopPropagation() { this.stopped = true },
+  }
+}
+
+function findAll(node: MiniNode, predicate: (node: MiniNode) => boolean): MiniNode[] {
+  return [...(predicate(node) ? [node] : []), ...node.childNodes.flatMap((child) => findAll(child, predicate))]
+}

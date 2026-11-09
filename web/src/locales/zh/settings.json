@@ -1,4 +1,33 @@
 {
+  "appearance": {
+    "title": "外观设置",
+    "description": "为整个实例配置全局背景图与导航菜单，应用于主程序所有页面。",
+    "loading": "正在读取设置...",
+    "saved": "外观设置已保存",
+    "saveFailed": "保存失败",
+    "background": {
+      "title": "背景图",
+      "hint": "选择或上传一张背景图；不选择时使用默认的星点背景。",
+      "none": "无（星点背景）",
+      "custom": "自定义 {{index}}",
+      "upload": "上传图片",
+      "remove": "删除自定义 {{index}}",
+      "imageTooLarge": "图片不能超过 8MB",
+      "imageReadFailed": "图片读取失败"
+    },
+    "tabs": {
+      "background": "背景图",
+      "menu": "菜单设置"
+    },
+    "menu": {
+      "homeTitle": "首页",
+      "homeHint": "打开程序时默认进入的页面",
+      "homeDashboard": "仪表盘",
+      "homeAgent": "Agent",
+      "itemsTitle": "菜单项",
+      "itemsHint": "关闭后该菜单从侧边栏、移动端菜单和命令面板中隐藏；设置菜单不可隐藏"
+    }
+  },
   "general": {
     "title": "通用设置",
     "description": "基础运行时选项。",
@@ -251,7 +280,8 @@
       "failed": "导出失败",
       "noticeSensitive": "包含站点、模型、凭据、OAuth 账号、下游 API Key、请求日志与用量记录。",
       "noticePassphrase": "请妥善保存口令，导入时需要再次输入。",
-      "noticeUsersExcluded": "不包含管理员账号、登录会话、两步验证、管理员访问令牌和审计日志。"
+      "noticeUsersExcluded": "不包含管理员账号、登录会话、两步验证、管理员访问令牌和审计日志。",
+      "sectionsTitle": "备份内容"
     },
     "import": {
       "title": "导入数据",
@@ -270,11 +300,84 @@
       "noticeRestart": "健康状态、路由冷却和限流窗口不会恢复，会由系统重新生成。",
       "confirmTitle": "确认导入",
       "confirmDescription": "导入后将替换当前站点、模型、凭据、下游 API Key、请求日志、用量记录和配置文件。",
-      "confirmAction": "确认导入并覆盖"
+      "confirmAction": "确认导入并覆盖",
+      "previewAction": "下一步：预览",
+      "backAction": "返回",
+      "inspectFailed": "无法读取备份内容"
+    },
+    "restorePreview": {
+      "createdAt": "备份时间",
+      "formatVersion": "格式版本",
+      "legacy": "这是旧版备份，按旧版全量内容恢复",
+      "restoreTitle": "将恢复",
+      "clearTitle": "恢复后，以下现有数据会被清空",
+      "clearHint": "这些数据依赖被恢复的内容，无法单独保留。需要保留的话，请取消并先导出它们。",
+      "partial": "（部分数据）",
+      "unavailableTitle": "当前实例无法恢复以下内容，需先处理后才能继续",
+      "loading": "正在读取备份内容..."
     },
     "tabs": {
       "manual": "手动备份",
       "automatic": "自动备份"
+    },
+    "sections": {
+      "groups": {
+        "system": "系统",
+        "gateway": "网关数据",
+        "agent": "Agent"
+      },
+      "items": {
+        "settings": {
+          "label": "系统设置",
+          "description": "全局设置、外观、通知、备份设置等"
+        },
+        "gateway_sites": {
+          "label": "站点与模型",
+          "description": "站点、分组、凭据、OAuth 连接、模型与定价、代理设置"
+        },
+        "gateway_keys": {
+          "label": "API 密钥与权限",
+          "description": "API 密钥、站点权限、限流规则"
+        },
+        "gateway_logs": {
+          "label": "请求日志与用量",
+          "description": "请求日志、用量记录与统计汇总,体积通常最大"
+        },
+        "plugins": {
+          "label": "插件",
+          "description": "已安装的插件包、绑定、信任公钥、市场订阅"
+        },
+        "agent_config": {
+          "label": "Agent 设置",
+          "description": "Agent 的模型选择、外观与访问策略"
+        },
+        "agent_capabilities": {
+          "label": "Agent 能力文件",
+          "description": "技能(skills)、AGENTS.md 与能力配置"
+        },
+        "agent_sessions": {
+          "label": "Agent 会话记录",
+          "description": "所有 Agent 会话的对话历史与文件改动记录"
+        },
+        "agent_workspace": {
+          "label": "Agent 工作区",
+          "description": "共享工作区里的全部文件(不含 node_modules 等可重建目录),体积可能很大"
+        }
+      },
+      "requiredBy": "被「{{names}}」依赖,需先取消它们",
+      "recommends": "建议同时备份:{{names}}",
+      "unavailable": "当前不可用:{{reason}}",
+      "sizeRows": "约 {{count}} 行",
+      "sizeBytes": "{{size}}",
+      "atLeastOne": "至少选择一个备份内容",
+      "loading": "正在读取备份内容目录...",
+      "loadFailed": "备份内容目录读取失败，将按后端默认内容导出。",
+      "choose": "选择内容",
+      "summary": "已选 {{count}} 项：{{names}}",
+      "summaryNone": "未选择",
+      "dialogTitle": "选择备份内容",
+      "dialogDescription": "勾选需要备份的内容；有依赖关系的内容会被自动一并选中。",
+      "done": "完成"
     },
     "automatic": {
       "title": "自动备份",
@@ -298,6 +401,8 @@
         "description": "正在从 {{filename}} 还原数据，任务已在服务器后台运行。",
         "completeTitle": "还原完成",
         "completeDescription": "成功导入 {{tables}} 张表，共 {{rows}} 行数据。",
+        "completeDescriptionSections": "已恢复 {{count}} 个内容类别，数据库 {{tables}} 张表 / {{rows}} 行。",
+        "clearedNote": "已清空依赖数据：{{names}}",
         "canceledTitle": "还原已取消",
         "canceledDescription": "还原事务已回滚，数据库已恢复到还原开始前的状态。",
         "errorTitle": "还原失败",
@@ -306,7 +411,9 @@
         "stepDecrypt": "解密备份文件",
         "stepParse": "校验备份内容",
         "stepImport": "写入备份数据",
-        "stepFiles": "写入会话文件",
+        "stepAgent": "写入 Agent 配置",
+        "stepAgentSessions": "写入 Agent 会话",
+        "stepAgentWorkspace": "写入 Agent 工作区",
         "status": {
           "pending": "等待中",
           "in_progress": "进行中",
@@ -356,7 +463,9 @@
         "retention": "保留份数",
         "passphrase": "备份文件密钥",
         "passphraseDesc": "自动备份生成的 .xlyra 文件会使用此密钥加密。",
-        "passphraseSaved": "已保存：{{value}}。留空则保持不变。"
+        "passphraseSaved": "已保存：{{value}}。留空则保持不变。",
+        "sectionsTitle": "备份内容",
+        "sectionsHint": "自动备份会按这里选择的内容生成。默认包含除 Agent 工作区外的全部内容，体积较大时可以按需取消。"
       },
       "files": {
         "title": "远端备份文件",
@@ -491,96 +600,13 @@
     "description": "按类别管理全局设置。",
     "nav": {
       "general": "通用设置",
+      "appearance": "外观设置",
       "profile": "个人信息",
       "systemProxy": "系统代理",
       "rateLimit": "全局限流",
       "siteGroups": "分组配置",
       "backup": "导入导出",
       "portal": "密钥门户"
-    }
-  },
-  "agent": {
-    "eyebrow": "设置",
-    "title": "Agent 设置",
-    "description": "配置 Agent 运行环境，并控制工作台可使用的站点与模型。",
-    "loading": "正在加载 Agent 配置…",
-    "save": "保存",
-    "saving": "保存中…",
-    "saveSuccess": "Agent 设置已保存",
-    "saveFailed": "Agent 设置保存失败",
-    "status": {
-      "stateHealthy": "正常",
-      "stateUnhealthy": "异常",
-      "stateUnreachable": "不可达",
-      "stateUnknown": "未知",
-      "refresh": "刷新状态",
-      "agentSelfManaged": "自管理",
-      "allModels": "全部模型",
-      "allSites": "全部站点",
-      "siteCount": "{{count}} 个站点",
-      "modelCount": "{{count}} 个模型"
-    },
-    "runner": {
-      "title": "Runner 连接",
-      "description": "Runner 是执行 Agent 任务的运行组件，这里配置网关与它的连接方式。",
-      "urlLabel": "Runner 地址",
-      "urlPlaceholder": "http://127.0.0.1:3211",
-      "tokenLabel": "Runner Token",
-      "tokenConfigured": "已配置。留空表示保持当前值。",
-      "tokenNotConfigured": "用于网关与 Runner 之间的安全校验。",
-      "tokenPlaceholder": "请输入 Runner Token",
-      "tokenReplacePlaceholder": "输入新值可替换",
-      "clear": "清空配置",
-      "clearTitle": "清空 Runner 连接配置",
-      "clearDescription": "将移除 Runner 地址与 Token，Agent 功能将不可用，直到重新配置。",
-      "clearCancel": "取消",
-      "clearConfirm": "清空",
-      "clearing": "清空中…",
-      "cleared": "Runner 连接配置已清空",
-      "clearFailed": "清空失败"
-    },
-    "upgrade": {
-      "available": "可升级 {{version}}",
-      "action": "升级",
-      "retry": "重试升级",
-      "upgrading": "升级中…",
-      "title": "升级 Agent",
-      "description": "将 Agent 从 {{current}} 升级到 {{target}}。升级过程会重启 Agent，耗时约几分钟。",
-      "confirm": "确认升级",
-      "cancel": "取消",
-      "forceTitle": "有会话正在运行",
-      "forceDescription": "当前有 {{count}} 个会话正在运行，升级将中断这些会话。确定继续吗？",
-      "forceConfirm": "强制升级",
-      "starting": "提交中…",
-      "started": "已开始升级 Agent",
-      "startFailed": "升级请求失败",
-      "succeeded": "Agent 已升级到 {{version}}",
-      "failed": "Agent 升级失败"
-    },
-    "scope": {
-      "title": "站点与模型范围",
-      "description": "控制 Agent 工作台可以选择哪些站点和模型。",
-      "siteAccess": "站点范围",
-      "allowAllSites": "全部站点",
-      "allowListedSites": "仅指定站点",
-      "searchSites": "搜索站点",
-      "noSites": "没有符合条件的站点",
-      "modelAccess": "模型范围",
-      "allowAllModels": "全部模型",
-      "allowListedModels": "仅指定模型",
-      "searchModels": "搜索模型",
-      "noModels": "没有符合条件的模型",
-      "selectAll": "全选",
-      "clearAll": "取消全选",
-      "selectedCount": "已选 {{count}} 项",
-      "selectSitesFirst": "请先在左侧选择站点",
-      "configure": "配置范围",
-      "availableSites": "可用站点",
-      "availableSitesHint": "点击查看站点列表",
-      "availableModels": "可用模型",
-      "availableModelsHint": "点击查看模型列表",
-      "disabled": "停用",
-      "cancel": "取消"
     }
   },
   "siteGroups": {
@@ -845,8 +871,16 @@
     "previewPricingFailed": "预览失败",
     "pricingPreviewSummary": "解析出 {{items}} 个模型价格、{{groups}} 个分组。",
     "pricingReviewConfirm": "我已核对解析结果，同意让这个插件为该站点提供价格。",
-    "bindSiteHint": {"model_list": "该站点同步模型时，改用这个插件拉取模型列表。", "credential_check": "该站点校验密钥和做健康检查时，改用这个插件。", "error_classifier": "该站点的上游错误改由这个插件归类（只能选类别，不影响冷却时长）。", "pricing_parse": "刷新该站点模型时，用这个插件读取并保存价格。会改变该站点展示的价格，请先预览核对。"},
-    "globalKindHint": {"site_detect": "启用后，识别站点类型时会同时运行这个插件；它只能指向 xLyra 已支持的站点类型。", "model_metadata": "启用后，对所有站点生效；它只补充缺失的模型名称与能力，不会覆盖已有的值。"},
+    "bindSiteHint": {
+      "model_list": "该站点同步模型时，改用这个插件拉取模型列表。",
+      "credential_check": "该站点校验密钥和做健康检查时，改用这个插件。",
+      "error_classifier": "该站点的上游错误改由这个插件归类（只能选类别，不影响冷却时长）。",
+      "pricing_parse": "刷新该站点模型时，用这个插件读取并保存价格。会改变该站点展示的价格，请先预览核对。"
+    },
+    "globalKindHint": {
+      "site_detect": "启用后，识别站点类型时会同时运行这个插件；它只能指向 xLyra 已支持的站点类型。",
+      "model_metadata": "启用后，对所有站点生效；它只补充缺失的模型名称与能力，不会覆盖已有的值。"
+    },
     "trialPassed": "试跑通过",
     "trialFailed": "试跑失败",
     "siteBinding": {

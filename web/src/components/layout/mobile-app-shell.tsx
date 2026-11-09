@@ -7,9 +7,10 @@ import { MobileTabbar, type MobileTabbarItem } from '@/components/layout/mobile-
 import { MobileTopbar } from '@/components/layout/mobile-topbar'
 import { useCollapseOnScroll } from '@/hooks/use-collapse-on-scroll'
 import { useIOSViewportBounceLock } from '@/hooks/use-ios-viewport-bounce-lock'
-import { getAppNavSections, type AppNavItem, type AppNavSection } from '@/lib/navigation'
+import { filterHiddenNavSections, getAppNavSections, type AppNavItem, type AppNavSection } from '@/lib/navigation'
 import { useAgentAvailability } from '@/features/agent/lib/use-agent-availability'
-import { AmbientBackground } from '@/components/layout/ambient-background'
+import { useMenuPreferences } from '@/features/appearance/api/appearance'
+import { AppBackground } from '@/components/layout/app-background'
 
 const mobilePrimaryPaths = ['/dashboard', '/sites', '/requests', '/api-keys']
 
@@ -22,31 +23,21 @@ export function MobileAppShell({ children }: PropsWithChildren) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const moreButtonRef = useRef<HTMLButtonElement>(null)
   const agentAvailable = useAgentAvailability()
-  const navSections = useMemo(() => getAppNavSections(t, { agent: agentAvailable }), [t, agentAvailable])
+  const { hiddenMenuItems } = useMenuPreferences()
+  const navSections = useMemo(
+    () => filterHiddenNavSections(getAppNavSections(t, { agent: agentAvailable }), hiddenMenuItems),
+    [t, agentAvailable, hiddenMenuItems],
+  )
   const primaryItems = useMemo(() => getMobilePrimaryItems(navSections), [navSections])
   const dockItems = useMemo(() => getMobileDockItems(navSections, primaryItems), [navSections, primaryItems])
 
   useIOSViewportBounceLock(viewportRef)
 
   const isAgentWorkspace = location.pathname === '/agent' || location.pathname.startsWith('/agent/')
-  // 模型体验：独占整屏的工作台，自带返回与会话抽屉，不显示全局顶栏和底部 Tab Bar
-  const isPlayground = location.pathname === '/playground' || location.pathname.startsWith('/playground/')
-
-  if (isPlayground) {
-    return (
-      <div ref={viewportRef} className="app-viewport">
-        <AmbientBackground />
-        <main data-scroll-container="true" className="relative z-0 h-full min-h-0 overflow-hidden">
-          {children}
-        </main>
-      </div>
-    )
-  }
-
   if (isAgentWorkspace) {
     return (
       <div ref={viewportRef} className="app-viewport">
-        <AmbientBackground />
+        <AppBackground />
         <main data-scroll-container="true" className="relative z-0 h-full min-h-0 overflow-hidden">
           {children}
         </main>
@@ -56,7 +47,7 @@ export function MobileAppShell({ children }: PropsWithChildren) {
 
   return (
     <div ref={viewportRef} className="app-viewport">
-      <AmbientBackground />
+      <AppBackground />
       <div className="relative z-0 h-full min-h-0">
         <main
           data-scroll-container="true"

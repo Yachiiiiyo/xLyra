@@ -1,7 +1,6 @@
 import {
   Activity,
   BadgeDollarSign,
-  Bot,
   Cable,
   ChartColumn,
   Cloud,
@@ -9,11 +8,11 @@ import {
   DatabaseBackup,
   DatabaseZap,
   KeyRound,
-  MessagesSquare,
   Route,
   Settings,
   ShieldCheck,
   ShieldEllipsis,
+  Sparkles,
   Puzzle,
   Waypoints,
   type LucideIcon,
@@ -36,9 +35,32 @@ export type AppNavSection = {
 
 type TFunction = (key: string) => string
 
-/** Feature gates for nav entries; the /agent entry hides while the runner is unconfigured. */
+/** Feature gates for nav entries; the /agent entry hides only when the built-in agent is absent. */
 export type NavFeatures = {
   agent?: boolean
+}
+
+/** 设置页及其子页不可隐藏，防止把用户自己锁在外面 */
+const unhideableNavPrefix = '/settings'
+
+export function isNavItemHideable(to: string): boolean {
+  return !to.startsWith(unhideableNavPrefix)
+}
+
+/** 按隐藏列表过滤导航分组：某分组过滤后无 item 则整组去掉 */
+export function filterHiddenNavSections(sections: AppNavSection[], hidden: readonly string[]): AppNavSection[] {
+  if (!hidden.length) return sections
+  const hiddenSet = new Set(hidden)
+  const filterItem = (item: AppNavItem): AppNavItem | null => {
+    if (hiddenSet.has(item.to)) return null
+    if (item.children?.length) {
+      return { ...item, children: item.children.filter((child) => !hiddenSet.has(child.to)) }
+    }
+    return item
+  }
+  return sections
+    .map((section) => ({ ...section, items: section.items.map(filterItem).filter((item): item is AppNavItem => item !== null) }))
+    .filter((section) => section.items.length > 0)
 }
 
 export function getAppNavSections(t: TFunction, features: NavFeatures = {}): AppNavSection[] {
@@ -48,16 +70,10 @@ export function getAppNavSections(t: TFunction, features: NavFeatures = {}): App
       key: 'workspace',
       label: t('nav.workspace'),
       items: [
-        {
-          to: '/playground',
-          label: t('nav.playground'),
-          icon: MessagesSquare,
-          description: 'Test chat and image models end-to-end through the gateway.',
-        },
         ...(showAgent ? [{
           to: '/agent',
           label: t('nav.agent'),
-          icon: Bot,
+          icon: Sparkles,
           description: 'Run an agent session with tools, approvals and live events.',
         }] : []),
       ],
@@ -150,12 +166,6 @@ export function getAppNavSections(t: TFunction, features: NavFeatures = {}): App
               label: t('nav.globalSettings'),
               icon: Settings,
               description: 'Global gateway configuration and defaults.',
-            },
-            {
-              to: '/settings/agent',
-              label: t('nav.agentSettings'),
-              icon: Bot,
-              description: 'Configure Agent runtime, runner and model channels.',
             },
             {
               to: '/settings/models-price',

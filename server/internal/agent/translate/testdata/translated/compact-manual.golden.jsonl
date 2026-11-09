@@ -1,0 +1,41 @@
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"re"}}
+{"type":"text_delta","data":{"delta":"pl"}}
+{"type":"text_delta","data":{"delta":"y:"}}
+{"type":"text_delta","data":{"delta":"OL"}}
+{"type":"text_delta","data":{"delta":"D-"}}
+{"type":"text_delta","data":{"delta":"HI"}}
+{"type":"text_delta","data":{"delta":"ST"}}
+{"type":"text_delta","data":{"delta":"OR"}}
+{"type":"text_delta","data":{"delta":"Y-"}}
+{"type":"text_delta","data":{"delta":"MA"}}
+{"type":"text_delta","data":{"delta":"RK"}}
+{"type":"text_delta","data":{"delta":"ER"}}
+{"type":"text_delta","data":{"delta":" 第"}}
+{"type":"text_delta","data":{"delta":"一段"}}
+{"type":"agent_done","data":{}}
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"re"}}
+{"type":"text_delta","data":{"delta":"pl"}}
+{"type":"text_delta","data":{"delta":"y:"}}
+{"type":"text_delta","data":{"delta":"RE"}}
+{"type":"text_delta","data":{"delta":"CE"}}
+{"type":"text_delta","data":{"delta":"NT"}}
+{"type":"text_delta","data":{"delta":"-M"}}
+{"type":"text_delta","data":{"delta":"AR"}}
+{"type":"text_delta","data":{"delta":"KE"}}
+{"type":"text_delta","data":{"delta":"R "}}
+{"type":"text_delta","data":{"delta":"第二"}}
+{"type":"text_delta","data":{"delta":"段"}}
+{"type":"agent_done","data":{}}
+{"type":"context_compacting","data":{"manual":true}}
+{"type":"context_compacted","data":{"compaction":{"details":{"modifiedFiles":[],"readFiles":[]},"estimatedTokensAfter":587,"firstKeptEntryId":"81a78ac6","summary":"SUMMARY-C1 manual checkpoint about OLD-HISTORY-MARKER.\n\n---\n\n**Turn Context (split turn):**\n\nSUMMARY-C1 manual checkpoint about OLD-HISTORY-MARKER.","tokensBefore":16,"tokens_after":587,"tokens_before":16,"usage":{"cacheRead":0,"cacheWrite":0,"cost":{"cacheRead":0,"cacheWrite":0,"input":0,"output":0,"total":0},"input":24,"output":8,"reasoning":0,"totalTokens":32}}}}
+{"type":"agent_start","data":{}}
+{"type":"text_delta","data":{"delta":"re"}}
+{"type":"text_delta","data":{"delta":"pl"}}
+{"type":"text_delta","data":{"delta":"y:"}}
+{"type":"text_delta","data":{"delta":"压缩"}}
+{"type":"text_delta","data":{"delta":"后的"}}
+{"type":"text_delta","data":{"delta":"新问"}}
+{"type":"text_delta","data":{"delta":"题"}}
+{"type":"agent_done","data":{}}

@@ -125,13 +125,54 @@ export async function updateRateLimitSettings(settings: RateLimitSettings) {
   })
 }
 
+export type BackupSectionImpact = {
+  id: string
+  partial: boolean
+}
+
 export type BackupImportSummary = {
   tables: number
   rows: number
   config_keys: number
   format_version: number
-  files?: number
-  file_bytes?: number
+  agent_files?: number
+  agent_sessions?: number
+  agent_workspace_files?: number
+  sections?: string[]
+  cleared_sections?: BackupSectionImpact[]
+}
+
+export type BackupSectionInfo = {
+  id: string
+  group: 'system' | 'gateway' | 'agent'
+  requires: string[]
+  recommends: string[]
+  default_manual: boolean
+  default_auto: boolean
+  available: boolean
+  unavailable_reason?: string
+  rows?: number
+  size_bytes?: number
+  size_truncated?: boolean
+}
+
+export type BackupSectionsResponse = {
+  sections: BackupSectionInfo[]
+  defaults: {
+    manual: string[]
+    auto: string[]
+  }
+}
+
+export type BackupInspectResult = {
+  backup: {
+    format_version: number
+    created_at: string
+    legacy: boolean
+    sections: string[]
+    impact: BackupSectionImpact[]
+    unavailable: { id: string; reason: string }[]
+  }
 }
 
 export type AutomaticBackupConfig = {
@@ -151,6 +192,7 @@ export type AutomaticBackupConfig = {
   use_ssl: boolean
   skip_tls_verify: boolean
   ready: boolean
+  sections: string[]
 }
 
 export type AutomaticBackupConfigInput = {
@@ -167,6 +209,7 @@ export type AutomaticBackupConfigInput = {
   force_path_style: boolean
   use_ssl: boolean
   skip_tls_verify: boolean
+  sections?: string[]
 }
 
 export type AutomaticBackupTestResult = {
@@ -192,10 +235,45 @@ export type AutomaticBackupRunTask = {
   started_at: string
 }
 
-export async function exportBackup(passphrase: string) {
+export async function fetchBackupSections(signal?: AbortSignal) {
+  const response = await apiFetch<BackupSectionsResponse>('/api/v1/settings/backup/sections', { signal })
+  // Go 的 nil 切片会序列化成 null，这里统一规整成数组，避免遍历时报错。
+  return {
+    sections: (response.sections ?? []).map((section) => ({
+      ...section,
+      requires: section.requires ?? [],
+      recommends: section.recommends ?? [],
+    })),
+    defaults: {
+      manual: response.defaults?.manual ?? [],
+      auto: response.defaults?.auto ?? [],
+    },
+  }
+}
+
+export async function inspectBackupFile(file: File, passphrase: string, signal?: AbortSignal) {
+  const body = new FormData()
+  body.set('file', file.slice(0, 4 * 1024 * 1024), file.name)
+  body.set('passphrase', passphrase)
+  return apiFetch<BackupInspectResult>('/api/v1/settings/backup/inspect', {
+    method: 'POST',
+    body,
+    signal,
+  })
+}
+
+export async function inspectAutomaticBackupFile(key: string, signal?: AbortSignal) {
+  return apiFetch<BackupInspectResult>('/api/v1/settings/backup/automatic/files/inspect', {
+    method: 'POST',
+    body: { key },
+    signal,
+  })
+}
+
+export async function exportBackup(passphrase: string, sections?: string[]) {
   const result = await apiFetch<{ download: DownloadTicket }>('/api/v1/settings/backup/export', {
     method: 'POST',
-    body: { passphrase },
+    body: sections ? { passphrase, sections } : { passphrase },
   })
   return result.download
 }
@@ -232,7 +310,7 @@ export async function runAutomaticBackup() {
 }
 
 export type RestoreProgressEvent = {
-  step: 'download' | 'decrypt' | 'parse' | 'import' | 'files' | 'complete'
+  step: 'download' | 'decrypt' | 'parse' | 'import' | 'agent' | 'agent_sessions' | 'agent_workspace' | 'complete'
   status: 'in_progress' | 'complete' | 'error'
   rows?: number
   total_rows?: number
