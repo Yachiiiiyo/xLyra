@@ -22,6 +22,7 @@ vi.mock('@/features/agent/api/agent', () => ({
   fetchAgentHealth: vi.fn(),
   fetchAgentModelMemory: vi.fn(),
   fetchAgentRuntimeSettings: vi.fn(),
+  fetchAgentSessionStats: vi.fn(),
   fetchAgentTranscript: vi.fn(),
   fetchSessionArtifacts: vi.fn(() => Promise.resolve(null)),
   followAgentEvents: vi.fn(),
@@ -94,7 +95,6 @@ describe('AgentWorkspace 玻璃面板', () => {
     expect(html).not.toContain('agent-liquid-surface')
     expect(html).not.toContain('lg-pane')
     expect(html).not.toContain('lg-pane-dim')
-    expect(html).toContain('mt-3 text-center text-xs text-faint')
   })
 
   it('WebGL 不可用时面板仍渲染内容（无会话 + 有背景图仍走 WebGL 面板）', () => {

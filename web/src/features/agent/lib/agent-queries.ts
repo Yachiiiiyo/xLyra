@@ -5,6 +5,7 @@ import {
   fetchAgentHealth,
   fetchAgentModelMemory,
   fetchAgentRuntimeSettings,
+  fetchAgentSessionStats,
   listAgentSessions,
   type AgentAvailableSite,
 } from '@/features/agent/api/agent'
@@ -99,6 +100,46 @@ export function agentHealthQueryOptions() {
     staleTime: 30_000,
     refetchInterval: 30_000,
   }
+}
+
+/** 会话统计：轮次/步数/token/上下文占用；仅在选中会话时请求，运行中不轮询 */
+export function agentSessionStatsQueryOptions(sessionId: string | null | undefined) {
+  return {
+    queryKey: ['agent', 'session-stats', sessionId ?? ''],
+    queryFn: () => fetchAgentSessionStats(sessionId ?? ''),
+    enabled: Boolean(sessionId),
+    staleTime: 10_000,
+    retry: false,
+  }
+}
+
+/** run 终态与压缩完成：立即失效重拉 */
+const SESSION_STATS_REFRESH_EVENTS = new Set(['agent_done', 'agent_error', 'agent_cancelled', 'context_compacted'])
+/** 运行中每一步模型请求结束后会跟着出现的事件：节流后重拉，让统计随步更新 */
+const SESSION_STATS_STEP_EVENTS = new Set(['tool_call', 'tool_result'])
+export const SESSION_STATS_STEP_REFRESH_MS = 1200
+
+const pendingStatsRefresh = new Map<string, ReturnType<typeof setTimeout>>()
+
+function invalidateSessionStats(queryClient: QueryClient, sessionId: string): void {
+  void queryClient.invalidateQueries({ queryKey: ['agent', 'session-stats', sessionId] })
+}
+
+/** 终态与压缩完成立即失效；运行中的每一步（tool_call / tool_result）按固定间隔合并成一次重拉，
+ * 不必等一轮对话结束；文本 delta 等其它事件不刷新。 */
+export function refreshAgentSessionStats(queryClient: QueryClient, sessionId: string, eventType: string): void {
+  if (SESSION_STATS_REFRESH_EVENTS.has(eventType)) {
+    const pending = pendingStatsRefresh.get(sessionId)
+    if (pending !== undefined) clearTimeout(pending)
+    pendingStatsRefresh.delete(sessionId)
+    invalidateSessionStats(queryClient, sessionId)
+    return
+  }
+  if (!SESSION_STATS_STEP_EVENTS.has(eventType) || pendingStatsRefresh.has(sessionId)) return
+  pendingStatsRefresh.set(sessionId, setTimeout(() => {
+    pendingStatsRefresh.delete(sessionId)
+    invalidateSessionStats(queryClient, sessionId)
+  }, SESSION_STATS_STEP_REFRESH_MS))
 }
 
 export function prefetchAgentWorkspace(queryClient: QueryClient): void {

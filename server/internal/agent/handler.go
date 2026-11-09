@@ -300,6 +300,46 @@ func (h *Handler) SessionTranscript(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"data": map[string]any{"entries": entries}})
 }
 
+// SessionStats GET /sessions/{id}/stats → {"data":{turns,steps,total_tokens,
+// input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,
+// cache_hit_rate,tokens_per_second,context_tokens,context_window,compact_ratio}};
+// 会话不存在 404,Pi 会话文件尚不存在时统计全为 0/null。
+func (h *Handler) SessionStats(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.sessionID(w, r)
+	if !ok {
+		return
+	}
+	stats, err := h.store.Stats(id)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	stats.ContextWindow, stats.CompactRatio = h.contextParams()
+	httpx.JSON(w, http.StatusOK, map[string]any{"data": stats})
+}
+
+// contextParams 取上下文窗口与自动压缩水位线:与 runner 每次 run 取能力快照
+// 用同一份能力配置,并同样应用 200000 兜底;未装配或读取失败时回退
+// 200000 / 0.9。这里只读配置(不扫描技能目录),统计接口会被频繁轮询。
+func (h *Handler) contextParams() (int, float64) {
+	window, ratio := 200000, 0.9
+	if h.capabilities == nil {
+		return window, ratio
+	}
+	config, err := h.capabilities.GetConfig()
+	if err != nil {
+		h.logger.Warn("读取 Agent 能力配置失败,会话统计回退默认上下文参数", "error", err)
+		return window, ratio
+	}
+	if config.ContextWindow > 0 {
+		window = config.ContextWindow
+	}
+	if config.CompactTriggerRatio > 0 {
+		ratio = config.CompactTriggerRatio
+	}
+	return window, ratio
+}
+
 // DeleteSession DELETE /sessions/{id}:先停掉进行中的 run 再删除会话目录。
 func (h *Handler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.sessionID(w, r)

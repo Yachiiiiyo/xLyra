@@ -583,6 +583,9 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 	close(commandReady)
 	lastEntryID := ""
 	var outputBytes int64
+	// 生成速度实测:每条 assistant 消息结束就写回 meta(与审批记录同样是一次小的 meta 更新),
+	// 让输入框下方的统计在一轮对话进行中就能随每一步更新。
+	gen := genSampleTracker{now: time.Now}
 	for {
 		select {
 		case raw, ok := <-prep.proc.Events():
@@ -606,6 +609,9 @@ func (r *Runner) drive(ar *activeRun, spec runSpec, prep *prepared) {
 				return
 			}
 			outputBytes += int64(len(raw))
+			if sample, ok := gen.observe(raw); ok {
+				r.recordGenSamples(ar, []session.GenSample{sample})
+			}
 			if outputBytes > r.cfg.MaxOutputBytes {
 				r.publishFinal(ar, translate.Event{Type: "agent_error", Data: map[string]any{"message": "输出超过上限,已中止"}}, "output_limit")
 				r.abort(ar, prep)

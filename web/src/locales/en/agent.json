@@ -21,7 +21,27 @@
     "thinking": "Agent is working…",
     "inputPlaceholder": "Type freely....",
     "acceptSuggestion": "Accept suggestion",
-    "hint": "Enter to send · Shift+Enter for a new line",
+    "stats": {
+      "turns": "{{turns}} turns · {{steps}} steps",
+      "tokPerSecond": "{{value}} tok/s",
+      "tokens": "{{value}} tok",
+      "cacheHit": "Cache hit {{percent}}%",
+      "tokenPopover": {
+        "total": "Total tokens",
+        "input": "Input tokens",
+        "output": "Output tokens",
+        "cached": "Cached tokens",
+        "hitRate": "Cache hit rate"
+      },
+      "contextPopover": {
+        "title": "Context window",
+        "window": "Total context",
+        "used": "Current context",
+        "usage": "Usage",
+        "compact": "Auto-compaction threshold",
+        "compactValue": "{{percent}}% · approx. {{tokens}} tokens"
+      }
+    },
     "sendFailed": "Failed to send",
     "editReplayTitle": "Regenerate this reply?",
     "editReplayDescription": "The last reply will be replaced and regenerated from your edited message.",

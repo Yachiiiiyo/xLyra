@@ -21,7 +21,27 @@
     "thinking": "Agent 正在处理…",
     "inputPlaceholder": "随心输入....",
     "acceptSuggestion": "接受输入预测",
-    "hint": "Enter 发送 · Shift+Enter 换行",
+    "stats": {
+      "turns": "{{turns}} 轮 {{steps}} 步",
+      "tokPerSecond": "{{value}} tok/s",
+      "tokens": "{{value}} tok",
+      "cacheHit": "缓存命中 {{percent}}%",
+      "tokenPopover": {
+        "total": "总 Tokens",
+        "input": "输入 Tokens",
+        "output": "输出 Tokens",
+        "cached": "缓存命中 Tokens",
+        "hitRate": "缓存命中率"
+      },
+      "contextPopover": {
+        "title": "上下文窗口",
+        "window": "总上下文",
+        "used": "当前上下文",
+        "usage": "占用比例",
+        "compact": "自动压缩水位线",
+        "compactValue": "{{percent}}% · 约 {{tokens}} tokens"
+      }
+    },
     "sendFailed": "发送失败",
     "editReplayTitle": "确认重新生成？",
     "editReplayDescription": "这会覆盖最后一次回复，并根据编辑后的内容重新生成，原回复将被替换。",

@@ -181,6 +181,51 @@ export async function fetchAgentSuggestion(sessionId: string, signal?: AbortSign
   }
 }
 
+export type AgentSessionStats = {
+  turns: number
+  steps: number
+  total_tokens: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  /** 0..1，无数据为 null */
+  cache_hit_rate: number | null
+  tokens_per_second: number | null
+  context_tokens: number
+  context_window: number
+  /** 自动压缩水位线 0..1 */
+  compact_ratio: number
+}
+
+const statsCount = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
+const statsRate = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+
+/** 会话统计：失败（含会话不存在）静默返回 null，由调用方决定是否保留占位 */
+export async function fetchAgentSessionStats(sessionId: string): Promise<AgentSessionStats | null> {
+  try {
+    const response = await apiFetch<{ data?: Partial<AgentSessionStats> }>(`/api/v1/agent/sessions/${encodeURIComponent(sessionId)}/stats`)
+    const data = response.data
+    if (!data) return null
+    return {
+      turns: statsCount(data.turns),
+      steps: statsCount(data.steps),
+      total_tokens: statsCount(data.total_tokens),
+      input_tokens: statsCount(data.input_tokens),
+      output_tokens: statsCount(data.output_tokens),
+      cache_read_tokens: statsCount(data.cache_read_tokens),
+      cache_write_tokens: statsCount(data.cache_write_tokens),
+      cache_hit_rate: statsRate(data.cache_hit_rate),
+      tokens_per_second: statsRate(data.tokens_per_second),
+      context_tokens: statsCount(data.context_tokens),
+      context_window: statsCount(data.context_window),
+      compact_ratio: statsRate(data.compact_ratio) ?? 0.9,
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function updateAgentScopeSettings(settings: { site_policy: 'allow_all' | 'allow_list'; model_policy: 'allow_all' | 'allow_list'; allowed_site_ids: string[]; allowed_site_model_ids: string[]; image_models?: AgentImageModelSelection[] }) {
   const response = await apiFetch<{ data?: AgentRuntimeSettings }>('/api/v1/agent/settings', {
     method: 'PUT',

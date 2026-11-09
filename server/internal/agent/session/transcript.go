@@ -26,6 +26,8 @@ type piEntry struct {
 }
 
 // piMessage 是条目内嵌的 AgentMessage;content 兼容 string 与内容块数组。
+// usage/timestamp/model/stopReason 只在会话统计里用,timestamp 是消息创建
+// 时刻的毫秒数(与 Pi 事件里 message.timestamp 同源)。
 type piMessage struct {
 	Role       string          `json:"role"`
 	Content    json.RawMessage `json:"content"`
@@ -33,6 +35,19 @@ type piMessage struct {
 	ToolName   string          `json:"toolName"`
 	IsError    bool            `json:"isError"`
 	Details    json.RawMessage `json:"details"`
+	Usage      *piUsage        `json:"usage"`
+	Timestamp  int64           `json:"timestamp"`
+	Model      string          `json:"model"`
+	StopReason string          `json:"stopReason"`
+}
+
+// piUsage 是 assistant 消息的 token 用量(Pi 的 Usage 结构)。
+type piUsage struct {
+	Input       int64 `json:"input"`
+	Output      int64 `json:"output"`
+	CacheRead   int64 `json:"cacheRead"`
+	CacheWrite  int64 `json:"cacheWrite"`
+	TotalTokens int64 `json:"totalTokens"`
 }
 
 // piBlock 是 assistant/user/toolResult 的内容块。

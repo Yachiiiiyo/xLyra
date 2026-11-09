@@ -21,6 +21,7 @@ import { loadPermissionMode, type PermissionMode } from '@/features/agent/lib/ag
 import { AgentTimeline } from '@/features/agent/components/agent-timeline'
 import { AgentPreviewPanel } from '@/features/agent/components/agent-preview-panel'
 import { AgentArtifactFiles } from '@/features/agent/components/agent-artifact-files'
+import { AgentSessionStats } from '@/features/agent/components/agent-session-stats'
 import { runDisplayChanges } from '@/features/agent/lib/run-changes'
 import { Button } from '@/components/ui/button'
 import { AppLogo } from '@/components/common/app-logo'
@@ -70,9 +71,11 @@ import {
   agentHealthQueryOptions,
   agentModelMemoryQueryOptions,
   agentRuntimeSettingsQueryOptions,
+  agentSessionStatsQueryOptions,
   agentSessionsQueryOptions,
   agentWorkspaceAvailableModelsQueryOptions,
   applySessionTitleToCache,
+  refreshAgentSessionStats,
 } from '@/features/agent/lib/agent-queries'
 import { agentGeneratedFileCount } from '@/features/agent/lib/artifacts'
 import { BUSY_RETRY_DELAY_MS, shouldRetryBusySend } from '@/features/agent/lib/busy-retry'
@@ -257,6 +260,9 @@ export function AgentWorkspace() {
     enabled: Boolean(selectedId),
   })
   const artifactCount = agentGeneratedFileCount(artifactsQuery.data)
+  // 输入框下方的会话统计：选中会话时请求，run 终态与压缩完成后刷新（见事件分发处）
+  const sessionStatsQuery = useQuery(agentSessionStatsQueryOptions(selectedId))
+  const sessionStats = sessionStatsQuery.data ?? null
   // 终态对账会用转录重建 run(id 随之改变),按 id 找不到时退回与 reconcileTimeline 相同的「第 N 个 run」配对
   const previewRun = useMemo(() => {
     if (!preview || preview.mode !== 'run' || !selectedId) return undefined
@@ -363,6 +369,8 @@ export function AgentWorkspace() {
     try {
       await followAgentEvents(sessionId, controller.signal, (event) => {
         const terminal = ['agent_done', 'agent_error', 'agent_cancelled'].includes(event.type)
+        // 轮次/步数/token/上下文占用统计：终态与压缩完成时失效重拉
+        refreshAgentSessionStats(queryClient, sessionId, event.type)
         // 终态事件立即落盘，避免收尾逻辑被 frame 调度延迟；delta 交给下一帧合并
         enqueue(event, terminal)
         if (terminal) {
@@ -457,11 +465,12 @@ export function AgentWorkspace() {
   /** 手动压缩：识别 /compact 指令——不冒泡为用户消息，直接展示压缩状态并调用压缩接口 */
   const compactMutation = useMutation({
     mutationFn: (sessionId: string) => compactAgentSession(sessionId, effectiveModel ?? undefined),
-    onSuccess: async (data) => {
+    onSuccess: async (data, sessionId) => {
       setTimeline((current) => reduceAgentEvent(reduceAgentEvent(current, {
         type: 'context_compacted',
         data: { compaction: { summary: data.summary, tokens_before: data.tokens_before, tokens_after: data.tokens_after } },
       }), { type: 'agent_done', data: {} }))
+      refreshAgentSessionStats(queryClient, sessionId, 'context_compacted')
       await queryClient.invalidateQueries({ queryKey: ['agent', 'sessions'] })
     },
     onError: (error) => {
@@ -1091,7 +1100,11 @@ export function AgentWorkspace() {
                 {healthNotices}
                 {filesEntry}
                 {composer}
-                <p className={cn('mt-2 text-center text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}>{t('agent:chat.hint')}</p>
+                <AgentSessionStats
+                  reserve
+                  stats={sessionStats}
+                  className={cn('mt-2 text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}
+                />
               </div>
             </div>
           </>
@@ -1104,7 +1117,10 @@ export function AgentWorkspace() {
               {healthNotices}
               {filesEntry}
               {composer}
-              <p className={cn('mt-3 text-center text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}>{t('agent:chat.hint')}</p>
+              <AgentSessionStats
+                stats={sessionStats}
+                className={cn('mt-3 text-xs', hasBackgroundImage ? 'text-label [text-shadow:0_1px_3px_rgb(0_0_0/0.6),0_2px_14px_rgb(0_0_0/0.5)]' : 'text-faint')}
+              />
             </div>
           </div>
         )}

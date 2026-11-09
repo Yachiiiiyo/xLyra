@@ -4,10 +4,13 @@ import {
   agentHealthQueryOptions,
   agentModelMemoryQueryOptions,
   agentRuntimeSettingsQueryOptions,
+  agentSessionStatsQueryOptions,
   agentSessionsQueryOptions,
   agentWorkspaceAvailableModelsQueryOptions,
   applySessionTitleToCache,
   prefetchAgentWorkspace,
+  refreshAgentSessionStats,
+  SESSION_STATS_STEP_REFRESH_MS,
 } from '@/features/agent/lib/agent-queries'
 
 const api = vi.hoisted(() => ({
@@ -15,6 +18,7 @@ const api = vi.hoisted(() => ({
   fetchAgentHealth: vi.fn(),
   fetchAgentModelMemory: vi.fn(),
   fetchAgentRuntimeSettings: vi.fn(),
+  fetchAgentSessionStats: vi.fn(),
   listAgentSessions: vi.fn(),
 }))
 const readQuerySnapshot = vi.hoisted(() => vi.fn())
@@ -99,6 +103,88 @@ describe('agent query snapshots', () => {
       availableSites,
     })
     expect(available.availableSites).toBe(availableSites)
+  })
+})
+
+describe('agentSessionStatsQueryOptions', () => {
+  it('只在选中会话时请求', () => {
+    expect(agentSessionStatsQueryOptions(null)).toMatchObject({ enabled: false, queryKey: ['agent', 'session-stats', ''] })
+    const options = agentSessionStatsQueryOptions('session-1')
+    expect(options).toMatchObject({ enabled: true, queryKey: ['agent', 'session-stats', 'session-1'], retry: false })
+    expect(options.staleTime).toBeLessThanOrEqual(15_000)
+  })
+})
+
+describe('refreshAgentSessionStats', () => {
+  it('run 终态与压缩完成时失效统计缓存', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+
+    for (const type of ['agent_done', 'agent_error', 'agent_cancelled', 'context_compacted']) {
+      refreshAgentSessionStats(queryClient, 'session-1', type)
+    }
+
+    expect(invalidate).toHaveBeenCalledTimes(4)
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['agent', 'session-stats', 'session-1'] })
+  })
+
+  it('运行中事件与无关事件不刷新', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+
+    vi.useFakeTimers()
+    try {
+      for (const type of ['message_delta', 'text_delta', 'thinking', 'run_changes', 'session_title']) {
+        refreshAgentSessionStats(queryClient, 'session-1', type)
+      }
+      vi.advanceTimersByTime(SESSION_STATS_STEP_REFRESH_MS * 2)
+      expect(invalidate).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('运行中每一步的 tool_call / tool_result 在间隔内合并成一次重拉', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    vi.useFakeTimers()
+    try {
+      refreshAgentSessionStats(queryClient, 'session-1', 'tool_call')
+      refreshAgentSessionStats(queryClient, 'session-1', 'tool_call')
+      refreshAgentSessionStats(queryClient, 'session-1', 'tool_result')
+      expect(invalidate).not.toHaveBeenCalled()
+
+      vi.advanceTimersByTime(SESSION_STATS_STEP_REFRESH_MS)
+      expect(invalidate).toHaveBeenCalledTimes(1)
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ['agent', 'session-stats', 'session-1'] })
+
+      // 下一步重新计时
+      refreshAgentSessionStats(queryClient, 'session-1', 'tool_result')
+      vi.advanceTimersByTime(SESSION_STATS_STEP_REFRESH_MS)
+      expect(invalidate).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('终态事件立即重拉并取消尚未触发的步进刷新；不同会话互不影响', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+    vi.useFakeTimers()
+    try {
+      refreshAgentSessionStats(queryClient, 'session-1', 'tool_result')
+      refreshAgentSessionStats(queryClient, 'session-2', 'tool_result')
+      refreshAgentSessionStats(queryClient, 'session-1', 'agent_done')
+      expect(invalidate).toHaveBeenCalledTimes(1)
+      expect(invalidate).toHaveBeenLastCalledWith({ queryKey: ['agent', 'session-stats', 'session-1'] })
+
+      vi.advanceTimersByTime(SESSION_STATS_STEP_REFRESH_MS)
+      // session-1 的待触发刷新已被终态取消，只剩 session-2 的一次
+      expect(invalidate).toHaveBeenCalledTimes(2)
+      expect(invalidate).toHaveBeenLastCalledWith({ queryKey: ['agent', 'session-stats', 'session-2'] })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

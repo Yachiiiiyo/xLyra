@@ -21,7 +21,27 @@
     "thinking": "Agent が処理中…",
     "inputPlaceholder": "ご自由に入力....",
     "acceptSuggestion": "入力候補を受け入れる",
-    "hint": "Enter で送信 · Shift+Enter で改行",
+    "stats": {
+      "turns": "{{turns}} ターン {{steps}} ステップ",
+      "tokPerSecond": "{{value}} tok/s",
+      "tokens": "{{value}} tok",
+      "cacheHit": "キャッシュヒット {{percent}}%",
+      "tokenPopover": {
+        "total": "合計トークン",
+        "input": "入力トークン",
+        "output": "出力トークン",
+        "cached": "キャッシュヒットトークン",
+        "hitRate": "キャッシュヒット率"
+      },
+      "contextPopover": {
+        "title": "コンテキストウィンドウ",
+        "window": "コンテキスト総量",
+        "used": "現在のコンテキスト",
+        "usage": "使用率",
+        "compact": "自動圧縮のしきい値",
+        "compactValue": "{{percent}}% · 約 {{tokens}} tokens"
+      }
+    },
     "sendFailed": "送信に失敗しました",
     "editReplayTitle": "返信を再生成しますか？",
     "editReplayDescription": "最後の返信を置き換え、編集したメッセージから再生成します。",

@@ -43,13 +43,14 @@ type Meta struct {
 	Slot           int           `json:"slot,omitempty"` // 隔离身份槽位(1..MaxSlots-2);0 = 未分配(旧会话/关闭隔离)
 	CreatedAt      time.Time     `json:"created_at"`
 	UpdatedAt      time.Time     `json:"updated_at"`
-	PiSessionID    string        `json:"pi_session_id"` // 当前 Pi 会话 id(fork 后会变),空表示尚未创建
-	Messages       []UserMessage `json:"messages"`      // 用户消息:message_id ↔ Pi 条目 id 绑定
-	Escalations    []Escalation  `json:"escalations"`   // 审批记录(Pi 不记决定,xLyra 自己存)
-	SessionAllow   []string      `json:"session_allow"` // 会话内允许的工具名(write/edit/bash),空表示逐条审批
-	RunErrors      []RunError    `json:"run_errors"`    // run 失败记录,刷新后由 transcript 回放
-	RunChanges     []RunChange   `json:"run_changes"`   // 每轮文件变更摘要
-	Questions      []Question    `json:"questions"`     // question 工具的提问记录(含未回答)
+	PiSessionID    string        `json:"pi_session_id"`         // 当前 Pi 会话 id(fork 后会变),空表示尚未创建
+	Messages       []UserMessage `json:"messages"`              // 用户消息:message_id ↔ Pi 条目 id 绑定
+	Escalations    []Escalation  `json:"escalations"`           // 审批记录(Pi 不记决定,xLyra 自己存)
+	SessionAllow   []string      `json:"session_allow"`         // 会话内允许的工具名(write/edit/bash),空表示逐条审批
+	RunErrors      []RunError    `json:"run_errors"`            // run 失败记录,刷新后由 transcript 回放
+	RunChanges     []RunChange   `json:"run_changes"`           // 每轮文件变更摘要
+	Questions      []Question    `json:"questions"`             // question 工具的提问记录(含未回答)
+	GenSamples     []GenSample   `json:"gen_samples,omitempty"` // runner 实测的生成速度样本,用于会话统计的 tok/s
 }
 
 // UserMessage 记录一条用户消息及其绑定的 Pi 条目。

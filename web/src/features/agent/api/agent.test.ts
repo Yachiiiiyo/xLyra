@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dedupeImageModels, fetchAgentRuntimeSettings, fetchAgentSuggestion, updateAgentClassifierModel, updateAgentFastModel, updateAgentImageModels, updateAgentPromptSuggestion } from './agent'
+import { dedupeImageModels, fetchAgentRuntimeSettings, fetchAgentSessionStats, fetchAgentSuggestion, updateAgentClassifierModel, updateAgentFastModel, updateAgentImageModels, updateAgentPromptSuggestion } from './agent'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -152,6 +152,66 @@ describe('fetchAgentSuggestion', () => {
     controller.abort()
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError')))
     await expect(fetchAgentSuggestion('session-1', controller.signal)).resolves.toBeNull()
+  })
+})
+
+describe('fetchAgentSessionStats', () => {
+  it('reads the session stats payload', async () => {
+    const fetchMock = stubFetch({
+      turns: 2,
+      steps: 44,
+      total_tokens: 2_600_000,
+      input_tokens: 2_400_000,
+      output_tokens: 200_000,
+      cache_read_tokens: 1_980_000,
+      cache_write_tokens: 120_000,
+      cache_hit_rate: 0.83,
+      tokens_per_second: 159,
+      context_tokens: 54_000,
+      context_window: 200_000,
+      compact_ratio: 0.9,
+    })
+    await expect(fetchAgentSessionStats('session/1')).resolves.toEqual({
+      turns: 2,
+      steps: 44,
+      total_tokens: 2_600_000,
+      input_tokens: 2_400_000,
+      output_tokens: 200_000,
+      cache_read_tokens: 1_980_000,
+      cache_write_tokens: 120_000,
+      cache_hit_rate: 0.83,
+      tokens_per_second: 159,
+      context_tokens: 54_000,
+      context_window: 200_000,
+      compact_ratio: 0.9,
+    })
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/v1/agent/sessions/session%2F1/stats')
+  })
+
+  it('falls back to zero counts, null rates and the default compact ratio', async () => {
+    stubFetch({ turns: null, steps: -3, cache_hit_rate: 'x', tokens_per_second: null, context_window: 0 })
+    await expect(fetchAgentSessionStats('session-1')).resolves.toEqual({
+      turns: 0,
+      steps: 0,
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      cache_hit_rate: null,
+      tokens_per_second: null,
+      context_tokens: 0,
+      context_window: 0,
+      compact_ratio: 0.9,
+    })
+  })
+
+  it('silently returns null when the session is gone or the request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not found', { status: 404 })))
+    await expect(fetchAgentSessionStats('session-1')).resolves.toBeNull()
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    await expect(fetchAgentSessionStats('session-1')).resolves.toBeNull()
   })
 })
 
