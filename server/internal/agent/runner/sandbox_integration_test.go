@@ -41,6 +41,10 @@ func requireSandboxTerminal(t *testing.T, events []translate.Event, want string)
 	t.Fatalf("缺少终态 %s: %v", want, eventTypes(events))
 }
 
+// sandboxTestPath 不用宿主 PATH:CI 里 PATH 含 /home/runner/go/bin 等 Pi 身份
+// 无权遍历的目录,沙箱子进程 stat 它们会失败。
+const sandboxTestPath = "/usr/local/bin:/usr/bin:/bin"
+
 type sandboxEnv struct {
 	runner    *Runner
 	store     *session.Store
@@ -99,7 +103,7 @@ func newSandboxEnv(t *testing.T, command string) *sandboxEnv {
 		Store: store, Runs: runs, Tokens: &fakeIssuer{},
 		Protocol:       func(context.Context, string) (string, error) { return "openai-chat-completions", nil },
 		GatewayBaseURL: "http://" + gateway.Addr().String(), Command: os.Args[0], Args: args,
-		PathEnv: os.Getenv("PATH"), ExtensionPath: extension,
+		PathEnv: sandboxTestPath, ExtensionPath: extension,
 		RunTimeout: 30 * time.Second, AbortGrace: time.Second,
 		Logger:    slog.New(slog.NewTextHandler(os.Stderr, nil)),
 		Isolation: &IsolationConfig{},

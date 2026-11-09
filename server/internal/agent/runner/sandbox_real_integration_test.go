@@ -31,6 +31,10 @@ func TestRunnerRealPiSandboxBash(t *testing.T) {
 	root := shortTempDir(t)
 	makeTraversable(t, root)
 	makeTraversable(t, filepath.Dir(os.Args[0]))
+	// CI 里 Pi 入口与扩展位于 /home/runner 之下,Pi 身份要能走到它们
+	for _, p := range []string{node, entry, extension} {
+		makeTraversable(t, filepath.Dir(p))
+	}
 	dataDir := filepath.Join(root, "agent")
 	if err := isolation.PrepareDataDir(dataDir); err != nil {
 		t.Fatal(err)
@@ -93,7 +97,7 @@ func TestRunnerRealPiSandboxBash(t *testing.T) {
 		Store: store, Runs: runs, Tokens: &fakeIssuer{},
 		Protocol:       func(context.Context, string) (string, error) { return "openai-chat-completions", nil },
 		GatewayBaseURL: mock.URL, Command: node, Args: []string{entry}, ExtensionPath: extension,
-		PathEnv: os.Getenv("PATH"), Isolation: &IsolationConfig{},
+		PathEnv: sandboxTestPath, Isolation: &IsolationConfig{},
 		Sandbox:    &SandboxConfig{Exe: os.Args[0], PiLandlock: true, Bash: true},
 		RunTimeout: 2 * time.Minute, AbortGrace: 2 * time.Second,
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
