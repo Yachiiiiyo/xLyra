@@ -781,9 +781,9 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 	}); err != nil {
 		r.logger.Error("记录审批失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", err)
 	}
-	// permission_mode=full 的自动放行由 Pi 扩展完成;会话内允许的工具由 runner
-	// 直接放行。auto 模式在未命中会话内允许后交给分类器,所有结果都自动决定,
-	// 不再把审批留给用户。
+	// permission_mode=full 下扩展对 write/edit/bash 一律不审批,不会有审批到达
+	// runner;会话内允许的工具由 runner 直接放行。auto 模式在未命中会话内允许后
+	// 交给分类器,所有结果都自动决定,不再把审批留给用户。
 	if r.autoGrantable(ar, escalation, note) {
 		r.resolveEscalation(ar, id, resolveOptions{granted: true, scope: "session", auto: true})
 		return
@@ -807,7 +807,9 @@ func (r *Runner) anchorFromSessionFile(ar *activeRun) string {
 }
 
 // autoGrantable 判断一条新审批能否依会话内允许自动放行:工具在最新 meta 的
-// SessionAllow 里,且不是带高危提示的 bash 审批。
+// SessionAllow 里,且不是带高危提示的 bash 审批。后者现在只可能来自扩展在 auto
+// 模式下命中的高危规则(full 不审批、ask 不带命中规则),这里拦下来交给
+// startClassification 确定性拒绝;ask 下出现同类 note 也照此兜住。
 func (r *Runner) autoGrantable(ar *activeRun, escalation session.Escalation, note string) bool {
 	if escalation.ToolName == "" {
 		return false

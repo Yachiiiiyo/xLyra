@@ -7,9 +7,9 @@
 //   边界,这里不做词法检查。
 // - 审批:permissionMode=ask 时 write/edit/bash 执行前必须经用户确认(bash 逐条命令
 //   审批,卡片展示完整命令);auto(「替我审批」)时 write/edit 直接放行,bash 逐条
-//   发审批并由 Go 分类器自动决定;full 时跳过 write/edit 审批,bash 仅在命中高危
-//   模式时要求确认。auto/full 的 bash 备注都带高危规则名,路径约束照常生效,
-//   工具白名单由 Go 侧 --tools 控制。
+//   发审批并由 Go 分类器自动决定(命中高危规则时备注带规则名,供 runner 确定性
+//   拒绝);full(「完全访问」)时 write/edit/bash 一律不审批,高危规则不参与。
+//   路径约束照常生效,工具白名单由 Go 侧 --tools 控制。
 // - 沙箱 bash:运行配置 runtime.bash 启用时,用 createBashTool 以同名工具覆盖内置
 //   bash(描述、参数 schema、输出截断全部不变),模型与用户的 bash 命令(! 前缀与
 //   RPC 的 bash)一律发给 xLyra 主进程的 Unix 套接字执行器(专用 uid + Landlock +
@@ -139,8 +139,9 @@ function optionalPositiveInt(value: unknown, fallback: number): number | null {
 }
 
 // 高危命令规则:尽力而为的提示层,不是安全边界——真正的边界是沙箱执行器的
-// Landlock/seccomp/rlimit。命中只是在 auto 模式下确定性拒绝、在 full 模式下多一道
-// 用户审批,漏报不构成漏洞,误报可接受。按「命令文本中出现」匹配,不解析 shell 语义。
+// Landlock/seccomp/rlimit。命中只是在 auto 模式下发审批时把规则名带给 runner 作确定性
+// 拒绝,full 模式不参与;漏报不构成漏洞,误报可接受。按「命令文本中出现」匹配,
+// 不解析 shell 语义。
 const HIGH_RISK_RULES: { name: string; pattern: RegExp }[] = [
 	// rm 带递归标志(-r/-R/-rf/--recursive 等)且目标含绝对路径 /、~、$HOME、..、
 	// 通配 * 或单独的点(整个工作目录)
@@ -156,10 +157,12 @@ const HIGH_RISK_RULES: { name: string; pattern: RegExp }[] = [
 	{ name: "重定向写入磁盘设备", pattern: /(?:^|[^>])\s*>{1,2}\s*\/dev\/(?:sd|nvme)/ },
 	// fork 炸弹
 	{ name: "fork 炸弹", pattern: /:\(\)\{/ },
-	// curl/wget 下载直接进解释器执行
+	// curl/wget 下载直接进解释器执行;解释器带内联脚本参数(node -e/-p/--eval/--print、
+	// python -c、sh/bash/zsh -c)时管道内容只是数据,不算命中
 	{
 		name: "下载脚本直接执行",
-		pattern: /(?:^|[\s;&|(])(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:(?:ba|z)?sh\b|python[\w.-]*\b|node\b)/,
+		pattern:
+			/(?:^|[\s;&|(])(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:(?:ba|z)?sh\b(?![^|;&]*\s-[a-zA-Z]*c\b)|python[\w.-]*\b(?![^|;&]*\s-[a-zA-Z]*c\b)|node\b(?![^|;&]*\s(?:-[a-zA-Z]*[ep][a-zA-Z]*|--(?:eval|print))\b))/,
 	},
 	// 递归 chmod/chown 作用于根目录
 	{
@@ -301,9 +304,9 @@ function sandboxOperations(config: BashSandboxConfig): BashOperations {
 	};
 }
 
-// bash 审批:ask/auto 模式逐条审批;full 模式仅高危命令审批。auto/full 都在命中时
-// 注明规则名,auto 仍由 Go 分类器决定。异常/abort 一律按拒绝;message.command 对齐
-// Go 侧 ParseApprovalMessage 的 []string,完整命令不截断。
+// bash 审批:full(完全访问)直接放行,只保留空/超长的输入校验;ask/auto 逐条审批,
+// auto 命中高危规则时在备注里注明规则名,由 Go 分类器决定。异常/abort 一律按拒绝;
+// message.command 对齐 Go 侧 ParseApprovalMessage 的 []string,完整命令不截断。
 async function approveBashCall(
 	event: BashToolCallEvent,
 	ctx: ExtensionContext,
@@ -316,8 +319,8 @@ async function approveBashCall(
 	if (Buffer.byteLength(command, "utf8") > MAX_APPROVAL_COMMAND_BYTES) {
 		return { block: true, reason: "命令过长,已拒绝(超过 8 KiB)" };
 	}
-	const hits = permissionMode === "ask" ? null : matchHighRiskRules(command);
-	if (permissionMode === "full" && hits === null) return; // full 且未命中:不审批
+	if (permissionMode === "full") return; // 完全访问:输入校验通过即放行,不审批
+	const hits = permissionMode === "auto" ? matchHighRiskRules(command) : null;
 
 	const cwd = ctx.cwd || process.cwd();
 	const workdir = path.relative(process.cwd(), cwd) || ".";
@@ -333,11 +336,9 @@ async function approveBashCall(
 	let confirmed = false;
 	try {
 		// 必须传 signal,否则等待审批时 abort 会被卡住
-		confirmed = await ctx.ui.confirm(
-			permissionMode === "full" ? "这条命令有风险,允许执行?" : "允许执行命令?",
-			JSON.stringify(payload),
-			{ signal: ctx.signal },
-		);
+		confirmed = await ctx.ui.confirm("允许执行命令?", JSON.stringify(payload), {
+			signal: ctx.signal,
+		});
 	} catch {
 		confirmed = false; // abort 等异常一律按拒绝处理
 	}

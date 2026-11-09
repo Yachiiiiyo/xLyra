@@ -36,7 +36,7 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 `extension/xlyra.ts` 是随镜像发布的小型 Pi 扩展,由 Go 以 `pi -e <扩展路径>` 加载,承担三件事:
 
 1. **路径约束**(第二层防线):`read/ls/grep/find/summarize_file` 只能访问会话工作目录(Pi 进程 cwd)之内、或 `readRoots`(启用技能的目录,Go 侧随 `XLYRA_RUN_CONFIG` 的 `runtime` 字段传入)之内的路径;`write/edit` 仍只允许工作目录之内,即使目标位于 `readRoots` 内也拒绝。绝对路径、`~` 前缀、`..` 逃逸、指向允许范围外的符号链接(含悬空链接)一律拒绝;`full` 模式也不放宽。路径约束对 bash 不适用(沙箱边界由执行器的 Landlock 负责)。
-2. **审批**:`ask` 下 `write`/`edit`/`bash` 执行前经 `extension_ui_request(confirm)` 向用户确认,拒绝/取消/超时都不执行;`auto`(「替我审批」)下工作目录内的 `write`/`edit` 直接放行,`bash` 逐条发审批并由 Go 分类器自动决定;`full` 下跳过 `write`/`edit` 审批,`bash` 仅高危命令需用户确认(见下节)。三种模式的路径约束都照常生效。
+2. **审批**:`ask` 下 `write`/`edit`/`bash` 执行前经 `extension_ui_request(confirm)` 向用户确认,拒绝/取消/超时都不执行;`auto`(「替我审批」)下工作目录内的 `write`/`edit` 直接放行,`bash` 逐条发审批并由 Go 分类器自动决定;`full` 下 `write`/`edit`/`bash` 一律不审批、直接执行。三种模式的路径约束都照常生效。
 3. **沙箱 bash**:配置启用时覆盖内置 `bash`,命令一律经主进程的执行器在专用 uid + Landlock + seccomp + rlimit 下执行,失败即关闭、绝不回退本地(见下节)。
 4. **文件摘要**:`runtime.fastTask` 启用时注册 `summarize_file`(见下节)。
 
@@ -53,7 +53,7 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 
 - `ask`:写类工具与 bash 命令须用户确认(默认);
 - `auto`:工作目录内的 write/edit 直接放行,bash 逐条发审批,由 Go 侧分类器自动允许或拒绝;
-- `full`:跳过 write/edit 审批,bash 仅命中高危模式时确认;路径约束照常生效;
+- `full`:跳过 `write`/`edit`/`bash` 审批,命令直接执行(含高危命令);路径约束照常生效;
 - `readRoots`:只读根(启用技能的目录绝对路径),只放宽 `read/ls/grep/find`;每项须是存在的绝对路径且深度 ≥ 2 段,非法项忽略,缺省为 `[]`;
 - `bash`:沙箱执行器配置,见下节;
 - `fastTask`:快速模型文件摘要配置,见下节。
@@ -80,7 +80,7 @@ PI_OFFLINE=1 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 
 - `permissionMode=ask`:每条命令都审批,title `允许执行命令?`,message 为 JSON `{toolCallId, toolName:"bash", command:[<完整命令字符串>], note:"工作目录: <相对 cwd 的路径或 .>"}`——`command` 是单元素字符串数组(对齐 Go 侧 `ParseApprovalMessage` 的 `Command []string`),命令原文完整展示不截断,超过 8 KiB 直接拒绝("命令过长");
 - `permissionMode=auto`:每条命令都审批,title `允许执行命令?`,message 结构与 ask 相同;命中高危模式时 `note` 追加 `;命中规则: <规则名>`,未命中不追加。审批由 Go 分类器自动决定,命中规则的 bash 不调模型、直接拒绝;
-- `permissionMode=full`:仅命中高危模式时用 title `这条命令有风险,允许执行?` 审批,message 同上,`note` 追加 `;命中规则: <规则名>`。高危规则(rm 递归删除高危目标、mkfs、dd 写块设备、重定向写磁盘设备、fork 炸弹、下载脚本直接执行、递归改根目录权限、关机/重启、git 强推、sudo、覆盖 SSH/shell 配置)是**尽力而为的提示层,不是安全边界**,真正的边界是执行器的 Landlock/seccomp/rlimit;
+- `permissionMode=full`:不审批,输入校验(命令为空或超过 8 KiB)通过即直接放行,高危规则不参与。高危规则(rm 递归删除高危目标、mkfs、dd 写块设备、重定向写磁盘设备、fork 炸弹、下载脚本直接执行、递归改根目录权限、关机/重启、git 强推、sudo、覆盖 SSH/shell 配置)是**尽力而为的提示层,不是安全边界**,只在 `auto` 模式下用于确定性拒绝,真正的边界是执行器的 Landlock/seccomp/rlimit;其中「下载脚本直接执行」不把管道后带内联脚本参数的解释器(`node -e/-p`、`python -c`、`sh/bash -c`)算作命中;
 - 拒绝时工具返回 `用户拒绝了本次命令`;路径约束对 bash 不适用(沙箱的 Landlock 才是边界),`cwd` 原样使用 Pi 给的工作目录。
 
 ### 文件摘要工具 summarize_file

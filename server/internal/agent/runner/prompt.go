@@ -111,7 +111,8 @@ func (r *Runner) systemPrompt(workspace string, bash, localBash bool, defaultTim
 
 // permissionModeValue 归一化写进运行配置 runtime 的权限模式:full/auto 原样传给
 // 扩展,其余(含空、非法值)一律 ask。auto 由扩展放行工作区内 write/edit,bash
-// 仍逐条发审批并交给 runner 的分类器判定。
+// 仍逐条发审批并交给 runner 的分类器判定;full 下 write/edit/bash 全部不审批
+// (含命中高危规则的命令),ask 下三者逐条询问。
 func permissionModeValue(mode string) string {
 	if mode == "full" || mode == "auto" {
 		return mode
