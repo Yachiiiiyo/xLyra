@@ -2,74 +2,54 @@
 
 ## [1.18.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.17.0...v1.18.0) (2026-11-09)
 
+本版本把内置 Agent（基于 Pi）作为正式功能上线：支持会话、分叉与引用、权限审批、提问、文件预览与文生图，命令沙箱改为可选；同时新增自定义实例背景、按类别备份与恢复，并移除「模型体验」页。
 
 ### Features
 
-* ✨ 「替我审批」权限级别：新增 auto 权限（询问与完全访问之间），审批由分类器模型代为判定且不弹卡片；分层提示词（硬拦截/软拦截/默认放行/用户意图），模型报错最多重试 2 次、失败即拒绝；扩展识别 auto（write/edit 直接放行，bash 命中高危规则由 runner 确定性拒绝）；连续被拒 3 次或累计 20 次中止运行；审批卡片展示自动允许/拒绝及理由；权限按钮改为三档菜单 ([2485991](https://github.com/Yachiiiiyo/xLyra/commit/2485991664bb843a6623246f9041d33095267cf1))
-* ✨ Agent 全局共享工作区：所有会话共用同一个 workspace（默认 &lt;数据目录&gt;/workspace，可用 AGENT_WORKSPACE_DIR 覆盖），分叉会话直接共享文件；旧会话非空 workspace 启动时迁入 _legacy/&lt;会话ID&gt;；系统提示环境段注入工作区绝对路径；共享目录不计入会话配额；uid 隔离模式下工作区 0777 且 umask 为 0；分叉响应去掉 workspace_copied ([9aa17f5](https://github.com/Yachiiiiyo/xLyra/commit/9aa17f57c4d4dee42be240039920b0329a779653))
-* ✨ Agent 前端支持生成图片：消息内渲染生成的图片，设置里新增图片模型选择，可用模型配置拆为独立弹窗 ([bfee874](https://github.com/Yachiiiiyo/xLyra/commit/bfee874df16bd1130ae9958a05d2896e376783af))
-* ✨ Agent 前端改用主程序设计并收口内置引擎：删除 Runner 专属功能、范围并入设置弹窗、新增运行环境面板与不可用提示，LiquidGlass 与 Dialog 统一风格，修复取消/错误/审批状态、bash 审批提交与审批等待期间的计时和重复卡片 ([eb49f75](https://github.com/Yachiiiiyo/xLyra/commit/eb49f75a46919da2f10d367fd7905e67cd32ec06))
-* ✨ Agent 前端新增分叉会话（会话菜单与回复操作行）与引用其他会话（输入区选择、引用标签与回放） ([b56bd2f](https://github.com/Yachiiiiyo/xLyra/commit/b56bd2f25118d4871123644294f26e1561f45b75))
-* ✨ Agent 命令沙箱改为可选（默认关闭）：Agent 设置「环境」面板新增沙箱开关（能力配置 sandbox_enabled，重启后生效）；未启用时 Pi 与命令直接在本机运行、可联网，bash 开放并沿用 ask/auto/full 审批与高危规则，扩展新增本机 bash 模式（复用 Pi 本地 shell + 超时包装）；启用时行为不变；required 仍强制沙箱；系统提示按模式区分命令执行规则；环境面板文案同步 ([3d037f7](https://github.com/Yachiiiiyo/xLyra/commit/3d037f7474fcdf39ab880a9323eaebe633db87d6))
-* ✨ Agent 回复底部复制图标右侧显示时间（12 小时内相对时间，之后具体时间），会话菜单新增复制会话 ID ([9a0b647](https://github.com/Yachiiiiyo/xLyra/commit/9a0b647f79c9735b407c8867a06b7cc7dce031e6))
-* ✨ Agent 回复底部新增「本轮变更」区：列出本轮 write/edit 改动的文件与增删行数，点击在右侧面板（窄屏为底部抽屉）查看 diff 与源码；后端在转录与实时事件里透传 edit 工具的 patch，运行中不显示变更区，同一文件先 write 后 edit 时按合并后的整份内容展示 ([f3c91e6](https://github.com/Yachiiiiyo/xLyra/commit/f3c91e63205845f1c79e2ba5909b2d2924b55d05))
-* ✨ Agent 导航图标改为 Sparkles，请求详情代码块改用玻璃填充底色，调整背景遮罩样式 ([cb5c040](https://github.com/Yachiiiiyo/xLyra/commit/cb5c040fb7473b2c9d007570fef5791d9db49787))
-* ✨ Agent 提问工具与提问卡片：模型可调用 question 工具让用户选择（单选/多选/其他补充），前端按分步向导逐题回答、确认后提交；新增回答接口、超时自动跳过（AGENT_QUESTION_TIMEOUT）、等待审批/提问时暂停运行总时限，回答摘要显示在回复区，会话记录/引用/分叉支持提问条目 ([3341574](https://github.com/Yachiiiiyo/xLyra/commit/3341574e7e70d1cf4ca08c49f98e28dac3dde062))
-* ✨ Agent 文件预览：读取接口放宽到工作区多级路径（文本一律 text/plain、逐级拒绝链接、新增下载与大小限制），面板新增预览标签（Markdown、沙箱 HTML、图片、SVG、CSV、文本）与下载，回复里的相对路径链接可直接打开预览 ([63f3be8](https://github.com/Yachiiiiyo/xLyra/commit/63f3be8144a227dccfce4ae5bf8d4561357e4379))
-* ✨ Agent 本轮变更覆盖 bash 等所有写文件途径：每轮前后对工作区做清单求差（含内容寻址的修改前快照与按需 diff），新增 changes/diff/artifacts/artifacts.zip 接口，变更区改以后端 run_changes 为准；输入框上方新增「文件 · N」入口与会话文件列表（点文件名展开原文、展开行吸附顶部、变更文件默认打开预览），预览面板复制改为复制内容 ([1f3501b](https://github.com/Yachiiiiyo/xLyra/commit/1f3501b0807298e2f31e4c1521ed3c51fb7c01e3))
-* ✨ Agent 权限卡片三档（允许、会话内允许、拒绝），可用模型概览仅保留查看入口，自动放行显示与会话菜单撤销自动允许 ([d731650](https://github.com/Yachiiiiyo/xLyra/commit/d73165006e02a3db4418f36244214590fb21a457))
-* ✨ Agent 生成图片的放大查看改为只放大图片：深色遮罩、无边框底板，下方仅保留下载按钮 ([1aefd5c](https://github.com/Yachiiiiyo/xLyra/commit/1aefd5c94652a820194a13c38e1b65ef7cfd08a8))
-* ✨ Agent 设置弹窗改版：范围改为可用模型并置顶概览与查看弹窗，Skills 新增添加与创建入口，移除人格配置 ([9404d58](https://github.com/Yachiiiiyo/xLyra/commit/9404d58d0886e67d2b136530e7d84a2c5a5e0e4e))
-* ✨ Agent 输入区对齐 Playground：输入框加高、附件改用 AttachmentMenu、权限按钮统一触发器样式 ([9122d7a](https://github.com/Yachiiiiyo/xLyra/commit/9122d7a78b1be89f328836aaeba7679261e6a213))
-* ✨ Agent 页适配自定义背景：有背景图时侧栏、输入框与会话遮罩改用玻璃面板，无背景图时保持星点背景，设置弹窗与引用弹窗样式同步调整 ([6cb816b](https://github.com/Yachiiiiyo/xLyra/commit/6cb816b4055f63b561ab8bdd3ac20c982085043b))
-* ✨ 内置 Agent 接入 /api/v1/agent 契约：新增 AGENT_ENGINE（默认 pi）、沙箱与隔离配置、健康状态、会话/分叉/授权接口与启动自检，runner 引擎保持转发 ([b09e8b4](https://github.com/Yachiiiiyo/xLyra/commit/b09e8b4e75eaeaf0cd67808fca4cb23b51b903b6))
-* ✨ 内置 Agent 新增 Pi RPC 进程客户端、Pi 事件到前端事件的翻译器与 run 事件缓冲（SSE 输出、断线重放），固化 Pi 事件样本为测试夹具 ([c48f389](https://github.com/Yachiiiiyo/xLyra/commit/c48f389152c2f433f9aa04712fc20929a88a09c8))
-* ✨ 内置 Agent 新增 Pi 运行配置生成（模型、思考档位、Claude 5 系列强制 adaptive 思考）与进程内 run 令牌签发 ([77d9edc](https://github.com/Yachiiiiyo/xLyra/commit/77d9edca3edc919ee0e66e6f544e59b93fec42f3))
-* ✨ 内置 Agent 新增会话存储与 transcript 构建，支持分叉会话与引用其他会话上下文，审批与失败记录按 Pi 会话文件锚点定位 ([b1340aa](https://github.com/Yachiiiiyo/xLyra/commit/b1340aacb86811eb6a3ca1266130fb7c33e9a9f1))
-* ✨ 内置 Agent 新增文生图工具：扩展提供 generate_image，经进程内令牌调用网关生成，图片落盘到会话目录并在 transcript 与文件接口中回放，新增图片模型配置与可用图片模型列表 ([0cbf43e](https://github.com/Yachiiiiyo/xLyra/commit/0cbf43e0065ee2f08f97703e65899a062eae2389))
-* ✨ 内置 Agent 新增能力存储：Skills、AGENTS.md 与上下文配置的磁盘存取与校验 ([194c3cf](https://github.com/Yachiiiiyo/xLyra/commit/194c3cfd7dff75813207da8ebe0be582784dccf9))
-* ✨ 内置 Agent 新增运行编排器：Pi 进程生命周期、令牌、审批、会话内允许、停止、重试、手动压缩、并发排队与配额、沙箱 bash、分叉与引用 ([cc8915d](https://github.com/Yachiiiiyo/xLyra/commit/cc8915ddd1136d1e8a466be178fc84f1f387c4c1))
-* ✨ 删除模型体验页：移除路由、导航入口、三语文案与 /api/playground 代理，附件菜单与推理设置选择器迁到 components/chat，旧历史数据与浏览器本地存储保持不动 ([dc7fc9f](https://github.com/Yachiiiiyo/xLyra/commit/dc7fc9faeb7ce3cf6a766c1f3aa1a35aae6992d6))
-* ✨ 备份按内容类别导出与恢复：新增 9 个可选类别（系统设置、站点与模型、API 密钥与权限、请求日志与用量、插件、Agent 设置/能力文件/会话记录/工作区），类别间硬依赖自动联动、软依赖提示；格式升到 v4（旧 v2/v3 备份继续可导入，忽略已废弃的 Playground）；备份纳入此前遗漏的插件表与模型端点覆盖表；恢复按类别替换并清空依赖数据（汇总表随明细清空，悬空的插件输入引用会被清理）；恢复前新增预览（只解密备份开头一块，列出将恢复/将清空/无法恢复的内容）；恢复期间拦住运行中的 Agent 并在恢复后重载插件；定时备份补上 Agent 目录（此前定时备份不含 Agent 数据）；自动备份可配置备份内容；前端以按钮加弹窗选择备份内容，并重做恢复预览与进度对话框；移除 agent.runner_* 旧配置的导出；沙箱开启时恢复后放开共享工作区权限 ([d45dd06](https://github.com/Yachiiiiyo/xLyra/commit/d45dd0601cb5ceaae6519d1cfe6efa9df42eeb16))
-* ✨ 外观设置新增菜单设置：可自定义显示的菜单项与程序首页（仪表盘 / Agent） ([ec3d72b](https://github.com/Yachiiiiyo/xLyra/commit/ec3d72bfda33fd261d6f946b468302a461706daa))
-* ✨ 审批模型配置：Agent 设置新增独立的「审批模型」（agent.classifier_model，未配置回退当前对话模型，不回退快速模型），审批模型与快速模型改为行内下拉选择并各自自愈清理失效配置，移除快速模型弹窗 ([9078dae](https://github.com/Yachiiiiyo/xLyra/commit/9078dae63eeb31d3a8367d94531c63bb8154a667))
-* ✨ 快速模型扩展用途：新增 summarize_file 文件摘要工具（扩展经本 run 令牌调用 fast-task 端点，由快速模型提炼文件前 256 KiB，只把摘要回给主模型，免审批、走路径约束、每 run 限 40 次）与 AI 会话标题（首条消息后异步生成，失败保持截断标题，生成后经 session_title 事件即时更新侧栏）；快速模型未配置时均回退当前对话模型 ([fee4848](https://github.com/Yachiiiiyo/xLyra/commit/fee484813ecc6ebccde443186debd000b83c7e28))
-* ✨ 抽屉的返回与关闭按钮、代码块复制按钮和表格表头改为透明磨砂样式，适配背景图 ([20839c1](https://github.com/Yachiiiiyo/xLyra/commit/20839c1d29793cd0778d15d67c9dee868aadf485))
-* ✨ 抽屉默认支持上滑扩展到全屏，不再要求内容区可滚动 ([626f02f](https://github.com/Yachiiiiyo/xLyra/commit/626f02fd35070fc60af8ca7304906c9bceb4d0a8))
-* ✨ 支持自定义实例背景：新增外观设置页，整页背景图层与可读性遮罩，主侧栏在有背景图时改用折射玻璃 ([db8cb42](https://github.com/Yachiiiiyo/xLyra/commit/db8cb426e168f56722f924c8c1c0804664cb9fa6))
-* ✨ 新增 Agent 进程隔离：每会话专属 uid 槽位、目录属主与权限、探测与带正向对照的启动自检 ([08b96ae](https://github.com/Yachiiiiyo/xLyra/commit/08b96aed0f2085753351141f2753fc77968abe27))
-* ✨ 新增 agent-runtime：锁定 Pi 1.4.0，提供 xLyra 扩展（路径约束、write/edit/bash 审批、沙箱 bash 执行器协议） ([989e26b](https://github.com/Yachiiiiyo/xLyra/commit/989e26b7b6d0ed0dc52b3898a0aa30c78a8c91d5))
-* ✨ 新增命令沙箱与执行器：Landlock、seccomp、资源限制、降权 helper，Unix 套接字协议串行执行并按 uid 清理零残留 ([d7810fc](https://github.com/Yachiiiiyo/xLyra/commit/d7810fca6b91299a9e0cf72aab8028628397dcc5))
-* ✨ 新增外观设置接口：读取与更新实例背景图配置，上传的自定义背景按内容哈希落盘并提供读取 ([0e905f4](https://github.com/Yachiiiiyo/xLyra/commit/0e905f41bc6ee29e1b80fc3aaa83fa173b3ac52c))
-* ✨ 站点/模型选择器重做为顶部胶囊 Tabs + 下方模型列表，桌面与移动端统一；生图模型配置复用同一组件，Tabs 滑块跟随标签宽度变化，去掉「显示停用站点」选项 ([cb92051](https://github.com/Yachiiiiyo/xLyra/commit/cb92051a53978da29f4b535d097ca33c8da50dbb))
-* ✨ 系统备份纳入 Agent 能力文件：备份包新增可选的 agent_capabilities 段（skills/、AGENTS.md、config.json），手动与自动备份均包含；恢复时先解压到临时目录再整体切换并支持回滚，拒绝越界路径与符号链接，限制单文件 64MB/总量 512MB，权限与能力包一致；旧备份（无 sections）导入不动现有 Agent 文件；导入结果新增 agent_files，进度新增 agent 步骤 ([19a9a2b](https://github.com/Yachiiiiyo/xLyra/commit/19a9a2b1c1b435f4f554c42900c3e5baf82a23e0))
-* ✨ 网关新增文生图执行器：按候选模型与站点依次故障转移，记录每次尝试的失败原因，故障转移上限不再按配置预分配容量 ([6af8c0d](https://github.com/Yachiiiiyo/xLyra/commit/6af8c0db1a373628ab3ed15d864fa86ee9f5fbd1))
-* ✨ 聊天通用组件与工具迁出 playground 到 components/chat 与 lib，Agent 页改用 chat 命名空间，样式类与属性去掉 playground 前缀 ([c74b764](https://github.com/Yachiiiiyo/xLyra/commit/c74b7647fbb7bebd9b6b4fe64a554e7bf63584e4))
-* ✨ 输入框下方会话统计行：新增 GET /sessions/{id}/stats（轮/步、累计 token、总输入输出、缓存命中/写入、命中率、上下文占用，读 Pi 会话文件仅统计当前分支，按文件大小+修改时间缓存）与 runner 实测生成速度 tok/s（首个 delta 到消息结束，排除首字等待与网关重试，每条消息结束即写入样本）；前端桌面左中右三栏、移动端仅 tok/s/缓存命中/圆环，对话界面行高固定占位避免输入框跳动；Token 用量复用请求页弹窗、上下文窗口浮窗（桌面悬停/移动端点击）；运行中随每一步（tool_call/tool_result 节流）刷新，终态与压缩完成立即刷新 ([5ec4827](https://github.com/Yachiiiiyo/xLyra/commit/5ec48276918f611ffc45fd991bbf6d6749465906))
-* ✨ 输入预测（Ghost Text）与快速模型配置：每轮对话结束后预测用户下一条消息，空输入框显示灰字，按 Tab / → 或点击提示接受，输入后删空会重新显示；新增预测接口（等待 run 收尾、过滤器、上下文裁剪）与进程内文本补全；Agent 设置新增「快速模型」（未配置时回退当前对话模型并提示，可用范围变化时连带清除）与「输入预测」开关；run 开始/结束与预测完成日志降为 debug ([5491cd7](https://github.com/Yachiiiiyo/xLyra/commit/5491cd7118acb06ab911528f981890cb1a6c3ab5))
-* ✨ 重写 Agent 默认系统提示：分运行方式/工具使用/工作方式/回复风格四块，补充并行调用、工作循环、报错不重发、文件状态时效与友好语气；系统提示末尾追加当前日期环境段，bash 段新增改后跑测试指引 ([270f17d](https://github.com/Yachiiiiyo/xLyra/commit/270f17d32e0af036d8fc5e39a5929e4576b1d540))
+#### 内置 Agent
+* ✨ 内置 Agent 接入 `/api/v1/agent`：新增运行编排（Pi 进程生命周期、令牌、审批、停止、重试、手动压缩、并发排队与配额）、会话存储与 transcript、分叉与引用其他会话、Skills / AGENTS.md 能力存储；`AGENT_ENGINE` 默认 `pi`，并提供健康状态与启动自检
+* ✨ 新增 `agent-runtime`（锁定 Pi 1.4.0）与 xLyra 扩展：路径约束、write/edit/bash 审批、沙箱 bash 执行器协议
+* ✨ 全局共享工作区：所有会话共用同一个 workspace（默认 `<数据目录>/workspace`，可用 `AGENT_WORKSPACE_DIR` 覆盖），旧会话的非空 workspace 启动时迁入 `_legacy/<会话ID>`
+* ✨ 重写默认系统提示，并新增 `question` 提问工具（单选/多选/其他补充，前端分步向导作答，超时自动跳过）
+* ✨ 输入预测（Ghost Text）：每轮结束后预测下一条消息，Tab / → 接受；新增「快速模型」设置，用于输入预测、`summarize_file` 文件摘要工具和 AI 会话标题，未配置时回退当前对话模型
+* ✨ 文生图：扩展提供 `generate_image`，网关新增文生图执行器（按候选模型与站点依次故障转移），Agent 页可渲染、放大查看与下载生成的图片，设置里可选图片模型
+* ✨ 会话统计行：输入框下方显示轮/步、累计 token、缓存命中率、上下文占用与实测生成速度（tok/s）
+* ✨ 会话内的文件：每轮前后对工作区做清单求差，回复底部显示「本轮变更」，支持 diff / 源码查看；文件预览支持 Markdown、沙箱 HTML、图片、SVG、CSV 与文本，并可下载（含 `artifacts.zip`）
+* ✨ Agent 会话目录瘦身：Pi 配置与 AGENTS.md 改经环境变量传入，系统提示直接传文本，每次运行清理历史残留文件
 
+#### 权限与沙箱
+* ✨ 「替我审批」权限级别：新增 `auto` 权限（询问与完全访问之间），由分类器模型代为判定；新增独立的「审批模型」，权限卡片改为三档（允许 / 会话内允许 / 拒绝）
+* ✨ Agent 命令沙箱改为可选（默认关闭，可在 Agent 设置「环境」面板开启，重启后生效）；开启后行为不变，`required` 仍强制沙箱
+* ✨ 新增 Agent 进程隔离（每会话专属 uid、目录属主与权限、启动自检）和命令沙箱执行器（Landlock、seccomp、资源限制、降权）
+
+#### 备份
+* ✨ 备份按内容类别导出与恢复：9 个可选类别，类别间依赖自动联动；格式升到 v4（旧 v2/v3 备份仍可导入）；恢复前可预览将恢复 / 将清空 / 无法恢复的内容
+* ✨ 备份纳入此前遗漏的插件表、模型端点覆盖表和 Agent 能力文件（Skills、AGENTS.md、配置）；定时备份补上 Agent 目录，自动备份可配置备份内容
+
+#### 外观与前端
+* ✨ 自定义实例背景：新增外观设置页，整页背景图层与可读性遮罩，侧栏、抽屉与输入框在有背景图时改用玻璃材质；外观设置新增菜单设置，可自定义显示的菜单项与程序首页（仪表盘 / Agent）
+* ✨ Agent 前端改用主程序设计：设置弹窗改版（范围改为可用模型、新增运行环境面板）、站点/模型选择器重做为胶囊 Tabs + 模型列表、导航图标改为 Sparkles、回复底部显示时间与复制会话 ID
+* ✨ 删除「模型体验」页（路由、导航入口、`/api/playground` 代理），附件菜单与推理设置选择器迁到 `components/chat`；旧历史数据与浏览器本地存储不动
+* ✨ 抽屉默认支持上滑扩展到全屏；抽屉按钮、代码块复制按钮和表格表头改为透明磨砂样式
 
 ### Bug Fixes
 
-* 🐛 Agent 回复里不再渲染模型编造的 images/ 图片引用，生图提示去掉可照抄的 Markdown 示例；已处理的权限请求收成一行；撤销自动允许文案精简 ([0a06e7c](https://github.com/Yachiiiiyo/xLyra/commit/0a06e7cd3cfddced7a60222c029b1d5bbb87ddf1))
-* 🐛 Agent 提问默认一直等待用户回答，同时运行的 Agent 上限从 4 个提高到 16 个 ([cd2b86f](https://github.com/Yachiiiiyo/xLyra/commit/cd2b86f0e76b7ca1b35c9fb195f16dbf29b3f689))
-* 🐛 Agent 输入框：引用会话并入「+」菜单，窄屏下模型选择器可收缩不再把发送按钮挤出，新建对话输入框的小螃蟹不再被裁切 ([13ffe8e](https://github.com/Yachiiiiyo/xLyra/commit/13ffe8ec4e664341d16a0755c6f792f133a118b0))
-* 🐛 Agent 页打开默认停在无对话初始页，不再恢复上次会话；移动端对话顶部留白按安全区计算，首条消息不再被顶栏遮挡 ([49e1ad7](https://github.com/Yachiiiiyo/xLyra/commit/49e1ad79081d39957b939741f6805658404574ea))
-* 🐛 修复合并前 CI：升级 brotli/compress 消除 govulncheck 漏洞，扩展拒绝路径不再泄露真实路径，沙箱集成测试与镜像冒烟显式开启沙箱，隔离自检环境变量对照兼容非 dumpable 进程 ([73f3d0a](https://github.com/Yachiiiiyo/xLyra/commit/73f3d0ab70bd5a6528fece5097a29e7bf362d67e))
-* 🐛 完全访问不再对高危命令二次确认：full 模式 bash 校验通过即直接放行，高危规则仅供「替我审批」做确定性拒绝；修复「下载脚本直接执行」规则对 wget|node -e、curl|python -c、curl|bash -c 等内联脚本管道的误报 ([08073bd](https://github.com/Yachiiiiyo/xLyra/commit/08073bd41055afa9d0bce2f289364c9c3d03a6ae))
-* 🐛 沙箱集成测试不再继承宿主 PATH，并让 Pi 身份能遍历 CI 里的 Pi 入口目录 ([5f06c16](https://github.com/Yachiiiiyo/xLyra/commit/5f06c1669eeeb26bf76bcb287d1aea38eb6a4e9c))
-* 🐛 程序首页设为 Agent 后左上角返回失效：返回时有应用内上一页则回退，否则默认替换跳转到仪表盘 ([49317c8](https://github.com/Yachiiiiyo/xLyra/commit/49317c8bc5e00f4fe28643ca4ff400dec0dfaa66))
-* 🐛 网关 Anthropic 协议输出的 input_tokens 改为不含缓存读写（官方语义）：此前输出含缓存的总提示 token，与 cache_read_input_tokens 重复计数，导致下游（如 Pi）的缓存命中率偏低、累计 token 与上下文占用偏大、自动压缩触发偏早；内部记录与计费口径、OpenAI 协议输出不变，已写入的旧会话数据不迁移 ([2139808](https://github.com/Yachiiiiyo/xLyra/commit/21398082fe85af22e714d717ae79fe2147e3f927))
-* 🐛 网关流式转发推理增量时原样保留空白，修复思考文本词间空格丢失 ([235b3d2](https://github.com/Yachiiiiyo/xLyra/commit/235b3d204512c2cd1ff753904f573f4b51b74589))
-* 🐛 表格表头样式收口到全局组件：模型价格页等手写的不透明深色表头改用 DataTableHeader 与统一的 fill 底色，导出统一的表头文字与 grid 表头样式 ([176dbca](https://github.com/Yachiiiiyo/xLyra/commit/176dbcab5fa6e03910b5e102c23b95cdc3a77720))
-
+* 🐛 网关 Anthropic 协议输出的 `input_tokens` 改为不含缓存读写（官方语义）：此前与 `cache_read_input_tokens` 重复计数，导致下游（如 Pi）缓存命中率偏低、自动压缩触发偏早；内部记录与计费口径、OpenAI 协议输出不变，已写入的旧会话数据不迁移
+* 🐛 网关流式转发推理增量时原样保留空白，修复思考文本词间空格丢失
+* 🐛 完全访问不再对高危命令二次确认；修复「下载脚本直接执行」规则对 `wget|node -e`、`curl|python -c`、`curl|bash -c` 等内联脚本管道的误报
+* 🐛 Agent 提问默认一直等待用户回答，同时运行的 Agent 上限从 4 个提高到 16 个
+* 🐛 Agent 回复里不再渲染模型编造的 `images/` 图片引用；已处理的权限请求收成一行
+* 🐛 Agent 页打开默认停在无对话初始页，不再恢复上次会话；移动端对话顶部留白按安全区计算，首条消息不再被顶栏遮挡
+* 🐛 Agent 输入框：引用会话并入「+」菜单，窄屏下模型选择器可收缩不再把发送按钮挤出，小螃蟹不再被裁切
+* 🐛 程序首页设为 Agent 后左上角返回失效：有应用内上一页则回退，否则跳转到仪表盘
+* 🐛 表格表头样式收口到全局组件，模型价格页等手写的不透明表头统一为 `DataTableHeader`
+* 🐛 升级 brotli 与 compress 依赖，消除 govulncheck 报出的漏洞；扩展拒绝路径时不再在提示里泄露宿主机真实路径
 
 ### Performance Improvements
 
-* ⚡ Agent 配置取数改用批量接口：站点列表新增 lite 参数跳过用量聚合与账号计数，新增 /site-models 一次返回全部站点模型，前端去掉逐站点请求；可用模型页去掉边框改用分隔线、生图摘要不再显示站点名 ([cf15867](https://github.com/Yachiiiiyo/xLyra/commit/cf1586713003157ec5db9a652cfcce500c8495be))
-* ⚡ 前端加载提速：背景图 WebP 转码/预加载/淡入/SW 缓存，Agent 路由并行预取与查询快照 ([c000cc1](https://github.com/Yachiiiiyo/xLyra/commit/c000cc14e76d42b0cc823d61bbfcfed39f2c3cfa))
-* ⚡ 后端静态资源 br/gzip 压缩与 Agent 会话列表缓存 ([2f9d03c](https://github.com/Yachiiiiyo/xLyra/commit/2f9d03ceaa3198c4b62196e905c31fc6014080e6))
+* ⚡ 前端加载提速：背景图 WebP 转码 / 预加载 / 淡入 / SW 缓存，Agent 路由并行预取与查询快照
+* ⚡ 后端静态资源 br/gzip 压缩与 Agent 会话列表缓存
+* ⚡ Agent 配置取数改用批量接口：站点列表新增 `lite` 参数，新增 `/site-models` 一次返回全部站点模型
 
 ## [1.17.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.16.0...v1.17.0) (2026-11-02)
 
