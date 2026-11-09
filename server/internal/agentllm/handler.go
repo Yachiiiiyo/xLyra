@@ -78,6 +78,12 @@ func NewHandler(logger *slog.Logger, db *store.Store, gatewayHandler gateway.Han
 	return Handler{logger: logger, repo: store.NewAgentRepository(db.DB()), gateway: gatewayHandler, now: time.Now, imageTracker: newAgentImageTracker(), fastTaskTracker: newAgentImageTracker()}
 }
 
+// DefaultModel 返回 model-memory 的全局默认模型,供 /agent/models 复用。
+func DefaultModel(ctx context.Context, db *store.Store) (string, error) {
+	defaultModel, _, err := store.NewAgentRepository(db.DB()).ModelMemory(ctx)
+	return defaultModel, err
+}
+
 func (h Handler) Credential(w http.ResponseWriter, r *http.Request) {
 	var input credentialRequest
 	if err := decode(r, &input); err != nil {

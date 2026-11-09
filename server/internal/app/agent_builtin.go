@@ -73,7 +73,7 @@ func (b agentBins) ready() bool {
 // newBuiltinAgent 按配置装配内置 Agent(session 存储、能力存储、run 事件流、
 // 隔离启动流程、runner 与 HTTP handler)。node 命令或 Pi 入口脚本缺失时不
 // 报错:handler 正常路由,health 会报告不可用原因。
-func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc) *builtinAgent {
+func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc, modelSources ...agentModelSource) *builtinAgent {
 	dataDir := resolveAgentDataDir(cfg)
 	// 能力存储与 sessions 同级:<dataDir>/skills、AGENTS.md、config.json。
 	caps := capabilities.NewStore(dataDir)
@@ -111,6 +111,7 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 		Runs:         runs,
 		Capabilities: caps,
 		ModelMemory:  modelMemory,
+		Models:       agentModelCatalog(modelSources, confFile),
 		Suggest:      suggest,
 		SuggestionEnabled: func() bool {
 			return cfg.AgentPromptSuggestion && agentproxy.PromptSuggestionEnabledFromConfig(confFile)

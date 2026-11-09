@@ -66,6 +66,7 @@ type Deps struct {
 	Runs                *runlog.Registry
 	Capabilities        *capabilities.Store
 	ModelMemory         http.HandlerFunc
+	Models              ModelCatalog
 	Suggest             func(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error)
 	SuggestionEnabled   func() bool
 	FastModel           func() string
@@ -100,6 +101,7 @@ type Handler struct {
 	runs                *runlog.Registry
 	capabilities        *capabilities.Store
 	modelMemory         http.HandlerFunc
+	models              ModelCatalog
 	suggest             func(context.Context, string, string, string, string, int) (string, error)
 	suggestionEnabled   func() bool
 	fastModel           func() string
@@ -116,6 +118,7 @@ func NewHandler(d Deps) *Handler {
 		runs:                d.Runs,
 		capabilities:        d.Capabilities,
 		modelMemory:         d.ModelMemory,
+		models:              d.Models,
 		suggest:             d.Suggest,
 		suggestionEnabled:   d.SuggestionEnabled,
 		fastModel:           d.FastModel,

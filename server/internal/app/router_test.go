@@ -160,6 +160,7 @@ func TestProtectedAdminFeatureRoutesAreRegistered(t *testing.T) {
 		{name: "settings general", method: http.MethodGet, path: "/api/v1/settings/general"},
 		{name: "automatic backup files", method: http.MethodGet, path: "/api/v1/settings/backup/automatic/files"},
 		{name: "dashboard health", method: http.MethodGet, path: "/api/v1/dashboard/health"},
+		{name: "agent models", method: http.MethodGet, path: "/api/v1/agent/models"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {

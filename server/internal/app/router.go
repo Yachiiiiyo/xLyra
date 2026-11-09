@@ -223,7 +223,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		go syncAgentAccessPolicy()
 	}
 	// 内置 Pi 是唯一引擎，始终装配。
-	builtin := newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory)
+	builtin := newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, agentModelSource{sites: siteService, db: db})
 	if tasks != nil {
 		tasks.Add(1)
 		go func() {
@@ -652,6 +652,7 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Get("/config", h.GetConfig)
 	agentRouter.Put("/config", h.PutConfig)
 	agentRouter.Get("/model-memory", h.ModelMemory)
+	agentRouter.Get("/models", h.Models)
 	agentRouter.Get("/sessions", h.ListSessions)
 	agentRouter.Post("/sessions", h.CreateSession)
 	agentRouter.Patch("/sessions/{id}", h.RenameSession)

@@ -134,6 +134,7 @@ func agentRouter(h *Handler) http.Handler {
 	r.Route("/api/v1/agent", func(g chi.Router) {
 		g.Get("/health", h.Health)
 		g.Get("/model-memory", h.ModelMemory)
+		g.Get("/models", h.Models)
 		g.Get("/skills", h.ListSkills)
 		g.Get("/skills/{name}", h.GetSkill)
 		g.Get("/skills/{name}/file", h.GetSkillFile)
