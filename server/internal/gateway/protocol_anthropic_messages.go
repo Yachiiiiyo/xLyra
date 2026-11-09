@@ -1777,8 +1777,15 @@ func anthropicWebSearchRequestCount(usage anthropicMessageUsageBody) int {
 
 func anthropicUsagePayload(usage gatewayUsage) map[string]any {
 	usage = usage.normalized()
+	// Anthropic 的 input_tokens 不含缓存命中与缓存写入,而网关内部的
+	// PromptTokens 是含缓存的总提示 token,输出侧要减回来,否则下游
+	// (如 Pi)会与 cache_read_input_tokens 重复计数。
+	inputTokens := usage.PromptTokens - usage.CachedPromptTokens - usage.CacheCreationInputTokens
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
 	payload := map[string]any{
-		"input_tokens":                usage.PromptTokens,
+		"input_tokens":                inputTokens,
 		"output_tokens":               usage.CompletionTokens,
 		"cache_creation_input_tokens": usage.CacheCreationInputTokens,
 		"cache_read_input_tokens":     usage.CachedPromptTokens,
