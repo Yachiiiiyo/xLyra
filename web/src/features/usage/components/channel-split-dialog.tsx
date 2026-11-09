@@ -306,7 +306,7 @@ function SplitMetricCard({ compact, label, value }: { compact: boolean; label: s
       compact ? 'px-3 py-2.5' : 'px-4 py-3',
     )}>
       <div className="text-footnote text-label-2">{label}</div>
-      <div className={cn('mt-1 truncate font-semibold tabular-nums text-label', compact ? 'text-title-3' : 'text-xl')} title={value}>
+      <div className={cn('mt-1 truncate font-semibold tabular-nums text-label', compact ? 'text-title-3' : 'text-xl max-lg:text-title-3')} title={value}>
         {value}
       </div>
     </div>

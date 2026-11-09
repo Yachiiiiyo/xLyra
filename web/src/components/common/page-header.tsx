@@ -44,13 +44,13 @@ export function PageHeader({ eyebrow, title, description, actions, collapsible =
   }, [collapsible, setInlineTitle, title])
 
   return (
-    <div className={cn('flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between', className)}>
+    <div className={cn('flex flex-col gap-4 max-lg:gap-2 lg:flex-row lg:items-end lg:justify-between', className)}>
       <div className="min-w-0 space-y-1">
         {eyebrow ? <p className="text-footnote text-label-3">{eyebrow}</p> : null}
         <h2 ref={titleRef} className="text-large-title text-label">
           {title}
         </h2>
-        {description ? <p className="max-w-3xl text-body text-label-2">{description}</p> : null}
+        {description ? <p className="max-w-3xl text-body text-label-2 max-lg:text-callout">{description}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>

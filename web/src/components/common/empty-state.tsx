@@ -17,7 +17,7 @@ type EmptyStateProps = {
  */
 export function EmptyState({ title, description, action, icon: Icon = Inbox, className }: EmptyStateProps) {
   return (
-    <div className={cn('flex min-h-56 flex-col items-center justify-center gap-3 px-6 py-10 text-center', className)}>
+    <div className={cn('flex min-h-56 flex-col items-center justify-center gap-3 px-6 py-10 text-center max-lg:min-h-40 max-lg:py-6', className)}>
       <Icon className="size-10 text-label-3" strokeWidth={1.5} aria-hidden="true" />
       <div className="space-y-1">
         <h3 className="text-title-3 text-label">{title}</h3>

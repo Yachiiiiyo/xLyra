@@ -196,6 +196,12 @@ html[data-standalone='true'] .mobile-dock-anchor {
   /* 代码与数字：JetBrains Mono；其中的中文回退到系统无衬线字体 */
   --font-mono: "JetBrains Mono Variable", "SF Mono", ui-monospace, Menlo, "PingFang SC", Consolas, monospace;
 
+  /* Tailwind 标准档：显式写成 px，移动端才好在 :root 里覆盖（仍等价于 0.75rem / 0.875rem） */
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+
   --text-large-title: 30px;
   --text-large-title--line-height: 36px;
   --text-large-title--font-weight: 700;
@@ -291,7 +297,7 @@ html[data-standalone='true'] .mobile-dock-anchor {
   --control-h-sm: 32px;
   --control-h: 36px;
   --control-h-lg: 44px;
-  /* Switch：桌面 40×24，移动端为 iOS 标准 51×31 */
+  /* Switch：桌面 40×24，移动端 46×28 */
   --switch-w: 40px;
   --switch-h: 24px;
   /* Checkbox / Radio 边长 */
@@ -386,35 +392,41 @@ html[data-standalone='true'] .mobile-dock-anchor {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 移动端字号采用 iOS 默认（Large）档 */
+/* 移动端字号与控件：在桌面基础上略放大，整体比 iOS 默认档小一号 */
 @media (max-width: 1023px) {
   :root {
-    --control-h-sm: 36px;
-    --control-h: 44px;
-    --control-h-lg: 50px;
-    --switch-w: 51px;
-    --switch-h: 31px;
-    --check-size: 22px;
-    --text-large-title: 34px;
-    --text-large-title--line-height: 41px;
-    --text-title-1: 28px;
-    --text-title-1--line-height: 34px;
-    --text-title-2: 22px;
-    --text-title-2--line-height: 28px;
-    --text-title-3: 20px;
-    --text-title-3--line-height: 25px;
-    --text-headline: 17px;
-    --text-headline--line-height: 22px;
-    --text-body: 17px;
-    --text-body--line-height: 22px;
-    --text-callout: 16px;
-    --text-callout--line-height: 21px;
-    --text-subhead: 15px;
-    --text-subhead--line-height: 20px;
-    --text-footnote: 13px;
-    --text-footnote--line-height: 18px;
-    --text-caption-1: 12px;
-    --text-caption-1--line-height: 16px;
+    --control-h-sm: 32px;
+    --control-h: 40px;
+    --control-h-lg: 44px;
+    --switch-w: 46px;
+    --switch-h: 28px;
+    --check-size: 20px;
+    --text-large-title: 26px;
+    --text-large-title--line-height: 32px;
+    --text-title-1: 22px;
+    --text-title-1--line-height: 28px;
+    --text-title-2: 18px;
+    --text-title-2--line-height: 24px;
+    --text-title-3: 17px;
+    --text-title-3--line-height: 22px;
+    --text-kpi: 22px;
+    --text-kpi--line-height: 28px;
+    --text-headline: 15px;
+    --text-headline--line-height: 20px;
+    --text-body: 15px;
+    --text-body--line-height: 20px;
+    --text-callout: 14px;
+    --text-callout--line-height: 19px;
+    --text-subhead: 13.5px;
+    --text-subhead--line-height: 18px;
+    --text-footnote: 12px;
+    --text-footnote--line-height: 16px;
+    --text-caption-1: 11px;
+    --text-caption-1--line-height: 14px;
+    --text-xs: 11px;
+    --text-xs--line-height: 15px;
+    --text-sm: 13px;
+    --text-sm--line-height: 18px;
   }
 }
 

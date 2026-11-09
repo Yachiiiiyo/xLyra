@@ -2,7 +2,7 @@ import * as React from 'react'
 import { fieldFocusClass, fieldSurfaceClass } from '@/components/ui/field-styles'
 import { cn } from '@/lib/utils'
 
-/** 单行输入框：填充色底、无描边；高度取 --control-h，移动端自动放大到 44 */
+/** 单行输入框：填充色底、无描边；高度取 --control-h，移动端自动放大到 40 */
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
   ({ className, ...props }, ref) => (
     <input

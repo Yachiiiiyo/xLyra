@@ -123,7 +123,7 @@ function DrawHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement
 }
 
 function DrawBody({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5', className)} {...props} />
+  return <div data-draw-scroll className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 max-lg:px-5 max-lg:py-4', className)} {...props} />
 }
 
 type DrawFooterProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
@@ -148,7 +148,7 @@ function DrawFooter({ className, cancel, confirm, ...props }: DrawFooterProps) {
   return (
     <div
       className={cn(
-        'grid gap-3 border-t border-separator px-6 py-4',
+        'grid gap-3 border-t border-separator px-6 py-4 max-lg:px-5 max-lg:py-3',
         columns,
         '[&>*]:w-full',
         className,

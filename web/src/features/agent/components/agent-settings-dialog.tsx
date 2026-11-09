@@ -468,7 +468,7 @@ function SkillDetail({
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3">
-        <p className="flex min-w-0 items-center gap-2 text-base font-semibold text-foreground">
+        <p className="flex min-w-0 items-center gap-2 text-base max-lg:text-body font-semibold text-foreground">
           <span className="truncate">{name}</span>
           {external ? <Badge variant="neutral">{t('settings.skillScopeExternal')}</Badge> : null}
         </p>

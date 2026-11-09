@@ -34,14 +34,14 @@ export const panelSearchClass = 'flex h-[var(--control-h-sm)] items-center gap-2
 
 /** 菜单项：圆角与面板同心（20 − 6 = 14） */
 export const menuItemClass =
-  'relative flex min-h-[var(--control-h-sm)] w-full cursor-default select-none items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-body text-label outline-none transition-colors duration-100 data-[highlighted]:bg-fill-3 data-[disabled]:pointer-events-none data-[disabled]:opacity-40'
+  'relative flex min-h-[var(--control-h-sm)] max-lg:min-h-11 w-full cursor-default select-none items-center gap-2 rounded-[14px] px-2.5 py-1.5 text-body text-label outline-none transition-colors duration-100 data-[highlighted]:bg-fill-3 data-[disabled]:pointer-events-none data-[disabled]:opacity-40'
 
 /** 面板内分组标题 */
 export const menuGroupLabelClass = 'px-2.5 pb-1 pt-2.5 text-caption-1 text-label-3 first:pt-1'
 
 /** 非 Radix 菜单（Popover 里手写的按钮列表）中的一行：账户菜单、语言菜单等 */
 export const menuButtonClass =
-  'flex min-h-[var(--control-h-sm)] w-full items-center gap-2.5 rounded-[14px] px-2.5 py-1.5 text-left text-body text-label outline-none transition-colors duration-100 hover:bg-fill-3 focus-visible:bg-fill-3 disabled:pointer-events-none disabled:opacity-40'
+  'flex min-h-[var(--control-h-sm)] max-lg:min-h-11 w-full items-center gap-2.5 rounded-[14px] px-2.5 py-1.5 text-left text-body text-label outline-none transition-colors duration-100 hover:bg-fill-3 focus-visible:bg-fill-3 disabled:pointer-events-none disabled:opacity-40'
 
 /** 面板内的分隔线：左右与菜单项文字对齐 */
 export const menuSeparatorClass = 'mx-2.5 my-1 h-px bg-separator'

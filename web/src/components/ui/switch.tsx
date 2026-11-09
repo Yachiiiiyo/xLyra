@@ -16,7 +16,7 @@ type SwitchProps = Omit<
 }
 
 /**
- * 开关：关为填充色、开为系统绿。尺寸取 --switch-w / --switch-h，移动端为 iOS 标准 51×31。
+ * 开关：关为填充色、开为系统绿。尺寸取 --switch-w / --switch-h，移动端 46×28。
  * 按住时滑块向内拉长并变为半透明玻璃（HIG：滑块在交互时呈现 Liquid Glass 外观），松开恢复。
  */
 const SwitchControl = React.forwardRef<
