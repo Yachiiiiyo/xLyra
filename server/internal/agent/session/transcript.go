@@ -385,6 +385,16 @@ func escalationEntry(esc Escalation) map[string]any {
 	if esc.Auto && esc.ClassifierReason != "" {
 		out["reason"] = esc.ClassifierReason
 	}
+	// 审批说明与风险标注只在有值时输出;旧数据没有这些字段,不要补空串。
+	if esc.Note != "" {
+		out["note"] = esc.Note
+	}
+	if esc.Risk != "" {
+		out["risk"] = esc.Risk
+	}
+	if len(esc.RiskRules) > 0 {
+		out["risk_rules"] = esc.RiskRules
+	}
 	return out
 }
 

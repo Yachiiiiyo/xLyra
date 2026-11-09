@@ -146,6 +146,7 @@ func agentRouter(h *Handler) http.Handler {
 		g.Put("/config", h.PutConfig)
 		g.Get("/sessions", h.ListSessions)
 		g.Post("/sessions", h.CreateSession)
+		g.Patch("/sessions/{id}", h.RenameSession)
 		g.Get("/sessions/{id}/transcript", h.SessionTranscript)
 		g.Get("/sessions/{id}/stats", h.SessionStats)
 		g.Delete("/sessions/{id}", h.DeleteSession)

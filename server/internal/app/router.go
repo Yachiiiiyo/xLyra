@@ -654,6 +654,7 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Get("/model-memory", h.ModelMemory)
 	agentRouter.Get("/sessions", h.ListSessions)
 	agentRouter.Post("/sessions", h.CreateSession)
+	agentRouter.Patch("/sessions/{id}", h.RenameSession)
 	agentRouter.Get("/sessions/{id}/transcript", h.SessionTranscript)
 	agentRouter.Get("/sessions/{id}/stats", h.SessionStats)
 	agentRouter.Delete("/sessions/{id}", h.DeleteSession)

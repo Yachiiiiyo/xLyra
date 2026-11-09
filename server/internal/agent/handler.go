@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -234,6 +235,47 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeSendResult(w, http.StatusOK, result)
+}
+
+// sessionTitleMaxRunes 是会话标题的字数上限(按 rune 计,不是字节)。
+const sessionTitleMaxRunes = 100
+
+// RenameSession PATCH /sessions/{id}:改会话标题。运行中的会话也允许改名;
+// 标题去首尾空白后不能为空,按 rune 计最长 100。
+func (h *Handler) RenameSession(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.sessionID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !h.decodeBody(w, r, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	switch {
+	case title == "":
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "标题不能为空")
+		return
+	case utf8.RuneCountInString(title) > sessionTitleMaxRunes:
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "标题不能超过 100 个字")
+		return
+	}
+	meta, err := h.store.Update(id, func(m *session.Meta) error {
+		m.Title = title
+		// 用户手改后锁住:即使新标题恰好等于首条消息的占位截断,也不再被 session_title 覆盖。
+		m.TitleLocked = true
+		return nil
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
+		"session_id": meta.ID,
+		"title":      meta.Title,
+	}})
 }
 
 // RetrySession POST /sessions/{id}/retry:从 message_id 起重发。

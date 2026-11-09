@@ -169,6 +169,33 @@ func TestGenerateTitleDoesNotOverwriteChangedPlaceholder(t *testing.T) {
 	assertNoSessionTitleEvent(t, run)
 }
 
+// 用户手改后即使标题文本仍等于占位截断(TitleLocked),自动生成也不再覆盖。
+func TestGenerateTitleSkipsLockedTitle(t *testing.T) {
+	content := "帮我分析这个仓库"
+	var calls atomic.Int64
+	r, store, _ := newTitleTestRunner(t, func(context.Context, string, string, string, string, int, string) (string, error) {
+		calls.Add(1)
+		return "模型生成标题", nil
+	}, nil)
+	meta, placeholder := newTitleTestSession(t, store, content)
+	if _, err := store.Update(meta.ID, func(m *session.Meta) error {
+		m.Title = placeholder
+		m.TitleLocked = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.maybeGenerateTitle(&activeRun{sessionID: meta.ID, model: "main-model"}, content)
+	waitTitleTasks(t, r)
+	updated, err := store.Get(meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Title != placeholder || !updated.TitleLocked || calls.Load() != 0 {
+		t.Fatalf("锁定标题被覆盖: title=%q locked=%v calls=%d", updated.Title, updated.TitleLocked, calls.Load())
+	}
+}
+
 func TestGenerateTitleFailureKeepsOriginal(t *testing.T) {
 	content := "原始首条消息"
 	var calls int

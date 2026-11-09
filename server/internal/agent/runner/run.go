@@ -733,6 +733,17 @@ func (r *Runner) recordEscalation(ar *activeRun, event translate.Event, afterEnt
 	escalation.RequestedPath, _ = data["requested_path"].(string)
 	escalation.ResolvedPath, _ = data["resolved_path"].(string)
 	note, _ := data["note"].(string)
+	escalation.Note = note
+	escalation.Risk, _ = data["risk"].(string)
+	if rules, ok := data["risk_rules"].([]string); ok {
+		escalation.RiskRules = rules
+	} else if values, ok := data["risk_rules"].([]any); ok {
+		for _, value := range values {
+			if text, ok := value.(string); ok {
+				escalation.RiskRules = append(escalation.RiskRules, text)
+			}
+		}
+	}
 	if command, ok := data["requested_command"].([]string); ok {
 		escalation.RequestedCommand = command
 	} else if values, ok := data["requested_command"].([]any); ok {
@@ -813,14 +824,14 @@ func (r *Runner) anchorFromSessionFile(ar *activeRun) string {
 }
 
 // autoGrantable 判断一条新审批能否依会话内允许自动放行:工具在最新 meta 的
-// SessionAllow 里,且不是带高危提示的 bash 审批。后者现在只可能来自扩展在 auto
-// 模式下命中的高危规则(full 不审批、ask 不带命中规则),这里拦下来交给
-// startClassification 确定性拒绝;ask 下出现同类 note 也照此兜住。
+// SessionAllow 里,且不是高危 bash。高危以 note 含「命中规则」(auto 命中,交给
+// startClassification 确定性拒绝)或结构化字段 Risk == "high" 为准。ask 模式的高危 bash 即使
+// 该工具已在会话内允许,也必须逐条由用户确认,不能因会话内允许自动放行。
 func (r *Runner) autoGrantable(ar *activeRun, escalation session.Escalation, note string) bool {
 	if escalation.ToolName == "" {
 		return false
 	}
-	if escalation.ToolName == "bash" && strings.Contains(note, "命中规则") {
+	if escalation.ToolName == "bash" && (escalation.Risk == "high" || strings.Contains(note, "命中规则")) {
 		return false
 	}
 	meta, err := r.cfg.Store.Get(ar.sessionID)

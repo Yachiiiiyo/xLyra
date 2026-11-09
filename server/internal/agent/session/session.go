@@ -38,6 +38,7 @@ var ErrInvalidID = errors.New("session: 非法会话 id")
 type Meta struct {
 	ID             string        `json:"id"`
 	Title          string        `json:"title"`
+	TitleLocked    bool          `json:"title_locked,omitempty"` // 用户手改过标题后为 true,AI 自动生成不再覆盖
 	Model          string        `json:"model"`
 	PermissionMode string        `json:"permission_mode"`
 	Slot           int           `json:"slot,omitempty"` // 隔离身份槽位(1..MaxSlots-2);0 = 未分配(旧会话/关闭隔离)
@@ -95,6 +96,11 @@ type Escalation struct {
 	Auto             bool      `json:"auto,omitempty"`
 	ClassifierReason string    `json:"classifier_reason,omitempty"`
 	Reviewing        bool      `json:"reviewing,omitempty"`
+	// Note / Risk / RiskRules 来自审批事件:说明、风险等级(命中时为 "high")与命中规则。
+	// 旧记录没有这些字段,读出为零值,转录照常省略。
+	Note      string   `json:"note,omitempty"`
+	Risk      string   `json:"risk,omitempty"`
+	RiskRules []string `json:"risk_rules,omitempty"`
 }
 
 // MaxRunErrors 是 meta 里保留的 run 失败记录条数上限,超出丢弃最旧的。
