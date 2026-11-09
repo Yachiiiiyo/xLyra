@@ -45,10 +45,10 @@ type Config struct {
 	AgentDataDir        string        `env:"AGENT_DATA_DIR"`
 	// AgentWorkspaceDir 是 Agent 共享工作区目录,空则 <数据目录>/workspace。
 	AgentWorkspaceDir  string        `env:"AGENT_WORKSPACE_DIR"`
-	AgentMaxConcurrent int           `env:"AGENT_MAX_CONCURRENT" envDefault:"4"`
+	AgentMaxConcurrent int           `env:"AGENT_MAX_CONCURRENT" envDefault:"16"`
 	AgentRunTimeout    time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
-	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长,0 表示不超时。
-	AgentQuestionTimeout  time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"30m"`
+	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长;默认 0 表示一直等待、不超时。
+	AgentQuestionTimeout  time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"0"`
 	AgentGatewayBaseURL   string        `env:"AGENT_GATEWAY_BASE_URL"`
 	AgentImageMaxCalls    int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
 	AgentImageTimeout     time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`

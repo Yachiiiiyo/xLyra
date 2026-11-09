@@ -109,7 +109,7 @@ type Config struct {
 	MaxConcurrent int
 	// RunTimeout 是单个 run 的时长上限;令牌已改文件轮换,不再受 TTL 约束。
 	RunTimeout time.Duration
-	// QuestionTimeout 是提问无人回答时自动跳过的等待时长;0 表示不超时。
+	// QuestionTimeout 是提问无人回答时自动跳过的等待时长;默认 0 表示一直等待、不超时。
 	QuestionTimeout time.Duration
 	// MaxOutputBytes 是单个 run 内 Pi stdout 事件的总字节上限。
 	MaxOutputBytes int64
@@ -336,7 +336,7 @@ func New(cfg Config) (*Runner, error) {
 		cfg.Sandbox = &sandbox
 	}
 	if cfg.MaxConcurrent <= 0 {
-		cfg.MaxConcurrent = 4
+		cfg.MaxConcurrent = 16
 	}
 	if cfg.RunTimeout <= 0 {
 		cfg.RunTimeout = 60 * time.Minute

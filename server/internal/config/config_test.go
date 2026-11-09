@@ -262,6 +262,7 @@ func TestLoadAppliesAgentDefaults(t *testing.T) {
 	t.Setenv("AGENT_DATA_DIR", "")
 	t.Setenv("AGENT_MAX_CONCURRENT", "")
 	t.Setenv("AGENT_RUN_TIMEOUT", "")
+	t.Setenv("AGENT_QUESTION_TIMEOUT", "")
 	t.Setenv("AGENT_GATEWAY_BASE_URL", "")
 
 	cfg, err := Load()
@@ -271,11 +272,14 @@ func TestLoadAppliesAgentDefaults(t *testing.T) {
 	if cfg.AgentNodeBin != "" || cfg.AgentPiEntry != "" || cfg.AgentExtensionPath != "" || cfg.AgentDataDir != "" || cfg.AgentWorkspaceDir != "" || cfg.AgentGatewayBaseURL != "" {
 		t.Fatalf("unexpected agent path defaults: %#v", cfg)
 	}
-	if cfg.AgentMaxConcurrent != 4 {
-		t.Fatalf("AGENT_MAX_CONCURRENT default = %d, want 4", cfg.AgentMaxConcurrent)
+	if cfg.AgentMaxConcurrent != 16 {
+		t.Fatalf("AGENT_MAX_CONCURRENT default = %d, want 16", cfg.AgentMaxConcurrent)
 	}
 	if cfg.AgentRunTimeout != 60*time.Minute {
 		t.Fatalf("AGENT_RUN_TIMEOUT default = %s, want 60m", cfg.AgentRunTimeout)
+	}
+	if cfg.AgentQuestionTimeout != 0 {
+		t.Fatalf("AGENT_QUESTION_TIMEOUT default = %s, want 0", cfg.AgentQuestionTimeout)
 	}
 }
 
@@ -319,7 +323,7 @@ func validConfig() Config {
 		SiteHealthInterval:      15 * time.Minute,
 		SiteHealthTimeout:       10 * time.Second,
 		SiteHealthWorkers:       4,
-		AgentMaxConcurrent:      4,
+		AgentMaxConcurrent:      16,
 		AgentRunTimeout:         60 * time.Minute,
 		AgentIsolation:          "auto",
 		AgentUIDBase:            20000,
