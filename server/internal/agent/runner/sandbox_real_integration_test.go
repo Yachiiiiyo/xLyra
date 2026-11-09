@@ -126,9 +126,7 @@ func TestRunnerRealPiSandboxBash(t *testing.T) {
 			t.Fatal(sendErr)
 		}
 		events := collectRun(t, runs, meta.ID).wait(t)
-		if events[len(events)-1].Type != "agent_done" {
-			t.Fatalf("第 %d 轮终态: %v", i+1, eventTypes(events))
-		}
+		requireSandboxTerminal(t, events, "agent_done")
 		output := realToolOutput(events)
 		if i == 0 {
 			if !strings.Contains(output, "hi-sandbox") || !strings.Contains(output, strconv.Itoa(int(identity().ExecUID))) {

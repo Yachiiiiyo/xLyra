@@ -3,13 +3,13 @@ module xlyra/server
 go 1.26.10
 
 require (
-	github.com/andybalholm/brotli v1.2.0
+	github.com/andybalholm/brotli v1.2.8
 	github.com/caarlos0/env/v11 v11.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
-	github.com/klauspost/compress v1.18.4
+	github.com/klauspost/compress v1.20.4
 	github.com/minio/minio-go/v7 v7.0.84
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/robfig/cron/v3 v3.0.1

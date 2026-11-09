@@ -17,6 +17,7 @@ import (
 	"xlyra/server/internal/agent/runlog"
 	"xlyra/server/internal/agent/sandbox"
 	"xlyra/server/internal/agent/session"
+	"xlyra/server/internal/agent/translate"
 )
 
 func requireSandboxIntegration(t *testing.T) {
@@ -24,6 +25,20 @@ func requireSandboxIntegration(t *testing.T) {
 	if os.Getenv("AGENT_SANDBOX_INTEGRATION") != "1" || runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		t.Skip("需要 Linux + root + AGENT_SANDBOX_INTEGRATION=1")
 	}
+}
+
+func requireSandboxTerminal(t *testing.T, events []translate.Event, want string) {
+	t.Helper()
+	for _, event := range events {
+		switch event.Type {
+		case "agent_done", "agent_error", "agent_cancelled":
+			if event.Type != want {
+				t.Fatalf("终态 = %s, want %s: %v data=%v", event.Type, want, eventTypes(events), event.Data)
+			}
+			return
+		}
+	}
+	t.Fatalf("缺少终态 %s: %v", want, eventTypes(events))
 }
 
 type sandboxEnv struct {
@@ -142,9 +157,7 @@ func TestRunnerSandboxBashIntegration(t *testing.T) {
 	requireSandboxIntegration(t)
 	env := newSandboxEnv(t, "echo hi; id -u")
 	events := env.send(t).wait(t)
-	if events[len(events)-1].Type != "agent_done" {
-		t.Fatalf("终态: %v", eventTypes(events))
-	}
+	requireSandboxTerminal(t, events, "agent_done")
 	result := readSandboxResult(t, env.result)
 	for _, key := range []string{"secret_denied", "outside_denied", "workspace_write", "workspace_read", "parent_environ_denied", "gateway_ok", "other_denied"} {
 		if ok, _ := result[key].(bool); !ok {
@@ -171,9 +184,7 @@ func TestRunnerSandboxBashIntegration(t *testing.T) {
 func TestRunnerSandboxToolsAndCompact(t *testing.T) {
 	requireSandboxIntegration(t)
 	env := newSandboxEnv(t, "echo hi")
-	if events := env.send(t).wait(t); events[len(events)-1].Type != "agent_done" {
-		t.Fatal(eventTypes(events))
-	}
+	requireSandboxTerminal(t, env.send(t).wait(t), "agent_done")
 	if _, err := env.runner.Compact(context.Background(), env.sessionID, "mock-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -219,9 +230,7 @@ func TestRunnerSandboxCancelIntegration(t *testing.T) {
 	if err := env.runner.Stop(context.Background(), env.sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if events := collected.wait(t); events[len(events)-1].Type != "agent_cancelled" {
-		t.Fatal(eventTypes(events))
-	}
+	requireSandboxTerminal(t, collected.wait(t), "agent_cancelled")
 	assertSandboxUIDsGone(t, identityOfSession(t, env.store, env.sessionID))
 }
 
@@ -253,9 +262,7 @@ func TestRunnerSandboxExecutorStartFailure(t *testing.T) {
 	if _, err := r.Send(context.Background(), SendInput{SessionID: meta.ID, Content: "x", Model: "mock-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if events := collectRun(t, runs, meta.ID).wait(t); events[len(events)-1].Type != "agent_error" {
-		t.Fatal(eventTypes(events))
-	}
+	requireSandboxTerminal(t, collectRun(t, runs, meta.ID).wait(t), "agent_error")
 	if _, err := os.Stat(filepath.Join(store.Dir(meta.ID), "pi-agent/record.jsonl")); !os.IsNotExist(err) {
 		t.Fatalf("Pi 不应启动: %v", err)
 	}

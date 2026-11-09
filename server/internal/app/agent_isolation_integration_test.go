@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"xlyra/server/internal/agent/capabilities"
 	"xlyra/server/internal/agent/isolation"
 	"xlyra/server/internal/config"
 )
@@ -106,6 +107,17 @@ func buildIsolationWorkdir(t *testing.T, isolationMode string) config.Config {
 // fetchIsolationHealth 装配内置 Agent 并拉取 /health。
 func fetchIsolationHealth(t *testing.T, cfg config.Config) (int, map[string]any) {
 	t.Helper()
+	// 集成测试验证沙箱开启态(默认关闭由其他单元测试覆盖);按 cfg 的数据目录写,
+	// 这样改过 AgentDataDir 的用例也生效。
+	dataDir := config.ResolveAgentDataDir(cfg)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sandboxConfig := capabilities.DefaultConfig()
+	sandboxConfig.SandboxEnabled = true
+	if _, err := capabilities.NewStore(dataDir).PutConfig(sandboxConfig); err != nil {
+		t.Fatal(err)
+	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	builtin := newBuiltinAgent(cfg, logger, nil, nil, fakeBuiltinTokenIssuer{}, nil)
 	router := newAgentOnlyRouter(cfg, builtin)

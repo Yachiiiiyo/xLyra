@@ -454,11 +454,6 @@ function describeChange(toolName: string, input: Record<string, unknown>): strin
 	return undefined;
 }
 
-// reason 里只用模型给的原始输入,避免泄露 realpath 之后的宿主机真实路径
-function displayPath(raw: string): string {
-	return raw.length > 200 ? `${raw.slice(0, 200)}...` : raw;
-}
-
 // ---- 生图工具:经本 run 令牌调用网关,图片只落工作区、不回灌模型 ----
 type ImageGenerationConfig = { endpoint: string; tokenFile: string; maxBytes: number; timeoutSeconds: number };
 type ImageGenerationInput = { prompt: string; size?: string; quality?: string };
@@ -1000,7 +995,7 @@ export default function (pi: ExtensionAPI) {
 
 			const abs = toAbsolute(rawPath, cwd);
 			if (abs === null) {
-				return { block: true, reason: `路径不在会话工作目录内,已拒绝访问:${displayPath(rawPath)}` };
+				return { block: true, reason: "路径不在会话工作目录内,已拒绝访问" };
 			}
 			const target = resolveReal(abs);
 			if (!isInside(realCwd, target)) {
@@ -1009,7 +1004,7 @@ export default function (pi: ExtensionAPI) {
 				const readonlyAllowed =
 					READONLY_PATH_TOOLS.has(event.toolName) && readRoots.some((root) => isInside(root, target));
 				if (!readonlyAllowed) {
-					return { block: true, reason: `路径不在会话工作目录内,已拒绝访问:${displayPath(rawPath)}` };
+					return { block: true, reason: "路径不在会话工作目录内,已拒绝访问" };
 				}
 			}
 

@@ -411,10 +411,16 @@ func probePiEnviron(ctx context.Context, e *checkEnv) []string {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// 正向对照:属主(PiUID)读自己进程的 environ 能看到 marker,证明 environ 真的带探测变量、
-	// 读取机制可用。不用 root 当对照:容器默认没有 CAP_SYS_PTRACE,root 读不了别的 uid 的 environ。
-	if r := runProbe(ctx, e.a.PiCredential(), "/bin/cat "+q(envFile)); r.code != 0 || !strings.Contains(r.out, probeMarker) {
-		return []string{"对照失败,属主 PiUID 读不到自己探测进程的 environ"}
+	// 经 Credential 从 root 降权启动的进程会被内核设为非 dumpable,此时
+	// /proc/<pid>/environ 归 root 所有,同 uid 进程也不一定能读(还需
+	// CAP_SYS_PTRACE)。只有 proc 条目确属 PiUID 时才把属主读取作为正向对照;
+	// 否则跳过该对照,仍强制验证下面 ExecUID 的跨身份读取必定失败。
+	if fi, err := os.Stat(envFile); err == nil {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && st.Uid == e.a.PiUID {
+			if r := runProbe(ctx, e.a.PiCredential(), "/bin/cat "+q(envFile)); r.code != 0 || !strings.Contains(r.out, probeMarker) {
+				return []string{"对照失败,属主 PiUID 读不到自己探测进程的 environ"}
+			}
+		}
 	}
 	if r := runProbe(ctx, e.a.ExecCredential(), "/bin/cat "+q(envFile)); r.code == 0 {
 		return []string{"ExecUID 读到了 Pi 进程的 environ(预期读不到)"}

@@ -164,7 +164,11 @@ jobs:
             -e POSTGRES_DB=xlyra -e POSTGRES_USER=xlyra -e POSTGRES_PASSWORD=pw \
             postgres:17-alpine
           sleep 8
+          smoke_data="$(mktemp -d)"
+          mkdir -p "${smoke_data}/agent"
+          printf '{"sandbox_enabled":true}\n' > "${smoke_data}/agent/config.json"
           docker run -d --name xlyra --network xl -p 5801:5801 \
+            -v "${smoke_data}:/data" \
             --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add CHOWN \
             --cap-add KILL --cap-add FOWNER --cap-add DAC_OVERRIDE \
             -e DB_HOST=pg -e DB_NAME=xlyra -e DB_USER=xlyra -e DB_PASSWORD=pw \
