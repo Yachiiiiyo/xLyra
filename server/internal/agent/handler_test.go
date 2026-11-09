@@ -53,6 +53,9 @@ type fakeRunner struct {
 
 	answerErr error
 	answered  []runner.AnswerQuestionInput
+
+	pendingApprovals map[string]int
+	pendingQuestions map[string]int
 }
 
 type compactCall struct {
@@ -95,6 +98,10 @@ func (f *fakeRunner) AnswerQuestion(_ context.Context, in runner.AnswerQuestionI
 func (f *fakeRunner) Grant(_ context.Context, sessionID string, in runner.GrantInput) error {
 	f.grantInfo = append(f.grantInfo, grantCall{sessionID: sessionID, input: in})
 	return f.grantErr
+}
+
+func (f *fakeRunner) PendingCounts(sessionID string) (int, int) {
+	return f.pendingApprovals[sessionID], f.pendingQuestions[sessionID]
 }
 
 func (f *fakeRunner) Health() runner.Health {
@@ -235,6 +242,54 @@ func TestListSessionsResponseShape(t *testing.T) {
 	}
 	if _, ok := byID[idle.ID]; !ok || runningFlags[idle.ID] || titles[idle.ID] == "" {
 		t.Fatalf("idle session idle = %s, got %v/%v", idle.ID, titles[idle.ID], runningFlags[idle.ID])
+	}
+}
+
+// TestListSessionsPendingCounts:列表每项恒带 pending_approvals/pending_questions,
+// 计数按 session_id 从 runner 取,无活跃 run 的会话为 0。
+func TestListSessionsPendingCounts(t *testing.T) {
+	fake := &fakeRunner{}
+	handler, store, _ := newTestHandler(t, fake)
+
+	busy, err := store.Create("m1", "ask")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idle, err := store.Create("m2", "ask")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.pendingApprovals = map[string]int{busy.ID: 2}
+	fake.pendingQuestions = map[string]int{busy.ID: 1}
+
+	rec := doJSONAgent(t, handler, http.MethodGet, "/api/v1/agent/sessions", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data []struct {
+			SessionID        string `json:"session_id"`
+			PendingApprovals int    `json:"pending_approvals"`
+			PendingQuestions int    `json:"pending_questions"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &body)
+	if len(body.Data) != 2 {
+		t.Fatalf("sessions = %d, want 2 (%s)", len(body.Data), rec.Body.String())
+	}
+	counts := map[string][2]int{}
+	for _, item := range body.Data {
+		counts[item.SessionID] = [2]int{item.PendingApprovals, item.PendingQuestions}
+	}
+	if got := counts[busy.ID]; got != [2]int{2, 1} {
+		t.Fatalf("busy pending = %v, want [2 1]", got)
+	}
+	if got := counts[idle.ID]; got != [2]int{0, 0} {
+		t.Fatalf("idle pending = %v, want [0 0]", got)
+	}
+	// 无计数时也要输出整数 0 而不是省略字段。
+	if !strings.Contains(rec.Body.String(), `"pending_approvals":0`) || !strings.Contains(rec.Body.String(), `"pending_questions":0`) {
+		t.Fatalf("列表应恒输出计数字段: %s", rec.Body.String())
 	}
 }
 

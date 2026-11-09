@@ -100,13 +100,17 @@ func TestSystemVersionIsPublic(t *testing.T) {
 	}
 
 	var body struct {
-		Version string `json:"version"`
+		Version  string `json:"version"`
+		AgentAPI int    `json:"agent_api"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if body.Version == "" {
 		t.Fatal("expected version in response")
+	}
+	if body.AgentAPI < 1 {
+		t.Fatalf("agent_api = %d, want >= 1", body.AgentAPI)
 	}
 }
 

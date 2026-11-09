@@ -737,6 +737,11 @@ func (u unavailableRunner) AnswerQuestion(context.Context, runner.AnswerQuestion
 	return fmt.Errorf("%w: %s", runner.ErrUnavailable, u.reason)
 }
 
+// PendingCounts 降级实现无活跃 run,恒为 0。
+func (u unavailableRunner) PendingCounts(string) (int, int) {
+	return 0, 0
+}
+
 func (u unavailableRunner) Health() runner.Health {
 	return runner.Health{Reason: u.reason}
 }

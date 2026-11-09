@@ -41,6 +41,8 @@ type Runner interface {
 	Stop(ctx context.Context, sessionID string) error
 	Grant(ctx context.Context, sessionID string, in runner.GrantInput) error
 	AnswerQuestion(ctx context.Context, in runner.AnswerQuestionInput) error
+	// PendingCounts 返回会话当前等用户的未决审批与未回答提问数。
+	PendingCounts(sessionID string) (approvals, questions int)
 	Health() runner.Health
 }
 
@@ -135,6 +137,9 @@ type sessionItem struct {
 	UpdatedAt    int64    `json:"updated_at"`
 	Running      bool     `json:"running"`
 	SessionAllow []string `json:"session_allow"` // 恒为数组,空为 []
+	// PendingApprovals/PendingQuestions 是「等你处理」计数,无则为 0。
+	PendingApprovals int `json:"pending_approvals"`
+	PendingQuestions int `json:"pending_questions"`
 }
 
 // sessionCommandBody 同时覆盖 POST /sessions 与 /sessions/{id}/retry 的请求体;
@@ -164,6 +169,10 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if h.runs != nil {
 		running = h.runs.Running
 	}
+	pendingCounts := func(string) (int, int) { return 0, 0 }
+	if h.runner != nil {
+		pendingCounts = h.runner.PendingCounts
+	}
 	items, err := h.store.ListItems(running)
 	if err != nil {
 		h.fail(w, r, err)
@@ -171,13 +180,16 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	data := make([]sessionItem, 0, len(items))
 	for _, item := range items {
+		approvals, questions := pendingCounts(item.SessionID)
 		data = append(data, sessionItem{
-			SessionID:    item.SessionID,
-			Title:        item.Title,
-			Preview:      item.Preview,
-			UpdatedAt:    item.UpdatedAt,
-			Running:      item.Running,
-			SessionAllow: item.SessionAllow,
+			SessionID:        item.SessionID,
+			Title:            item.Title,
+			Preview:          item.Preview,
+			UpdatedAt:        item.UpdatedAt,
+			Running:          item.Running,
+			SessionAllow:     item.SessionAllow,
+			PendingApprovals: approvals,
+			PendingQuestions: questions,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"data": data})
