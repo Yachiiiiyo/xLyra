@@ -331,7 +331,6 @@ func TestGrokResponsesProtocolRejectsParametersWithoutEquivalent(t *testing.T) {
 		{name: "flex tier", payload: map[string]any{"service_tier": "flex"}, want: "service_tier"},
 		{name: "arbitrary metadata", payload: map[string]any{"metadata": map[string]any{"trace": "abc"}}, want: "metadata.trace"},
 		{name: "reasoning context", payload: map[string]any{"reasoning": map[string]any{"effort": "high", "context": "opaque"}}, want: "reasoning.context"},
-		{name: "public API cache key", payload: map[string]any{"prompt_cache_key": "cache-1"}, want: "prompt_cache_key"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,6 +347,52 @@ func TestGrokResponsesProtocolRejectsParametersWithoutEquivalent(t *testing.T) {
 				t.Fatalf("incompatible parameters = %#v, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGrokResponsesProtocolAllowsAdvisoryCacheAndEncryptedInclude(t *testing.T) {
+	payload := map[string]any{
+		"model":            "grok-4.5",
+		"input":            "hello",
+		"prompt_cache_key": "cache-1",
+		"include":          []any{"reasoning.encrypted_content"},
+		"client_metadata":  map[string]any{"session_id": "x"},
+	}
+	payload["input"] = []any{
+		map[string]any{"type": "reasoning", "id": "rs_1", "summary": []any{}},
+		map[string]any{"type": "message", "role": "user", "content": "hello"},
+	}
+	canonical, err := canonicalRequestFromOpenAIResponsesPayload(payload, "grok-4.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := gatewayRequest{DownstreamPath: gatewayEndpointResponses, Payload: payload, Canonical: &canonical}
+	if params := grokIncompatibleRequestParams(request); len(params) != 0 {
+		t.Fatalf("incompatible parameters = %#v, want none", params)
+	}
+	upstream, err := newGrokResponsesProtocolAdapter(request, true).BuildUpstreamPayload(request, routeengine.Candidate{Model: routeengine.CandidateModel{UpstreamName: "grok-4.5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := upstream["prompt_cache_key"]; ok {
+		t.Fatalf("prompt_cache_key remained in upstream payload: %#v", upstream["prompt_cache_key"])
+	}
+	if _, ok := upstream["client_metadata"]; ok {
+		t.Fatal("client_metadata remained in upstream payload")
+	}
+	if input, _ := upstream["input"].([]any); true {
+		for _, raw := range input {
+			if item, _ := raw.(map[string]any); item["type"] == "reasoning" {
+				t.Fatalf("reasoning item remained in upstream input: %#v", input)
+			}
+		}
+	}
+	if include, ok := upstream["include"].([]any); ok {
+		for _, item := range include {
+			if strings.Contains(strings.ToLower(anyString(item)), "reasoning.encrypted_content") {
+				t.Fatalf("include still contains reasoning.encrypted_content: %#v", include)
+			}
+		}
 	}
 }
 
