@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast'
 import commonZh from '@/locales/zh/common.json'
 import zh from '@/locales/zh/settings.json'
 import { DevicesSettingsPage } from '@/routes/system/paired-devices-page'
-import type { DeviceItem, DevicePairing } from '@/features/auth/api/paired-devices'
+import { devicesQueryKeys, type DeviceItem, type DevicePairing } from '@/features/auth/api/paired-devices'
 
 const listDevices = vi.hoisted(() => vi.fn())
 const createDevicePairing = vi.hoisted(() => vi.fn())
@@ -32,7 +32,21 @@ vi.mock('@/components/common/qr-code', () => ({
   QRCode: () => createElement('div'),
 }))
 
-// Radix Dialog 依赖真实 DOM，换成 open 时才渲染确认按钮的简化实现
+// Radix Dialog 依赖真实 DOM，换成 open 时才渲染子元素的简化实现
+vi.mock('@/components/ui/dialog', () => {
+  const passthrough = (tag: string) => (props: { children?: React.ReactNode }) => createElement(tag, props)
+  return {
+    Dialog: ({ open, children }: { open: boolean; children?: React.ReactNode }) => open ? createElement('div', null, children) : null,
+    DialogContent: passthrough('div'),
+    DialogHeader: passthrough('div'),
+    DialogBody: passthrough('div'),
+    DialogTitle: passthrough('h2'),
+    DialogDescription: passthrough('p'),
+    DialogFooter: ({ children, cancel, confirm }: { children?: React.ReactNode; cancel?: React.ReactNode; confirm?: React.ReactNode }) =>
+      createElement('div', null, children, cancel, confirm),
+  }
+})
+
 vi.mock('@/components/common/confirm-dialog', () => ({
   ConfirmDialog: ({ open, title, confirmLabel, onConfirm }: {
     open: boolean
@@ -64,6 +78,7 @@ beforeAll(async () => {
   vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '', ...{} }))
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number)
   vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
+  vi.stubGlobal('location', { origin: 'http://192.168.1.10:5173' })
   await i18n.init({
     lng: 'zh',
     defaultNS: 'settings',
@@ -135,13 +150,41 @@ describe('devices settings page', () => {
     }
   })
 
-  it('生成配对码后展示配对码文本', async () => {
+  it('生成配对码先确认地址，继续后展示配对码与地址，新设备连上后自动关闭弹窗', async () => {
     const mounted = await mountPage()
     try {
       await click(findButton(mounted.container, '生成配对码'))
+      // 确认步骤不调接口，先展示当前地址
+      expect(createDevicePairing).not.toHaveBeenCalled()
+      expect(mounted.container.textContent).toContain('确认服务器地址')
+      expect(mounted.container.textContent).toContain('http://192.168.1.10:5173')
+      await click(findButton(mounted.container, '地址正确，继续'))
       expect(createDevicePairing).toHaveBeenCalledOnce()
-      expect(mounted.container.textContent).toContain('ABCD-2345')
-      expect(mounted.container.textContent).toContain('后过期')
+      const text = mounted.container.textContent
+      expect(text).toContain('ABCD-2345')
+      expect(text).toContain('http://192.168.1.10:5173')
+      expect(text).toContain('后过期')
+      // 模拟轮询拉到设备列表里多出一台，弹窗应自动关闭并提示已连接
+      listDevices.mockResolvedValue([device()])
+      await act(async () => {
+        await mounted.client.refetchQueries({ queryKey: devicesQueryKeys.list() })
+      })
+      await flushUpdates()
+      expect(toast.success).toHaveBeenCalledWith('已连接：小夜的 iPhone')
+      expect(mounted.container.textContent).not.toContain('ABCD-2345')
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('取消地址确认弹窗不会调用配对接口', async () => {
+    const mounted = await mountPage()
+    try {
+      await click(findButton(mounted.container, '生成配对码'))
+      expect(mounted.container.textContent).toContain('确认服务器地址')
+      await click(findButton(mounted.container, '取消'))
+      expect(createDevicePairing).not.toHaveBeenCalled()
+      expect(mounted.container.textContent).not.toContain('确认服务器地址')
     } finally {
       await mounted.unmount()
     }
@@ -256,6 +299,7 @@ async function mountPage() {
     await flushUpdates()
     return {
       container,
+      client,
       async unmount() {
         await act(async () => {
           root.unmount()

@@ -73,6 +73,8 @@ type Config struct {
 	AgentQueueTimeout      time.Duration `env:"AGENT_QUEUE_TIMEOUT" envDefault:"2m"`
 	// AgentQueueMax 是并发满时的排队上限;-1 关闭排队。
 	AgentQueueMax int `env:"AGENT_QUEUE_MAX" envDefault:"32"`
+	// TrustedProxies 是额外可信的代理 IP/CIDR;特殊值 * 表示信任任意对端。
+	TrustedProxies []string `env:"TRUSTED_PROXIES" envSeparator:","`
 }
 
 func Load() (Config, error) {

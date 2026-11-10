@@ -112,13 +112,9 @@ export default defineConfig(({ command, mode }) => {
       host: '0.0.0.0',
       port: 5173,
       strictPort: false,
-      proxy: {
-        '/api/v1': proxyTarget,
-        '/v1': proxyTarget,
-        '/healthz': proxyTarget,
-        '/readyz': proxyTarget,
-        '/debug': proxyTarget,
-      },
+      proxy: Object.fromEntries(
+        ['/api/v1', '/v1', '/healthz', '/readyz', '/debug'].map((prefix) => [prefix, { target: proxyTarget, xfwd: true }]),
+      ),
     },
   }
 })

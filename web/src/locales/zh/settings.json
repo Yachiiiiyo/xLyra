@@ -1206,7 +1206,13 @@
       "expiresIn": "{{time}} 后过期",
       "createFailed": "配对码生成失败",
       "connected": "已连接：{{name}}",
-      "done": "完成"
+      "confirmTitle": "确认服务器地址",
+      "confirmDescription": "请确认手机能访问下方地址。如果你现在用的是内网地址、而手机在外网，则无法连接；地址不对时请关闭弹窗，改用手机能访问的地址打开 xLyra 后再尝试配对。",
+      "confirmContinue": "地址正确，继续",
+      "serverAddress": "服务器地址",
+      "codeLabel": "配对码",
+      "addressCopied": "已复制服务器地址",
+      "scanHint": "使用 xLyra App 扫描二维码，或在 App 中手动输入服务器地址和配对码。"
     },
     "list": {
       "title": "已连接的设备",

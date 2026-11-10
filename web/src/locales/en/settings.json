@@ -1206,7 +1206,13 @@
       "expiresIn": "Expires in {{time}}",
       "createFailed": "Failed to create the pairing code",
       "connected": "Connected: {{name}}",
-      "done": "Done"
+      "confirmTitle": "Confirm server address",
+      "confirmDescription": "Make sure your phone can reach the address below. If you are visiting via an internal network address while your phone is on an external network, it cannot connect. If the address is wrong, close this dialog, open xLyra at an address your phone can reach, and try pairing again.",
+      "confirmContinue": "Address is correct, continue",
+      "serverAddress": "Server address",
+      "codeLabel": "Pairing code",
+      "addressCopied": "Server address copied",
+      "scanHint": "Scan the QR code with the xLyra App, or enter the server address and pairing code in the App manually."
     },
     "list": {
       "title": "Connected Devices",
