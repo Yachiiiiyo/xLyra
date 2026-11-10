@@ -1191,5 +1191,46 @@
       "connected": "Connected to xLyra Cloud",
       "disconnected": "Disconnected"
     }
+  },
+  "devices": {
+    "title": "Devices",
+    "description": "Manage devices paired with the xLyra App.",
+    "pairing": {
+      "title": "Add Device",
+      "generate": "Generate Pairing Code",
+      "regenerate": "Regenerate",
+      "hint": "Scan the QR code with the xLyra App, or enter the instance address and pairing code in the App. The code is valid for 5 minutes and can only be used once.",
+      "copy": "Copy",
+      "copied": "Pairing code copied",
+      "expired": "Pairing code expired",
+      "expiresIn": "Expires in {{time}}",
+      "createFailed": "Failed to create the pairing code",
+      "connected": "Connected: {{name}}",
+      "done": "Done"
+    },
+    "list": {
+      "title": "Connected Devices",
+      "current": "Current Device",
+      "revoke": "Revoke",
+      "revokeAll": "Revoke All",
+      "loading": "Loading devices…",
+      "loadFailed": "Failed to load devices",
+      "empty": "No connected devices",
+      "emptyDescription": "Generate a pairing code and scan it with the xLyra App to add a device.",
+      "revoked": "Device revoked",
+      "revokeFailed": "Failed to revoke the device",
+      "allRevoked": "All devices revoked",
+      "revokeAllFailed": "Failed to revoke all devices",
+      "revokeDialog": {
+        "title": "Revoke Device",
+        "description": "The device will lose access and must be paired again.",
+        "confirm": "Revoke"
+      },
+      "revokeAllDialog": {
+        "title": "Revoke All Devices",
+        "description": "All paired devices will be revoked and lose access.",
+        "confirm": "Revoke All"
+      }
+    }
   }
 }

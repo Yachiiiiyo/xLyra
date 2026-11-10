@@ -1191,5 +1191,46 @@
       "connected": "xLyra Cloud に接続しました",
       "disconnected": "接続を解除しました"
     }
+  },
+  "devices": {
+    "title": "デバイス",
+    "description": "xLyra アプリでペアリングしたデバイスを管理します。",
+    "pairing": {
+      "title": "デバイスを追加",
+      "generate": "ペアリングコードを生成",
+      "regenerate": "再生成",
+      "hint": "xLyra アプリで QR コードをスキャンするか、アプリにインスタンスアドレスとペアリングコードを入力してください。コードは 5 分間有効で、一度しか使用できません。",
+      "copy": "コピー",
+      "copied": "ペアリングコードをコピーしました",
+      "expired": "ペアリングコードの有効期限が切れました",
+      "expiresIn": "あと {{time}} で期限切れ",
+      "createFailed": "ペアリングコードの生成に失敗しました",
+      "connected": "接続しました：{{name}}",
+      "done": "完了"
+    },
+    "list": {
+      "title": "接続済みデバイス",
+      "current": "現在のデバイス",
+      "revoke": "失効",
+      "revokeAll": "すべて失効",
+      "loading": "デバイス一覧を読み込み中…",
+      "loadFailed": "デバイス一覧の読み込みに失敗しました",
+      "empty": "接続済みデバイスはありません",
+      "emptyDescription": "ペアリングコードを生成して xLyra アプリでスキャンするとデバイスを追加できます。",
+      "revoked": "デバイスを失効しました",
+      "revokeFailed": "デバイスの失効に失敗しました",
+      "allRevoked": "すべてのデバイスを失効しました",
+      "revokeAllFailed": "すべてのデバイスの失効に失敗しました",
+      "revokeDialog": {
+        "title": "デバイスを失効",
+        "description": "失効するとこのデバイスはアクセスできなくなり、再度ペアリングが必要です。",
+        "confirm": "失効"
+      },
+      "revokeAllDialog": {
+        "title": "すべてのデバイスを失効",
+        "description": "ペアリング済みのすべてのデバイスが失効し、アクセスできなくなります。",
+        "confirm": "すべて失効"
+      }
+    }
   }
 }

@@ -28,6 +28,7 @@ const XlyraCloudSettingsPage = lazyNamed(() => import('@/routes/system/xlyra-clo
 const PluginsSettingsPage = lazyNamed(() => import('@/routes/system/plugins-settings-page'), 'PluginsSettingsPage')
 const dashboardModule = import('@/routes/dashboard')
 const DashboardPage = lazyNamed(() => dashboardModule, 'DashboardPage')
+const DevicesSettingsPage = lazyNamed(() => import('@/routes/system/paired-devices-page'), 'DevicesSettingsPage')
 const GeneralSettingsPage = lazyNamed(() => import('@/routes/settings/global/general-settings-page'), 'GeneralSettingsPage')
 const GlobalConfigPage = lazyNamed(() => import('@/routes/settings/global-config-page'), 'GlobalConfigPage')
 const ModelsPage = lazyNamed(() => import('@/routes/models'), 'ModelsPage')
@@ -114,6 +115,7 @@ export const appRouter = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/system/xlyra-cloud" replace /> },
           { path: 'xlyra-cloud', element: lazyElement(<XlyraCloudSettingsPage />) },
+          { path: 'devices', element: lazyElement(<DevicesSettingsPage />) },
           { path: 'plugins', element: lazyElement(<PluginsSettingsPage />) },
         ],
       },

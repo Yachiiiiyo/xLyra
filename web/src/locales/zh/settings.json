@@ -1191,5 +1191,46 @@
       "connected": "已连接到 xLyra Cloud",
       "disconnected": "已断开连接"
     }
+  },
+  "devices": {
+    "title": "设备",
+    "description": "管理通过 xLyra App 配对的设备。",
+    "pairing": {
+      "title": "添加设备",
+      "generate": "生成配对码",
+      "regenerate": "重新生成",
+      "hint": "用 xLyra App 扫描二维码，或在 App 里输入实例地址和配对码。配对码 5 分钟内有效，只能使用一次。",
+      "copy": "复制",
+      "copied": "已复制配对码",
+      "expired": "配对码已过期",
+      "expiresIn": "{{time}} 后过期",
+      "createFailed": "配对码生成失败",
+      "connected": "已连接：{{name}}",
+      "done": "完成"
+    },
+    "list": {
+      "title": "已连接的设备",
+      "current": "当前设备",
+      "revoke": "吊销",
+      "revokeAll": "全部吊销",
+      "loading": "正在加载设备列表…",
+      "loadFailed": "设备列表加载失败",
+      "empty": "暂无已连接的设备",
+      "emptyDescription": "生成配对码并用 xLyra App 扫码即可添加设备。",
+      "revoked": "设备已吊销",
+      "revokeFailed": "设备吊销失败",
+      "allRevoked": "已吊销全部设备",
+      "revokeAllFailed": "全部吊销失败",
+      "revokeDialog": {
+        "title": "吊销设备",
+        "description": "吊销后该设备将无法继续访问，需要重新配对才能恢复。",
+        "confirm": "吊销"
+      },
+      "revokeAllDialog": {
+        "title": "吊销全部设备",
+        "description": "所有已配对的设备都会被吊销，它们将无法继续访问。",
+        "confirm": "全部吊销"
+      }
+    }
   }
 }

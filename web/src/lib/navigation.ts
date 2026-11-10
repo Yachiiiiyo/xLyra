@@ -4,6 +4,7 @@ import {
   Cable,
   ChartColumn,
   Cloud,
+  Smartphone,
   ChartNoAxesCombined,
   DatabaseBackup,
   DatabaseZap,
@@ -192,6 +193,12 @@ export function getAppNavSections(t: TFunction, features: NavFeatures = {}): App
           label: t('nav.xlyraCloud'),
           icon: Cloud,
           description: 'Connect this instance to an xLyra Cloud account.',
+        },
+        {
+          to: '/system/devices',
+          label: t('nav.devices'),
+          icon: Smartphone,
+          description: 'Pair phones with the xLyra app and revoke paired devices.',
         },
         {
           to: '/system/plugins',

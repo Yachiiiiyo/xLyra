@@ -597,13 +597,13 @@ describe('xLyra Cloud settings page', () => {
 })
 
 describe('settings navigation', () => {
-  it('puts xLyra Cloud and plugins in the system section after operations', () => {
+  it('puts xLyra Cloud and plugins in the system section after operations, with devices between them', () => {
     const sections = getAppNavSections((key) => key)
     const keys = sections.map((section) => section.key)
     expect(keys.indexOf('system')).toBe(keys.indexOf('operations') + 1)
     const system = sections.find((section) => section.key === 'system')
     expect(system?.label).toBe('nav.system')
-    expect(system?.items.map((item) => item.to)).toEqual(['/system/xlyra-cloud', '/system/plugins'])
+    expect(system?.items.map((item) => item.to)).toEqual(['/system/xlyra-cloud', '/system/devices', '/system/plugins'])
     expect(system?.items[0]?.icon).toBe(Cloud)
     const settings = sections.flatMap((section) => section.items).find((item) => item.to === '/settings')
     const children = (settings?.children ?? []).map((item) => item.to)
