@@ -120,6 +120,12 @@ func (c *Client) mapPushResponse(ctx context.Context, deviceID uuid.UUID, status
 	}
 	cloudErr, _ := cloudError(status, raw).(*CloudError)
 	code := codeOf(cloudErr)
+	// Hub 的发送结果只带 result，没有 error.code；cloudError 会把空 code 兜底成 invalid_request。
+	if code == "" || code == "invalid_request" {
+		if result := pushResultField(raw); result != "" {
+			code = result
+		}
+	}
 	if code == "instance_revoked" {
 		c.handleRevoked(ctx)
 		return PushNotReady, errRevoked
