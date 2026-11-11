@@ -1240,3 +1240,26 @@
     }
   }
 }
+    },
+    "push": {
+      "unregistered": "通知オフ",
+      "ok": "プッシュ正常",
+      "invalid": "プッシュ無効",
+      "error": "直近のプッシュ失敗",
+      "unregisteredHint": "スマートフォンの xLyra アプリで通知をオンにすると、ここにプッシュ状態が表示されます",
+      "invalidHint": "スマートフォンで xLyra アプリを開き直し、通知を再登録してください",
+      "registeredAt": "登録：{{time}}",
+      "cloudRequired": "プッシュには、このインスタンスを xLyra Cloud に連携する必要があります",
+      "cloudLink": "連携する",
+      "prefsOff": "オフ：{{names}}",
+      "listSeparator": "、",
+      "env": {
+        "sandbox": "サンドボックス",
+        "production": "本番"
+      },
+      "kinds": {
+        "approval": "承認",
+        "question": "質問",
+        "done": "完了",
+        "error": "エラー"
+      }

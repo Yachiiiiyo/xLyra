@@ -1240,3 +1240,26 @@
     }
   }
 }
+    },
+    "push": {
+      "unregistered": "未开启通知",
+      "ok": "推送正常",
+      "invalid": "推送失效",
+      "error": "最近推送失败",
+      "unregisteredHint": "在手机的 xLyra App 里开启通知后这里会显示推送状态",
+      "invalidHint": "请在手机上重新打开 xLyra App 以重新登记通知",
+      "registeredAt": "登记于 {{time}}",
+      "cloudRequired": "推送需要先把本实例绑定到 xLyra Cloud",
+      "cloudLink": "前往绑定",
+      "prefsOff": "已关闭：{{names}}",
+      "listSeparator": "、",
+      "env": {
+        "sandbox": "沙盒",
+        "production": "生产"
+      },
+      "kinds": {
+        "approval": "审批",
+        "question": "提问",
+        "done": "完成",
+        "error": "出错"
+      }

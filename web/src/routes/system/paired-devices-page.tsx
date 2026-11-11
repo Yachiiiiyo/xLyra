@@ -24,12 +24,15 @@ import {
 import {
   createDevicePairing,
   devicesQueryKeys,
+  isIOSPlatform,
   listDevices,
   revokeAllDevices,
   revokeDevice,
   type DeviceItem,
   type DevicePairing,
 } from '@/features/auth/api/paired-devices'
+import { cloudBindingQueryKeys, fetchCloudBinding } from '@/features/settings/api/cloud-binding'
+import { DeviceCloudPushNotice, DevicePushStatus } from '@/routes/system/device-push-status'
 
 export function DevicesSettingsPage() {
   const { t, i18n } = useTranslation('settings')
@@ -85,6 +88,13 @@ export function DevicesSettingsPage() {
   })
 
   const devices = devicesQuery.data ?? []
+  const cloudBindingQuery = useQuery({
+    queryKey: cloudBindingQueryKeys.all,
+    queryFn: ({ signal }) => fetchCloudBinding(signal),
+  })
+  const showCloudPushNotice = cloudBindingQuery.isSuccess
+    && cloudBindingQuery.data.status !== 'bound'
+    && devices.some((device) => device.push?.registered === true || isIOSPlatform(device.platform))
 
   // 检测到新设备连上后自动关闭弹窗、刷新列表并提示。
   const connectedRef = useRef(false)
@@ -138,6 +148,7 @@ export function DevicesSettingsPage() {
             {t('devices.list.revokeAll')}
           </Button>
         </div>
+        {showCloudPushNotice ? <DeviceCloudPushNotice /> : null}
         {devicesQuery.isLoading ? (
           <p className="text-label-2 text-body">{t('devices.list.loading')}</p>
         ) : devicesQuery.isError ? (
@@ -158,6 +169,7 @@ export function DevicesSettingsPage() {
                   <p className="truncate text-footnote text-label-2">
                     {device.platform} · {device.last_ip ?? '-'} · {formatRelativeTime(device.last_seen_at ?? undefined, i18n.language) || '-'}
                   </p>
+                  <DevicePushStatus device={device} />
                 </div>
                 <Button variant="secondary" size="sm" disabled={revokeMutation.isPending} onClick={() => setRevokeTarget(device)}>
                   {t('devices.list.revoke')}

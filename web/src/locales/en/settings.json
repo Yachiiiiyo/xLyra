@@ -1240,3 +1240,26 @@
     }
   }
 }
+    },
+    "push": {
+      "unregistered": "Notifications off",
+      "ok": "Push OK",
+      "invalid": "Push invalid",
+      "error": "Last push failed",
+      "unregisteredHint": "Turn on notifications in the xLyra App on your phone, and the push status will show up here.",
+      "invalidHint": "Open the xLyra App on your phone again to register notifications.",
+      "registeredAt": "Registered {{time}}",
+      "cloudRequired": "Push requires this instance to be bound to xLyra Cloud",
+      "cloudLink": "Bind now",
+      "prefsOff": "Off: {{names}}",
+      "listSeparator": ", ",
+      "env": {
+        "sandbox": "Sandbox",
+        "production": "Production"
+      },
+      "kinds": {
+        "approval": "Approval",
+        "question": "Question",
+        "done": "Done",
+        "error": "Error"
+      }
