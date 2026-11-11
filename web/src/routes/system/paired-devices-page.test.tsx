@@ -156,9 +156,9 @@ describe('devices settings page', () => {
       await click(findButton(mounted.container, '生成配对码'))
       // 确认步骤不调接口，先展示当前地址
       expect(createDevicePairing).not.toHaveBeenCalled()
-      expect(mounted.container.textContent).toContain('确认服务器地址')
+      expect(mounted.container.textContent).toContain('确认连接地址')
       expect(mounted.container.textContent).toContain('http://192.168.1.10:5173')
-      await click(findButton(mounted.container, '地址正确，继续'))
+      await click(findButton(mounted.container, '使用此地址'))
       expect(createDevicePairing).toHaveBeenCalledOnce()
       const text = mounted.container.textContent
       expect(text).toContain('ABCD-2345')
@@ -181,10 +181,10 @@ describe('devices settings page', () => {
     const mounted = await mountPage()
     try {
       await click(findButton(mounted.container, '生成配对码'))
-      expect(mounted.container.textContent).toContain('确认服务器地址')
+      expect(mounted.container.textContent).toContain('确认连接地址')
       await click(findButton(mounted.container, '取消'))
       expect(createDevicePairing).not.toHaveBeenCalled()
-      expect(mounted.container.textContent).not.toContain('确认服务器地址')
+      expect(mounted.container.textContent).not.toContain('确认连接地址')
     } finally {
       await mounted.unmount()
     }
