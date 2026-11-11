@@ -123,3 +123,9 @@ export async function revokeDevice(deviceId: string) {
 export async function revokeAllDevices() {
   return apiFetch<void>('/api/v1/devices/revoke-all', { method: 'POST' })
 }
+
+export type DevicePushTestResult = 'ok' | 'unregistered' | 'retry_later' | 'rejected'
+
+export async function sendDevicePushTest(id: string) {
+  return apiFetch<{ result: DevicePushTestResult }>(`/api/v1/devices/${id}/push/test`, { method: 'POST' })
+}

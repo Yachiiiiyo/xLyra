@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"xlyra/server/internal/auth"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/store"
 )
 
@@ -320,6 +321,81 @@ func (h Handler) PutDevicePushPrefs(w http.ResponseWriter, r *http.Request) {
 
 	h.recordAudit(r, deviceActor(device), "device.push_prefs", "admin_device", device.ID.String(), true, "", map[string]any{"prefs": prefs})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+const (
+	pushTestSessionID = "push-test"
+	pushTestRefID     = "push-test"
+	pushTestTitle     = "xLyra 测试通知"
+	pushTestBody      = "收到这条通知，说明这台手机的推送已经连通"
+)
+
+// TestDevicePush 给一台已登记推送的设备发一条测试通知。
+func (h Handler) TestDevicePush(w http.ResponseWriter, r *http.Request) {
+	actor := currentAdminActor(r)
+	if h.auth == nil || actor.AdminID == uuid.Nil {
+		h.writeError(w, r, http.StatusUnauthorized, "unauthorized", "admin session is required")
+		return
+	}
+
+	deviceID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		h.writeError(w, r, http.StatusNotFound, "not_found", "device not found")
+		return
+	}
+	device, err := h.auth.GetDevice(r.Context(), deviceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "device not found")
+			return
+		}
+		h.writeError(w, r, http.StatusInternalServerError, "device_push_failed", "failed to load the device")
+		return
+	}
+	if device.AdminID != actor.AdminID {
+		h.writeError(w, r, http.StatusNotFound, "not_found", "device not found")
+		return
+	}
+	if device.APNSTokenEnc == "" {
+		h.writeError(w, r, http.StatusConflict, "push_not_registered", "device push is not registered")
+		return
+	}
+	if h.PushSender == nil {
+		h.writeError(w, r, http.StatusConflict, "cloud_not_bound", "xLyra Cloud is not bound")
+		return
+	}
+
+	result, err := h.PushSender.SendPush(r.Context(), cloudclient.PushRequest{
+		DeviceID:  device.ID.String(),
+		Kind:      "done",
+		Title:     pushTestTitle,
+		Body:      pushTestBody,
+		SessionID: pushTestSessionID,
+		RefID:     pushTestRefID,
+	})
+	if result == cloudclient.PushNotReady {
+		h.writeError(w, r, http.StatusConflict, "cloud_not_bound", "xLyra Cloud is not bound")
+		return
+	}
+	name := pushTestResultName(result)
+	if err != nil {
+		h.logWarn("device push test was not delivered", "device_id", device.ID.String(), "result", name)
+	}
+	h.recordAudit(r, actor, "device.push_test", "admin_device", device.ID.String(), true, "", map[string]any{"result": name})
+	h.writePayload(w, http.StatusOK, map[string]any{"result": name})
+}
+
+func pushTestResultName(result cloudclient.PushResult) string {
+	switch result {
+	case cloudclient.PushUnregistered:
+		return "unregistered"
+	case cloudclient.PushRetryLater:
+		return "retry_later"
+	case cloudclient.PushRejected:
+		return "rejected"
+	default:
+		return "ok"
+	}
 }
 
 func (h Handler) wakePushSync() {

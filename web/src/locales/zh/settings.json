@@ -1264,6 +1264,17 @@
         "question": "提问",
         "done": "完成",
         "error": "出错"
+      },
+      "test": {
+        "send": "发送测试通知",
+        "cloudNotBound": "请先绑定 xLyra Cloud",
+        "failed": "测试通知发送失败",
+        "result": {
+          "ok": "已发送，请看手机",
+          "unregistered": "这台手机的推送已失效，请在手机上重新打开 xLyra App",
+          "retry_later": "暂时没发出去，稍后再试",
+          "rejected": "发送被拒绝"
+        }
       }
     }
   }

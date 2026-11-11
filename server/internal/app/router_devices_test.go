@@ -140,6 +140,7 @@ func TestDeviceTokenIsDeniedOnWebOnlyAdminRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/devices/pairings"},
 		{http.MethodGet, "/api/v1/devices"},
 		{http.MethodDelete, "/api/v1/devices/" + uuid.NewString()},
+		{http.MethodPost, "/api/v1/devices/" + uuid.NewString() + "/push/test"},
 		{http.MethodPost, "/api/v1/devices/revoke-all"},
 	} {
 		tc := tc

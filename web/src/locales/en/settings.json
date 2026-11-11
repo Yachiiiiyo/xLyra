@@ -1264,6 +1264,17 @@
         "question": "Question",
         "done": "Done",
         "error": "Error"
+      },
+      "test": {
+        "send": "Send test notification",
+        "cloudNotBound": "Bind xLyra Cloud first",
+        "failed": "Failed to send the test notification",
+        "result": {
+          "ok": "Sent. Check your phone",
+          "unregistered": "Push for this phone is no longer valid. Open the xLyra App again",
+          "retry_later": "It didn't go out. Try again later",
+          "rejected": "The send was rejected"
+        }
       }
     }
   }

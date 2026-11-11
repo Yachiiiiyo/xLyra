@@ -4,6 +4,7 @@ import { act, createElement } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { MemoryRouter } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { APIError } from '@/lib/http'
 import { toast } from '@/lib/toast'
 import commonZh from '@/locales/zh/common.json'
 import zh from '@/locales/zh/settings.json'
@@ -16,10 +17,11 @@ const fetchCloudBinding = vi.hoisted(() => vi.fn())
 const createDevicePairing = vi.hoisted(() => vi.fn())
 const revokeDevice = vi.hoisted(() => vi.fn())
 const revokeAllDevices = vi.hoisted(() => vi.fn())
+const sendDevicePushTest = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/auth/api/paired-devices', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/auth/api/paired-devices')>()
-  return { ...actual, listDevices, createDevicePairing, revokeDevice, revokeAllDevices }
+  return { ...actual, listDevices, createDevicePairing, revokeDevice, revokeAllDevices, sendDevicePushTest }
 })
 
 vi.mock('@/features/settings/api/cloud-binding', async (importOriginal) => {
@@ -107,6 +109,7 @@ beforeEach(() => {
   createDevicePairing.mockResolvedValue(pairing())
   revokeDevice.mockResolvedValue(undefined)
   revokeAllDevices.mockResolvedValue(undefined)
+  sendDevicePushTest.mockResolvedValue({ result: 'ok' })
 })
 
 afterEach(() => {
@@ -115,6 +118,7 @@ afterEach(() => {
   createDevicePairing.mockReset()
   revokeDevice.mockReset()
   revokeAllDevices.mockReset()
+  sendDevicePushTest.mockReset()
   vi.mocked(toast.success).mockClear()
   vi.mocked(toast.error).mockClear()
 })
@@ -391,6 +395,60 @@ describe('devices settings page', () => {
       expect(text).not.toContain('设备列表加载失败')
     } finally {
       await mounted.unmount()
+    }
+  })
+
+  it('发送测试通知只在已登记时出现，并按结果提示', async () => {
+    listDevices.mockResolvedValue([
+      device({ push: devicePush() }),
+      device({ id: '33333333-3333-3333-3333-333333333333', name: '未登记', push: devicePush({ registered: false }) }),
+    ])
+    const mounted = await mountPage()
+    try {
+      const buttons = findButtons(mounted.container, '发送测试通知')
+      expect(buttons).toHaveLength(1)
+
+      let release: (value: { result: string }) => void = () => {}
+      sendDevicePushTest.mockReturnValue(new Promise((resolve) => { release = resolve }))
+      await click(buttons[0])
+      expect(sendDevicePushTest).toHaveBeenCalledWith('11111111-1111-1111-1111-111111111111')
+      const pending = findButton(mounted.container, '发送测试通知')
+      expect(pending?.hasAttribute('disabled')).toBe(true)
+
+      await act(async () => { release({ result: 'ok' }) })
+      await flushUpdates()
+      await flushUpdates()
+      expect(toast.success).toHaveBeenCalledWith('已发送，请看手机')
+    } finally {
+      await mounted.unmount()
+    }
+  })
+
+  it('测试通知失败时按结果或错误码提示', async () => {
+    listDevices.mockResolvedValue([device({ push: devicePush() })])
+    for (const [result, message] of [
+      ['unregistered', '这台手机的推送已失效，请在手机上重新打开 xLyra App'],
+      ['retry_later', '暂时没发出去，稍后再试'],
+      ['rejected', '发送被拒绝'],
+    ] as const) {
+      sendDevicePushTest.mockResolvedValue({ result })
+      const mounted = await mountPage()
+      try {
+        await click(findButton(mounted.container, '发送测试通知'))
+        expect(toast.success).toHaveBeenCalledWith(message)
+      } finally {
+        await mounted.unmount()
+        vi.mocked(toast.success).mockClear()
+      }
+    }
+
+    sendDevicePushTest.mockRejectedValue(new APIError('not bound', 409, 'cloud_not_bound'))
+    const unbound = await mountPage()
+    try {
+      await click(findButton(unbound.container, '发送测试通知'))
+      expect(toast.error).toHaveBeenCalledWith('请先绑定 xLyra Cloud')
+    } finally {
+      await unbound.unmount()
     }
   })
 })

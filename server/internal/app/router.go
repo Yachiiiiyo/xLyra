@@ -248,6 +248,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	if cloudClient != nil {
 		adminHandler = adminHandler.WithCloudClient(cloudClient)
 		adminHandler.PushSyncWaker = cloudClient
+		adminHandler.PushSender = cloudClient
 		adminHandler.HubStatus = func(ctx context.Context) (bool, string) {
 			status, err := cloudClient.Status(ctx)
 			if err != nil {
@@ -709,6 +710,7 @@ func registerAdminDeviceRoutes(protected chi.Router, adminHandler admin.Handler)
 	webOnly.Post("/devices/pairings", adminHandler.CreateDevicePairing)
 	webOnly.Get("/devices", adminHandler.ListDevices)
 	webOnly.Delete("/devices/{id}", adminHandler.RevokeDevice)
+	webOnly.Post("/devices/{id}/push/test", adminHandler.TestDevicePush)
 	webOnly.Post("/devices/revoke-all", adminHandler.RevokeAllDevices)
 	protected.Get("/devices/self", adminHandler.GetDeviceSelf)
 	protected.Delete("/devices/self", adminHandler.DeleteDeviceSelf)

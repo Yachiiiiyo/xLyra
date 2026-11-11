@@ -1,8 +1,13 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatRelativeTime } from '@/features/agent/lib/relative-time'
-import type { DeviceItem, DevicePush, DevicePushPrefs } from '@/features/auth/api/paired-devices'
+import { devicesQueryKeys, sendDevicePushTest, type DeviceItem, type DevicePush, type DevicePushPrefs } from '@/features/auth/api/paired-devices'
+import { APIError } from '@/lib/http'
+import { toast } from '@/lib/toast'
 
 const prefKeys = ['approval', 'question', 'done', 'error'] as const satisfies ReadonlyArray<keyof DevicePushPrefs>
 
@@ -21,6 +26,8 @@ export function DeviceCloudPushNotice() {
 
 export function DevicePushStatus({ device }: { device: DeviceItem }) {
   const { t, i18n } = useTranslation('settings')
+  const queryClient = useQueryClient()
+  const [sending, setSending] = useState(false)
   const push = device.push
   const registered = push?.registered === true
 
@@ -48,8 +55,36 @@ export function DevicePushStatus({ device }: { device: DeviceItem }) {
       {meta ? <p className="text-footnote text-label-2">{meta}</p> : null}
       {push.state === 'invalid' ? <p className="text-footnote text-label-2">{t('devices.push.invalidHint')}</p> : null}
       {offSummary ? <p className="text-footnote text-label-2">{offSummary}</p> : null}
+      <Button
+        variant="secondary"
+        size="sm"
+        loading={sending}
+        disabled={sending}
+        onClick={() => { void sendTest() }}
+      >
+        {t('devices.push.test.send')}
+      </Button>
     </div>
   )
+
+  async function sendTest() {
+    setSending(true)
+    try {
+      const payload = await sendDevicePushTest(device.id)
+      toast.success(t(`devices.push.test.result.${payload.result}`))
+    } catch (error) {
+      if (error instanceof APIError && error.status === 409 && error.code === 'cloud_not_bound') {
+        toast.error(t('devices.push.test.cloudNotBound'))
+      } else if (error instanceof APIError && error.status === 409 && error.code === 'push_not_registered') {
+        toast.error(error.message)
+      } else {
+        toast.error(error instanceof Error ? error.message : t('devices.push.test.failed'))
+      }
+    } finally {
+      setSending(false)
+      void queryClient.invalidateQueries({ queryKey: devicesQueryKeys.list() })
+    }
+  }
 }
 
 function registeredMeta(push: DevicePush, locale: string, t: (key: string, options?: Record<string, unknown>) => string) {

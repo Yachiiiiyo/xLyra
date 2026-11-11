@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"xlyra/server/internal/auth"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/store"
 )
@@ -365,6 +366,104 @@ func TestRevokeWakesPushSync(t *testing.T) {
 
 	if waker.calls != 3 {
 		t.Fatalf("WakePushSync calls = %d, want one per revoke path", waker.calls)
+	}
+}
+
+type stubPushSender struct {
+	req    cloudclient.PushRequest
+	result cloudclient.PushResult
+	err    error
+	calls  int
+}
+
+func (s *stubPushSender) SendPush(_ context.Context, req cloudclient.PushRequest) (cloudclient.PushResult, error) {
+	s.calls++
+	s.req = req
+	return s.result, s.err
+}
+
+func TestTestDevicePush(t *testing.T) {
+	t.Parallel()
+
+	device := store.AdminDevice{ID: uuid.New(), AdminID: uuid.New(), Name: "iphone", APNSTokenEnc: "ciphertext"}
+	actor := auth.AdminActor{Type: "session", AdminID: device.AdminID}
+	request := func() *http.Request {
+		req := adminRequestWithRouteParam(http.MethodPost, "/api/v1/devices/"+device.ID.String()+"/push/test", "", "id", device.ID.String())
+		return adminDeviceContext(req, actor)
+	}
+
+	t.Run("missing", func(t *testing.T) {
+		t.Parallel()
+		handler := Handler{auth: auth.NewService(nil, adminTestMasterKey)}
+		req := adminDeviceContext(adminRequestWithRouteParam(http.MethodPost, "/api/v1/devices/not-a-uuid/push/test", "", "id", "not-a-uuid"), actor)
+		assertAdminErrorCode(t, adminPerform(handler.TestDevicePush, req), http.StatusNotFound, "not_found")
+	})
+
+	t.Run("not registered", func(t *testing.T) {
+		t.Parallel()
+		audits := make([]store.AdminAuditLog, 0, 1)
+		db, _ := devicePushFixture(t, store.AdminDevice{ID: device.ID, AdminID: device.AdminID}, &audits)
+		handler := Handler{auth: auth.NewService(db, adminTestMasterKey), PushSender: &stubPushSender{}}
+		assertAdminErrorCode(t, adminPerform(handler.TestDevicePush, request()), http.StatusConflict, "push_not_registered")
+		if len(audits) != 0 {
+			t.Fatalf("audits = %#v, want none", audits)
+		}
+	})
+
+	t.Run("not bound", func(t *testing.T) {
+		t.Parallel()
+		audits := make([]store.AdminAuditLog, 0, 1)
+		db, _ := devicePushFixture(t, device, &audits)
+		handler := Handler{auth: auth.NewService(db, adminTestMasterKey)}
+		assertAdminErrorCode(t, adminPerform(handler.TestDevicePush, request()), http.StatusConflict, "cloud_not_bound")
+	})
+
+	t.Run("sender not ready", func(t *testing.T) {
+		t.Parallel()
+		audits := make([]store.AdminAuditLog, 0, 1)
+		db, _ := devicePushFixture(t, device, &audits)
+		sender := &stubPushSender{result: cloudclient.PushNotReady}
+		handler := Handler{auth: auth.NewService(db, adminTestMasterKey), PushSender: sender}
+		assertAdminErrorCode(t, adminPerform(handler.TestDevicePush, request()), http.StatusConflict, "cloud_not_bound")
+		if sender.calls != 1 || len(audits) != 0 {
+			t.Fatalf("calls = %d audits = %d, want one send and no audit", sender.calls, len(audits))
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		result cloudclient.PushResult
+		want   string
+	}{
+		{name: "ok", result: cloudclient.PushOK, want: "ok"},
+		{name: "unregistered", result: cloudclient.PushUnregistered, want: "unregistered"},
+		{name: "retry later", result: cloudclient.PushRetryLater, want: "retry_later"},
+		{name: "rejected", result: cloudclient.PushRejected, want: "rejected"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var logs bytes.Buffer
+			audits := make([]store.AdminAuditLog, 0, 1)
+			db, _ := devicePushFixture(t, device, &audits)
+			sender := &stubPushSender{result: tc.result, err: errors.New("token=secret-apns-token")}
+			handler := Handler{logger: slog.New(slog.NewTextHandler(&logs, nil)), auth: auth.NewService(db, adminTestMasterKey), PushSender: sender}
+			rec := adminPerform(handler.TestDevicePush, request())
+
+			adminAssertStatus(t, rec, http.StatusOK)
+			if rec.Body.String() != `{"result":"`+tc.want+`"}\n` && !strings.Contains(rec.Body.String(), `"result":"`+tc.want+`"`) {
+				t.Fatalf("body = %s, want result %s", rec.Body.String(), tc.want)
+			}
+			if sender.req.DeviceID != device.ID.String() || sender.req.Kind != "done" || sender.req.Title != "xLyra 测试通知" || sender.req.SessionID == "" || sender.req.RefID == "" || sender.req.Badge != nil {
+				t.Fatalf("request = %+v", sender.req)
+			}
+			if len(audits) != 1 || audits[0].Action != "device.push_test" || !strings.Contains(string(audits[0].Metadata), tc.want) {
+				t.Fatalf("audits = %#v, want device.push_test", audits)
+			}
+			if strings.Contains(rec.Body.String(), "secret-apns-token") || strings.Contains(logs.String(), "secret-apns-token") || strings.Contains(string(audits[0].Metadata), "secret-apns-token") || strings.Contains(string(audits[0].Metadata), pushTestTitle) {
+				t.Fatal("response, log, or audit leaked the token or the notification text")
+			}
+		})
 	}
 }
 
