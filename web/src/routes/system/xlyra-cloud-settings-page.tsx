@@ -6,6 +6,7 @@ import { copyToClipboard } from '@/components/common/copy-to-clipboard'
 import { ConfirmDialog } from '@/components/common/confirm-dialog'
 import { ErrorState } from '@/components/common/error-state'
 import { Notice } from '@/components/common/notice'
+import { QRCode } from '@/components/common/qr-code'
 import { PageHeader } from '@/components/common/page-header'
 import { StatusBadge } from '@/components/common/status-badge'
 import { Button } from '@/components/ui/button'
@@ -395,6 +396,23 @@ function PairingGuide({
           <p className="text-center text-footnote tabular-nums text-label-2">{t('xlyraCloud.pairing.countdown', { time: formatCountdown(remaining) })}</p>
         ) : null}
         {expired ? <p className="text-center text-footnote tabular-nums text-label-2">{t('xlyraCloud.pairing.expired')}</p> : null}
+        {openURL && !expired ? (
+          <div className="flex flex-col items-center gap-3">
+            <QRCode
+              value={openURL}
+              size={160}
+              data-testid="cloud-pairing-qr"
+              aria-label={t('xlyraCloud.pairing.scanHint')}
+            />
+            <p className="text-center text-footnote text-label-2">{t('xlyraCloud.pairing.scanHint')}</p>
+          </div>
+        ) : null}
+        <ol className="list-decimal space-y-1 pl-5 text-body text-label-2">
+          <li>{t('xlyraCloud.pairing.stepCopyOrScan')}</li>
+          <li>{t('xlyraCloud.pairing.stepApprove')}</li>
+          <li>{t('xlyraCloud.pairing.stepReturn')}</li>
+        </ol>
+        <p className="text-footnote text-label-2">{t('xlyraCloud.pairing.dismissHint')}</p>
       </DialogBody>
       <DialogFooter
         cancel={(

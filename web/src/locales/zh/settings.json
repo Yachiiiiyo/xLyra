@@ -1081,7 +1081,7 @@
     "unbound": {
       "title": "未连接",
       "description": "连接后可以在 xLyra Cloud 控制台里查看和管理这台实例。",
-      "privacy": "连接后，实例会定期向 xLyra Cloud 上报 xLyra 版本号和已安装插件的状态（不包含站点地址、密钥或配置）。",
+      "privacy": "连接后，实例会定期向 xLyra Cloud 上报 xLyra 版本号、已安装插件的状态，以及已配对手机的名称、平台、最近活跃时间和是否开启通知（不包含站点地址、密钥或配置）。",
       "connect": "连接账号"
     },
     "pairing": {
@@ -1092,12 +1092,17 @@
       "heading": "配对",
       "viewCode": "查看配对码",
       "instruction": "在已登录的 xLyra Cloud 控制台点「连接实例」，输入这个配对码。",
+      "stepCopyOrScan": "点「复制并打开 Cloud」或扫码",
+      "stepApprove": "在 Cloud 登录后核对配对码与上面一致，点「批准」",
+      "stepReturn": "回到这里，几秒后会显示「已连接」",
+      "scanHint": "用手机扫码，在 xLyra Cloud 登录后核对配对码并批准",
+      "dismissHint": "关闭这个窗口不会取消配对，在 Cloud 批准后仍会自动连上。想放弃请点『取消配对』。",
       "open": "在 xLyra Cloud 打开",
       "cancel": "取消",
       "cancelPairing": "取消配对",
       "copyOpen": "复制并打开 Cloud",
       "countdown": "剩余 {{time}}",
-      "expired": "配对码已过期",
+      "expired": "配对码已过期，请重新生成配对码",
       "regenerate": "重新生成",
       "codeMissing": "配对码已不可见，请重新生成"
     },
@@ -1237,9 +1242,6 @@
         "description": "所有已配对的设备都会被吊销，它们将无法继续访问。",
         "confirm": "全部吊销"
       }
-    }
-  }
-}
     },
     "push": {
       "unregistered": "未开启通知",
@@ -1263,3 +1265,6 @@
         "done": "完成",
         "error": "出错"
       }
+    }
+  }
+}

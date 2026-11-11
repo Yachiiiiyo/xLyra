@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createInstance } from 'i18next'
-import { act, type ReactNode } from 'react'
+import { act, createElement, type ReactNode } from 'react'
 import { I18nextProvider } from 'react-i18next'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Cloud } from 'lucide-react'
@@ -31,6 +31,11 @@ vi.mock('@/features/settings/api/cloud-binding', async (importOriginal) => {
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
+}))
+
+vi.mock('@/components/common/qr-code', () => ({
+  QRCode: ({ value, 'data-testid': testId, 'aria-label': ariaLabel }: { value: string; 'data-testid'?: string; 'aria-label'?: string }) =>
+    createElement('div', { 'data-testid': testId, 'data-qr-value': value, 'aria-label': ariaLabel }),
 }))
 
 vi.mock('@/components/ui/dialog', async () => {
@@ -202,6 +207,9 @@ describe('xLyra Cloud settings page', () => {
       expect(mounted.container.textContent).toContain('等待连接')
       expect(findTagText(mounted.container, 'H2', '配对')).not.toBeNull()
       expect(mounted.container.textContent).toContain('在已登录的 xLyra Cloud 控制台点「连接实例」')
+      expect(mounted.container.textContent).toContain('点「复制并打开 Cloud」或扫码')
+      expect(mounted.container.textContent).toContain('关闭这个窗口不会取消配对')
+      expect(findTestId(mounted.container, 'cloud-pairing-qr')?.getAttribute('data-qr-value')).toBe('https://xlyra.yachiyo.im/console/#connect=GYD4-LMGT')
       expect(fieldValue(findTestId(mounted.container, 'cloud-pairing-code'))).toBe('GYD4-LMGT')
       expect(findButton(mounted.container, '查看配对码')).not.toBeNull()
     } finally {
@@ -252,7 +260,8 @@ describe('xLyra Cloud settings page', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(4000)
       })
-      expect(mounted.container.textContent).toContain('配对码已过期')
+      expect(mounted.container.textContent).toContain('配对码已过期，请重新生成配对码')
+      expect(findTestId(mounted.container, 'cloud-pairing-qr')).toBeNull()
       pairCloudBinding.mockResolvedValue(binding({
         status: 'pairing',
         cloud_url: 'https://xlyra.yachiyo.im',
@@ -331,6 +340,7 @@ describe('xLyra Cloud settings page', () => {
     const scriptURL = await mountPage()
     try {
       expect(findButton(scriptURL.container, '复制并打开 Cloud')).toBeNull()
+      expect(findTestId(scriptURL.container, 'cloud-pairing-qr')).toBeNull()
       expect(scriptURL.container.textContent).not.toContain('在 xLyra Cloud 打开')
     } finally {
       await scriptURL.unmount()

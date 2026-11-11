@@ -1081,7 +1081,7 @@
     "unbound": {
       "title": "Not connected",
       "description": "After connecting, you can view and manage this instance in the xLyra Cloud console.",
-      "privacy": "After connecting, this instance periodically reports the xLyra version and installed plugin status to xLyra Cloud. Site addresses, secrets, and configuration are not included.",
+      "privacy": "After connecting, this instance periodically reports the xLyra version, installed plugin status, and the name, platform, last active time, and notification status of paired phones to xLyra Cloud. Site addresses, secrets, and configuration are not included.",
       "connect": "Connect account"
     },
     "pairing": {
@@ -1092,12 +1092,17 @@
       "heading": "Pairing",
       "viewCode": "View pairing code",
       "instruction": "In the signed-in xLyra Cloud console, choose Connect instance and enter this pairing code.",
+      "stepCopyOrScan": "Choose \u201cCopy and open Cloud\u201d or scan the code",
+      "stepApprove": "After signing in to Cloud, check that the pairing code matches the one above, then choose Approve",
+      "stepReturn": "Come back here. Connected appears within a few seconds",
+      "scanHint": "Scan with your phone, sign in to xLyra Cloud, then check the pairing code and approve",
+      "dismissHint": "Closing this window does not cancel pairing. Approving in Cloud still connects automatically. To give up, choose \u201cCancel pairing.\u201d",
       "open": "Open in xLyra Cloud",
       "cancel": "Cancel",
       "cancelPairing": "Cancel pairing",
       "copyOpen": "Copy and open Cloud",
       "countdown": "{{time}} remaining",
-      "expired": "Pairing code expired",
+      "expired": "Pairing code expired. Generate a new pairing code.",
       "regenerate": "Generate again",
       "codeMissing": "The pairing code is no longer available. Generate a new one."
     },
@@ -1237,9 +1242,6 @@
         "description": "All paired devices will be revoked and lose access.",
         "confirm": "Revoke All"
       }
-    }
-  }
-}
     },
     "push": {
       "unregistered": "Notifications off",
@@ -1263,3 +1265,6 @@
         "done": "Done",
         "error": "Error"
       }
+    }
+  }
+}
