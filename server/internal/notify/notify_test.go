@@ -256,8 +256,17 @@ func TestMapping(t *testing.T) {
 		{kindError, "运行出错", "run-1", 5, false, false},
 		{kindDone, "对话已完成", "run-1", 5, false, false},
 	}
+	// 两个 worker 并发消费队列，发送顺序不保证，按 kind+RefID 对号入座。
+	byKey := map[string]sentPush{}
+	for _, push := range sent {
+		byKey[push.req.Kind+"/"+push.req.RefID] = push
+	}
 	for i, item := range want {
-		req := sent[i].req
+		push, ok := byKey[item.kind+"/"+item.collapse]
+		if !ok {
+			t.Fatalf("#%d 缺少 %s/%s，实际 %+v", i, item.kind, item.collapse, sent)
+		}
+		req := push.req
 		if req.Kind != item.kind || req.Body != item.body || req.Title != "会话一" || req.CollapseID != item.collapse || req.Priority != item.priority || req.HighRisk != item.high {
 			t.Fatalf("#%d = %+v, want %+v", i, req, item)
 		}
@@ -595,9 +604,12 @@ func TestWorkerSurvivesPanicAndKeepsDelivering(t *testing.T) {
 	h.publish(start, escalationEvent("esc-boom", ""))
 	h.publish(start, questionEvent("q-after"))
 
-	sent := h.waitSent(t, 1)
-	if sent[0].req.RefID != "q-after" {
-		t.Fatalf("panic 之后的通知没有发出: %+v", sent[0].req)
+	// 两个 worker 并发，先处理到的那条会触发 panic，哪条不固定；只断言之后仍能继续投递。
+	h.waitSent(t, 1)
+	h.publish(start, questionEvent("q-final"))
+	sent := h.waitSent(t, 2)
+	if len(sent) != 2 {
+		t.Fatalf("panic 之后的通知没有发出: %+v", sent)
 	}
 	if strings.Contains(h.logs.String(), "esc-boom") || strings.Contains(h.logs.String(), "会话一") {
 		t.Fatalf("panic 日志泄漏了通知内容: %s", h.logs.String())
