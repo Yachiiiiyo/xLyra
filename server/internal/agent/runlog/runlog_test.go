@@ -107,6 +107,53 @@ func TestBasicPublishSubscribe(t *testing.T) {
 	}
 }
 
+// TestObserverReceivesSessionAndOrder:观察者按发布顺序收到带 sessionID 的事件。
+func TestObserverReceivesSessionAndOrder(t *testing.T) {
+	started := time.Unix(100, 0)
+	var mu sync.Mutex
+	var got []string
+	registry := NewRegistry(WithClock(func() time.Time { return started }), WithObserver(func(sessionID, runID string, at time.Time, ev translate.Event) {
+		mu.Lock()
+		got = append(got, sessionID+"|"+runID+"|"+at.Format(time.RFC3339)+"|"+ev.Type)
+		mu.Unlock()
+	}))
+	run, err := registry.Begin("s1", "r1")
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	for _, typ := range []string{"a", "b"} {
+		if !run.Publish(typedEvent(typ)) {
+			t.Fatalf("Publish %s 返回 false", typ)
+		}
+	}
+	want := []string{
+		"s1|r1|" + started.Format(time.RFC3339) + "|a",
+		"s1|r1|" + started.Format(time.RFC3339) + "|b",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("observer = %v, want %v", got, want)
+	}
+}
+
+// TestObserverPanicDoesNotBreakPublish:观察者 panic 不影响事件广播。
+func TestObserverPanicDoesNotBreakPublish(t *testing.T) {
+	registry := NewRegistry(WithObserver(func(string, string, time.Time, translate.Event) {
+		panic("observer boom")
+	}))
+	run, err := registry.Begin("s1", "r1")
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if !run.Publish(typedEvent("kept")) {
+		t.Fatal("观察者 panic 后 Publish 应仍返回 true")
+	}
+	events := run.Subscribe(context.Background())
+	ev := mustReceive(t, events, "panic 后的事件")
+	if ev.Type != "kept" || ev.Ordinal != 1 {
+		t.Fatalf("event = (%d,%s), want (1,kept)", ev.Ordinal, ev.Type)
+	}
+}
+
 // TestLateSubscribe:run 中途订阅先收重放再收实时;结束后(保留期内)订阅收全部后关闭。
 func TestLateSubscribe(t *testing.T) {
 	registry := NewRegistry()

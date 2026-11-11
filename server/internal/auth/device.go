@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/httpx"
 	"xlyra/server/internal/store"
 )
@@ -239,6 +240,35 @@ func (s *Service) RevokeSelf(ctx context.Context, deviceID uuid.UUID) error {
 		return fmt.Errorf("revoke admin device: %w", store.ErrDevicePairingInvalid)
 	}
 	return s.devices.RevokeByID(ctx, deviceID, time.Now())
+}
+
+// RegisterDevicePush 用主密钥加密 APNs token 后登记到设备上。明文 token 只在这里
+// 出现, 落库的是密文。
+func (s *Service) RegisterDevicePush(ctx context.Context, deviceID uuid.UUID, token string, env string) error {
+	if deviceID == uuid.Nil {
+		return fmt.Errorf("register device push: %w", store.ErrDevicePairingInvalid)
+	}
+	encrypted, err := crypto.EncryptSecret(s.masterKey, token)
+	if err != nil {
+		return fmt.Errorf("encrypt device push token: %w", err)
+	}
+	return s.devices.RegisterPush(ctx, deviceID, encrypted, env, time.Now())
+}
+
+// ClearDevicePush 清掉设备的推送登记。
+func (s *Service) ClearDevicePush(ctx context.Context, deviceID uuid.UUID) error {
+	if deviceID == uuid.Nil {
+		return fmt.Errorf("clear device push: %w", store.ErrDevicePairingInvalid)
+	}
+	return s.devices.ClearPush(ctx, deviceID)
+}
+
+// SetDevicePushPrefs 保存合并后的通知开关。
+func (s *Service) SetDevicePushPrefs(ctx context.Context, deviceID uuid.UUID, prefs store.JSON) error {
+	if deviceID == uuid.Nil {
+		return fmt.Errorf("set device push prefs: %w", store.ErrDevicePairingInvalid)
+	}
+	return s.devices.SetPushPrefs(ctx, deviceID, prefs)
 }
 
 // DeviceTokenFromRequest 只接受 Authorization: Bearer xld_…; 会话 Cookie 与

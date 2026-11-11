@@ -387,15 +387,20 @@ func latestSubmission(items []Submission) (Submission, bool) {
 }
 
 func (c *Client) signedExchange(ctx context.Context, row store.CloudBinding, method, path, rawQuery, contentType string, body []byte) (int, []byte, error) {
+	status, raw, _, err := c.signedExchangeHeaders(ctx, row, method, path, rawQuery, contentType, body)
+	return status, raw, err
+}
+
+func (c *Client) signedExchangeHeaders(ctx context.Context, row store.CloudBinding, method, path, rawQuery, contentType string, body []byte) (int, []byte, http.Header, error) {
 	priv, err := c.privateKey(row)
 	if err != nil {
-		return 0, nil, errors.New("实例私钥无法读取")
+		return 0, nil, nil, errors.New("实例私钥无法读取")
 	}
 	cloud := row.CloudURL
 	if cloud == "" {
 		cloud, err = c.cloudURL(ctx)
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, nil, err
 		}
 	}
 	timeout := c.http.Timeout
@@ -404,7 +409,7 @@ func (c *Client) signedExchange(ctx context.Context, row store.CloudBinding, met
 	}
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return c.exchange(callCtx, method, cloud, path, rawQuery, body, contentType, &signedRequest{
+	return c.exchangeHeaders(callCtx, method, cloud, path, rawQuery, body, contentType, &signedRequest{
 		instanceID: row.InstanceID,
 		privateKey: priv,
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,8 +143,8 @@ func TestAdminDeviceRevokeScopesToAdminAndWritesRevokedAt(t *testing.T) {
 	if err := NewAdminDeviceRepository(db).Revoke(context.Background(), uuid.New(), uuid.New(), time.Now()); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	if len(updates) != 1 || updates["revoked_at"] == nil {
-		t.Fatalf("revoke updates = %v, want only revoked_at", updates)
+	if updates["revoked_at"] == nil || updates["apns_token_enc"] != "" || updates["apns_env"] != "" || updates["push_state"] != "" {
+		t.Fatalf("revoke updates = %v, want revoked_at plus cleared push registration", updates)
 	}
 	if !scopedToAdmin || !scopedToDevice {
 		t.Fatalf("revoke scope admin/device = %v/%v, want both", scopedToAdmin, scopedToDevice)
@@ -303,6 +304,74 @@ func clauseHasLastSeenLte(expr clause.Expression) bool {
 	default:
 		return false
 	}
+}
+
+func TestAdminDeviceRegisterPushResetsSyncState(t *testing.T) {
+	t.Parallel()
+
+	db := storeRepositoryOfflineGorm(t)
+	updates := map[string]any{}
+	storeReplaceUpdateCallback(t, db, func(tx *gorm.DB) {
+		dest, ok := tx.Statement.Dest.(map[string]any)
+		if !ok {
+			tx.AddError(errors.New("unexpected push register update destination"))
+			return
+		}
+		updates = dest
+		tx.Statement.RowsAffected = 1
+	})
+
+	now := time.Now()
+	if err := NewAdminDeviceRepository(db).RegisterPush(context.Background(), uuid.New(), "enc-token", "sandbox", now); err != nil {
+		t.Fatalf("RegisterPush: %v", err)
+	}
+	if updates["apns_token_enc"] != "enc-token" || updates["apns_env"] != "sandbox" || updates["push_registered_at"] != now {
+		t.Fatalf("register updates = %v, want encrypted token, env and registered_at", updates)
+	}
+	if _, ok := updates["push_synced_at"]; !ok || !isNullExpr(updates["push_synced_at"]) || updates["push_state"] != "" {
+		t.Fatalf("register updates = %v, want push_synced_at NULL and empty push_state", updates)
+	}
+}
+
+func TestAdminDeviceClearPushDropsToken(t *testing.T) {
+	t.Parallel()
+
+	db := storeRepositoryOfflineGorm(t)
+	updates := map[string]any{}
+	storeReplaceUpdateCallback(t, db, func(tx *gorm.DB) {
+		dest, ok := tx.Statement.Dest.(map[string]any)
+		if !ok {
+			tx.AddError(errors.New("unexpected push clear update destination"))
+			return
+		}
+		updates = dest
+		tx.Statement.RowsAffected = 1
+	})
+
+	if err := NewAdminDeviceRepository(db).ClearPush(context.Background(), uuid.New()); err != nil {
+		t.Fatalf("ClearPush: %v", err)
+	}
+	if updates["apns_token_enc"] != "" || updates["apns_env"] != "" || !isNullExpr(updates["push_synced_at"]) || updates["push_state"] != "" {
+		t.Fatalf("clear updates = %v, want token, env, sync and state cleared", updates)
+	}
+}
+
+func TestAdminDeviceSetPushStateRejectsUnknownState(t *testing.T) {
+	t.Parallel()
+
+	db := storeRepositoryOfflineGorm(t)
+	storeReplaceUpdateCallback(t, db, func(tx *gorm.DB) {
+		tx.AddError(errors.New("unknown push state must not reach the database"))
+	})
+
+	if err := NewAdminDeviceRepository(db).SetPushState(context.Background(), uuid.New(), "maybe", time.Now()); err == nil {
+		t.Fatal("SetPushState accepted an unknown state")
+	}
+}
+
+func isNullExpr(value any) bool {
+	expr, ok := value.(clause.Expr)
+	return ok && strings.EqualFold(strings.TrimSpace(expr.SQL), "NULL")
 }
 
 func anyClauseMatches(exprs []clause.Expression, match func(clause.Expression) bool) bool {

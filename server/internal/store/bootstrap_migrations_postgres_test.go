@@ -84,7 +84,7 @@ func TestDevPostgresMigrationsInitializeNewSchema(t *testing.T) {
 	if !migrator.HasColumn(&JSPluginVersion{}, "Origin") {
 		t.Fatal("js_plugin_versions.origin column was not created")
 	}
-	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19})
+	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20})
 }
 
 func TestDevPostgresMigrationsUpgradeExistingSchema(t *testing.T) {
@@ -113,7 +113,7 @@ func TestDevPostgresMigrationsUpgradeExistingSchema(t *testing.T) {
 	if !db.Migrator().HasColumn(&OAuthConnection{}, "RefreshLeaseID") {
 		t.Fatal("refresh lease column was not added by upgrade migration")
 	}
-	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19})
+	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20})
 }
 
 func TestDevPostgresMigrationsAreRepeatable(t *testing.T) {
@@ -127,7 +127,7 @@ func TestDevPostgresMigrationsAreRepeatable(t *testing.T) {
 	if err := ensureDatabaseInitializedOnce(ctx, cfg); err != nil {
 		t.Fatalf("second migration run: %v", err)
 	}
-	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19})
+	assertAppliedMigrationVersions(t, db, []int64{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20})
 }
 
 func TestDevPostgresFailedMigrationIsNotRecordedAndCanRetry(t *testing.T) {
@@ -633,5 +633,35 @@ func TestJSPluginDeleteVersionRemovesEmptyPlugin(t *testing.T) {
 	}
 	if pluginCount() != 0 {
 		t.Fatal("an empty plugin was left behind after the last version was uninstalled")
+	}
+}
+
+func TestAdminDevicePushMigrationRollsBack(t *testing.T) {
+	db, _, cleanup := openTemporaryMigrationStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get postgres sql db: %v", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS)
+	if err != nil {
+		t.Fatalf("create migration provider: %v", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	if !db.Migrator().HasColumn(&AdminDevice{}, "APNSTokenEnc") || !db.Migrator().HasColumn(&AdminDevice{}, "PushState") {
+		t.Fatal("push columns missing after migration up")
+	}
+
+	if _, err := provider.DownTo(ctx, 19); err != nil {
+		t.Fatalf("roll back device push migration: %v", err)
+	}
+	if db.Migrator().HasColumn(&AdminDevice{}, "APNSTokenEnc") || db.Migrator().HasColumn(&AdminDevice{}, "PushPrefs") {
+		t.Fatal("push columns survived the migration down")
+	}
+	if !db.Migrator().HasTable(&AdminDevice{}) {
+		t.Fatal("rolling back the push migration dropped admin_devices")
 	}
 }

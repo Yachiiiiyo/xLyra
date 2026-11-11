@@ -17,12 +17,12 @@ import (
 	"xlyra/server/internal/analytics"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/catalog"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/dashboard"
 	"xlyra/server/internal/downloads"
 	"xlyra/server/internal/gateway"
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
@@ -56,6 +56,17 @@ type Handler struct {
 	jsPlugins    *jsplugin.Manager
 	pluginMarket *market.Service
 	cloudClient  *cloudclient.Client
+	// PushSyncWaker 在设备的推送登记变化（登记、清除、吊销）后被唤醒,
+	// 由后续的 Hub 同步任务实现; nil 时什么都不做。
+	PushSyncWaker PushSyncWaker
+	// HubStatus 报告实例是否已绑定 xLyra Cloud, 给设备查询自己的推送状态用;
+	// nil 时按未绑定处理。
+	HubStatus func(ctx context.Context) (bound bool, lastError string)
+}
+
+// PushSyncWaker 让推送同步任务在设备变化后尽快跑一轮。
+type PushSyncWaker interface {
+	WakePushSync()
 }
 
 func (h Handler) WithTrafficFlowStore(db *store.Store) Handler {

@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +52,11 @@ type Config struct {
 	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长;默认 0 表示一直等待、不超时。
 	AgentQuestionTimeout time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"0"`
 	// DeviceIdleDays 是设备令牌闲置失效天数;默认 180,0 表示不限。
-	DeviceIdleDays        int           `env:"DEVICE_IDLE_DAYS" envDefault:"180"`
+	DeviceIdleDays int `env:"DEVICE_IDLE_DAYS" envDefault:"180"`
+	// PushEnabled 控制是否订阅 Agent 事件并向已登记的手机发通知;默认开启。
+	PushEnabled bool `env:"PUSH_ENABLED" envDefault:"true"`
+	// PushDoneMinSeconds 是「对话已完成」通知的最短运行时长(秒);默认 20,0 表示总是发。
+	PushDoneMinSeconds    int           `env:"PUSH_DONE_MIN_SECONDS" envDefault:"20"`
 	AgentGatewayBaseURL   string        `env:"AGENT_GATEWAY_BASE_URL"`
 	AgentImageMaxCalls    int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
 	AgentImageTimeout     time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
@@ -78,8 +84,9 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	envMap := pushDoneMinEnv(envMapFromEnviron(os.Environ()))
 	var cfg Config
-	if err := env.Parse(&cfg); err != nil {
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: envMap}); err != nil {
 		return Config{}, err
 	}
 
@@ -265,6 +272,31 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+func envMapFromEnviron(environ []string) map[string]string {
+	out := make(map[string]string, len(environ))
+	for _, entry := range environ {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+// pushDoneMinEnv 把非法的 PUSH_DONE_MIN_SECONDS 回退到缺省 20。
+// 0 合法(总是发完成通知);未设置时不写入,交给 envDefault。
+func pushDoneMinEnv(envMap map[string]string) map[string]string {
+	raw, ok := envMap["PUSH_DONE_MIN_SECONDS"]
+	if !ok {
+		return envMap
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 0 {
+		envMap["PUSH_DONE_MIN_SECONDS"] = "20"
+	}
+	return envMap
 }
 
 func sanitizeOrigins(origins []string) []string {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"xlyra/server/internal/agent"
@@ -20,7 +21,9 @@ import (
 	"xlyra/server/internal/agent/sandbox"
 	"xlyra/server/internal/agent/session"
 	"xlyra/server/internal/agentproxy"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/config"
+	"xlyra/server/internal/notify"
 	routeengine "xlyra/server/internal/router"
 )
 
@@ -56,6 +59,8 @@ type builtinAgent struct {
 	// relaxWorkspace 在 uid 隔离开启时放开共享工作区已有内容的权限(备份恢复出的
 	// 文件属主是 xLyra 进程用户,各会话身份需要能读写);隔离未开启时为 nil。
 	relaxWorkspace func()
+	// notifier 在 PUSH_ENABLED 时订阅本进程的 Agent 事件;关闭时为 nil。
+	notifier *notify.Notifier
 }
 
 // agentBins 是 node 命令、Pi 入口与 xLyra 扩展的解析结果;任一为空表示
@@ -74,6 +79,10 @@ func (b agentBins) ready() bool {
 // 隔离启动流程、runner 与 HTTP handler)。node 命令或 Pi 入口脚本缺失时不
 // 报错:handler 正常路由,health 会报告不可用原因。
 func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc, modelSources ...agentModelSource) *builtinAgent {
+	return newBuiltinAgentWithDevices(cfg, logger, confFile, routerService, tokens, modelMemory, nil, modelSources...)
+}
+
+func newBuiltinAgentWithDevices(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc, devices notify.DeviceLister, modelSources ...agentModelSource) *builtinAgent {
 	dataDir := resolveAgentDataDir(cfg)
 	// 能力存储与 sessions 同级:<dataDir>/skills、AGENTS.md、config.json。
 	caps := capabilities.NewStore(dataDir)
@@ -87,7 +96,17 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 	} else if moved > 0 {
 		logger.Info("已把旧会话工作区迁入共享工作区 _legacy 目录", "moved", moved)
 	}
-	runs := runlog.NewRegistry()
+	var runsOpts []runlog.Option
+	var notifier *notify.Notifier
+	if cfg.PushEnabled {
+		notifier = notify.New(notify.Deps{
+			Sessions: notify.StoreSessions{Store: store},
+			Devices:  notify.StoreDevices{Repo: devices},
+			Logger:   logger,
+		}, notify.Options{DoneMinDuration: time.Duration(cfg.PushDoneMinSeconds) * time.Second})
+		runsOpts = append(runsOpts, runlog.WithObserver(notifier.Observe))
+	}
+	runs := runlog.NewRegistry(runsOpts...)
 
 	bins := resolveAgentBins(cfg)
 	decision := prepareIsolation(cfg, logger, dataDir, caps, bins)
@@ -124,7 +143,7 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 		MaxBodyBytes:        cfg.MaxRequestBodyBytes,
 		Status:              func() agent.Status { return decision.status() },
 	})
-	agentInstance := &builtinAgent{handler: handler, shutdown: shutdown}
+	agentInstance := &builtinAgent{handler: handler, shutdown: shutdown, notifier: notifier}
 	if gate, ok := run.(interface {
 		BeginRestore() error
 		EndRestore()
@@ -140,6 +159,26 @@ func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.Co
 		}
 	}
 	return agentInstance
+}
+
+// startPush 绑定云端发送端并随应用生命周期启动通知分发。
+// PUSH_ENABLED 关闭(notifier 为 nil)时不做任何事。
+func (b *builtinAgent) startPush(ctx context.Context, tasks *sync.WaitGroup, sender *cloudclient.Client) {
+	if b == nil || b.notifier == nil {
+		return
+	}
+	if sender != nil {
+		b.notifier.SetSender(sender)
+	}
+	b.notifier.Start(ctx)
+	if tasks == nil {
+		return
+	}
+	tasks.Add(1)
+	go func() {
+		defer tasks.Done()
+		<-b.notifier.Done()
+	}()
 }
 
 // resolveAgentDataDir 返回内置 Agent 的数据目录，供运行时装配与备份共用。

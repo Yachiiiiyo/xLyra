@@ -1,10 +1,13 @@
 package admin
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -147,6 +150,7 @@ func (h Handler) RevokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.recordAudit(r, actor, "device.revoke", "admin_device", deviceID.String(), true, "", nil)
+	h.wakePushSync()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -165,6 +169,7 @@ func (h Handler) RevokeAllDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.recordAudit(r, actor, "device.revoke_all", "admin_device", "", true, "", map[string]any{"revoked": revoked})
+	h.wakePushSync()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -194,7 +199,133 @@ func (h Handler) DeleteDeviceSelf(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.recordAudit(r, auth.AdminActor{Type: auth.DeviceActorType, AdminID: device.AdminID, DeviceID: device.ID}, "device.revoke_self", "admin_device", device.ID.String(), true, "", nil)
+	h.wakePushSync()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// PutDevicePush 登记（或更换）当前设备的 APNs token。明文 token 只用于加密, 不进
+// 响应、审计和日志。
+func (h Handler) PutDevicePush(w http.ResponseWriter, r *http.Request) {
+	device, ok := h.currentDevice(w, r)
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		APNSToken   string `json:"apns_token"`
+		Environment string `json:"environment"`
+	}
+	if !h.decodeJSON(w, r, &payload) {
+		return
+	}
+	token := strings.TrimSpace(payload.APNSToken)
+	if !validAPNSToken(token) {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_push_token", "apns token must be 1 to 200 hex characters")
+		return
+	}
+	env := payload.Environment
+	if env != "sandbox" && env != "production" {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_push_environment", "push environment must be sandbox or production")
+		return
+	}
+
+	if err := h.auth.RegisterDevicePush(r.Context(), device.ID, token, env); err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "device_push_failed", "failed to register the push token")
+		return
+	}
+
+	h.recordAudit(r, deviceActor(device), "device.push_register", "admin_device", device.ID.String(), true, "", map[string]any{"environment": env})
+	h.wakePushSync()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteDevicePush 清除当前设备的推送登记, 没有登记过也返回 204。
+func (h Handler) DeleteDevicePush(w http.ResponseWriter, r *http.Request) {
+	device, ok := h.currentDevice(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.auth.ClearDevicePush(r.Context(), device.ID); err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "device_push_failed", "failed to clear the push token")
+		return
+	}
+
+	h.recordAudit(r, deviceActor(device), "device.push_unregister", "admin_device", device.ID.String(), true, "", nil)
+	h.wakePushSync()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetDevicePush 返回当前设备的推送状态。registered 只表示有没有 token, 不返回 token 本身。
+func (h Handler) GetDevicePush(w http.ResponseWriter, r *http.Request) {
+	device, ok := h.currentDevice(w, r)
+	if !ok {
+		return
+	}
+
+	bound, lastError := false, ""
+	if h.HubStatus != nil {
+		bound, lastError = h.HubStatus(r.Context())
+	}
+
+	h.writePayload(w, http.StatusOK, map[string]any{
+		"data": map[string]any{
+			"registered":    device.APNSTokenEnc != "",
+			"environment":   device.APNSEnv,
+			"state":         device.PushState,
+			"registered_at": nullTimeValue(device.PushRegisteredAt),
+			"prefs":         pushPrefsValue(device.PushPrefs),
+			"hub": map[string]any{
+				"bound":      bound,
+				"last_error": lastError,
+			},
+		},
+	})
+}
+
+// PutDevicePushPrefs 合并通知开关: 请求里缺省的键保持原值。
+func (h Handler) PutDevicePushPrefs(w http.ResponseWriter, r *http.Request) {
+	device, ok := h.currentDevice(w, r)
+	if !ok {
+		return
+	}
+
+	var raw map[string]json.RawMessage
+	if !h.decodeJSON(w, r, &raw) {
+		return
+	}
+	prefs := pushPrefsValue(device.PushPrefs)
+	for _, key := range pushPrefKeys {
+		value, present := raw[key]
+		if !present {
+			continue
+		}
+		var enabled bool
+		if err := json.Unmarshal(value, &enabled); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "invalid_push_prefs", "push preferences must be booleans")
+			return
+		}
+		prefs[key] = enabled
+	}
+
+	encoded, err := json.Marshal(prefs)
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "device_push_failed", "failed to save the push preferences")
+		return
+	}
+	if err := h.auth.SetDevicePushPrefs(r.Context(), device.ID, store.JSON(encoded)); err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "device_push_failed", "failed to save the push preferences")
+		return
+	}
+
+	h.recordAudit(r, deviceActor(device), "device.push_prefs", "admin_device", device.ID.String(), true, "", map[string]any{"prefs": prefs})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h Handler) wakePushSync() {
+	if h.PushSyncWaker != nil {
+		h.PushSyncWaker.WakePushSync()
+	}
 }
 
 // currentDevice 取出设备令牌对应的设备; 非设备身份返回 400 not_a_device。
@@ -226,7 +357,58 @@ func devicePayload(device store.AdminDevice, current bool) map[string]any {
 		"last_seen_at": nullTimeValue(device.LastSeenAt),
 		"last_ip":      deviceIPValue(device.LastIP),
 		"current":      current,
+		"push":         devicePushValue(device),
 	}
+}
+
+func devicePushValue(device store.AdminDevice) map[string]any {
+	return map[string]any{
+		"registered":    device.APNSTokenEnc != "",
+		"environment":   device.APNSEnv,
+		"state":         device.PushState,
+		"prefs":         pushPrefsValue(device.PushPrefs),
+		"registered_at": nullTimeValue(device.PushRegisteredAt),
+	}
+}
+
+var pushPrefKeys = []string{"approval", "question", "done", "error"}
+
+// pushPrefsValue 把库里的开关解出来; 缺省的键按全开处理。
+func pushPrefsValue(raw store.JSON) map[string]bool {
+	prefs := map[string]bool{"approval": true, "question": true, "done": true, "error": true}
+	if len(raw) == 0 {
+		return prefs
+	}
+	var stored map[string]bool
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return prefs
+	}
+	for _, key := range pushPrefKeys {
+		if value, ok := stored[key]; ok {
+			prefs[key] = value
+		}
+	}
+	return prefs
+}
+
+func deviceActor(device store.AdminDevice) auth.AdminActor {
+	return auth.AdminActor{Type: auth.DeviceActorType, AdminID: device.AdminID, DeviceID: device.ID}
+}
+
+// validAPNSToken 要求 1 到 200 位的十六进制字符串。
+func validAPNSToken(token string) bool {
+	length := utf8.RuneCountInString(token)
+	if length < 1 || length > 200 {
+		return false
+	}
+	for _, r := range token {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func deviceIPValue(ip store.IPAddress) any {

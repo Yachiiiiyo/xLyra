@@ -96,7 +96,9 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	var jsPluginManager *jsplugin.Manager
 	var pluginMarket *market.Service
 	var cloudClient *cloudclient.Client
+	var deviceRepo store.AdminDeviceRepository
 	if db != nil {
+		deviceRepo = store.NewAdminDeviceRepository(db.DB())
 		jsPluginManager = jsplugin.NewManager(db, jsplugin.DefaultCatalog())
 		marketService, err := market.NewService(store.NewJSPluginRepository(db.DB()), httpClients, confFile, nil, nil)
 		if err != nil {
@@ -125,7 +127,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				return pluginMarket.CloudURL(ctx)
 			},
 			cloudclient.Options{
-				Logger: logger,
+				Logger:  logger,
+				Devices: devicePushStore{repo: deviceRepo},
 				Audit: func(ctx context.Context, action string, metadata map[string]any) {
 					if authService == nil {
 						return
@@ -223,7 +226,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		go syncAgentAccessPolicy()
 	}
 	// 内置 Pi 是唯一引擎，始终装配。
-	builtin := newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, agentModelSource{sites: siteService, db: db})
+	builtin := newBuiltinAgentWithDevices(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, deviceRepo, agentModelSource{sites: siteService, db: db})
+	builtin.startPush(ctx, tasks, cloudClient)
 	if tasks != nil {
 		tasks.Add(1)
 		go func() {
@@ -243,6 +247,14 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	}
 	if cloudClient != nil {
 		adminHandler = adminHandler.WithCloudClient(cloudClient)
+		adminHandler.PushSyncWaker = cloudClient
+		adminHandler.HubStatus = func(ctx context.Context) (bool, string) {
+			status, err := cloudClient.Status(ctx)
+			if err != nil {
+				return false, err.Error()
+			}
+			return status.Status == store.CloudStatusBound, status.LastError
+		}
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
@@ -700,6 +712,10 @@ func registerAdminDeviceRoutes(protected chi.Router, adminHandler admin.Handler)
 	webOnly.Post("/devices/revoke-all", adminHandler.RevokeAllDevices)
 	protected.Get("/devices/self", adminHandler.GetDeviceSelf)
 	protected.Delete("/devices/self", adminHandler.DeleteDeviceSelf)
+	protected.Put("/devices/self/push", adminHandler.PutDevicePush)
+	protected.Delete("/devices/self/push", adminHandler.DeleteDevicePush)
+	protected.Get("/devices/self/push", adminHandler.GetDevicePush)
+	protected.Put("/devices/self/push/prefs", adminHandler.PutDevicePushPrefs)
 }
 
 func requireAdmin(authService *auth.Service) func(http.Handler) http.Handler {

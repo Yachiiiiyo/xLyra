@@ -218,6 +218,10 @@ func TestDevicePairAndManagementRoutesAreRegistered(t *testing.T) {
 		{name: "revoke all", method: http.MethodPost, path: "/api/v1/devices/revoke-all"},
 		{name: "device self", method: http.MethodGet, path: "/api/v1/devices/self"},
 		{name: "device self delete", method: http.MethodDelete, path: "/api/v1/devices/self"},
+		{name: "device push get", method: http.MethodGet, path: "/api/v1/devices/self/push"},
+		{name: "device push put", method: http.MethodPut, path: "/api/v1/devices/self/push"},
+		{name: "device push delete", method: http.MethodDelete, path: "/api/v1/devices/self/push"},
+		{name: "device push prefs", method: http.MethodPut, path: "/api/v1/devices/self/push/prefs"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -282,8 +286,16 @@ func TestWebOnlyAdminRoutesCarryDenyDeviceActorMiddleware(t *testing.T) {
 		}
 	}
 
-	// /devices/self 不加 DenyDeviceActor: 它本来就是设备令牌专属。
-	if got := middlewareCounts["GET /api/v1/devices/self"]; got != middlewareCounts["GET /api/v1/profile"] {
-		t.Fatalf("device self middleware count = %d, want same as plain protected route (%d)", got, middlewareCounts["GET /api/v1/profile"])
+	// /devices/self 与推送自用接口不加 DenyDeviceActor: 它们本来就是设备令牌专属。
+	for _, route := range []string{
+		"GET /api/v1/devices/self",
+		"GET /api/v1/devices/self/push",
+		"PUT /api/v1/devices/self/push",
+		"DELETE /api/v1/devices/self/push",
+		"PUT /api/v1/devices/self/push/prefs",
+	} {
+		if got := middlewareCounts[route]; got != middlewareCounts["GET /api/v1/profile"] {
+			t.Fatalf("%s middleware count = %d, want same as plain protected route (%d)", route, got, middlewareCounts["GET /api/v1/profile"])
+		}
 	}
 }

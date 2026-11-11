@@ -406,16 +406,26 @@ func waitUntil(t *testing.T, limit time.Duration, ok func() bool) {
 }
 
 type fakeCloud struct {
-	mu         sync.Mutex
-	mode       string
-	hits       map[string]int
-	polls      int
-	hearts     int
-	pub        ed25519.PublicKey
-	userCode   string
-	token      string
-	instanceID string
-	heartBody  []byte
+	mu             sync.Mutex
+	mode           string
+	hits           map[string]int
+	polls          int
+	hearts         int
+	pub            ed25519.PublicKey
+	userCode       string
+	token          string
+	instanceID     string
+	heartBody      []byte
+	pushes         []pushCall
+	pushPutStatus  int
+	pushPutCode    string
+	dropPush       bool
+	dropSend       bool
+	sendStatus     int
+	sendCode       string
+	sendResult     string
+	sendRetryAfter string
+	sendBody       []byte
 }
 
 func newFakeCloud(mode string) *fakeCloud {
@@ -431,8 +441,10 @@ func newFakeCloud(mode string) *fakeCloud {
 func (h *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.hits[r.URL.Path]++
+	kind := ""
+	status, code, message, serverTime := 0, "", "", ""
+	var payload any
 	switch r.URL.Path {
 	case "/api/instance/pair/start":
 		var req struct {
@@ -441,82 +453,111 @@ func (h *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &req)
 		raw, err := base64.StdEncoding.DecodeString(req.PublicKey)
 		if err != nil || len(raw) != ed25519.PublicKeySize {
-			writeCloudError(w, http.StatusBadRequest, "invalid_request", "bad public key", "")
-			return
+			status, code, message = http.StatusBadRequest, "invalid_request", "bad public key"
+			break
 		}
 		h.pub = ed25519.PublicKey(raw)
-		writeJSON(w, http.StatusOK, map[string]any{
+		kind = "json"
+		payload = map[string]any{
 			"userCode":        h.userCode,
 			"pollToken":       h.token,
 			"expiresAt":       time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339),
 			"intervalSeconds": 3,
-		})
+		}
 	case "/api/instance/pair/poll":
 		h.polls++
-		if h.mode == "deny" {
-			writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
-			return
+		kind = "json"
+		switch {
+		case h.mode == "deny":
+			payload = map[string]any{"status": "denied"}
+		case h.mode == "expire":
+			payload = map[string]any{"status": "expired"}
+		case h.polls == 1:
+			payload = map[string]any{"status": "pending"}
+		default:
+			payload = map[string]any{
+				"status": "approved", "instanceId": h.instanceID, "instanceName": "from-cloud", "userDisplayName": "Ada",
+			}
 		}
-		if h.mode == "expire" {
-			writeJSON(w, http.StatusOK, map[string]any{"status": "expired"})
-			return
-		}
-		if h.polls == 1 {
-			writeJSON(w, http.StatusOK, map[string]any{"status": "pending"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "approved", "instanceId": h.instanceID, "instanceName": "from-cloud", "userDisplayName": "Ada",
-		})
 	case "/api/instance/heartbeat":
-		if !h.verify(w, r, body) {
-			return
+		var ok bool
+		ok, code, message, serverTime = h.signatureError(r, body)
+		if !ok {
+			status = http.StatusUnauthorized
+			break
 		}
 		h.hearts++
 		h.heartBody = append([]byte(nil), body...)
 		if h.mode == "skew" {
-			writeCloudError(w, http.StatusUnauthorized, "clock_skew", "clock skew", "2026-01-02T03:04:05Z")
-			return
+			status, code, message, serverTime = http.StatusUnauthorized, "clock_skew", "clock skew", "2026-01-02T03:04:05Z"
+			break
 		}
 		if h.mode == "revoke" && h.hearts > 1 {
-			writeCloudError(w, http.StatusUnauthorized, "instance_revoked", "revoked", "")
-			return
+			status, code, message = http.StatusUnauthorized, "instance_revoked", "revoked"
+			break
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		kind = "json"
+		payload = map[string]any{
 			"ok": true, "serverTime": time.Now().UTC().Format(time.RFC3339),
 			"instanceName": "renamed", "userDisplayName": "Ada",
-		})
-	case "/api/instance/unbind":
-		if !h.verify(w, r, body) {
-			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+	case "/api/instance/unbind":
+		var ok bool
+		ok, code, message, serverTime = h.signatureError(r, body)
+		if !ok {
+			status = http.StatusUnauthorized
+			break
+		}
+		kind = "empty"
+		status = http.StatusNoContent
 	default:
-		writeCloudError(w, http.StatusNotFound, "not_found", "not found", "")
+		if strings.HasPrefix(r.URL.Path, "/api/instance/push/") {
+			kind = "push"
+			break
+		}
+		status, code, message = http.StatusNotFound, "not_found", "not found"
+	}
+	h.mu.Unlock()
+	switch kind {
+	case "json":
+		writeJSON(w, http.StatusOK, payload)
+	case "empty":
+		w.WriteHeader(status)
+	case "push":
+		h.servePush(w, r, body)
+	default:
+		writeCloudError(w, status, code, message, serverTime)
 	}
 }
 
 func (h *fakeCloud) verify(w http.ResponseWriter, r *http.Request, body []byte) bool {
+	h.mu.Lock()
+	ok, code, message, serverTime := h.signatureError(r, body)
+	h.mu.Unlock()
+	if ok {
+		return true
+	}
+	writeCloudError(w, http.StatusUnauthorized, code, message, serverTime)
+	return false
+}
+
+func (h *fakeCloud) signatureError(r *http.Request, body []byte) (bool, string, string, string) {
 	if r.Header.Get("X-XLyra-Instance") != h.instanceID {
-		writeCloudError(w, http.StatusUnauthorized, "bad_signature", "bad instance", "")
-		return false
+		return false, "bad_signature", "bad instance", ""
 	}
 	unix, err := strconv.ParseInt(r.Header.Get("X-XLyra-Timestamp"), 10, 64)
 	if err != nil {
-		writeCloudError(w, http.StatusUnauthorized, "bad_signature", "bad timestamp", "")
-		return false
+		return false, "bad_signature", "bad timestamp", ""
 	}
 	if delta := time.Now().Unix() - unix; delta > 300 || delta < -300 {
-		writeCloudError(w, http.StatusUnauthorized, "clock_skew", "clock skew", time.Now().UTC().Format(time.RFC3339))
-		return false
+		return false, "clock_skew", "clock skew", time.Now().UTC().Format(time.RFC3339)
 	}
 	sig, err := base64.StdEncoding.DecodeString(r.Header.Get("X-XLyra-Signature"))
 	message := CanonicalMessage(r.Method, r.URL.Path, unix, body)
 	if err != nil || !ed25519.Verify(h.pub, []byte(message), sig) {
-		writeCloudError(w, http.StatusUnauthorized, "bad_signature", "bad signature", "")
-		return false
+		return false, "bad_signature", "bad signature", ""
 	}
-	return true
+	return true, "", "", ""
 }
 
 func (h *fakeCloud) count(path string) int {
