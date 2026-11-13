@@ -24,7 +24,7 @@ func TestLiveOpenCodeZenFreeLaneMinimalBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	applyOpenCodeGoGatewayHeaders(req, gatewayRequest{DownstreamHeaders: http.Header{}}, "public")
+	applyOpenCodeGoGatewayHeaders(req, gatewayRequest{DownstreamHeaders: http.Header{}}, "public", true)
 
 	manager := httpclient.NewManager(nil)
 	client, err := manager.Client(httpclient.Profile{

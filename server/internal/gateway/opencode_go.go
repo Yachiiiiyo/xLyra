@@ -23,6 +23,7 @@ const (
 	openCodeGoSessionHeader   = "x-opencode-session-id"
 	openCodeGoAffinityHeader  = "x-session-affinity"
 	openCodeGoUserAgent       = "opencode/latest/2.1.1/cli"
+	openCodeGoLegacyUserAgent = "opencode/latest/2.0.29/cli"
 	openCodeGoIdentifierSize  = 26
 	openCodeGoTimestampSize   = 12
 	openCodeGoRandomSize      = openCodeGoIdentifierSize - openCodeGoTimestampSize
@@ -100,22 +101,43 @@ func buildGatewayUpstreamPayload(protocol gatewayProtocolAdapter, request gatewa
 }
 
 // applyOpenCodeGoGatewayHeaders replaces all application headers with the
-// set the official OpenCode CLI sends, which the Zen endpoints expect.
-func applyOpenCodeGoGatewayHeaders(req *http.Request, request gatewayRequest, apiKey string) {
+// set the Zen endpoints expect. With impersonate (gateway
+// impersonate_opencode_client) it sends the full official OpenCode CLI shape:
+// current UA, the client marker, the session header family, a fresh 40-hex
+// project id, and sessions minted in the official descending-time encoding —
+// downstream session ids are reused only when they already carry that
+// encoding, because a legacy-encoded id answers 429 on the free lane.
+// Without the switch it keeps exactly the pre-impersonation header shape, so
+// existing keyed zen/go sites are unchanged.
+func applyOpenCodeGoGatewayHeaders(req *http.Request, request gatewayRequest, apiKey string, impersonate bool) {
 	if req == nil {
 		return
 	}
 	req.Header = make(http.Header)
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
+	if !impersonate {
+		req.Header.Set("User-Agent", openCodeGoLegacyUserAgent)
+		sessionID := openCodeGoValidHeaderID(request.DownstreamHeaders.Get(openCodeGoSessionHeader))
+		if sessionID == "" {
+			sessionID = openCodeGoNewLegacySessionID()
+		}
+		affinityID := openCodeGoValidHeaderID(request.DownstreamHeaders.Get(openCodeGoAffinityHeader))
+		if affinityID == "" {
+			affinityID = sessionID
+		}
+		req.Header.Set(openCodeGoSessionHeader, sessionID)
+		req.Header.Set(openCodeGoAffinityHeader, affinityID)
+		return
+	}
 	req.Header.Set("User-Agent", openCodeGoUserAgent)
 	req.Header.Set("x-opencode-client", "cli")
 
-	sessionID := openCodeGoValidHeaderID(request.DownstreamHeaders.Get(openCodeGoSessionHeader))
+	sessionID := openCodeGoOfficialHeaderID(request.DownstreamHeaders.Get(openCodeGoSessionHeader))
 	if sessionID == "" {
 		sessionID = openCodeGoNewSessionID()
 	}
-	affinityID := openCodeGoValidHeaderID(request.DownstreamHeaders.Get(openCodeGoAffinityHeader))
+	affinityID := openCodeGoOfficialHeaderID(request.DownstreamHeaders.Get(openCodeGoAffinityHeader))
 	if affinityID == "" {
 		affinityID = sessionID
 	}
@@ -126,6 +148,18 @@ func applyOpenCodeGoGatewayHeaders(req *http.Request, request gatewayRequest, ap
 	req.Header.Set("x-opencode-session", sessionID)
 	req.Header.Set("x-session-id", sessionID)
 	req.Header.Set("x-opencode-project", openCodeGoNewProjectID())
+}
+
+// openCodeGoOfficialHeaderID returns the trimmed id when value carries the
+// official session shape and a creation time inside the accepted window, and
+// "" otherwise — including for legacy charset-valid ids, which the upstream
+// decodes as implausible timestamps.
+func openCodeGoOfficialHeaderID(value string) string {
+	value = strings.TrimSpace(value)
+	if !openCodeGoIsOfficialSessionID(value) {
+		return ""
+	}
+	return value
 }
 
 // openCodeGoNewProjectID mints the fresh 40-hex project id every request
@@ -163,15 +197,22 @@ func openCodeGoValidHeaderID(value string) string {
 // session's encoded creation time; sessions dated outside it answer 429.
 const openCodeGoSessionWindowMS = 30 * 24 * 60 * 60 * 1000
 
+// openCodeGoSessionPhaseMS is the modular space of the encoded creation time:
+// only the low 48 bits of (creation<<12|1) survive, so the phase wraps every
+// 2^36 milliseconds and ages must be compared phase-to-phase, never against
+// an absolute clock.
+const openCodeGoSessionPhaseMS = 1 << 36
+
 // openCodeGoDescendingTimeRE matches the inverted-timestamp encoding of an
 // official session id: the low flag bit fixed by the inversion turns the 11th
 // and 12th hex digits into the "f[c-f]" marker, so plausible times all share
 // this descending shape.
 var openCodeGoDescendingTimeRE = regexp.MustCompile(`^[0-9a-f]{9}f[c-f][0-9a-f]$`)
 
-// openCodeGoSessionPhaseMS decodes the creation time (in milliseconds) that
-// an official session id encodes, reporting false for other shapes.
-func openCodeGoSessionPhaseMS(id string) (int64, bool) {
+// openCodeGoSessionPhaseMS decodes the creation-time phase (in milliseconds
+// modulo 2^36) that an official session id encodes, reporting false for other
+// shapes.
+func openCodeGoSessionPhase(id string) (int64, bool) {
 	if len(id) != len("ses_")+openCodeGoIdentifierSize || !strings.HasPrefix(id, "ses_") {
 		return 0, false
 	}
@@ -189,18 +230,39 @@ func openCodeGoSessionPhaseMS(id string) (int64, bool) {
 
 // openCodeGoIsOfficialSessionID reports whether value carries the official
 // client's session shape and encodes a creation time still inside the
-// accepted window.
+// accepted window (aged phase-to-phase, as the upstream does).
 func openCodeGoIsOfficialSessionID(value string) bool {
 	value = strings.TrimSpace(value)
-	phase, ok := openCodeGoSessionPhaseMS(value)
+	phase, ok := openCodeGoSessionPhase(value)
 	if !ok {
 		return false
 	}
-	age := time.Now().UnixMilli() - phase
+	nowPhase := time.Now().UnixMilli() % openCodeGoSessionPhaseMS
+	age := (nowPhase - phase) % openCodeGoSessionPhaseMS
 	if age < 0 {
-		age = -age
+		age += openCodeGoSessionPhaseMS
 	}
 	return age <= openCodeGoSessionWindowMS
+}
+
+// openCodeGoNewLegacySessionID mints the pre-impersonation session shape: a
+// plain hex UnixMilli timestamp followed by random base62 characters. Kept
+// for keyed zen/go sites that do not turn on impersonate_opencode_client;
+// the free lane decodes this shape as an implausible timestamp and refuses
+// it with 429, which is why impersonation mints openCodeGoNewSessionID
+// instead.
+func openCodeGoNewLegacySessionID() string {
+	timestamp := fmt.Sprintf("%012x", uint64(time.Now().UnixMilli()))
+	random := make([]byte, openCodeGoRandomSize)
+	if _, err := rand.Read(random); err != nil {
+		for index := range random {
+			random[index] = byte(time.Now().UnixNano() >> (index % 8 * 8))
+		}
+	}
+	for index, value := range random {
+		random[index] = openCodeGoIdentifierChars[int(value)%len(openCodeGoIdentifierChars)]
+	}
+	return "ses_" + timestamp + string(random)
 }
 
 // openCodeGoNewSessionID mints a session id in the official client's
