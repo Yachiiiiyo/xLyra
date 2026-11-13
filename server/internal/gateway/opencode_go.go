@@ -3,9 +3,14 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +22,7 @@ import (
 const (
 	openCodeGoSessionHeader   = "x-opencode-session-id"
 	openCodeGoAffinityHeader  = "x-session-affinity"
-	openCodeGoUserAgent       = "opencode/latest/2.0.29/cli"
+	openCodeGoUserAgent       = "opencode/latest/2.1.1/cli"
 	openCodeGoIdentifierSize  = 26
 	openCodeGoTimestampSize   = 12
 	openCodeGoRandomSize      = openCodeGoIdentifierSize - openCodeGoTimestampSize
@@ -95,7 +100,7 @@ func buildGatewayUpstreamPayload(protocol gatewayProtocolAdapter, request gatewa
 }
 
 // applyOpenCodeGoGatewayHeaders replaces all application headers with the
-// small set expected by the OpenCode Go endpoint.
+// set the official OpenCode CLI sends, which the Zen endpoints expect.
 func applyOpenCodeGoGatewayHeaders(req *http.Request, request gatewayRequest, apiKey string) {
 	if req == nil {
 		return
@@ -104,6 +109,7 @@ func applyOpenCodeGoGatewayHeaders(req *http.Request, request gatewayRequest, ap
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", openCodeGoUserAgent)
+	req.Header.Set("x-opencode-client", "cli")
 
 	sessionID := openCodeGoValidHeaderID(request.DownstreamHeaders.Get(openCodeGoSessionHeader))
 	if sessionID == "" {
@@ -115,6 +121,23 @@ func applyOpenCodeGoGatewayHeaders(req *http.Request, request gatewayRequest, ap
 	}
 	req.Header.Set(openCodeGoSessionHeader, sessionID)
 	req.Header.Set(openCodeGoAffinityHeader, affinityID)
+	// The official client repeats the session across the session header
+	// family and bills the free tier per fresh 40-hex project id.
+	req.Header.Set("x-opencode-session", sessionID)
+	req.Header.Set("x-session-id", sessionID)
+	req.Header.Set("x-opencode-project", openCodeGoNewProjectID())
+}
+
+// openCodeGoNewProjectID mints the fresh 40-hex project id every request
+// carries; a shared id would share one pre-burned free-tier quota bucket.
+func openCodeGoNewProjectID() string {
+	buf := make([]byte, 20)
+	if _, err := rand.Read(buf); err != nil {
+		for index := range buf {
+			buf[index] = byte(time.Now().UnixNano() >> (index % 8 * 8))
+		}
+	}
+	return hex.EncodeToString(buf)
 }
 
 func openCodeGoValidHeaderID(value string) string {
@@ -136,16 +159,73 @@ func openCodeGoValidHeaderID(value string) string {
 	return value
 }
 
+// openCodeGoSessionWindowMS is how far back the upstream still accepts a
+// session's encoded creation time; sessions dated outside it answer 429.
+const openCodeGoSessionWindowMS = 30 * 24 * 60 * 60 * 1000
+
+// openCodeGoDescendingTimeRE matches the inverted-timestamp encoding of an
+// official session id: the low flag bit fixed by the inversion turns the 11th
+// and 12th hex digits into the "f[c-f]" marker, so plausible times all share
+// this descending shape.
+var openCodeGoDescendingTimeRE = regexp.MustCompile(`^[0-9a-f]{9}f[c-f][0-9a-f]$`)
+
+// openCodeGoSessionPhaseMS decodes the creation time (in milliseconds) that
+// an official session id encodes, reporting false for other shapes.
+func openCodeGoSessionPhaseMS(id string) (int64, bool) {
+	if len(id) != len("ses_")+openCodeGoIdentifierSize || !strings.HasPrefix(id, "ses_") {
+		return 0, false
+	}
+	timePart := id[len("ses_") : len("ses_")+openCodeGoTimestampSize]
+	if !openCodeGoDescendingTimeRE.MatchString(timePart) {
+		return 0, false
+	}
+	inverted, err := strconv.ParseUint(timePart, 16, 64)
+	if err != nil {
+		return 0, false
+	}
+	current := (^inverted) & 0xffffffffffff
+	return int64(current >> 12), true
+}
+
+// openCodeGoIsOfficialSessionID reports whether value carries the official
+// client's session shape and encodes a creation time still inside the
+// accepted window.
+func openCodeGoIsOfficialSessionID(value string) bool {
+	value = strings.TrimSpace(value)
+	phase, ok := openCodeGoSessionPhaseMS(value)
+	if !ok {
+		return false
+	}
+	age := time.Now().UnixMilli() - phase
+	if age < 0 {
+		age = -age
+	}
+	return age <= openCodeGoSessionWindowMS
+}
+
+// openCodeGoNewSessionID mints a session id in the official client's
+// descending-time encoding: today's UTC midnight minus a random offset of at
+// most 30 days, shifted left by 12 with a set low bit, bitwise-inverted into
+// 12 hex characters, followed by 14 base62 characters. The upstream decodes
+// that time and refuses implausible ones, so plain hex timestamps fail.
 func openCodeGoNewSessionID() string {
-	timestamp := fmt.Sprintf("%012x", uint64(time.Now().UnixMilli()))
-	random := make([]byte, openCodeGoRandomSize)
-	if _, err := rand.Read(random); err != nil {
-		for index := range random {
-			random[index] = byte(time.Now().UnixNano() >> (index % 8 * 8))
+	seed := make([]byte, 4+openCodeGoRandomSize)
+	if _, err := rand.Read(seed); err != nil {
+		for index := range seed {
+			seed[index] = byte(time.Now().UnixNano() >> (index % 8 * 8))
 		}
 	}
-	for index, value := range random {
-		random[index] = openCodeGoIdentifierChars[int(value)%len(openCodeGoIdentifierChars)]
+	offset := binary.BigEndian.Uint32(seed[0:4]) % openCodeGoSessionWindowMS
+	midnight := time.Now().UTC().UnixMilli() / 86400000 * 86400000
+	base := big.NewInt(midnight - int64(offset))
+	value := new(big.Int).Or(new(big.Int).Lsh(base, 12), big.NewInt(1))
+	mask := new(big.Int).SetUint64(0xffffffffffff)
+	inverted := new(big.Int).And(new(big.Int).Not(value), mask)
+	timestamp := fmt.Sprintf("%012x", inverted)
+
+	random := make([]byte, openCodeGoRandomSize)
+	for index := range random {
+		random[index] = openCodeGoIdentifierChars[int(seed[4+index])%len(openCodeGoIdentifierChars)]
 	}
 	return "ses_" + timestamp + string(random)
 }

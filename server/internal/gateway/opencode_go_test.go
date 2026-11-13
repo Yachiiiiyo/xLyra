@@ -186,12 +186,13 @@ func TestApplyOpenCodeGoGatewayHeadersKeepsOnlyRequiredHeaders(t *testing.T) {
 	want := map[string]string{
 		"Authorization":          "Bearer test-api-key",
 		"Content-Type":           "application/json",
-		"User-Agent":             "opencode/latest/2.0.29/cli",
+		"User-Agent":             openCodeGoUserAgent,
+		"X-Opencode-Client":      "cli",
 		openCodeGoSessionHeader:  req.Header.Get(openCodeGoSessionHeader),
 		openCodeGoAffinityHeader: req.Header.Get(openCodeGoAffinityHeader),
 	}
-	if len(req.Header) != len(want) {
-		t.Fatalf("headers = %#v, want only %d headers", req.Header, len(want))
+	if len(req.Header) != len(want)+3 {
+		t.Fatalf("headers = %#v, want only %d headers", req.Header, len(want)+3)
 	}
 	for key, value := range want {
 		if got := req.Header.Get(key); got != value {
@@ -203,6 +204,21 @@ func TestApplyOpenCodeGoGatewayHeadersKeepsOnlyRequiredHeaders(t *testing.T) {
 	}
 	if !openCodeGoHeaderIDIsValid(req.Header.Get(openCodeGoAffinityHeader)) {
 		t.Errorf("%s = %q, want ses_ + 12 lowercase hex timestamp digits + 14 random characters", openCodeGoAffinityHeader, req.Header.Get(openCodeGoAffinityHeader))
+	}
+	// The official client repeats one session id across the session header
+	// family, so the echo headers must match the canonical session header.
+	for _, echo := range []string{"x-opencode-session", "x-session-id"} {
+		assertGatewayHeader(t, req, echo, req.Header.Get(openCodeGoSessionHeader))
+	}
+	project := req.Header.Get("x-opencode-project")
+	if len(project) != 40 {
+		t.Errorf("x-opencode-project = %q, want 40 hex characters", project)
+	}
+	for _, char := range project {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			t.Errorf("x-opencode-project = %q, want lowercase hex only", project)
+			break
+		}
 	}
 }
 

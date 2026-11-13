@@ -262,6 +262,7 @@ type siteGatewayRequest struct {
 	ResponsesImageGenerationPolicy string   `json:"responses_image_generation_policy"`
 	ImpersonateCodexClient         *bool    `json:"impersonate_codex_client"`
 	ImpersonateClaudeCodeClient    *bool    `json:"impersonate_claude_code_client"`
+	ImpersonateOpencodeClient      *bool    `json:"impersonate_opencode_client"`
 	QuotaProbe                     *string  `json:"quota_probe"`
 }
 
@@ -285,6 +286,7 @@ func (r *siteGatewayRequest) toSiteGatewayConfig() *site.GatewayConfig {
 		ResponsesImageGenerationPolicy: r.ResponsesImageGenerationPolicy,
 		ImpersonateCodexClient:         r.ImpersonateCodexClient,
 		ImpersonateClaudeCodeClient:    r.ImpersonateClaudeCodeClient,
+		ImpersonateOpencodeClient:      r.ImpersonateOpencodeClient,
 		QuotaProbe:                     r.QuotaProbe,
 	}
 }

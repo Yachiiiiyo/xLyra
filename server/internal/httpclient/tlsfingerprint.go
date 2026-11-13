@@ -18,6 +18,77 @@ import (
 // produced by the Node.js runtime that the real Claude Code CLI runs on.
 const TLSFingerprintClaudeCode = "claude_code"
 
+// TLSFingerprintBun makes outgoing TLS handshakes look like the ones produced
+// by Bun's fetch, the runtime the official OpenCode CLI runs on. Unlike the
+// claude_code fingerprint this one also needs Bun's HTTP/1.1 header layout,
+// so it is served by BunTransport instead of a plain dialer.
+const TLSFingerprintBun = "bun"
+
+// bunUClient wraps conn in a uTLS client for a Bun-shaped handshake with
+// serverName. The caller applies bunClientHelloSpec and performs the
+// handshake.
+func bunUClient(conn net.Conn, serverName string) *utls.UConn {
+	return utls.UClient(conn, &utls.Config{ServerName: serverName}, utls.HelloCustom)
+}
+
+// bunClientHelloSpec returns the ClientHello of Bun's fetch, captured from
+// Bun 1.4.3 (spec from opencode2api internal/httpx). Bun links its own
+// BoringSSL, so the hello is the same on every platform: JA4 t13d1713h1, no
+// GREASE, no padding, http/1.1 as the only ALPN protocol and X25519MLKEM768
+// as the first key share. uTLS keeps handshake state in the extensions, so
+// every connection needs a fresh spec.
+func bunClientHelloSpec() *utls.ClientHelloSpec {
+	return &utls.ClientHelloSpec{
+		TLSVersMin: utls.VersionTLS12,
+		TLSVersMax: utls.VersionTLS13,
+		CipherSuites: []uint16{
+			utls.TLS_AES_128_GCM_SHA256,
+			utls.TLS_AES_256_GCM_SHA384,
+			utls.TLS_CHACHA20_POLY1305_SHA256,
+			utls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			utls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			utls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			utls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			utls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+			utls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			utls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
+			utls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+			utls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+			utls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+			utls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			utls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			utls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			utls.TLS_RSA_WITH_AES_256_CBC_SHA,
+		},
+		CompressionMethods: []uint8{0},
+		Extensions: []utls.TLSExtension{
+			&utls.SNIExtension{},
+			&utls.ExtendedMasterSecretExtension{},
+			&utls.RenegotiationInfoExtension{Renegotiation: utls.RenegotiateOnceAsClient},
+			&utls.SupportedCurvesExtension{Curves: []utls.CurveID{utls.X25519MLKEM768, utls.X25519, utls.CurveP256, utls.CurveP384}},
+			&utls.SupportedPointsExtension{SupportedPoints: []uint8{0}},
+			&utls.SessionTicketExtension{},
+			&utls.ALPNExtension{AlpnProtocols: []string{"http/1.1"}},
+			&utls.StatusRequestExtension{},
+			&utls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: []utls.SignatureScheme{
+				utls.ECDSAWithP256AndSHA256,
+				utls.PSSWithSHA256,
+				utls.PKCS1WithSHA256,
+				utls.ECDSAWithP384AndSHA384,
+				utls.PSSWithSHA384,
+				utls.PKCS1WithSHA384,
+				utls.PSSWithSHA512,
+				utls.PKCS1WithSHA512,
+				utls.PKCS1WithSHA1,
+			}},
+			&utls.SCTExtension{},
+			&utls.KeyShareExtension{KeyShares: []utls.KeyShare{{Group: utls.X25519MLKEM768}, {Group: utls.X25519}}},
+			&utls.PSKKeyExchangeModesExtension{Modes: []uint8{utls.PskModeDHE}},
+			&utls.SupportedVersionsExtension{Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12}},
+		},
+	}
+}
+
 type dialContextFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // nodeClientHelloCipherSuites mirrors the cipher suite order of Node.js 24 (JA3
