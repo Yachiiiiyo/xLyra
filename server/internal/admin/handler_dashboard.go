@@ -17,6 +17,9 @@ func (h Handler) DashboardUsage(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := h.dashboard.Usage(r.Context(), time.Now())
 	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, "dashboard_usage_failed", "failed to load dashboard usage")
 		return
 	}
@@ -32,6 +35,9 @@ func (h Handler) DashboardCooldowns(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := h.dashboard.Cooldowns(r.Context(), time.Now())
 	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, "dashboard_cooldowns_failed", "failed to load dashboard cooldowns")
 		return
 	}
@@ -47,6 +53,9 @@ func (h Handler) DashboardHealth(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := h.dashboard.Health(r.Context(), time.Now())
 	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, "dashboard_health_failed", "failed to load dashboard health")
 		return
 	}
@@ -62,6 +71,9 @@ func (h Handler) DashboardInsights(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := h.dashboard.Insights(r.Context(), time.Now())
 	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, "dashboard_insights_failed", "failed to load dashboard insights")
 		return
 	}
@@ -77,6 +89,9 @@ func (h Handler) DashboardEpaperSummary(w http.ResponseWriter, r *http.Request) 
 
 	payload, err := h.dashboard.EpaperSummary(r.Context(), time.Now())
 	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, "dashboard_epaper_summary_failed", "failed to load dashboard epaper summary")
 		return
 	}

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"xlyra/server/internal/dashboard"
 	"xlyra/server/internal/systemstats"
 )
 
@@ -32,6 +34,37 @@ func TestDashboardHandlersReturnUnavailableWithoutDashboardService(t *testing.T)
 			rec := adminPerform(tc.call, adminTestRequest(http.MethodGet, "/api/v1/dashboard/"+tc.name, ""))
 
 			assertAdminErrorCode(t, rec, http.StatusServiceUnavailable, "dashboard_service_unavailable")
+		})
+	}
+}
+
+func TestDashboardHandlersAbandonCancelledRequests(t *testing.T) {
+	t.Parallel()
+
+	handler := Handler{dashboard: &dashboard.Service{}}
+	for _, tc := range []struct {
+		name string
+		call func(http.ResponseWriter, *http.Request)
+		code string
+	}{
+		{name: "usage", call: handler.DashboardUsage, code: "dashboard_usage_failed"},
+		{name: "cooldowns", call: handler.DashboardCooldowns, code: "dashboard_cooldowns_failed"},
+		{name: "health", call: handler.DashboardHealth, code: "dashboard_health_failed"},
+		{name: "insights", call: handler.DashboardInsights, code: "dashboard_insights_failed"},
+		{name: "epaper_summary", call: handler.DashboardEpaperSummary, code: "dashboard_epaper_summary_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := adminTestRequest(http.MethodGet, "/api/v1/dashboard/"+tc.name, "")
+			assertAdminErrorCode(t, adminPerform(tc.call, req), http.StatusInternalServerError, tc.code)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			cancelled := adminPerform(tc.call, req.WithContext(ctx))
+			if cancelled.Code != statusClientClosedRequest {
+				t.Fatalf("status = %d, want %d", cancelled.Code, statusClientClosedRequest)
+			}
 		})
 	}
 }
