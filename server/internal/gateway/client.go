@@ -74,6 +74,10 @@ func upstreamClientProfileForRequest(cfg *site.GatewayConfig, request upstreamCl
 	if request.ClaudeCode {
 		config.TLSFingerprint = httpclient.TLSFingerprintClaudeCode
 	}
+	if cfg != nil && gatewayConfigBool(cfg.ImpersonateOpencodeClient) {
+		// The OpenCode Zen free lane only answers the Bun fetch wire shape.
+		config.TLSFingerprint = httpclient.TLSFingerprintBun
+	}
 	return config
 }
 

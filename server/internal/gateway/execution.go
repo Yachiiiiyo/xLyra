@@ -404,7 +404,7 @@ func (h Handler) forwardGatewayRequest(
 			applyClaudeCodeOAuthGatewayHeaders(req, upstreamKey)
 		}
 		if isOpenCodeZenSite(candidate) {
-			applyOpenCodeGoGatewayHeaders(req, request, upstreamKey)
+			applyOpenCodeGoGatewayHeaders(req, request, upstreamKey, siteConfig != nil && gatewayConfigBool(siteConfig.ImpersonateOpencodeClient))
 		}
 		if err := applyPluginRequestHeaders(req, candidate.Site.SiteType, headerVars, upstreamKey, upstreamBaseURL); err != nil {
 			result.statusCode = http.StatusBadGateway

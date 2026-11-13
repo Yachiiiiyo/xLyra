@@ -392,6 +392,7 @@ func newHTTPClient(profile Profile, proxyProfile *ProxyProfile) (*http.Client, e
 	guarded := NewGuardedDialer(profile.ConnectTimeout)
 	transport.DialContext = guarded.DialContext
 	fingerprintTLS := profile.TLSFingerprint == TLSFingerprintClaudeCode
+	bunTLS := profile.TLSFingerprint == TLSFingerprintBun
 	if proxyProfile != nil {
 		parsed, err := url.Parse(strings.TrimSpace(proxyProfile.URL))
 		if err != nil {
@@ -399,7 +400,7 @@ func newHTTPClient(profile Profile, proxyProfile *ProxyProfile) (*http.Client, e
 		}
 		switch strings.ToLower(strings.TrimSpace(proxyProfile.Type)) {
 		case "http", "https":
-			if fingerprintTLS {
+			if fingerprintTLS || bunTLS {
 				// DialTLSContext is bypassed when http.Transport.Proxy is set, so
 				// the CONNECT tunnel is established by the dialer itself.
 				transport.DialContext = httpConnectDialer(parsed, guarded)
@@ -440,6 +441,21 @@ func newHTTPClient(profile Profile, proxyProfile *ProxyProfile) (*http.Client, e
 		default:
 			return nil, fmt.Errorf("unsupported proxy type %q", proxyProfile.Type)
 		}
+	}
+	if bunTLS {
+		// The Bun wire shape needs its own HTTP/1.1 head layout, which an
+		// http.Transport writer cannot produce, so it is served by
+		// BunTransport over the (possibly proxied, SSRF-guarded) dialer.
+		return &http.Client{
+			Timeout: profile.RequestTimeout,
+			Transport: NewBunTransport(BunOptions{
+				DialContext:           transport.DialContext,
+				ConnectTimeout:        profile.ConnectTimeout,
+				ResponseHeaderTimeout: profile.ResponseHeaderTimeout,
+				IdleConnTimeout:       profile.IdleConnTimeout,
+				MaxIdleConnsPerHost:   profile.MaxIdleConnsPerHost,
+			}),
+		}, nil
 	}
 	transport.MaxIdleConns = profile.MaxIdleConns
 	transport.MaxIdleConnsPerHost = profile.MaxIdleConnsPerHost
