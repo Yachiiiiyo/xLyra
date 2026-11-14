@@ -214,7 +214,7 @@ func (h Handler) CodexOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	refreshResult, refreshErr := h.sites.RefreshState(r.Context(), siteItem.ID)
 	if refreshErr != nil {
-		_ = h.oauth.MarkConnectionUnavailable(r.Context(), connection.ID, refreshErr.Error())
+		h.markOAuthConnectionUnavailableOnRefreshAuthFailure(r.Context(), connection.ID, connection.Provider, refreshErr)
 	} else {
 		h.invalidateGatewayModelsCache()
 	}
@@ -309,7 +309,7 @@ func (h Handler) AntigravityOAuthCallback(w http.ResponseWriter, r *http.Request
 
 	refreshResult, refreshErr := h.sites.RefreshState(r.Context(), siteItem.ID)
 	if refreshErr != nil {
-		_ = h.oauth.MarkConnectionUnavailable(r.Context(), connection.ID, refreshErr.Error())
+		h.markOAuthConnectionUnavailableOnRefreshAuthFailure(r.Context(), connection.ID, connection.Provider, refreshErr)
 	} else {
 		h.invalidateGatewayModelsCache()
 	}
@@ -395,7 +395,7 @@ func (h Handler) CompleteClaudeCodeOAuth(w http.ResponseWriter, r *http.Request)
 
 	refreshResult, refreshErr := h.sites.RefreshState(r.Context(), siteItem.ID)
 	if refreshErr != nil {
-		_ = h.oauth.MarkConnectionUnavailable(r.Context(), connection.ID, refreshErr.Error())
+		h.markOAuthConnectionUnavailableOnRefreshAuthFailure(r.Context(), connection.ID, connection.Provider, refreshErr)
 	} else {
 		h.invalidateGatewayModelsCache()
 	}
@@ -575,7 +575,7 @@ func (h Handler) RefreshOAuthConnection(w http.ResponseWriter, r *http.Request) 
 	if details.Connection.SiteID != nil && *details.Connection.SiteID != uuid.Nil {
 		result, refreshErr := h.sites.RefreshState(r.Context(), *details.Connection.SiteID)
 		if refreshErr != nil {
-			_ = h.oauth.MarkConnectionUnavailable(r.Context(), connectionID, refreshErr.Error())
+			h.markOAuthConnectionUnavailableOnRefreshAuthFailure(r.Context(), connectionID, details.Connection.Provider, refreshErr)
 			if refreshed, err := h.oauth.ConnectionByID(r.Context(), connectionID); err == nil {
 				details = refreshed
 			}
@@ -593,6 +593,27 @@ func (h Handler) RefreshOAuthConnection(w http.ResponseWriter, r *http.Request) 
 		"connection": h.oauthConnectionDetailsPayload(r, details, resetCredits),
 		"refresh":    refreshPayload,
 	})
+}
+
+// markOAuthConnectionUnavailableOnRefreshAuthFailure only marks the connection
+// (and disables its site) when the site refresh failed with a permanent auth
+// error. Rate limits and transient upstream errors are left to the regular
+// refresh classification so a manual/monitor refresh cannot disable a healthy
+// but rate-limited site.
+func (h Handler) markOAuthConnectionUnavailableOnRefreshAuthFailure(ctx context.Context, connectionID uuid.UUID, provider string, refreshErr error) {
+	if h.oauth == nil || refreshErr == nil {
+		return
+	}
+	message := refreshErr.Error()
+	if !site.OAuthPermanentAuthRefreshError(provider, message) {
+		h.logInfo("oauth site refresh failed; connection kept available", "connection_id", connectionID, "provider", provider, "error", message)
+		return
+	}
+	if err := h.oauth.MarkConnectionUnavailable(ctx, connectionID, message); err != nil {
+		h.logWarn("failed to mark oauth connection unavailable after site refresh auth failure", "connection_id", connectionID, "provider", provider, "error", err)
+		return
+	}
+	h.logWarn("oauth connection marked unavailable and site disabled after site refresh auth failure", "connection_id", connectionID, "provider", provider, "error", message)
 }
 
 func (h Handler) ListOAuthConnectionResetCredits(w http.ResponseWriter, r *http.Request) {
