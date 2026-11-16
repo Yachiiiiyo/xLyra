@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "hostApi": 2,
+  "id": "example.primitives",
+  "kind": "site_provider",
+  "name": "原语与状态槽示例",
+  "description": "阶段 1 示例：展示 bytes/encoding/crypto 原语、storage 私有 KV、settings 配置与多钩子样本测试",
+  "version": "1.0.0",
+  "license": "MIT",
+  "permissions": ["storage"],
+  "settings": [
+    {
+      "key": "clientVersion",
+      "type": "string",
+      "default": "2.4.0",
+      "pattern": "^[0-9.]{1,16}$",
+      "label": { "zh": "客户端版本", "en": "Client version" }
+    }
+  ],
+  "siteProvider": {
+    "siteType": "example.primitives/chat",
+    "display": {
+      "name": { "zh": "原语示例站点", "en": "Primitives Demo Site" },
+      "subtitle": { "zh": "演示原语与私有存储", "en": "Demonstrates primitives and storage" }
+    },
+    "hosts": ["api.example.com"],
+    "credential": { "model": "api_key" },
+    "protocol": {
+      "kind": "openai_chat",
+      "path": "/v1/chat/completions",
+      "officialBaseURL": "https://api.example.com",
+      "defaultEndpointTypes": ["openai"]
+    },
+    "models": { "path": "/v1/models", "auth": "bearer" }
+  }
+}

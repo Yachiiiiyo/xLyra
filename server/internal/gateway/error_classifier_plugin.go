@@ -48,10 +48,11 @@ func applyErrorClassifierPlugin(candidate routeengine.Candidate, statusCode int,
 		verdict jsplugin.ErrorClassifyResult
 		err     error
 	)
+	callCtx := withCandidatePluginContext(ctx, candidate, plugin)
 	if plugin.Manifest.Kind == jsplugin.KindSiteProvider {
-		verdict, err = plugin.CallErrorClassifyHook(ctx, "classify", classifyCtx, input)
+		verdict, err = plugin.CallErrorClassifyHook(callCtx, "classify", classifyCtx, input)
 	} else {
-		verdict, err = plugin.CallErrorClassify(ctx, classifyCtx, input)
+		verdict, err = plugin.CallErrorClassify(callCtx, classifyCtx, input)
 	}
 	if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
 		if plugin.Manifest.Kind == jsplugin.KindSiteProvider {

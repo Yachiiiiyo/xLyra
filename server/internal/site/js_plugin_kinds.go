@@ -83,6 +83,22 @@ func SitePluginID(cfg *GatewayConfig, kind string) string {
 	return cfg.Plugins[kind]
 }
 
+// withSitePluginContext attaches per-site setting overrides and site-scoped
+// storage to ctx for one plugin call.
+func (s *Service) withSitePluginContext(ctx context.Context, item store.Site, plugin *jsplugin.Plugin) context.Context {
+	if plugin == nil {
+		return ctx
+	}
+	if overrides := SitePluginSettings(GatewayConfigFromSiteMeta(item.Meta), plugin.Manifest.ID); len(overrides) > 0 {
+		ctx = jsplugin.WithSiteSettings(ctx, overrides)
+	}
+	if s != nil && s.db != nil && item.ID != uuid.Nil && plugin.AllowsStorage() {
+		storageRepo := store.NewJSPluginStorageRepository(s.db.DB())
+		ctx = jsplugin.WithCallStorage(ctx, jsplugin.NewStoreStorage(storageRepo, plugin.Manifest.ID, jsplugin.StorageScopeSite, item.ID.String()))
+	}
+	return ctx
+}
+
 // driveStepped runs a model_list, credential_check or site_detect plugin to
 // completion. The host sends every request and adds the credential; secret is
 // empty for kinds that take none, and then no Authorization header is sent.
@@ -172,9 +188,13 @@ type pluginModelLister struct {
 	plugin     *jsplugin.Plugin
 	hook       string
 	resultKind string
+	wrapCtx    func(context.Context) context.Context
 }
 
 func (l pluginModelLister) ListModels(ctx context.Context, site adapter.SiteConfig, apiKey string) ([]adapter.Model, error) {
+	if l.wrapCtx != nil {
+		ctx = l.wrapCtx(ctx)
+	}
 	result, err := driveSteppedHook(ctx, site.Client, l.plugin, l.hook, l.resultKind, jsplugin.ProbeContext{
 		SiteType:       site.SiteType,
 		BaseURL:        site.BaseURL,
@@ -207,10 +227,18 @@ func (l pluginModelLister) ListModels(ctx context.Context, site adapter.SiteConf
 // to the site wins, then the site type's listModels hook, then the adapter.
 func (s *Service) modelListerFor(item store.Site, module adapter.Module) (adapter.GatewayModelLister, bool) {
 	if plugin, ok := s.boundSitePlugin(item, jsplugin.KindModelList); ok {
-		return pluginModelLister{plugin: plugin}, true
+		return pluginModelLister{
+			plugin:  plugin,
+			wrapCtx: func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+		}, true
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "listModels"); ok {
-		return pluginModelLister{plugin: plugin, hook: "listModels", resultKind: jsplugin.KindModelList}, true
+		return pluginModelLister{
+			plugin:     plugin,
+			hook:       "listModels",
+			resultKind: jsplugin.KindModelList,
+			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+		}, true
 	}
 	return adapter.AsGatewayModelLister(module)
 }
@@ -226,9 +254,13 @@ type pluginCredentialValidator struct {
 	plugin     *jsplugin.Plugin
 	hook       string
 	resultKind string
+	wrapCtx    func(context.Context) context.Context
 }
 
 func (v pluginCredentialValidator) ValidateCredentials(ctx context.Context, site adapter.SiteConfig, apiKey string) error {
+	if v.wrapCtx != nil {
+		ctx = v.wrapCtx(ctx)
+	}
 	result, err := driveSteppedHook(ctx, site.Client, v.plugin, v.hook, v.resultKind, jsplugin.ProbeContext{
 		SiteType:       site.SiteType,
 		BaseURL:        site.BaseURL,
@@ -280,10 +312,18 @@ func nonEmpty(value, fallback string) string {
 // hook, then the adapter.
 func (s *Service) credentialValidatorFor(item store.Site, module adapter.Module) (adapter.CredentialValidator, bool) {
 	if plugin, ok := s.boundSitePlugin(item, jsplugin.KindCredentialCheck); ok {
-		return pluginCredentialValidator{plugin: plugin}, true
+		return pluginCredentialValidator{
+			plugin:  plugin,
+			wrapCtx: func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+		}, true
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "check"); ok {
-		return pluginCredentialValidator{plugin: plugin, hook: "check", resultKind: jsplugin.KindCredentialCheck}, true
+		return pluginCredentialValidator{
+			plugin:     plugin,
+			hook:       "check",
+			resultKind: jsplugin.KindCredentialCheck,
+			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+		}, true
 	}
 	return adapter.AsCredentialValidator(module)
 }
@@ -386,7 +426,8 @@ func (s *Service) applyModelMetadataPlugins(ctx context.Context, item store.Site
 		return model
 	}
 	for _, plugin := range registry.ByKind(jsplugin.KindModelMetadata) {
-		result, err := plugin.CallModelMetadata(ctx,
+		callCtx := s.withSitePluginContext(ctx, item, plugin)
+		result, err := plugin.CallModelMetadata(callCtx,
 			jsplugin.ModelMetadataContext{SiteType: item.SiteType},
 			jsplugin.ModelMetadataInput{Models: []string{model.UpstreamName}})
 		if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
@@ -443,7 +484,7 @@ func (s *Service) fetchPluginPricing(ctx context.Context, item store.Site, plugi
 	if err != nil {
 		return adapter.PricingSnapshot{}, err
 	}
-	parsed, err := plugin.CallPricingParse(ctx, jsplugin.PricingParseContext{SiteType: item.SiteType}, payload)
+	parsed, err := plugin.CallPricingParse(s.withSitePluginContext(ctx, item, plugin), jsplugin.PricingParseContext{SiteType: item.SiteType}, payload)
 	if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
 		breaker.RecordProbeResult(plugin, err == nil)
 	}

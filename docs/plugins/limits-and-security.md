@@ -31,18 +31,21 @@
 
 | 项 | 上限 |
 | --- | --- |
-| 分步类型（`quota_probe`、`model_list`、`credential_check`、`site_detect`）每次钩子调用 | 200 ms |
-| `automation` 每次 `handle` 调用（不在请求路径上） | 200 ms |
-| 协议和 `error_classifier` 每次调用（在请求路径上） | 50 ms |
-| `model_metadata`、`pricing_parse` 每次调用 | 200 ms |
-| 每次调用的内存分配 | 16 MiB |
+| 分步类型及站点/账号分步钩子每次调用 | 500 ms |
+| `automation` / `onEvent` 每次调用（不在请求路径上） | 500 ms |
+| 协议、`rewritePayload` 和 `error_classifier`（`classifyError`）每次调用（在请求路径上） | 50 ms |
+| `signRequest` 每次调用（在请求路径上） | 100 ms |
+| `onSchedule` 每次调用 | 1 s |
+| `model_metadata`、`pricing_parse` 每次调用 | 500 ms |
+| 每次调用的内存分配 | 32 MiB |
 | 钩子返回值大小 | 1 MiB |
 | 分步类型的钩子调用次数 | 6 次（最多发 5 个 HTTP 请求） |
 | 额度探测单个请求体 | 64 KiB |
 | 额度探测发给插件的响应体 | 1 MiB |
 | 协议响应体 | 4 MiB |
 | 单个 HTTP 请求的超时 | 20 秒 |
-| 日志 | 每次调用 20 条，每条 1024 字节 |
+| 日志 | 每次调用 50 条，每条 2048 字节 |
+| 私有 KV 存储（`storage`） | 每个作用域最多 64 个键，共 64 KiB |
 | 请求头 | 32 个，共 8 KiB |
 | 插件包 | 2 MiB，64 个文件 |
 | `site_provider` 的 `display.icon` | 64 KiB，只能是 PNG 或 WebP |

@@ -21,7 +21,8 @@ var SignEncodings = []string{"hex", "base64"}
 
 // ProtocolEndpointContext is passed to decodeRequest.
 type ProtocolEndpointContext struct {
-	DownstreamPath string `ts:"downstreamPath"`
+	DownstreamPath string         `ts:"downstreamPath"`
+	Settings       map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ProtocolCandidateContext is the candidate block inside build/parse ctx.
@@ -35,6 +36,7 @@ type ProtocolCandidateContext struct {
 // ProtocolBuildContext is passed to buildRequest and parseResponse.
 type ProtocolBuildContext struct {
 	Candidate ProtocolCandidateContext `ts:"candidate"`
+	Settings  map[string]any           `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ProtocolDecodeResult is a successful decodeRequest return.
@@ -112,11 +114,15 @@ type ProtocolErrorResult struct {
 }
 
 func (pc ProtocolEndpointContext) asMap() map[string]any {
-	return map[string]any{"downstreamPath": pc.DownstreamPath}
+	out := map[string]any{"downstreamPath": pc.DownstreamPath}
+	if len(pc.Settings) > 0 {
+		out["settings"] = pc.Settings
+	}
+	return out
 }
 
 func (bc ProtocolBuildContext) asMap() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"candidate": map[string]any{
 			"siteType":      bc.Candidate.SiteType,
 			"baseURL":       bc.Candidate.BaseURL,
@@ -124,6 +130,10 @@ func (bc ProtocolBuildContext) asMap() map[string]any {
 			"upstreamModel": bc.Candidate.UpstreamModel,
 		},
 	}
+	if len(bc.Settings) > 0 {
+		out["settings"] = bc.Settings
+	}
+	return out
 }
 
 func parseInputAsMap(input ProtocolParseInput) map[string]any {

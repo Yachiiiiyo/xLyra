@@ -181,6 +181,20 @@ func (m *Manager) reloadLocked(ctx context.Context) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	pluginRows, err := m.repo.ListPlugins(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settingsByPlugin := make(map[string]map[string]any, len(pluginRows))
+	for _, pRow := range pluginRows {
+		if decoded := decodeStoredSettingsJSON(pRow.Settings); len(decoded) > 0 {
+			settingsByPlugin[pRow.ID] = decoded
+		}
+	}
+	var storageRepo store.JSPluginStorageRepository
+	if m.db != nil {
+		storageRepo = store.NewJSPluginStorageRepository(m.db.DB())
+	}
 	enabled := make([]EnabledPlugin, 0, len(enabledRows))
 	for _, row := range enabledRows {
 		pkg, err := ReadPackage(row.Package, true)
@@ -190,6 +204,12 @@ func (m *Manager) reloadLocked(ctx context.Context) (*Snapshot, error) {
 		plugin, err := CompilePackage(pkg)
 		if err != nil {
 			return nil, store.EnabledPluginCompileError(row.PluginID, row.Version, err)
+		}
+		if global, ok := settingsByPlugin[row.PluginID]; ok {
+			plugin.SetGlobalSettings(global)
+		}
+		if m.db != nil && plugin.AllowsStorage() {
+			plugin.SetStorageRepository(storageRepo)
 		}
 		enabled = append(enabled, EnabledPlugin{Plugin: plugin})
 	}
@@ -580,6 +600,81 @@ func (m *Manager) Metrics(pluginID, version string) PluginMetricsWindow {
 	}
 	return m.catalog.breaker.Metrics(pluginID, version)
 }
+
+// StorageForScope returns a database-backed StorageBackend for (pluginID, scopeType, scopeID).
+func (m *Manager) StorageForScope(pluginID, scopeType, scopeID string) StorageBackend {
+	if m == nil || m.db == nil {
+		return nil
+	}
+	return NewStoreStorage(store.NewJSPluginStorageRepository(m.db.DB()), pluginID, scopeType, scopeID)
+}
+
+// GetPluginSettings returns the selected version's SettingSpec schema, stored
+// global overrides, and resolved values (defaults merged with global overrides).
+func (m *Manager) GetPluginSettings(ctx context.Context, pluginID string) ([]SettingSpec, map[string]any, map[string]any, error) {
+	pRow, err := m.repo.GetPlugin(ctx, pluginID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	versions, err := m.repo.ListVersionHeadersForPlugin(ctx, pluginID)
+	if err != nil || len(versions) == 0 {
+		return nil, nil, nil, gorm.ErrRecordNotFound
+	}
+	selected, ok := SelectPluginVersion(versions)
+	if !ok {
+		return nil, nil, nil, gorm.ErrRecordNotFound
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(selected.Manifest, &manifest); err != nil {
+		return nil, nil, nil, err
+	}
+	stored := decodeStoredSettingsJSON(pRow.Settings)
+	if stored == nil {
+		stored = map[string]any{}
+	}
+	resolved := ResolveSettings(manifest.Settings, stored)
+	if resolved == nil {
+		resolved = map[string]any{}
+	}
+	return manifest.Settings, stored, resolved, nil
+}
+
+// UpdatePluginSettings validates values against the selected version's settings
+// schema, saves them to js_plugins.settings, and publishes a new catalog generation.
+func (m *Manager) UpdatePluginSettings(ctx context.Context, pluginID string, values map[string]any) (map[string]any, error) {
+	specs, _, _, err := m.GetPluginSettings(ctx, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	normalized, err := ValidateSettingValues(specs, values)
+	if err != nil {
+		return nil, &InvalidSettingsError{Err: err}
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.repo.SetPluginSettings(ctx, pluginID, store.JSON(encoded)); err != nil {
+		return nil, err
+	}
+	if err := m.publishCatalog(ctx); err != nil {
+		return nil, err
+	}
+	resolved := ResolveSettings(specs, normalized)
+	if resolved == nil {
+		resolved = map[string]any{}
+	}
+	return resolved, nil
+}
+
+// InvalidSettingsError marks setting overrides that failed schema validation.
+type InvalidSettingsError struct {
+	Err error
+}
+
+func (e *InvalidSettingsError) Error() string { return e.Err.Error() }
+
+func (e *InvalidSettingsError) Unwrap() error { return e.Err }
 
 func (m *Manager) BindProtocolSlug(ctx context.Context, pluginID, version, slug string) error {
 	if slug == "" {

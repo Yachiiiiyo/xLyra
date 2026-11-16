@@ -45,6 +45,9 @@ type GatewayConfig struct {
 	// Plugins maps a per-site plugin kind (model_list, credential_check,
 	// error_classifier, pricing_parse) to the plugin id an admin bound to this site.
 	Plugins map[string]string `json:"plugins,omitempty"`
+	// PluginSettings maps a plugin id to per-site setting overrides merged over
+	// the plugin's global settings and manifest defaults.
+	PluginSettings map[string]map[string]any `json:"plugin_settings,omitempty"`
 }
 
 // SitePluginKinds are the plugin kinds that take effect per site.
@@ -70,6 +73,45 @@ func normalizeSitePlugins(in map[string]string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+func normalizeSitePluginSettings(in map[string]map[string]any) map[string]map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := map[string]map[string]any{}
+	for pluginID, rawSettings := range in {
+		id := strings.TrimSpace(pluginID)
+		if id == "" || strings.ContainsAny(id, " \t\r\n") || len(rawSettings) == 0 {
+			continue
+		}
+		entries := map[string]any{}
+		for key, val := range rawSettings {
+			k := strings.TrimSpace(key)
+			if k == "" || val == nil {
+				continue
+			}
+			switch val.(type) {
+			case string, bool, float64, float32, int, int64, int32, json.Number:
+				entries[k] = val
+			}
+		}
+		if len(entries) > 0 {
+			out[id] = entries
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// SitePluginSettings returns the per-site setting overrides for pluginID, if any.
+func SitePluginSettings(cfg *GatewayConfig, pluginID string) map[string]any {
+	if cfg == nil || len(cfg.PluginSettings) == 0 {
+		return nil
+	}
+	return cfg.PluginSettings[strings.TrimSpace(pluginID)]
 }
 
 func NormalizeQuotaProbeType(value string) (string, error) {
@@ -136,6 +178,7 @@ func NormalizeGatewayConfig(input *GatewayConfig) (*GatewayConfig, error) {
 		normalized.QuotaProbe = &probeType
 	}
 	normalized.Plugins = normalizeSitePlugins(normalized.Plugins)
+	normalized.PluginSettings = normalizeSitePluginSettings(normalized.PluginSettings)
 	for _, field := range []struct {
 		name  string
 		value *int
@@ -266,6 +309,7 @@ func MergeSiteGatewayConfig(existingRaw []byte, gateway *GatewayConfig) ([]byte,
 	// Normalizing drops empty plugin ids, but in a patch an empty id means
 	// "remove this binding", so the merge must see it.
 	normalized.Plugins = gateway.Plugins
+	normalized.PluginSettings = gateway.PluginSettings
 
 	root := map[string]any{}
 	if len(existingRaw) > 0 {
@@ -325,6 +369,7 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 	}
 	if existing == nil {
 		patch.Plugins = normalizeSitePlugins(patch.Plugins)
+		patch.PluginSettings = normalizeSitePluginSettings(patch.PluginSettings)
 		return patch
 	}
 	merged := *existing
@@ -396,6 +441,39 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 				merged.QuotaProbe = &value
 			}
 		}
+	}
+	if patch.PluginSettings != nil {
+		merged.PluginSettings = map[string]map[string]any{}
+		for id, vals := range existing.PluginSettings {
+			copied := make(map[string]any, len(vals))
+			for k, v := range vals {
+				copied[k] = v
+			}
+			merged.PluginSettings[id] = copied
+		}
+		for id, patchVals := range patch.PluginSettings {
+			pluginID := strings.TrimSpace(id)
+			if pluginID == "" {
+				continue
+			}
+			if len(patchVals) == 0 {
+				delete(merged.PluginSettings, pluginID)
+				continue
+			}
+			target := merged.PluginSettings[pluginID]
+			if target == nil {
+				target = map[string]any{}
+			}
+			for k, v := range patchVals {
+				if v == nil {
+					delete(target, k)
+				} else {
+					target[k] = v
+				}
+			}
+			merged.PluginSettings[pluginID] = target
+		}
+		merged.PluginSettings = normalizeSitePluginSettings(merged.PluginSettings)
 	}
 	return &merged
 }

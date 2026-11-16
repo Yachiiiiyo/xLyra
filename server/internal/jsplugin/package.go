@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"xlyra/server/internal/store"
 	"xlyra/server/internal/version"
 )
 
@@ -28,6 +31,8 @@ type Manifest struct {
 	Description  string              `json:"description"`
 	License      string              `json:"license"`
 	Icon         string              `json:"icon,omitempty"`
+	Permissions  []string            `json:"permissions,omitempty"`
+	Settings     []SettingSpec       `json:"settings,omitempty"`
 	QuotaProbe   QuotaProbeSection   `json:"quotaProbe"`
 	Site         SiteSection         `json:"site"`
 	Protocol     ProtocolSection     `json:"protocol"`
@@ -91,13 +96,98 @@ func (s ProtocolSection) AuthHeader() string {
 
 // Plugin is a loaded, compiled plugin of one kind.
 type Plugin struct {
-	Manifest      Manifest
-	program       *program
-	pool          *pool
-	fixtures      []Fixture
-	gen           int64
-	source        string
-	packageSHA256 string
+	Manifest       Manifest
+	program        *program
+	pool           *pool
+	hotPool        *pool
+	fixtures       []Fixture
+	gen            int64
+	source         string
+	packageSHA256  string
+	stateMu        sync.RWMutex
+	globalSettings map[string]any
+	defaultStorage StorageBackend
+	storageRepo    store.JSPluginStorageRepository
+	hasStorageRepo bool
+}
+
+type callStorageCtxKey struct{}
+type callSecretBagCtxKey struct{}
+type callSiteSettingsCtxKey struct{}
+type callStorageScopeCtxKey struct{}
+
+type storageScope struct {
+	scopeType string
+	scopeID   string
+}
+
+// WithCallStorage attaches a StorageBackend for the duration of a hook call.
+func WithCallStorage(ctx context.Context, backend StorageBackend) context.Context {
+	if backend == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callStorageCtxKey{}, backend)
+}
+
+// WithStorageScope selects the plugin's private KV scope for a hook call.
+// An explicit WithCallStorage backend still wins. An empty scopeID is ignored.
+func WithStorageScope(ctx context.Context, scopeType, scopeID string) context.Context {
+	if ctx == nil || strings.TrimSpace(scopeID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, callStorageScopeCtxKey{}, storageScope{scopeType: scopeType, scopeID: scopeID})
+}
+
+// WithCallSecretBag attaches a SecretBag so storage.set rejects values that
+// leak secrets held by the bag.
+func WithCallSecretBag(ctx context.Context, bag *SecretBag) context.Context {
+	if bag == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callSecretBagCtxKey{}, bag)
+}
+
+// WithSiteSettings attaches per-site setting overrides for a hook call.
+func WithSiteSettings(ctx context.Context, settings map[string]any) context.Context {
+	if len(settings) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, callSiteSettingsCtxKey{}, settings)
+}
+
+func storageFromContext(ctx context.Context) StorageBackend {
+	if ctx == nil {
+		return nil
+	}
+	backend, _ := ctx.Value(callStorageCtxKey{}).(StorageBackend)
+	return backend
+}
+
+func storageScopeFromContext(ctx context.Context) (storageScope, bool) {
+	if ctx == nil {
+		return storageScope{}, false
+	}
+	scope, ok := ctx.Value(callStorageScopeCtxKey{}).(storageScope)
+	if !ok || strings.TrimSpace(scope.scopeID) == "" {
+		return storageScope{}, false
+	}
+	return scope, true
+}
+
+func secretBagFromContext(ctx context.Context) *SecretBag {
+	if ctx == nil {
+		return nil
+	}
+	bag, _ := ctx.Value(callSecretBagCtxKey{}).(*SecretBag)
+	return bag
+}
+
+func siteSettingsFromContext(ctx context.Context) map[string]any {
+	if ctx == nil {
+		return nil
+	}
+	settings, _ := ctx.Value(callSiteSettingsCtxKey{}).(map[string]any)
+	return settings
 }
 
 // PackageSHA256 is the canonical digest of the package this plugin was compiled
@@ -125,6 +215,87 @@ func (p *Plugin) Fixtures() []Fixture {
 		return nil
 	}
 	return append([]Fixture(nil), p.fixtures...)
+}
+
+// AllowsStorage reports whether the plugin manifest declares the "storage" permission.
+func (p *Plugin) AllowsStorage() bool {
+	if p == nil {
+		return false
+	}
+	return contains(p.Manifest.Permissions, PermissionStorage)
+}
+
+// SetGlobalSettings updates the plugin-wide admin setting overrides.
+func (p *Plugin) SetGlobalSettings(settings map[string]any) {
+	if p == nil {
+		return
+	}
+	p.stateMu.Lock()
+	p.globalSettings = maps.Clone(settings)
+	p.stateMu.Unlock()
+}
+
+// SetDefaultStorage sets the fallback StorageBackend when a call context does
+// not supply a narrower scope.
+func (p *Plugin) SetDefaultStorage(backend StorageBackend) {
+	if p == nil {
+		return
+	}
+	p.stateMu.Lock()
+	p.defaultStorage = backend
+	p.stateMu.Unlock()
+}
+
+// SetStorageRepository remembers the plugin storage repository and uses its
+// global scope as the fallback backend.
+func (p *Plugin) SetStorageRepository(repo store.JSPluginStorageRepository) {
+	if p == nil {
+		return
+	}
+	p.stateMu.Lock()
+	p.storageRepo = repo
+	p.hasStorageRepo = true
+	p.defaultStorage = NewStoreStorage(repo, p.Manifest.ID, StorageScopeGlobal, "")
+	p.stateMu.Unlock()
+}
+
+// EffectiveSettings returns the resolved settings map (defaults -> global -> site).
+// It returns nil when the manifest declares no settings.
+func (p *Plugin) EffectiveSettings(siteOverrides map[string]any) map[string]any {
+	if p == nil || len(p.Manifest.Settings) == 0 {
+		return nil
+	}
+	p.stateMu.RLock()
+	global := p.globalSettings
+	p.stateMu.RUnlock()
+	return ResolveSettings(p.Manifest.Settings, global, siteOverrides)
+}
+
+// HasSeparateHotPool reports whether the plugin allocated dedicated hot-path and
+// cold-path runtime pools.
+func (p *Plugin) HasSeparateHotPool() bool {
+	return p != nil && p.hotPool != nil && p.pool != nil && p.hotPool != p.pool
+}
+
+func isHotHookName(name string) bool {
+	switch name {
+	case "decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
+		"classify", "classifyError", "rewritePayload", "transformStream":
+		return true
+	default:
+		return false
+	}
+}
+
+func classifyProgramHooks(hooks map[string]any) (hasHot, hasCold bool) {
+	for name := range hooks {
+		if isHotHookName(name) {
+			hasHot = true
+		} else {
+			hasCold = true
+		}
+	}
+	return hasHot, hasCold
 }
 
 // NewPlugin compiles one module and checks its manifest. resident is the
@@ -160,11 +331,18 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err := program.requireHooks(accountPoolRequiredExports(manifest.SiteProvider)); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
+	// Register any additional known hooks exported by the module so selftest and
+	// multi-hook dispatch can invoke them.
+	if err := program.addOptionalHooks(allKnownOptionalHooks); err != nil {
+		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+	}
 	if err := rejectListModelsWithoutPerAccount(manifest, program); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
-	if _, signs := program.hooks[HookSignRequest]; signs && manifest.Protocol.Auth != "none" {
-		return nil, fmt.Errorf("%s: signRequest needs protocol.auth \"none\", so the credential is only used for signing", manifest.ID)
+	if manifest.Kind == KindProtocol {
+		if _, signs := program.hooks[HookSignRequest]; signs && manifest.Protocol.Auth != "none" {
+			return nil, fmt.Errorf("%s: signRequest needs protocol.auth \"none\", so the credential is only used for signing", manifest.ID)
+		}
 	}
 	loaded, err := newSession(program)
 	if err != nil {
@@ -174,6 +352,9 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 		if err := loaded.requireCallableHooks(spec.OptionalHooks); err != nil {
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 		}
+	}
+	if err := loaded.requireCallableHooks(allKnownOptionalHooks); err != nil {
+		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
 	if err := loaded.requireExports(accountPoolRequiredExports(manifest.SiteProvider)); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
@@ -185,43 +366,134 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err := metaMatches(manifest, meta); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
+	hasHot, hasCold := false, false
+	for name := range program.hooks {
+		if isHotHookName(name) {
+			hasHot = true
+		} else {
+			hasCold = true
+		}
+	}
+	spec, _ := lookupKind(manifest.Kind)
+	primaryHot := spec.HotPath || (hasHot && !hasCold)
 	maxPool := probePoolMax
-	if spec, _ := lookupKind(manifest.Kind); spec.HotPath {
-		if resident == 0 {
-			resident = protocolPoolResident
+	primaryResident := resident
+	if primaryHot {
+		if primaryResident == 0 {
+			primaryResident = protocolPoolResident
 		}
 		maxPool = protocolPoolMax
-	} else if resident == 0 {
-		resident = probePoolResident
+	} else if primaryResident == 0 {
+		primaryResident = probePoolResident
 	}
 	plugin := &Plugin{Manifest: manifest, program: program, fixtures: fixtures, gen: 1, source: source}
-	pool, err := newPool(resident, maxPool, func() (*session, error) {
+	pool, err := newPool(primaryResident, maxPool, func() (*session, error) {
 		return newSession(program)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
 	plugin.pool = pool
+	if !primaryHot && hasHot {
+		hotResident := protocolPoolResident
+		if resident > 0 && resident < hotResident {
+			hotResident = resident
+		}
+		hotPool, err := newPool(hotResident, protocolPoolMax, func() (*session, error) {
+			return newSession(program)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+		}
+		plugin.hotPool = hotPool
+	}
 	return plugin, nil
+}
+
+var allKnownOptionalHooks = []string{
+	"probe", "listModels", "check", "classify", "classifyError", "rewritePayload",
+	"parsePricing", "detect", "describeModels",
+	"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
+	"decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
+	"handle", "onEvent", "onSchedule",
+}
+
+func (p *Plugin) poolForHook(hookName string) *pool {
+	if p == nil {
+		return nil
+	}
+	if isHotHookName(hookName) && p.hotPool != nil {
+		return p.hotPool
+	}
+	return p.pool
+}
+
+func (p *Plugin) buildCallEnv(ctx context.Context) callEnv {
+	allows := p.AllowsStorage()
+	var backend StorageBackend
+	if allows {
+		backend = storageFromContext(ctx)
+		p.stateMu.RLock()
+		if backend == nil {
+			if scope, ok := storageScopeFromContext(ctx); ok && p.hasStorageRepo {
+				backend = NewStoreStorage(p.storageRepo, p.Manifest.ID, scope.scopeType, scope.scopeID)
+			}
+		}
+		if backend == nil {
+			backend = p.defaultStorage
+		}
+		p.stateMu.RUnlock()
+		if bag := secretBagFromContext(ctx); bag != nil {
+			backend = GuardStorage(backend, bag)
+		}
+	}
+	return callEnv{
+		ctx:           ctx,
+		allowsStorage: allows,
+		storage:       backend,
+	}
+}
+
+func (p *Plugin) injectContextSettings(ctx context.Context, arg any) any {
+	if p == nil || len(p.Manifest.Settings) == 0 {
+		return arg
+	}
+	ctxMap, ok := arg.(map[string]any)
+	if !ok || ctxMap == nil {
+		return arg
+	}
+	cloned := maps.Clone(ctxMap)
+	var explicit map[string]any
+	if existing, ok := cloned["settings"].(map[string]any); ok {
+		explicit = existing
+	}
+	siteOverrides := siteSettingsFromContext(ctx)
+	p.stateMu.RLock()
+	global := p.globalSettings
+	p.stateMu.RUnlock()
+	cloned["settings"] = ResolveSettings(p.Manifest.Settings, global, siteOverrides, explicit)
+	return cloned
 }
 
 // CallProbe runs the probe hook once.
 func (p *Plugin) CallProbe(ctx context.Context, probeCtx ProbeContext, steps []ProbeStep) (Decision, error) {
-	if p == nil || p.pool == nil {
+	targetPool := p.poolForHook("probe")
+	if p == nil || targetPool == nil {
 		return Decision{}, fmt.Errorf("plugin is not loaded")
 	}
 	started := time.Now()
-	session, err := p.pool.Acquire(ctx)
+	session, err := targetPool.Acquire(ctx)
 	if err != nil {
 		return Decision{}, annotate(p, err, "probe", len(steps), time.Since(started).Milliseconds())
 	}
 	hook, ok := p.program.hooks["probe"]
 	if !ok {
-		p.pool.Release(session, true)
+		targetPool.Release(session, true)
 		return Decision{}, fmt.Errorf("probe hook is missing")
 	}
-	out, logs, dropped, discard, callErr := session.call(ctx, probeHookTimeout, hook, []any{probeCtx.asMap(), stepsAsValue(steps)})
-	p.pool.Release(session, discard || fatalRuntime(callErr))
+	ctxArg := p.injectContextSettings(ctx, probeCtx.asMap())
+	out, logs, dropped, discard, callErr := session.callWithEnv(ctx, probeHookTimeout, hook, p.buildCallEnv(ctx), []any{ctxArg, stepsAsValue(steps)})
+	targetPool.Release(session, discard || fatalRuntime(callErr))
 	duration := time.Since(started).Milliseconds()
 	if callErr != nil {
 		return Decision{Logs: logs, DroppedLogs: dropped}, annotate(p, callErr, "probe", len(steps), duration)
@@ -271,6 +543,12 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 	sum, ok := manifest.SHA256["plugin.js"]
 	if !ok || !strings.EqualFold(sum, hashSource(source)) {
 		return fmt.Errorf("plugin.js sha256 does not match the manifest")
+	}
+	if err := validateManifestPermissions(manifest.Permissions); err != nil {
+		return err
+	}
+	if err := validateSettingSpecs(manifest.Settings); err != nil {
+		return err
 	}
 	if manifest.Kind != KindSiteProvider && siteProviderRequestPresent(manifest.SiteProvider.Request) {
 		return fmt.Errorf("request is not allowed for %s", manifest.Kind)
@@ -440,7 +718,7 @@ func (p *Plugin) HasHook(name string) bool {
 
 // CallSignRequest runs the optional signRequest hook once.
 func (p *Plugin) CallSignRequest(ctx context.Context, buildCtx ProtocolBuildContext, input ProtocolSignInput) (ProtocolSignResult, []LogEntry, int, error) {
-	out, logs, dropped, err := p.callHook(ctx, HookSignRequest, protocolHookTimeout, 0, buildCtx.asMap(), signInputAsMap(input))
+	out, logs, dropped, err := p.callHook(ctx, HookSignRequest, signHookTimeout, 0, buildCtx.asMap(), signInputAsMap(input))
 	if err != nil {
 		return ProtocolSignResult{}, logs, dropped, err
 	}
@@ -469,20 +747,24 @@ func (p *Plugin) CallParseResponse(ctx context.Context, buildCtx ProtocolBuildCo
 }
 
 func (p *Plugin) callHook(ctx context.Context, hookName string, timeout time.Duration, step int, args ...any) (any, []LogEntry, int, error) {
-	if p == nil || p.pool == nil {
+	targetPool := p.poolForHook(hookName)
+	if p == nil || targetPool == nil {
 		return nil, nil, 0, fmt.Errorf("plugin is not loaded")
 	}
 	hook, ok := p.program.hooks[hookName]
 	if !ok {
 		return nil, nil, 0, fmt.Errorf("%s hook is missing", hookName)
 	}
+	if len(args) > 0 {
+		args[0] = p.injectContextSettings(ctx, args[0])
+	}
 	started := time.Now()
-	session, err := p.pool.Acquire(ctx)
+	session, err := targetPool.Acquire(ctx)
 	if err != nil {
 		return nil, nil, 0, annotate(p, err, hookName, step, time.Since(started).Milliseconds())
 	}
-	out, logs, dropped, discard, callErr := session.call(ctx, timeout, hook, args)
-	p.pool.Release(session, discard || fatalRuntime(callErr))
+	out, logs, dropped, discard, callErr := session.callWithEnv(ctx, timeout, hook, p.buildCallEnv(ctx), args)
+	targetPool.Release(session, discard || fatalRuntime(callErr))
 	duration := time.Since(started).Milliseconds()
 	if callErr != nil {
 		return nil, logs, dropped, annotate(p, callErr, hookName, step, duration)

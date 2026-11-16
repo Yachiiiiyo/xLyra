@@ -18,6 +18,7 @@ type ProbeContext struct {
 	CredentialType string            `ts:"credentialType"`
 	Now            int64             `ts:"now,doc=Unix time in milliseconds."`
 	Account        map[string]string `ts:"account,optional,doc=Non-secret account fields for per-account model sync. Includes the resolved region id when the credential does not store region. Omitted for API-key calls."`
+	Settings       map[string]any    `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ProbeStep is one finished HTTP exchange, shown back to the plugin.
@@ -97,6 +98,9 @@ func (pc ProbeContext) asMap() map[string]any {
 	}
 	if len(pc.Account) > 0 {
 		out["account"] = pc.Account
+	}
+	if len(pc.Settings) > 0 {
+		out["settings"] = pc.Settings
 	}
 	return out
 }
@@ -402,6 +406,7 @@ type AccountLoginContext struct {
 	BaseURL  string            `ts:"baseURL"`
 	Params   map[string]string `ts:"params,doc=Login parameters from the admin UI. Not credentials."`
 	Now      int64             `ts:"now,doc=Unix time in milliseconds."`
+	Settings map[string]any    `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // AccountLoginResult is the account_login hook result.
@@ -423,6 +428,7 @@ type AccountCredentialContext struct {
 	BaseURL  string            `ts:"baseURL"`
 	Fields   map[string]string `ts:"fields,doc=Non-secret credential fields only. Access tokens and other secrets are omitted."`
 	Now      int64             `ts:"now,doc=Unix time in milliseconds."`
+	Settings map[string]any    `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // AccountRefreshResult is the account_refresh hook result.

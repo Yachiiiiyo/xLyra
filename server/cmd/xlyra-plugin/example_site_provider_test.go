@@ -83,18 +83,65 @@ func TestSiteProviderExamplePackage(t *testing.T) {
 // xlyra.d.ts identical to the scaffold template.
 func TestSiteProviderExampleTypesMatchTemplate(t *testing.T) {
 	root := repoRoot(t)
-	examplePath := filepath.Join(root, "docs", "plugins", "examples", "site-provider-minimal", "types", "xlyra.d.ts")
 	templatePath := filepath.Join(root, "server", "cmd", "xlyra-plugin", "templates", "types", "xlyra.d.ts")
-	example, err := os.ReadFile(examplePath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	template, err := os.ReadFile(templatePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(example) != string(template) {
-		t.Fatal("运行 go -C server generate ./cmd/xlyra-plugin 后把模板里的 xlyra.d.ts 复制到示例包")
+	for _, exampleDir := range []string{"site-provider-minimal", "stage1-primitives-demo"} {
+		examplePath := filepath.Join(root, "docs", "plugins", "examples", exampleDir, "types", "xlyra.d.ts")
+		example, err := os.ReadFile(examplePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(example) != string(template) {
+			t.Fatalf("%s: 运行 go -C server generate ./cmd/xlyra-plugin 后把模板里的 xlyra.d.ts 复制到示例包", exampleDir)
+		}
+	}
+}
+
+func TestStage1PrimitivesExamplePackage(t *testing.T) {
+	root := repoRoot(t)
+	src := filepath.Join(root, "docs", "plugins", "examples", "stage1-primitives-demo")
+	before := dirStamp(t, src)
+	dir := filepath.Join(t.TempDir(), "stage1-primitives-demo")
+	copyDir(t, src, dir)
+
+	var passed bool
+	out := captureStdout(t, func() { passed = testOnce(dir) })
+	if !passed {
+		t.Fatalf("test failed:\n%s", out)
+	}
+	for _, needle := range []string{
+		"example.primitives@1.0.0",
+		"probe quota and increment storage counter",
+		"rewrite payload with crypto and settings",
+		"hook=probe",
+		"hook=rewritePayload",
+		"2 passed, 0 failed",
+	} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("test output missing %q:\n%s", needle, out)
+		}
+	}
+
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, plugin, err := built.assemble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.SelfTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	verifyOut := captureStdout(t, func() { err = verifyPackage(raw) })
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, verifyOut)
+	}
+	if dirStamp(t, src) != before {
+		t.Fatal("example package in the repo changed")
 	}
 }
 

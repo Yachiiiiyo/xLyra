@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"xlyra/server/internal/jsplugin"
 	routeengine "xlyra/server/internal/router"
 	sitepkg "xlyra/server/internal/site"
@@ -28,7 +30,7 @@ func applyProviderRewrite(ctx context.Context, candidate routeengine.Candidate, 
 	streamValue, hasStream := payloadField(payload, "stream")
 	waitCtx, cancel := context.WithTimeout(ctx, errorClassifierWait)
 	defer cancel()
-	rewritten, err := plugin.CallRewritePayload(waitCtx, "rewritePayload", jsplugin.RewritePayloadContext{
+	rewritten, err := plugin.CallRewritePayload(withCandidatePluginContext(waitCtx, candidate, plugin), "rewritePayload", jsplugin.RewritePayloadContext{
 		SiteType: candidate.Site.SiteType,
 		Model:    rewriteModelName(candidate, payload),
 		Stream:   rewriteStreamFlag(payload),
@@ -44,6 +46,19 @@ func applyProviderRewrite(ctx context.Context, candidate routeengine.Candidate, 
 		return nil, fmt.Errorf("plugin %s: %s", plugin.Manifest.ID, err.Error())
 	}
 	return rewritten, nil
+}
+
+// withCandidatePluginContext attaches the site's setting overrides and, when
+// the plugin declared storage, a site-scoped KV backend.
+func withCandidatePluginContext(ctx context.Context, candidate routeengine.Candidate, plugin *jsplugin.Plugin) context.Context {
+	if plugin == nil {
+		return ctx
+	}
+	ctx = jsplugin.WithSiteSettings(ctx, candidate.Site.PluginSettings[plugin.Manifest.ID])
+	if plugin.AllowsStorage() && candidate.Site.ID != uuid.Nil {
+		ctx = jsplugin.WithStorageScope(ctx, jsplugin.StorageScopeSite, candidate.Site.ID.String())
+	}
+	return ctx
 }
 
 func rewriteModelName(candidate routeengine.Candidate, payload map[string]any) string {

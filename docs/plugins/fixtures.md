@@ -122,13 +122,19 @@ fixtures 是放在 `fixtures/*.json` 里的录制样本：给定上游的响应�
 
 所以请自己在样本里多写几组输入，覆盖边界情况。
 
-## site_provider 样本
+## site_provider 与多钩子样本
 
-`site_provider` 可以没有样本，没有样本的包仍能上传和启用。一旦有 `fixtures/*.json`，每个文件都必须带 `hook`，取值是 `probe`、`listModels`、`check`、`classify`、`rewritePayload` 之一，而且源码要导出同名函数。其它 kind 的样本不能写 `hook`。
+`site_provider` 可以没有样本，没有样本的包仍能上传和启用。一旦有 `fixtures/*.json`，每个文件都必须带 `hook`，而且源码要导出同名函数。支持的 `hook` 包括：
 
-账号池的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 不在自检里跑。样本写这四个名字会被拒绝。它们的返回 kind 是 `account_login`、`account_refresh`、`account_summary`，由宿主在真实登录、刷新、摘要时解码，不由 `xlyra-plugin test` 比对。对照包只为 `listModels` 和 `rewritePayload` 放了样本。
+- 站点分步钩子：`probe`、`listModels`、`check`
+- 账号池分步钩子：`startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount`（`ctx` 可传 `params` 或 `fields`，`expect.result` 比对解码后的 `account_login` / `account_refresh` / `account_summary` 结构）
+- 请求与响应链钩子：`rewritePayload`、`classify` / `classifyError`、`signRequest`、`parseError`
+- 价格与元数据钩子：`parsePricing`、`describeModels`
+- 事件与定时钩子：`onEvent` / `handle`、`onSchedule`
 
-`probe`、`listModels`、`check` 用上面的分步格式（`ctx`、`responses`、`expect.requests`、`expect.result`）。`classify` 用一次性函数的格式。`rewritePayload` 也是一次性函数，但 `ctx` 和 `input` 不同：
+所有样本均可在顶层提供 `"storage": { ... }` 预置内存 KV 状态，并在 `"expect": { "storage": { ... } }` 中断言执行后的存储结果（设为 `null` 表示断言该键已被删除或不存在）；在 `"ctx": { "settings": { ... } }` 中可传入测试用的配置覆盖值。
+
+`probe`、`listModels`、`check`、`startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount`、`onSchedule` 用上面的分步格式（`ctx`、`responses`、`expect.requests`、`expect.result`）。`classify` / `classifyError` 用一次性函数的格式。`rewritePayload` 也是一次性函数，但 `ctx` 和 `input` 不同：
 
 ```json
 {

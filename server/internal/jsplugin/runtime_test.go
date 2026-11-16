@@ -122,7 +122,7 @@ func TestPluginLogIsBounded(t *testing.T) {
 	source := wrapProbe(`
   log.info("short", { blob: "x".repeat(4096) });
   log.warn("kept", { step: 1 });
-  for (let i = 0; i < 30; i++) log.debug("line " + i);
+  for (let i = 0; i < 60; i++) log.debug("line " + i);
   return { result: { kind: "balance", entries: [{ label: "balance", remaining: 1 }] } };`)
 	plugin := mustTestPlugin(t, "xlyra.test.bomb", source)
 	decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)

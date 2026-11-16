@@ -9,13 +9,14 @@ import (
 )
 
 // Fixture is one recorded sample. Hook selects the export for a site_provider
-// sample; other kinds leave it empty.
+// or multi-hook sample; single-hook kinds may leave it empty.
 type Fixture struct {
 	Name string `json:"name"`
 	Hook string `json:"hook,omitempty"`
 	// File is the package path, such as fixtures/ok.json. It is not part of the sample JSON.
 	File      string             `json:"-"`
 	Ctx       fixtureContext     `json:"ctx"`
+	Storage   map[string]any     `json:"storage,omitempty"`
 	Responses []FixtureResponse  `json:"responses"`
 	Expect    fixtureExpectation `json:"expect"`
 	Payload   map[string]any     `json:"payload"`
@@ -38,10 +39,16 @@ type fixtureUpstream struct {
 }
 
 type fixtureContext struct {
-	SiteType       string `json:"siteType"`
-	BaseURL        string `json:"baseURL"`
-	CredentialType string `json:"credentialType"`
-	Now            int64  `json:"now"`
+	SiteType       string            `json:"siteType"`
+	BaseURL        string            `json:"baseURL"`
+	CredentialType string            `json:"credentialType"`
+	Now            int64             `json:"now"`
+	Account        map[string]string `json:"account,omitempty"`
+	Params         map[string]string `json:"params,omitempty"`
+	Fields         map[string]string `json:"fields,omitempty"`
+	Settings       map[string]any    `json:"settings,omitempty"`
+	Event          string            `json:"event,omitempty"`
+	BindingID      string            `json:"bindingId,omitempty"`
 	// Inputs and State stand in for what the admin picked and the binding's
 	// saved state in an automation fixture.
 	Inputs   map[string]any `json:"inputs"`
@@ -68,6 +75,7 @@ type FixtureMatch struct {
 type fixtureExpectation struct {
 	Requests []FixtureMatch `json:"requests"`
 	Result   map[string]any `json:"result"`
+	Storage  map[string]any `json:"storage,omitempty"`
 	Error    string         `json:"error"`
 	Decode   map[string]any `json:"decode"`
 	Request  map[string]any `json:"request"`
@@ -105,8 +113,28 @@ func (p *Plugin) RunFixture(ctx context.Context, fixture Fixture) error {
 	if err := p.checkFixtureHook(fixture); err != nil {
 		return err
 	}
-	if p.Manifest.Kind == KindSiteProvider {
-		return p.runSiteProviderFixture(ctx, fixture)
+	memStore, err := NewMemoryStorage(fixture.Storage)
+	if err != nil {
+		return fmt.Errorf("%s: %w", fixtureRef(fixture), err)
+	}
+	callCtx := WithCallStorage(ctx, memStore)
+	if len(fixture.Ctx.Settings) > 0 {
+		callCtx = WithSiteSettings(callCtx, fixture.Ctx.Settings)
+	}
+	if err := p.dispatchFixture(callCtx, fixture); err != nil {
+		return err
+	}
+	if fixture.Expect.Storage != nil {
+		if err := matchFixtureStorage(memStore, fixture.Expect.Storage); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Plugin) dispatchFixture(ctx context.Context, fixture Fixture) error {
+	if fixture.Hook != "" {
+		return p.runHookFixture(ctx, fixture)
 	}
 	switch p.Manifest.Kind {
 	case KindQuotaProbe:
@@ -137,10 +165,22 @@ func fixtureRef(fixture Fixture) string {
 	return "fixture"
 }
 
-// checkFixtureHook enforces the site_provider hook field. Other kinds reject a hook.
+func isValidSiteProviderFixtureHook(hook string) bool {
+	switch hook {
+	case "probe", "listModels", "check", "classify", "classifyError", "rewritePayload",
+		"parsePricing", "describeModels",
+		"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
+		HookSignRequest, "onEvent", "handle", "onSchedule":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkFixtureHook enforces the site_provider hook field. Other single-hook kinds reject a hook.
 func (p *Plugin) checkFixtureHook(fixture Fixture) error {
 	ref := fixtureRef(fixture)
-	if p.Manifest.Kind != KindSiteProvider {
+	if p.Manifest.Kind != KindSiteProvider && p.Manifest.Kind != "" {
 		if fixture.Hook != "" {
 			return fmt.Errorf("%s: hook is not allowed for %s fixtures", ref, p.Manifest.Kind)
 		}
@@ -149,9 +189,11 @@ func (p *Plugin) checkFixtureHook(fixture Fixture) error {
 	if fixture.Hook == "" {
 		return fmt.Errorf("%s: hook is required", ref)
 	}
-	switch fixture.Hook {
-	case "probe", "listModels", "check", "classify", "rewritePayload":
-	default:
+	if p.Manifest.Kind == KindSiteProvider {
+		if !isValidSiteProviderFixtureHook(fixture.Hook) {
+			return fmt.Errorf("%s: unknown hook %q", ref, fixture.Hook)
+		}
+	} else if !contains(allKnownOptionalHooks, fixture.Hook) {
 		return fmt.Errorf("%s: unknown hook %q", ref, fixture.Hook)
 	}
 	if !p.HasHook(fixture.Hook) {
@@ -160,7 +202,7 @@ func (p *Plugin) checkFixtureHook(fixture Fixture) error {
 	return nil
 }
 
-func (p *Plugin) runSiteProviderFixture(ctx context.Context, fixture Fixture) error {
+func (p *Plugin) runHookFixture(ctx context.Context, fixture Fixture) error {
 	switch fixture.Hook {
 	case "probe":
 		return p.runProbeFixture(ctx, fixture)
@@ -168,22 +210,300 @@ func (p *Plugin) runSiteProviderFixture(ctx context.Context, fixture Fixture) er
 		return p.runSteppedFixtureHook(ctx, fixture, "listModels", KindModelList)
 	case "check":
 		return p.runSteppedFixtureHook(ctx, fixture, "check", KindCredentialCheck)
-	case "classify":
-		return p.runClassifyFixture(ctx, fixture)
+	case "detect":
+		return p.runSteppedFixtureHook(ctx, fixture, "detect", KindSiteDetect)
+	case "startLogin":
+		return p.runAccountFixtureHook(ctx, fixture, "startLogin", KindAccountLogin)
+	case "pollLogin":
+		return p.runAccountFixtureHook(ctx, fixture, "pollLogin", KindAccountLogin)
+	case "refreshTokens":
+		return p.runAccountFixtureHook(ctx, fixture, "refreshTokens", KindAccountRefresh)
+	case "summarizeAccount":
+		return p.runAccountFixtureHook(ctx, fixture, "summarizeAccount", KindAccountSummary)
+	case "classify", "classifyError":
+		return p.runClassifyFixtureHook(ctx, fixture, fixture.Hook)
 	case "rewritePayload":
 		return p.runRewritePayloadFixture(ctx, fixture)
+	case "describeModels":
+		return p.runModelMetadataFixtureHook(ctx, fixture, "describeModels")
+	case "parsePricing":
+		return p.runPricingParseFixtureHook(ctx, fixture, "parsePricing")
+	case "handle", "onEvent":
+		return p.runEventFixtureHook(ctx, fixture, fixture.Hook)
+	case "onSchedule":
+		return p.runScheduleFixtureHook(ctx, fixture, "onSchedule")
+	case HookSignRequest:
+		return p.runStandaloneSignFixture(ctx, fixture)
+	case HookParseError:
+		return p.runStandaloneParseErrorFixture(ctx, fixture)
+	case "decodeRequest", "buildRequest", "parseResponse":
+		return p.runProtocolFixture(ctx, fixture)
 	default:
 		return fmt.Errorf("%s: unknown hook %q", fixtureRef(fixture), fixture.Hook)
 	}
 }
 
-func (p *Plugin) runClassifyFixture(ctx context.Context, fixture Fixture) error {
+func (p *Plugin) runClassifyFixtureHook(ctx context.Context, fixture Fixture, hook string) error {
 	var in ErrorClassifyInput
 	if err := decodeFixtureInput(fixture.Input, &in); err != nil {
 		return err
 	}
-	result, err := p.CallErrorClassifyHook(ctx, "classify", ErrorClassifyContext{SiteType: fixture.Ctx.SiteType}, in)
+	result, err := p.CallErrorClassifyHook(ctx, hook, ErrorClassifyContext{SiteType: fixture.Ctx.SiteType}, in)
 	return compareOneShot(result, err, fixture)
+}
+
+func (p *Plugin) runModelMetadataFixtureHook(ctx context.Context, fixture Fixture, hook string) error {
+	var in ModelMetadataInput
+	if err := decodeFixtureInput(fixture.Input, &in); err != nil {
+		return err
+	}
+	var out ModelMetadataResult
+	err := p.callOneShotHook(ctx, hook, KindModelMetadata, &out, encodeValue(ModelMetadataContext{SiteType: fixture.Ctx.SiteType}), encodeValue(in))
+	if err == nil {
+		asked := make(map[string]bool, len(in.Models))
+		for _, name := range in.Models {
+			asked[name] = true
+		}
+		for i, entry := range out.Models {
+			if !asked[entry.ID] {
+				err = annotate(p, shapeError("result.models[%d].id: %q was not in the input", i, entry.ID), hook, 0, 0)
+				break
+			}
+		}
+	}
+	return compareOneShot(out, err, fixture)
+}
+
+func (p *Plugin) runPricingParseFixtureHook(ctx context.Context, fixture Fixture, hook string) error {
+	if fixture.Input == nil {
+		return fmt.Errorf("input is required")
+	}
+	var out PricingParseResult
+	err := p.callOneShotHook(ctx, hook, KindPricingParse, &out, encodeValue(PricingParseContext{SiteType: fixture.Ctx.SiteType}), fixture.Input)
+	return compareOneShot(out, err, fixture)
+}
+
+func (p *Plugin) runEventFixtureHook(ctx context.Context, fixture Fixture, hook string) error {
+	var in AutomationEvent
+	if err := decodeFixtureInput(fixture.Input, &in); err != nil {
+		return err
+	}
+	eventType := fixture.Ctx.Event
+	if eventType == "" {
+		eventType = in.Type
+	}
+	bindingID := fixture.Ctx.BindingID
+	if bindingID == "" {
+		bindingID = "fixture"
+	}
+	inputs := fixture.Ctx.Inputs
+	if inputs == nil {
+		inputs = map[string]any{}
+	}
+	state := fixture.Ctx.State
+	if state == nil {
+		state = map[string]any{}
+	}
+	if in.Current == nil {
+		in.Current = map[string]any{}
+	}
+	if in.Subject.Fields == nil {
+		in.Subject.Fields = map[string]any{}
+	}
+	c := AutomationContext{
+		Event:     eventType,
+		Now:       fixture.Ctx.Now,
+		BindingID: bindingID,
+		Inputs:    inputs,
+		State:     state,
+	}
+	var out AutomationResult
+	err := p.callOneShotHook(ctx, hook, KindAutomation, &out, encodeValue(c), encodeValue(in))
+	if err == nil && len(p.Manifest.Automation.Permissions) > 0 {
+		if vErr := validateAutomationResult(&out, p.Manifest.Automation.Permissions, entitiesIn(c.Inputs), p.Manifest.Automation.Inputs, c.Inputs); vErr != nil {
+			err = annotate(p, vErr, hook, 0, 0)
+		}
+	}
+	return compareOneShot(out, err, fixture)
+}
+
+func (p *Plugin) runScheduleFixtureHook(ctx context.Context, fixture Fixture, hook string) error {
+	ctxMap := map[string]any{
+		"siteType": fixture.Ctx.SiteType,
+		"baseURL":  fixture.Ctx.BaseURL,
+		"now":      fixture.Ctx.Now,
+	}
+	if len(fixture.Ctx.Fields) > 0 {
+		ctxMap["fields"] = fixture.Ctx.Fields
+	}
+	if len(fixture.Ctx.Account) > 0 {
+		ctxMap["account"] = fixture.Ctx.Account
+	}
+	var steps []ProbeStep
+	var requests []ProbeRequest
+	used := make([]bool, len(fixture.Responses))
+	for step := 0; step < MaxProbeSteps; step++ {
+		out, _, _, err := p.callHook(ctx, hook, scheduleHookTimeout, len(steps), ctxMap, stepsAsValue(steps))
+		if err != nil {
+			if fixture.Expect.Error != "" && strings.Contains(err.Error(), fixture.Expect.Error) {
+				return nil
+			}
+			return err
+		}
+		object, ok := out.(map[string]any)
+		if !ok {
+			return fmt.Errorf("onSchedule return value: expected object")
+		}
+		if errText, ok := object["error"].(string); ok && errText != "" {
+			if errText != fixture.Expect.Error {
+				return fmt.Errorf("error %q, want %q", errText, fixture.Expect.Error)
+			}
+			return nil
+		}
+		if rawReq, hasReq := object["request"]; hasReq && rawReq != nil {
+			req, err := decodeRequest(rawReq)
+			if err != nil {
+				return err
+			}
+			requests = append(requests, req)
+			resp, ok := takeResponse(&req, fixture.Responses, used)
+			if !ok {
+				return fmt.Errorf("unexpected request %s %s", req.Method, req.Path)
+			}
+			steps = append(steps, ProbeStep{Request: req, Response: resp})
+			continue
+		}
+		if fixture.Expect.Error != "" {
+			return fmt.Errorf("got a result, want error %q", fixture.Expect.Error)
+		}
+		if len(fixture.Expect.Requests) > 0 {
+			if err := matchRequests(requests, fixture.Expect.Requests); err != nil {
+				return err
+			}
+		}
+		target := object
+		if inner, ok := object["result"].(map[string]any); ok {
+			target = inner
+		}
+		if fixture.Expect.Result != nil {
+			return diffValue("result", target, fixture.Expect.Result)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s exceeded %d steps", hook, MaxProbeSteps)
+}
+
+func (p *Plugin) runAccountFixtureHook(ctx context.Context, fixture Fixture, hook, resultKind string) error {
+	var ctxValue map[string]any
+	switch resultKind {
+	case KindAccountLogin:
+		params := fixture.Ctx.Params
+		if params == nil {
+			params = map[string]string{}
+		}
+		ctxValue = encodeValue(AccountLoginContext{
+			SiteType: fixture.Ctx.SiteType,
+			BaseURL:  fixture.Ctx.BaseURL,
+			Params:   params,
+			Now:      fixture.Ctx.Now,
+		}).(map[string]any)
+	default:
+		fields := fixture.Ctx.Fields
+		if fields == nil {
+			fields = map[string]string{}
+		}
+		ctxValue = encodeValue(AccountCredentialContext{
+			SiteType: fixture.Ctx.SiteType,
+			BaseURL:  fixture.Ctx.BaseURL,
+			Fields:   fields,
+			Now:      fixture.Ctx.Now,
+		}).(map[string]any)
+	}
+	var steps []ProbeStep
+	var requests []ProbeRequest
+	used := make([]bool, len(fixture.Responses))
+	for step := 0; step < MaxProbeSteps; step++ {
+		decision, err := p.CallAccountHook(ctx, hook, resultKind, ctxValue, steps)
+		if err != nil {
+			if fixture.Expect.Error != "" && strings.Contains(err.Error(), fixture.Expect.Error) {
+				return nil
+			}
+			return err
+		}
+		if decision.Error != "" {
+			if decision.Error != fixture.Expect.Error {
+				return fmt.Errorf("error %q, want %q", decision.Error, fixture.Expect.Error)
+			}
+			return nil
+		}
+		if decision.Result != nil {
+			if fixture.Expect.Error != "" {
+				return fmt.Errorf("got a result, want error %q", fixture.Expect.Error)
+			}
+			if err := matchRequests(requests, fixture.Expect.Requests); err != nil {
+				return err
+			}
+			if fixture.Expect.Result == nil {
+				return nil
+			}
+			return diffValue("result", encodeValue(decision.Result), fixture.Expect.Result)
+		}
+		if decision.Request == nil {
+			return fmt.Errorf("hook returned an empty decision")
+		}
+		requests = append(requests, *decision.Request)
+		response, ok := takeResponse(decision.Request, fixture.Responses, used)
+		if !ok {
+			return fmt.Errorf("unexpected request %s %s", decision.Request.Method, decision.Request.Path)
+		}
+		steps = append(steps, ProbeStep{Request: *decision.Request, Response: response})
+	}
+	return fmt.Errorf("%s exceeded %d steps", hook, MaxProbeSteps)
+}
+
+func (p *Plugin) runStandaloneSignFixture(ctx context.Context, fixture Fixture) error {
+	var in ProtocolSignInput
+	if err := decodeFixtureInput(fixture.Input, &in); err != nil {
+		return err
+	}
+	buildCtx := protocolBuildContextFromFixture(fixture)
+	signed, _, _, err := p.CallSignRequest(ctx, buildCtx, in)
+	if err != nil {
+		if fixture.Expect.Error != "" && strings.Contains(err.Error(), fixture.Expect.Error) {
+			return nil
+		}
+		return err
+	}
+	if fixture.Expect.Error != "" {
+		return fmt.Errorf("got a result, want error %q", fixture.Expect.Error)
+	}
+	want := fixture.Expect.Sign
+	if want == nil {
+		want = fixture.Expect.Result
+	}
+	if want == nil {
+		return nil
+	}
+	return matchProtocolSign(signed, want)
+}
+
+func (p *Plugin) runStandaloneParseErrorFixture(ctx context.Context, fixture Fixture) error {
+	body := fixture.Response.Body
+	if body == "" && fixture.Response.JSON != nil {
+		encoded, err := json.Marshal(fixture.Response.JSON)
+		if err != nil {
+			return err
+		}
+		body = string(encoded)
+	}
+	in := ProtocolErrorInput{
+		Status:  fixture.Response.Status,
+		Body:    body,
+		JSON:    fixture.Response.JSON,
+		Headers: map[string]string{},
+	}
+	buildCtx := protocolBuildContextFromFixture(fixture)
+	return p.runParseErrorFixture(ctx, buildCtx, in, fixture)
 }
 
 func (p *Plugin) runRewritePayloadFixture(ctx context.Context, fixture Fixture) error {
@@ -217,6 +537,7 @@ func (p *Plugin) runProbeFixture(ctx context.Context, fixture Fixture) error {
 		BaseURL:        fixture.Ctx.BaseURL,
 		CredentialType: fixture.Ctx.CredentialType,
 		Now:            fixture.Ctx.Now,
+		Account:        fixture.Ctx.Account,
 	}
 	var steps []ProbeStep
 	var requests []ProbeRequest
@@ -317,6 +638,29 @@ func matchResult(got *ProbeResult, want map[string]any) error {
 		return err
 	}
 	return diffValue("result", actual, want)
+}
+
+func matchFixtureStorage(mem *MemoryStorage, want map[string]any) error {
+	actual, err := mem.Snapshot()
+	if err != nil {
+		return err
+	}
+	for key, expected := range want {
+		gotVal, exists := actual[key]
+		if expected == nil {
+			if exists && gotVal != nil {
+				return fmt.Errorf("storage.%s = %#v, want absent/null", key, gotVal)
+			}
+			continue
+		}
+		if !exists {
+			return fmt.Errorf("storage.%s is missing, want %#v", key, expected)
+		}
+		if err := diffValue("storage."+key, gotVal, expected); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resultMap(result *ProbeResult) map[string]any {

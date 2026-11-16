@@ -630,7 +630,7 @@ func (r *AccountProviderRuntime) drive(ctx context.Context, call *accountCall, h
 		if r.observe != nil {
 			r.observe(hook, []any{ctxValue, stepsAsValue(call.steps)})
 		}
-		decision, err := r.plugin.CallAccountHook(ctx, hook, resultKind, ctxValue, call.steps)
+		decision, err := r.plugin.CallAccountHook(WithCallSecretBag(ctx, call.bag), hook, resultKind, ctxValue, call.steps)
 		logs, dropped := decision.Logs, decision.DroppedLogs
 		if callErr, ok := err.(*CallError); ok && len(logs) == 0 {
 			logs, dropped = callErr.Logs, callErr.DroppedLogs
@@ -678,7 +678,7 @@ func (r *AccountProviderRuntime) driveModelList(ctx context.Context, call *accou
 		if r.observe != nil {
 			r.observe("listModels", []any{ctxValue, stepsAsValue(call.steps)})
 		}
-		decision, err := r.plugin.CallSteppedHook(ctx, "listModels", KindModelList, probe, call.steps)
+		decision, err := r.plugin.CallSteppedHook(WithCallSecretBag(ctx, call.bag), "listModels", KindModelList, probe, call.steps)
 		logs, dropped := decision.Logs, decision.DroppedLogs
 		if callErr, ok := err.(*CallError); ok && len(logs) == 0 {
 			logs, dropped = callErr.Logs, callErr.DroppedLogs

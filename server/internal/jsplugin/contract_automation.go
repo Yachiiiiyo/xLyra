@@ -82,6 +82,7 @@ type AutomationContext struct {
 	BindingID string         `ts:"bindingId"`
 	Inputs    map[string]any `ts:"inputs,type=Record<string, AutomationInputValue>,doc=What the admin picked, by the input names declared in automation.inputs. An object input is an AutomationEntity (an array of them when multiple), a parameter is its value." max:"64"`
 	State     map[string]any `ts:"state,type=JsonObject,doc=What this binding returned as state last time; empty at first." max:"64"`
+	Settings  map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // AutomationEvent is what happened, with the snapshots needed to tell what changed.

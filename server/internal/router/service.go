@@ -77,6 +77,8 @@ type CandidateSite struct {
 	DisabledResponsesTools []string
 	// ErrorClassifierPlugin is the error_classifier plugin an admin bound to the site, if any.
 	ErrorClassifierPlugin string
+	// PluginSettings maps a plugin id to the site's setting overrides.
+	PluginSettings map[string]map[string]any
 }
 
 type CandidateModel struct {
@@ -244,6 +246,11 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 			cooling = true
 			coolingReason = item.Reason
 		}
+		gatewayCfg := siteGatewayConfig(row.SiteMeta)
+		var pluginSettings map[string]map[string]any
+		if gatewayCfg != nil {
+			pluginSettings = gatewayCfg.PluginSettings
+		}
 
 		costMultiplier := row.PreferredCredentialCostMultiplier
 		if costMultiplier <= 0 {
@@ -264,7 +271,8 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 				RoutingPriority:        row.SiteRoutingPriority,
 				ResponsesToolPolicy:    siteResponsesToolPolicy(row.SiteMeta),
 				DisabledResponsesTools: siteDisabledResponsesTools(row.SiteMeta),
-				ErrorClassifierPlugin:  sitepkg.SitePluginID(siteGatewayConfig(row.SiteMeta), "error_classifier"),
+				ErrorClassifierPlugin:  sitepkg.SitePluginID(gatewayCfg, "error_classifier"),
+				PluginSettings:         pluginSettings,
 			},
 			Model: CandidateModel{
 				SiteModelID:            row.SiteModelID,

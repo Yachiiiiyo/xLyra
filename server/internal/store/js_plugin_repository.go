@@ -37,6 +37,7 @@ var ErrJSPluginEnabled = errors.New("plugin has an enabled version")
 type JSPlugin struct {
 	ID        string `gorm:"primaryKey"`
 	Source    string
+	Settings  JSON `gorm:"type:jsonb"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -192,6 +193,31 @@ func (r JSPluginRepository) ListPlugins(ctx context.Context) ([]JSPlugin, error)
 	var items []JSPlugin
 	err := r.db.WithContext(ctx).Order("id ASC").Find(&items).Error
 	return items, err
+}
+
+func (r JSPluginRepository) GetPlugin(ctx context.Context, pluginID string) (JSPlugin, error) {
+	var item JSPlugin
+	err := r.db.WithContext(ctx).Where("id = ?", pluginID).First(&item).Error
+	return item, err
+}
+
+func (r JSPluginRepository) SetPluginSettings(ctx context.Context, pluginID string, settings JSON) error {
+	payload := []byte(settings)
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
+	res := r.db.WithContext(ctx).Exec(`
+		UPDATE js_plugins
+		SET settings = ?::jsonb, updated_at = ?
+		WHERE id = ?
+	`, string(payload), time.Now().UTC(), pluginID)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r JSPluginRepository) ListEnabledVersions(ctx context.Context) ([]JSPluginVersion, error) {

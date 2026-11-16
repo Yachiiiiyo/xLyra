@@ -304,6 +304,20 @@ func (b *SecretBag) Scrub(s string) string {
 	return s
 }
 
+// ContainsSecret reports whether s contains any scrubbable secret value (raw or
+// JSON-escaped) held by the bag.
+func (b *SecretBag) ContainsSecret(s string) bool {
+	if b == nil || s == "" {
+		return false
+	}
+	for _, needle := range b.needles() {
+		if needle != "" && strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func replaceNeedle(s, needle, mark string) string {
 	if needle == "" || strings.Contains(mark, needle) {
 		return s

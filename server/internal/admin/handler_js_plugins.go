@@ -849,6 +849,67 @@ func (h Handler) ListJSPluginAutomationOptions(w http.ResponseWriter, r *http.Re
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (h Handler) GetJSPluginSettings(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	specs, stored, resolved, err := h.jsPlugins.GetPluginSettings(r.Context(), pluginID)
+	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to read plugin settings")
+		return
+	}
+	if specs == nil {
+		specs = []jsplugin.SettingSpec{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"schema":   specs,
+		"values":   stored,
+		"resolved": resolved,
+	})
+}
+
+func (h Handler) UpdateJSPluginSettings(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var body struct {
+		Values map[string]any `json:"values"`
+	}
+	if err := httpx.DecodeJSONBody(r, &body); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	resolved, err := h.jsPlugins.UpdatePluginSettings(r.Context(), pluginID, body.Values)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		var invalid *jsplugin.InvalidSettingsError
+		if errors.As(err, &invalid) {
+			h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, false, "js_plugin_settings_invalid", nil)
+			h.writeError(w, r, http.StatusBadRequest, "js_plugin_settings_invalid", invalid.Error())
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, false, "js_plugin_settings_failed", nil)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to update plugin settings")
+		return
+	}
+	h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, true, "", nil)
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "resolved": resolved})
+}
+
 // statusClientClosedRequest is the conventional status for a request the client
 // gave up on before the answer was ready.
 const statusClientClosedRequest = 499
