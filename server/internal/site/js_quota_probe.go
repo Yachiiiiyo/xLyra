@@ -14,16 +14,37 @@ import (
 	"time"
 
 	"xlyra/server/internal/jsplugin"
+	"xlyra/server/internal/store"
 )
 
 // probeQuotaSources runs every source and concatenates the entries in priority
 // order. A source that fails contributes one entry carrying its error and does
 // not fail the whole probe. The result is ok when at least one source is.
 func (s *Service) probeQuotaSources(ctx context.Context, client *http.Client, sources []string, siteType, credentialType, baseURL, secret string) QuotaProbeResult {
+	return probeQuotaSourcesWith(sources, func(source string) QuotaProbeResult {
+		return s.probeQuota(ctx, client, source, siteType, credentialType, baseURL, secret)
+	})
+}
+
+func (s *Service) probeQuotaSourcesForSite(ctx context.Context, item store.Site, defaultClient *http.Client, sources []string, credentialType, baseURL, secret string) QuotaProbeResult {
+	return probeQuotaSourcesWith(sources, func(source string) QuotaProbeResult {
+		callCtx := ctx
+		client := defaultClient
+		if plugin, ok := s.quotaProbePlugin(source, item.SiteType); ok {
+			callCtx = s.withSitePluginContext(ctx, item, plugin)
+			if profiled, err := s.pluginProfileClient(callCtx, item, plugin); err == nil && profiled != nil {
+				client = profiled
+			}
+		}
+		return s.probeQuota(callCtx, client, source, item.SiteType, credentialType, baseURL, secret)
+	})
+}
+
+func probeQuotaSourcesWith(sources []string, run func(source string) QuotaProbeResult) QuotaProbeResult {
 	combined := QuotaProbeResult{Status: "error", FetchedAt: time.Now().UTC()}
 	var errors []string
 	for _, source := range sources {
-		result := s.probeQuota(ctx, client, source, siteType, credentialType, baseURL, secret)
+		result := run(source)
 		if result.Status == "ok" {
 			combined.Status = "ok"
 			combined.Entries = append(combined.Entries, result.Entries...)

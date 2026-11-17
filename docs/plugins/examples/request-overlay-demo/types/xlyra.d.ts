@@ -25,7 +25,7 @@ export interface ProbeRequest {
   headers?: Record<string, string>;
   query?: Record<string, string>;
   body?: Json;
-  /** pollLogin only. pending treats a non-JSON body as still waiting and discards it. */
+  /** Account-pool hooks. pending on pollLogin treats a non-JSON body as still waiting. pending elsewhere, and ignore, return the status with an empty body. */
   onNonJSON?: string;
 }
 

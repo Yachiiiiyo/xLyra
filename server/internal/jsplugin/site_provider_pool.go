@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -13,6 +14,7 @@ const (
 	maxCredentialFields       = 16
 	maxAccountPoolRegions     = 8
 	maxRegionListItems        = 8
+	maxRegionGatewayEndpoints = 8
 	maxImportAliases          = 8
 	maxImportContainers       = 8
 	maxImportValueMapFields   = 8
@@ -68,13 +70,92 @@ type SiteProviderField struct {
 // SiteProviderRegion is one upstream region. BaseURL's host must be in hosts.
 // Attrs holds header-template values such as origin and referer. Keys are a
 // fixed allow-list. {{region.<key>}} reads the account's region.
+// Endpoints, when set, splits the control plane from the forwarding gateways.
+// An empty Endpoints keeps the single BaseURL for both.
 type SiteProviderRegion struct {
-	ID      string            `json:"id"`
-	Label   LocalizedText     `json:"label,omitempty"`
-	BaseURL string            `json:"baseURL"`
-	Realms  []string          `json:"realms,omitempty"`
-	Domains []string          `json:"domains,omitempty"`
-	Attrs   map[string]string `json:"attrs,omitempty"`
+	ID        string                       `json:"id"`
+	Label     LocalizedText                `json:"label,omitempty"`
+	BaseURL   string                       `json:"baseURL"`
+	Endpoints *SiteProviderRegionEndpoints `json:"endpoints,omitempty"`
+	Realms    []string                     `json:"realms,omitempty"`
+	Domains   []string                     `json:"domains,omitempty"`
+	Attrs     map[string]string            `json:"attrs,omitempty"`
+}
+
+// SiteProviderRegionEndpoints names the hosts of one region by purpose.
+// Control is the account-hook base. Gateway is the forwarding base, in the
+// declared order. JSON accepts one gateway string or an array of strings.
+type SiteProviderRegionEndpoints struct {
+	Control string   `json:"control,omitempty"`
+	Gateway []string `json:"gateway,omitempty"`
+}
+
+// UnmarshalJSON accepts a gateway string or an array of gateway strings.
+func (e *SiteProviderRegionEndpoints) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Control string          `json:"control"`
+		Gateway json.RawMessage `json:"gateway"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	e.Control = raw.Control
+	if len(bytes.TrimSpace(raw.Gateway)) == 0 || string(bytes.TrimSpace(raw.Gateway)) == "null" {
+		e.Gateway = nil
+		return nil
+	}
+	gateway := bytes.TrimSpace(raw.Gateway)
+	if gateway[0] == '"' {
+		var text string
+		if err := json.Unmarshal(gateway, &text); err != nil {
+			return fmt.Errorf("gateway must be a string or an array of strings")
+		}
+		e.Gateway = []string{text}
+		return nil
+	}
+	if gateway[0] != '[' {
+		return fmt.Errorf("gateway must be a string or an array of strings")
+	}
+	var items []string
+	if err := json.Unmarshal(gateway, &items); err != nil {
+		return fmt.Errorf("gateway must be a string or an array of strings")
+	}
+	e.Gateway = items
+	return nil
+}
+
+// RegionControlURL is the account-hook base of a region.
+// A declared control endpoint wins. Otherwise the region base URL is used.
+// The result has no trailing slash.
+func RegionControlURL(region SiteProviderRegion) string {
+	base := region.BaseURL
+	if region.Endpoints != nil && strings.TrimSpace(region.Endpoints.Control) != "" {
+		base = region.Endpoints.Control
+	}
+	return strings.TrimRight(strings.TrimSpace(base), "/")
+}
+
+// RegionGatewayURLs is the forwarding bases of a region, in declared order.
+// A declared gateway list wins. Otherwise the result is the region base URL.
+// Each result has no trailing slash. Empty entries are dropped.
+func RegionGatewayURLs(region SiteProviderRegion) []string {
+	if region.Endpoints != nil && len(region.Endpoints.Gateway) > 0 {
+		out := make([]string, 0, len(region.Endpoints.Gateway))
+		for _, item := range region.Endpoints.Gateway {
+			item = strings.TrimRight(strings.TrimSpace(item), "/")
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	base := strings.TrimRight(strings.TrimSpace(region.BaseURL), "/")
+	if base == "" {
+		return nil
+	}
+	return []string{base}
 }
 
 // SiteProviderLoginParam is one value the login UI collects.
@@ -577,6 +658,9 @@ func validateAccountRegions(regions []SiteProviderRegion, hosts []string) (map[s
 		if err := validateHTTPSURL(region.BaseURL, hosts, fmt.Sprintf("siteProvider.regions[%d].baseURL", i)); err != nil {
 			return nil, err
 		}
+		if err := validateRegionEndpoints(region.Endpoints, hosts, i); err != nil {
+			return nil, err
+		}
 		if err := validateRealms(region.Realms, i); err != nil {
 			return nil, err
 		}
@@ -588,6 +672,29 @@ func validateAccountRegions(regions []SiteProviderRegion, hosts []string) (map[s
 		}
 	}
 	return ids, nil
+}
+
+func validateRegionEndpoints(endpoints *SiteProviderRegionEndpoints, hosts []string, index int) error {
+	if endpoints == nil {
+		return nil
+	}
+	if strings.TrimSpace(endpoints.Control) != "" {
+		if err := validateHTTPSURL(endpoints.Control, hosts, fmt.Sprintf("siteProvider.regions[%d].endpoints.control", index)); err != nil {
+			return err
+		}
+	}
+	if len(endpoints.Gateway) > maxRegionGatewayEndpoints {
+		return fmt.Errorf("siteProvider.regions[%d].endpoints.gateway must list at most %d items", index, maxRegionGatewayEndpoints)
+	}
+	for i, item := range endpoints.Gateway {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		if err := validateHTTPSURL(item, hosts, fmt.Sprintf("siteProvider.regions[%d].endpoints.gateway[%d]", index, i)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateRegionAttrs(attrs map[string]string, index int) error {
@@ -1179,11 +1286,21 @@ func cloneRegions(in []SiteProviderRegion) []SiteProviderRegion {
 	for i, region := range in {
 		out[i] = region
 		out[i].Label = cloneLocalized(region.Label)
+		out[i].Endpoints = cloneRegionEndpoints(region.Endpoints)
 		out[i].Realms = append([]string(nil), region.Realms...)
 		out[i].Domains = append([]string(nil), region.Domains...)
 		out[i].Attrs = cloneStringMap(region.Attrs)
 	}
 	return out
+}
+
+func cloneRegionEndpoints(in *SiteProviderRegionEndpoints) *SiteProviderRegionEndpoints {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Gateway = append([]string(nil), in.Gateway...)
+	return &out
 }
 
 func cloneLogin(in SiteProviderLogin) SiteProviderLogin {

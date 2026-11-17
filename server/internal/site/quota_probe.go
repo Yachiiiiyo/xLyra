@@ -57,7 +57,7 @@ func (s *Service) runQuotaProbes(ctx context.Context, item store.Site) store.Sit
 	}
 	if sources := probeSourcesForSite(s, item); len(sources) > 1 {
 		return s.runQuotaProbesWith(ctx, item, probeType, func(ctx context.Context, client *http.Client, credentialType, baseURL, secret string) QuotaProbeResult {
-			return s.probeQuotaSources(ctx, client, sources, item.SiteType, credentialType, baseURL, secret)
+			return s.probeQuotaSourcesForSite(ctx, item, client, sources, credentialType, baseURL, secret)
 		})
 	}
 	return s.runQuotaProbesWith(ctx, item, probeType, nil)
@@ -107,7 +107,11 @@ func (s *Service) runQuotaProbesWith(ctx context.Context, item store.Site, probe
 		} else if probe != nil {
 			result = probe(ctx, client, credential.CredentialType, item.BaseURL, secret)
 		} else {
-			result = s.probeQuota(ctx, client, probeType, item.SiteType, credential.CredentialType, item.BaseURL, secret)
+			callCtx := ctx
+			if plugin, ok := s.quotaProbePlugin(probeType, item.SiteType); ok {
+				callCtx = s.withSitePluginContext(ctx, item, plugin)
+			}
+			result = s.probeQuota(callCtx, client, probeType, item.SiteType, credential.CredentialType, item.BaseURL, secret)
 		}
 		if probeType == QuotaProbeTypeSub2API && result.Status == "ok" {
 			s.recoverSub2APISubscriptionCooldown(ctx, item.ID, credential.ID, result)

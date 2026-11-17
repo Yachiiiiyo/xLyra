@@ -79,17 +79,18 @@ type ProbeStep struct {
 }
 
 // ProbeRequest is a plugin-authored HTTP request before the host joins the URL.
-// OnNonJSON is read only while pollLogin is running. "pending" treats a body
-// that is not one JSON object as still waiting. The body is discarded and is
-// not shown to the plugin. Every other hook ignores the field and still
-// refuses a non-JSON body when secret paths are set.
+// OnNonJSON applies to every account-pool hook. "pending" on pollLogin treats a
+// body that is not one JSON object as still waiting. "pending" on any other
+// account hook, and "ignore" on every account hook, keeps the status and the
+// filtered headers and drops the body. The body is not shown to the plugin.
+// Quota probe and the other stepped hooks ignore the field.
 type ProbeRequest struct {
 	Method    string            `ts:"method,type=ProbeMethod"`
 	Path      string            `ts:"path,doc=Path under the site base URL. Absolute URLs are rejected."`
 	Headers   map[string]string `ts:"headers,optional"`
 	Query     map[string]string `ts:"query,optional"`
 	Body      any               `ts:"body,optional,type=Json"`
-	OnNonJSON string            `ts:"onNonJSON,optional,doc=pollLogin only. pending treats a non-JSON body as still waiting and discards it."`
+	OnNonJSON string            `ts:"onNonJSON,optional,doc=Account-pool hooks. pending on pollLogin treats a non-JSON body as still waiting. pending elsewhere, and ignore, return the status with an empty body."`
 }
 
 // ProbeResponse is the HTTP result shown to the plugin. JSON is nil when the body is not JSON.
@@ -289,7 +290,7 @@ func decodeRequest(value any) (ProbeRequest, error) {
 	if err != nil {
 		return ProbeRequest{}, err
 	}
-	if onNonJSON != "" && onNonJSON != "pending" {
+	if onNonJSON != "" && onNonJSON != "pending" && onNonJSON != "ignore" {
 		return ProbeRequest{}, shapeError("request.onNonJSON: unsupported value %q", onNonJSON)
 	}
 	return ProbeRequest{Method: method, Path: path, Headers: headers, Query: query, Body: body, OnNonJSON: onNonJSON}, nil

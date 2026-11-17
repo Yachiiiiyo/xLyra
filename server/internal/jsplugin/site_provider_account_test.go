@@ -770,7 +770,9 @@ func TestCustomPollNonJSONStaysPending(t *testing.T) {
 	defer srv.Close()
 	source := meta("acme.example", KindSiteProvider) + `
 export function startLogin(ctx, steps) {
-  if (steps.length === 0) return { request: { method: "GET", path: "/html", onNonJSON: "pending" } };
+  if (steps.length === 0) return { request: { method: "GET", path: "/html" } };
+  const body = steps[0] && steps[0].response ? String(steps[0].response.body || "") : "";
+  if (body.indexOf("ACCESS_LEAK_pending_body") >= 0) return { error: "start saw a body" };
   return { result: { kind: "account_login", status: "pending", interval: 1 } };
 }
 export function pollLogin(ctx, steps) {
@@ -786,9 +788,9 @@ export function summarizeAccount() { return { result: { kind: "account_summary",
 `
 	rt := customRuntime(t, srv, source)
 	if _, err := rt.StartLogin(context.Background(), map[string]string{"region": "cn"}); err == nil || !errors.Is(err, ErrSecretRedactNotJSON) || strings.Contains(err.Error(), leak) {
-		t.Fatalf("start ignored onNonJSON: %v", err)
+		t.Fatalf("start without onNonJSON: %v", err)
 	}
-	source = strings.Replace(source, `path: "/html", onNonJSON: "pending"`, `path: "/start"`, 1)
+	source = strings.Replace(source, `path: "/html" }`, `path: "/start" }`, 1)
 	rt = customRuntime(t, srv, source)
 	started, err := rt.StartLogin(context.Background(), map[string]string{"region": "cn"})
 	if err != nil {
@@ -800,6 +802,102 @@ export function summarizeAccount() { return { result: { kind: "account_summary",
 	}
 	if strings.Contains(logs.String(), leak) || strings.Contains(pending.String(), leak) {
 		t.Fatal("non-JSON poll body reached the host result or logs")
+	}
+}
+
+func TestBaseForUsesControlEndpoint(t *testing.T) {
+	rt := customRuntime(t, httptest.NewServer(http.NotFoundHandler()), "")
+	rt.hosts = append(rt.hosts, "*.example.cn")
+	rt.spec.Regions = []SiteProviderRegion{
+		{ID: "cn", BaseURL: "https://api.example.cn", Endpoints: &SiteProviderRegionEndpoints{Control: "http://127.0.0.1:9/control/"}},
+		{ID: "wild", BaseURL: "https://api.example.cn", Endpoints: &SiteProviderRegionEndpoints{Control: "https://auth.example.cn/control/"}},
+		{ID: "plain", BaseURL: "http://127.0.0.1:9/plain/"},
+	}
+	got, err := rt.baseFor(map[string]string{"region": "cn"})
+	if err != nil || got != "http://127.0.0.1:9/control" {
+		t.Fatalf("control base = %q err=%v", got, err)
+	}
+	got, err = rt.baseFor(map[string]string{"region": "wild"})
+	if err != nil || got != "https://auth.example.cn/control" {
+		t.Fatalf("wildcard control base = %q err=%v", got, err)
+	}
+	if err := rt.checkURL("https://example.cn/control"); err == nil {
+		t.Fatal("apex domain matched *.example.cn wildcard")
+	}
+	if err := rt.checkURL("https://auth.sub.example.cn/control"); err == nil {
+		t.Fatal("multi-level subdomain matched *.example.cn wildcard")
+	}
+	got, err = rt.baseFor(map[string]string{"region": "plain"})
+	if err != nil || got != "http://127.0.0.1:9/plain" {
+		t.Fatalf("fallback base = %q err=%v", got, err)
+	}
+}
+
+func TestAccountHooksIgnoreNonJSON(t *testing.T) {
+	const leak = "HTML_LEAK_account_body"
+	logs := captureLogs(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("X-Trace", "kept")
+		fmt.Fprint(w, "<html>"+leak+"</html>")
+	}))
+	defer srv.Close()
+	source := meta("acme.example", KindSiteProvider) + `
+export function startLogin(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "pending" } };
+  const step = steps[0];
+  const body = step && step.response ? String(step.response.body || "") : "missing";
+  if (body !== "") return { error: "body leaked:" + body };
+  if (!step.response || step.response.json !== null || step.response.status !== 200) return { error: "shape" };
+  return { result: { kind: "account_login", status: "pending", interval: 1 } };
+}
+export function pollLogin(ctx, steps) {
+  let token = null;
+  for (const step of steps) {
+    if (step.request && step.request.path === "/step") token = step;
+  }
+  if (!token) return { request: { method: "GET", path: "/step", onNonJSON: "ignore" } };
+  if (token.response.body !== "" || token.response.json !== null) return { error: "poll saw a body" };
+  return { result: { kind: "account_login", status: "pending", interval: 1 } };
+}
+export function refreshTokens(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "ignore" } };
+  if (steps[0].response.body !== "") return { error: "refresh saw a body" };
+  return { result: { kind: "account_refresh", status: "ok", credential: { access_token: "{{secret.access_token}}", domain: "x.cn", realm: "cn" } } };
+}
+export function summarizeAccount(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "pending" } };
+  if (steps[0].response.body !== "" || steps[0].response.headers["X-Trace"] !== "kept") return { error: "summary shape" };
+  return { result: { kind: "account_summary", status: "ok", entries: [] } };
+}
+export function listModels(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "ignore" } };
+  if (steps[0].response.body !== "") return { error: "models saw a body" };
+  return { result: { models: [{ name: "m1" }] } };
+}
+`
+	section := customSection()
+	section.Models.PerAccount = true
+	rt := testRuntime(t, mustPlugin(t, source, section), srv)
+	fields := map[string]string{"access_token": "tok", "domain": "x.cn", "realm": "cn"}
+	started, err := rt.StartLogin(context.Background(), map[string]string{"region": "cn"})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := rt.PollLogin(context.Background(), started); err != nil {
+		t.Fatalf("poll ignore: %v", err)
+	}
+	if _, err := rt.Refresh(context.Background(), fields); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := rt.Summarize(context.Background(), AccountSnapshot{BaseURL: srv.URL, Fields: fields}); err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if _, err := rt.ListModels(context.Background(), fields); err != nil {
+		t.Fatalf("models: %v", err)
+	}
+	if strings.Contains(logs.String(), leak) {
+		t.Fatal("non-JSON body reached the logs")
 	}
 }
 

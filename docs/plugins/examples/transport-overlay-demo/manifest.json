@@ -1,0 +1,13 @@
+{
+  "apiVersion": 1,
+  "hostApi": 2,
+  "id": "example.transport",
+  "name": "传输与叠加编排示例",
+  "description": "阶段 4 示例：声明 transport.profile 与 net:*.example.com，导出 rewritePayload、check 与 classifyError",
+  "version": "1.0.0",
+  "license": "MIT",
+  "permissions": ["net:*.example.com"],
+  "transport": {
+    "profile": "claude_code"
+  }
+}

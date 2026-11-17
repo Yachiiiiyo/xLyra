@@ -185,6 +185,13 @@ func TestBoundErrorClassifierBeatsSiteProviderHook(t *testing.T) {
 	if fallback.errorType != "upstream_credential_limited" || fallback.cooldownReason != store.CooldownReasonUpstreamCredentialLimited {
 		t.Fatalf("missing binding did not fall through to the site hook: %#v", fallback)
 	}
+
+	unknownBound := classifierPlugin(t, "acme-unknown", `export function classify() { return { class: "unknown" }; }`)
+	useGatewayPlugins(t, provider, unknownBound)
+	unknownFallback := classifyGatewayUpstreamError(providerCandidate("acme.example/chat", "acme-unknown"), plainFailureResult(http.StatusBadRequest), []byte(slowBody), now)
+	if unknownFallback.errorType != "upstream_credential_limited" || unknownFallback.cooldownReason != store.CooldownReasonUpstreamCredentialLimited {
+		t.Fatalf("unknown verdict from mounted classifier did not fall through to the site hook: %#v", unknownFallback)
+	}
 }
 
 func TestSiteProviderClassifySkipsBuiltinAndHookless(t *testing.T) {

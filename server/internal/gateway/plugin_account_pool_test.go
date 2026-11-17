@@ -170,6 +170,36 @@ func TestPluginAccountResolveRefreshAndReauth(t *testing.T) {
 	}
 }
 
+func TestPluginAccountBaseURLUsesGateway(t *testing.T) {
+	registerPluginAccountSite(t, pluginAccountSiteOptions{regions: []jsplugin.SiteProviderRegion{
+		{ID: "intl", BaseURL: "http://127.0.0.1/base", Endpoints: &jsplugin.SiteProviderRegionEndpoints{
+			Control: "http://127.0.0.1/control",
+			Gateway: []string{"http://127.0.0.1/gw1/", "http://127.0.0.1/gw2"},
+		}},
+		{ID: "plain", BaseURL: "http://127.0.0.1/plain/"},
+	}})
+	item, ok := site.LookupPluginSiteType(pluginAccountSiteType)
+	if !ok {
+		t.Fatal("plugin site missing")
+	}
+	got, err := pluginAccountBaseURL(item, map[string]string{"region": "intl"}, 0)
+	if err != nil || got != "http://127.0.0.1/gw1" {
+		t.Fatalf("first gateway = %q err=%v", got, err)
+	}
+	got, err = pluginAccountBaseURL(item, map[string]string{"region": "intl"}, 1)
+	if err != nil || got != "http://127.0.0.1/gw2" {
+		t.Fatalf("second gateway = %q err=%v", got, err)
+	}
+	got, err = pluginAccountBaseURL(item, map[string]string{"region": "intl"}, 2)
+	if err != nil || got != "http://127.0.0.1/gw1" {
+		t.Fatalf("wrapped gateway = %q err=%v", got, err)
+	}
+	got, err = pluginAccountBaseURL(item, map[string]string{"region": "plain"}, 3)
+	if err != nil || got != "http://127.0.0.1/plain" {
+		t.Fatalf("fallback gateway = %q err=%v", got, err)
+	}
+}
+
 func TestCredentialResolverForKeepsBuiltinAccounts(t *testing.T) {
 	registerPluginAccountSite(t, pluginAccountSiteOptions{})
 	stub := &stubGatewayOAuth{

@@ -1429,9 +1429,17 @@ func (p pluginAccountAPI) baseURL(region string) string {
 	if p.pool == nil {
 		return ""
 	}
+	if region == "" {
+		region = p.pool.DefaultRegion
+	}
 	for _, item := range p.pool.Regions {
 		if item.ID == region {
-			return strings.TrimRight(strings.TrimSpace(item.BaseURL), "/")
+			return jsplugin.RegionControlURL(item)
+		}
+	}
+	for _, item := range p.pool.Regions {
+		if item.ID == p.pool.DefaultRegion {
+			return jsplugin.RegionControlURL(item)
 		}
 	}
 	return p.pool.DefaultBaseURL()

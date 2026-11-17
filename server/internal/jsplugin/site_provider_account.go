@@ -24,6 +24,7 @@ import (
 	"weak"
 
 	"xlyra/server/internal/accountauth"
+	"xlyra/server/internal/httpclient"
 )
 
 const (
@@ -664,7 +665,7 @@ func (r *AccountProviderRuntime) drive(ctx context.Context, call *accountCall, h
 			return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
 		}
 		template := *decision.Request
-		response, err := r.doAccountHTTP(ctx, client, call, allowed, rules, template, hook == hookPollLogin)
+		response, err := r.doAccountHTTP(ctx, client, call, allowed, rules, template, hook)
 		if err != nil {
 			return nil, err
 		}
@@ -712,7 +713,7 @@ func (r *AccountProviderRuntime) driveModelList(ctx context.Context, call *accou
 			return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
 		}
 		template := *decision.Request
-		response, err := r.doAccountHTTP(ctx, client, call, allowed, nil, template, false)
+		response, err := r.doAccountHTTP(ctx, client, call, allowed, nil, template, "listModels")
 		if err != nil {
 			return nil, err
 		}
@@ -737,7 +738,25 @@ func (r *AccountProviderRuntime) driveModelList(ctx context.Context, call *accou
 // showing that body to JS or writing it into an error.
 var errPollNonJSON = errors.New("poll response is not JSON")
 
-func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http.Client, call *accountCall, allowed map[string]bool, rules map[string]string, template ProbeRequest, honorNonJSON bool) (ProbeResponse, error) {
+// accountNonJSONMode says how an account hook treats a body that is not one
+// JSON object. pollPending keeps the historical poll behavior. empty returns
+// the status and filtered headers with no body. none leaves the body to the
+// ordinary redaction path.
+func accountNonJSONMode(hook, onNonJSON string) string {
+	switch onNonJSON {
+	case "pending":
+		if hook == hookPollLogin {
+			return "pollPending"
+		}
+		return "empty"
+	case "ignore":
+		return "empty"
+	default:
+		return "none"
+	}
+}
+
+func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http.Client, call *accountCall, allowed map[string]bool, rules map[string]string, template ProbeRequest, hook string) (ProbeResponse, error) {
 	before, err := ResolveProbeURL(call.base, template.Path, template.Query)
 	if err != nil {
 		return ProbeResponse{}, &CallError{Kind: KindURLRejected, Detail: err.Error()}
@@ -816,8 +835,17 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 		return ProbeResponse{}, &CallError{Kind: KindResponseTooLarge, Detail: "response is too large"}
 	}
 	contentType := resp.Header.Get("Content-Type")
-	if honorNonJSON && template.OnNonJSON == "pending" && !accountJSONObject(buf) {
-		return ProbeResponse{}, errPollNonJSON
+	if !accountJSONObject(buf) {
+		switch accountNonJSONMode(hook, template.OnNonJSON) {
+		case "pollPending":
+			return ProbeResponse{}, errPollNonJSON
+		case "empty":
+			headersOut := FilterResponseHeaders(resp.Header)
+			for key, value := range headersOut {
+				headersOut[key] = call.bag.Scrub(value)
+			}
+			return ProbeResponse{Status: resp.StatusCode, Headers: headersOut}, nil
+		}
 	}
 	redactedBody, payload, err := redactProbeBody(call.bag, contentType, buf, rules)
 	if err != nil {
@@ -871,7 +899,7 @@ func (r *AccountProviderRuntime) checkURL(raw string) error {
 func (r *AccountProviderRuntime) hostAllowed(host string) bool {
 	host = strings.ToLower(host)
 	for _, allowed := range r.hosts {
-		if strings.ToLower(allowed) == host {
+		if httpclient.MatchHostPattern(allowed, host) {
 			return true
 		}
 	}
@@ -899,7 +927,7 @@ func (r *AccountProviderRuntime) baseFor(params map[string]string) (string, erro
 		if region.ID != id {
 			continue
 		}
-		base := strings.TrimRight(strings.TrimSpace(region.BaseURL), "/")
+		base := RegionControlURL(region)
 		if err := r.checkURL(base); err != nil {
 			return "", err
 		}
