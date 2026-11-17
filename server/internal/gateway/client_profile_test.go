@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"xlyra/server/internal/httpclient"
+	routeengine "xlyra/server/internal/router"
 	"xlyra/server/internal/site"
 )
 
@@ -101,7 +102,7 @@ func TestUpstreamClientForSiteWithoutStoreUsesDefaultClient(t *testing.T) {
 	t.Parallel()
 
 	handler := NewHandler(nil, nil, nil, nil, "test-master-key")
-	client, cfg, headers, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{})
+	client, cfg, headers, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{}, routeengine.Candidate{})
 
 	if err != nil {
 		t.Fatalf("upstreamClientForSite returned error: %v", err)
@@ -119,7 +120,7 @@ func TestForcedUpstreamClientOverridesStreamingProfile(t *testing.T) {
 
 	forced := &http.Client{Timeout: time.Second}
 	handler := NewHandler(nil, nil, nil, nil, "test-master-key").WithForcedUpstreamClient(forced)
-	client, _, _, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{Stream: true})
+	client, _, _, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{Stream: true}, routeengine.Candidate{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func TestUpstreamClientForStreamingWithoutStoreUsesStreamingProfile(t *testing.T
 	t.Parallel()
 
 	handler := NewHandler(nil, nil, nil, nil, "test-master-key")
-	client, cfg, headers, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{Stream: true})
+	client, cfg, headers, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{Stream: true}, routeengine.Candidate{})
 
 	if err != nil {
 		t.Fatalf("upstreamClientForSite returned error: %v", err)
@@ -178,7 +179,7 @@ func TestUpstreamClientForClaudeCodeSiteSkipsDefaultClient(t *testing.T) {
 	t.Parallel()
 
 	handler := NewHandler(nil, nil, nil, nil, "test-master-key")
-	client, _, _, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{ClaudeCode: true})
+	client, _, _, err := handler.upstreamClientForSite(context.Background(), uuid.New(), upstreamClientProfileRequest{ClaudeCode: true}, routeengine.Candidate{})
 
 	if err != nil {
 		t.Fatalf("upstreamClientForSite returned error: %v", err)

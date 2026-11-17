@@ -42,8 +42,9 @@ type Manifest struct {
 	SiteProvider SiteProviderSection `json:"siteProvider,omitzero"`
 	// Request is the top-level upstream header template. A site type uses it
 	// only when siteProvider.request is empty. Other plugins may set headers.
-	Request SiteProviderRequest `json:"request,omitempty"`
-	SHA256  map[string]string   `json:"sha256"`
+	Request   SiteProviderRequest `json:"request,omitempty"`
+	Transport TransportSection    `json:"transport,omitempty"`
+	SHA256    map[string]string   `json:"sha256"`
 
 	// hasQuotaProbe and hasSite record that the JSON object contained the
 	// section, including {}. Kindless manifests use them to tell an empty
@@ -644,6 +645,9 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 		return fmt.Errorf("request is not allowed for %s", manifest.KindLabel())
 	}
 	if err := validateManifestRequest(manifest); err != nil {
+		return err
+	}
+	if err := validateTransport(manifest.Transport); err != nil {
 		return err
 	}
 	switch manifest.Kind {

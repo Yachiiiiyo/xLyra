@@ -2386,6 +2386,22 @@ func (r errorRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, r.err
 }
 
+// pluginProfileClient returns the outbound client for one plugin's stepped
+// requests. A declared transport.profile selects that TLS fingerprint and
+// keeps the site proxy. With no profile, or no client manager, the site's
+// ordinary client is used.
+func (s *Service) pluginProfileClient(ctx context.Context, item store.Site, plugin *jsplugin.Plugin) (*http.Client, error) {
+	if s == nil || plugin == nil || plugin.Manifest.TransportProfile() == "" || s.httpClients == nil {
+		if s == nil {
+			return nil, fmt.Errorf("site service is not available")
+		}
+		return s.httpClientForSite(ctx, item, false)
+	}
+	profile := httpclientProfileFromGatewayConfig(GatewayConfigFromSiteMeta(item.Meta), proxyIDFromMeta(item.Meta))
+	profile.TLSFingerprint = plugin.Manifest.TransportProfile()
+	return s.httpClients.Client(profile)
+}
+
 func (s *Service) httpClientForSite(_ context.Context, item store.Site, stream bool) (*http.Client, error) {
 	proxyID := proxyIDFromMeta(item.Meta)
 	profile := httpclientProfileFromGatewayConfig(GatewayConfigFromSiteMeta(item.Meta), proxyID)

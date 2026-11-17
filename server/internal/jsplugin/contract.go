@@ -10,6 +10,24 @@ var probeMethods = map[string]struct{}{
 	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {}, "DELETE": {},
 }
 
+// TransportProfileSpec is the manifest transport block in the plugin SDK.
+// Profile is a built-in TLS fingerprint. bun is not supported by this build.
+type TransportProfileSpec struct {
+	Profile string `ts:"profile,optional,type=\"claude_code\",doc=Built-in TLS fingerprint. bun is not supported by this build."`
+}
+
+// PluginManifestSpec is the hand-written part of the plugin manifest in the SDK.
+type PluginManifestSpec struct {
+	APIVersion int                   `ts:"apiVersion"`
+	HostAPI    int                   `ts:"hostApi"`
+	ID         string                `ts:"id"`
+	Name       string                `ts:"name"`
+	Version    string                `ts:"version"`
+	Kind       string                `ts:"kind,optional,type=PluginKind"`
+	Exports    []string              `ts:"exports,optional"`
+	Transport  *TransportProfileSpec `ts:"transport,optional"`
+}
+
 // ProbeContext is the credential-free object passed to a quota probe hook.
 // Account is set only for an account-pool per-account listModels call.
 type ProbeContext struct {

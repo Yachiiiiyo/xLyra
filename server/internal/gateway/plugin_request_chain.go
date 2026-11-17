@@ -15,6 +15,37 @@ import (
 	sitepkg "xlyra/server/internal/site"
 )
 
+// pluginTransportProfile picks the TLS fingerprint for one candidate.
+// An explicit impersonate switch wins, then the first mounted plugin that
+// declares transport.profile and does not declare a site type, then the site
+// type plugin. Empty means the default handshake.
+func pluginTransportProfile(candidate routeengine.Candidate, cfg *sitepkg.GatewayConfig) string {
+	if cfg != nil && cfg.ImpersonateClaudeCodeClient != nil && *cfg.ImpersonateClaudeCodeClient {
+		return "claude_code"
+	}
+	registry := jsplugin.DefaultCatalog().Registry()
+	if registry == nil {
+		return ""
+	}
+	for _, id := range candidate.Site.PluginIDs {
+		plugin, ok := registry.ByPluginID(id)
+		if !ok || plugin == nil || plugin.Manifest.DeclaresSiteType() {
+			continue
+		}
+		if profile := plugin.Manifest.TransportProfile(); profile != "" {
+			return profile
+		}
+	}
+	if item, ok := sitepkg.LookupPluginSiteType(candidate.Site.SiteType); ok && item.Enabled && item.PluginID != "" {
+		if plugin, ok := registry.ByPluginID(item.PluginID); ok && plugin != nil && plugin.Manifest.DeclaresSiteType() {
+			if profile := plugin.Manifest.TransportProfile(); profile != "" {
+				return profile
+			}
+		}
+	}
+	return ""
+}
+
 // requestChainPlugins is the site type plugin first, then mounted plugins that
 // do not declare a site type, in PluginIDs order and without duplicates.
 func requestChainPlugins(candidate routeengine.Candidate) []*jsplugin.Plugin {

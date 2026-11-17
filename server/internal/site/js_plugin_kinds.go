@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"xlyra/server/internal/adapter"
-	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/store"
 	"xlyra/server/internal/upstream"
@@ -190,13 +189,20 @@ type pluginModelLister struct {
 	hook       string
 	resultKind string
 	wrapCtx    func(context.Context) context.Context
+	clientFor  func(context.Context) (*http.Client, error)
 }
 
 func (l pluginModelLister) ListModels(ctx context.Context, site adapter.SiteConfig, apiKey string) ([]adapter.Model, error) {
 	if l.wrapCtx != nil {
 		ctx = l.wrapCtx(ctx)
 	}
-	result, err := driveSteppedHook(ctx, site.Client, l.plugin, l.hook, l.resultKind, jsplugin.ProbeContext{
+	client := site.Client
+	if l.clientFor != nil && l.plugin.Manifest.TransportProfile() != "" {
+		if profiled, clientErr := l.clientFor(ctx); clientErr == nil && profiled != nil {
+			client = profiled
+		}
+	}
+	result, err := driveSteppedHook(ctx, client, l.plugin, l.hook, l.resultKind, jsplugin.ProbeContext{
 		SiteType:       site.SiteType,
 		BaseURL:        site.BaseURL,
 		CredentialType: defaultCredentialType,
@@ -236,6 +242,7 @@ func (s *Service) modelListerFor(item store.Site, module adapter.Module) (adapte
 			hook:       "listModels",
 			resultKind: jsplugin.KindModelList,
 			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+			clientFor:  func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
 		}, true
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "listModels"); ok {
@@ -244,6 +251,7 @@ func (s *Service) modelListerFor(item store.Site, module adapter.Module) (adapte
 			hook:       "listModels",
 			resultKind: jsplugin.KindModelList,
 			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+			clientFor:  func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
 		}, true
 	}
 	return adapter.AsGatewayModelLister(module)
@@ -261,13 +269,20 @@ type pluginCredentialValidator struct {
 	hook       string
 	resultKind string
 	wrapCtx    func(context.Context) context.Context
+	clientFor  func(context.Context) (*http.Client, error)
 }
 
 func (v pluginCredentialValidator) ValidateCredentials(ctx context.Context, site adapter.SiteConfig, apiKey string) error {
 	if v.wrapCtx != nil {
 		ctx = v.wrapCtx(ctx)
 	}
-	result, err := driveSteppedHook(ctx, site.Client, v.plugin, v.hook, v.resultKind, jsplugin.ProbeContext{
+	client := site.Client
+	if v.clientFor != nil && v.plugin.Manifest.TransportProfile() != "" {
+		if profiled, clientErr := v.clientFor(ctx); clientErr == nil && profiled != nil {
+			client = profiled
+		}
+	}
+	result, err := driveSteppedHook(ctx, client, v.plugin, v.hook, v.resultKind, jsplugin.ProbeContext{
 		SiteType:       site.SiteType,
 		BaseURL:        site.BaseURL,
 		CredentialType: defaultCredentialType,
@@ -318,22 +333,24 @@ func nonEmpty(value, fallback string) string {
 // hook, then the adapter.
 func (s *Service) credentialValidatorFor(item store.Site, module adapter.Module) (adapter.CredentialValidator, bool) {
 	if plugin, ok := s.siteHookPlugin(item, "check"); ok {
-		return pluginCredentialValidator{
-			plugin:     plugin,
-			hook:       "check",
-			resultKind: jsplugin.KindCredentialCheck,
-			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
-		}, true
+		validator := s.pluginCheckValidator(item, plugin)
+		validator.wrapCtx = func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) }
+		return validator, true
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "check"); ok {
-		return pluginCredentialValidator{
-			plugin:     plugin,
-			hook:       "check",
-			resultKind: jsplugin.KindCredentialCheck,
-			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
-		}, true
+		validator := s.pluginCheckValidator(item, plugin)
+		validator.wrapCtx = func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) }
+		return validator, true
 	}
 	return adapter.AsCredentialValidator(module)
+}
+
+// pluginCheckValidator is the check hook for one plugin, with its transport profile.
+func (s *Service) pluginCheckValidator(item store.Site, plugin *jsplugin.Plugin) pluginCredentialValidator {
+	return pluginCredentialValidator{
+		plugin: plugin, hook: "check", resultKind: jsplugin.KindCredentialCheck,
+		clientFor: func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
+	}
 }
 
 // runPluginHealthCheck runs a credential_check plugin, or a site_provider
@@ -386,12 +403,12 @@ func (s *Service) detectWithPlugins(ctx context.Context, baseURL string) (Detect
 	if len(plugins) == 0 {
 		return DetectResult{}, false
 	}
-	client, err := s.httpClients.Client(httpclient.DefaultProfile())
-	if err != nil {
-		return DetectResult{}, false
-	}
 	var best DetectResult
 	for _, plugin := range plugins {
+		client, err := s.pluginProfileClient(ctx, store.Site{}, plugin)
+		if err != nil {
+			continue
+		}
 		result, err := driveSteppedHook(ctx, client, plugin, "detect", jsplugin.KindSiteDetect, jsplugin.ProbeContext{BaseURL: baseURL, Now: time.Now().UnixMilli()}, "")
 		if err != nil {
 			slog.Default().Debug("site_detect plugin failed", "plugin_id", plugin.Manifest.ID, "error", err)
@@ -487,7 +504,7 @@ func (s *Service) fetchPluginPricing(ctx context.Context, item store.Site, plugi
 	if err != nil {
 		return adapter.PricingSnapshot{}, err
 	}
-	client, err := s.httpClientForSite(ctx, item, false)
+	client, err := s.pluginProfileClient(ctx, item, plugin)
 	if err != nil {
 		return adapter.PricingSnapshot{}, err
 	}

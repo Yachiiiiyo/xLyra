@@ -10,6 +10,7 @@ import (
 
 	"xlyra/server/internal/adapter"
 	"xlyra/server/internal/httpclient"
+	routeengine "xlyra/server/internal/router"
 	"xlyra/server/internal/site"
 	"xlyra/server/internal/store"
 )
@@ -27,6 +28,8 @@ type upstreamClientProfileRequest struct {
 	// ClaudeCode marks requests to a Claude Code OAuth site, which must present
 	// the TLS fingerprint of the real Claude Code runtime.
 	ClaudeCode bool
+	// TLSFingerprint is a plugin-declared transport profile. ClaudeCode wins.
+	TLSFingerprint string
 }
 
 func upstreamClientProfileFromSiteConfig(cfg *site.GatewayConfig, proxyID string) httpclient.Profile {
@@ -71,8 +74,11 @@ func upstreamClientProfileForRequest(cfg *site.GatewayConfig, request upstreamCl
 			config.ResponseHeaderTimeout = defaultResponseHeaderTimeoutForRequest(request)
 		}
 	}
-	if request.ClaudeCode {
+	switch {
+	case request.ClaudeCode:
 		config.TLSFingerprint = httpclient.TLSFingerprintClaudeCode
+	case request.TLSFingerprint != "":
+		config.TLSFingerprint = request.TLSFingerprint
 	}
 	return config
 }
@@ -103,15 +109,18 @@ func (h Handler) siteGatewayConfig(ctx context.Context, siteID uuid.UUID) (*site
 	return site.GatewayConfigFromSiteMeta(item.Meta), site.RequestHeadersFromSiteMeta(item.Meta), proxyID, nil
 }
 
-func (h Handler) upstreamClientForSite(ctx context.Context, siteID uuid.UUID, request upstreamClientProfileRequest) (*http.Client, *site.GatewayConfig, map[string]string, error) {
+func (h Handler) upstreamClientForSite(ctx context.Context, siteID uuid.UUID, request upstreamClientProfileRequest, candidate routeengine.Candidate) (*http.Client, *site.GatewayConfig, map[string]string, error) {
 	cfg, requestHeaders, proxyID, err := h.siteGatewayConfig(ctx, siteID)
 	if err != nil {
 		return h.httpClient, nil, nil, err
 	}
+	if profile := pluginTransportProfile(candidate, cfg); profile != "" {
+		request.TLSFingerprint = profile
+	}
 	if h.forcedUpstreamClient != nil {
 		return h.forcedUpstreamClient, cfg, requestHeaders, nil
 	}
-	if cfg == nil && proxyID == "" && !request.Stream && !request.ClaudeCode && !request.DisableCompression {
+	if cfg == nil && proxyID == "" && !request.Stream && !request.ClaudeCode && request.TLSFingerprint == "" && !request.DisableCompression {
 		return h.httpClient, nil, requestHeaders, nil
 	}
 	client, err := h.clients.Client(upstreamClientProfileForRequest(cfg, request, proxyID))

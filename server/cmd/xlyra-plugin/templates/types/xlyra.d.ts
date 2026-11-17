@@ -435,6 +435,11 @@ export interface AccountSummaryResult {
   entries: ProbeEntry[];
 }
 
+export interface TransportProfile {
+  /** Built-in TLS fingerprint. bun is not supported by this build. */
+  profile?: "claude_code";
+}
+
 export type PluginKind = "quota_probe" | "protocol" | "model_list" | "credential_check" | "site_detect" | "error_classifier" | "model_metadata" | "pricing_parse" | "automation" | "site_provider";
 
 export interface PluginManifest {
@@ -445,6 +450,7 @@ export interface PluginManifest {
   version: string;
   kind?: PluginKind;
   exports?: string[];
+  transport?: TransportProfile;
 }
 
 export interface PluginMeta {

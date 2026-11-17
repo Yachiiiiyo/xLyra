@@ -44,6 +44,20 @@
 - 顶层 `request` 与 `siteProvider.request` 结构相同，任何插件都可以写。叠加插件只用 `headers`（不能写 `stripDownstreamHeaders`、`upstreamStreamOnly`、`baseURLFrom`，也不能用 `{{cred.*}}`）。声明站点类型的插件二者只能写一处；只写顶层时，作为该站点类型的底座头模板。`{{region.*}}` 与 `stripDownstreamHeaders` 只允许声明站点类型的插件。
 - 清单 `permissions` 非空时，启用必须一次授予全部权限（含 automation 权限）。声明了 `secret.use`，或声明了站点类型，必须有受信签名或市场证明，`confirmUntrusted` 不能跳过。
 
+## transport 部分
+
+站点底座插件和叠加插件都可以声明出站 TLS 指纹。不写等于用默认握手。
+
+```json
+"transport": { "profile": "claude_code" }
+```
+
+`profile` 只能是宿主内置的 `claude_code`。`bun` 以及其它值会被拒绝，不能带自己的 ClientHello。声明后，网关上游转发和站点分步请求（`probe`、`listModels`、`check`、`detect`、`parsePricing`、账号池）都用这个指纹。管理员打开「伪装 Claude Code 客户端」时优先于插件；其次是挂载顺序里第一个声明了 profile 的叠加插件，底座插件兜底。拨号仍走原来的 SSRF 防护、代理和主机白名单。
+
+## 通配主机
+
+`siteProvider.hosts` 和 `permissions` 里的 `net:` 都可以写 `*.example.com`。`*.` 只匹配子域（`a.example.com`、`a.b.example.com`），不匹配裸域 `example.com`，也不匹配 `example.com.evil.com`。星号不在开头、或写 IP，都不合法。其余仍是小写 DNS 主机名，不能带端口。
+
 ## quota_probe 部分
 
 ```json
@@ -141,7 +155,7 @@
 | `display.subtitle` | 否 | 副标题，规则与 `name` 相同 |
 | `display.icon` | 否 | 包内相对路径，扩展名只能是 `.png` 或 `.webp`。文件必须存在，文件头要符合格式，不超过 64 KiB。声明之后，管理端用 `GET /api/v1/plugin-icons/{插件 id}` 取这张图，需要管理端会话。站点类型的 `icon_url` 带 `?v=`，值是包 SHA256 的前 16 位，换包后变化，用来让浏览器重新取图。也可以改用顶层 `icon`，见[图标](#图标) |
 | `display.brandColor` | 否 | `#RRGGBB` |
-| `hosts` | 是 | 1–16 个小写 DNS 主机名，不能重复。不能带协议、端口、路径，至少含一个 `.`，不能是 IP，不能以 `.` 或 `-` 开头或结尾 |
+| `hosts` | 是 | 1–16 个小写 DNS 主机名，不能重复。不能带协议、端口、路径，至少含一个 `.`，不能是 IP，不能以 `.` 或 `-` 开头或结尾。可以以 `*.` 开头表示子域通配，见[通配主机](#通配主机) |
 | `credential.model` | 是 | `api_key` 或 `account_pool`。`api_key` 不能再写 `credential.fields`、`accessTokenField`、`refreshTokenField`、`expiresAtField`、`expiresFrom`、`identity`、`display`、`regions`、`defaultRegion`、`login`、`refresh`、`import`、`selection`、`ui`。`account_pool` 的 `models` 只能是 `perAccount: true`，或者整段省略 |
 | `protocol.kind` | 是 | `openai_chat`、`openai_responses`、`anthropic_messages`、`google_gemini` 之一 |
 | `protocol.path` | 是 | 以单个 `/` 开头的路径，不能含 `..` 或编码后的 `..` |
@@ -173,7 +187,7 @@
 
 `probe`、`listModels`、`check`、`classify`、`rewritePayload` 都是可选导出。账号池还要导出 `summarizeAccount`；`login.kind` 为 `custom_poll` 时再导出 `startLogin`、`pollLogin`；`refresh.kind` 为 `custom_steps` 时再导出 `refreshTokens`；`models.perAccount` 为 true 时再导出 `listModels`。调用时机和返回值见[站点类型](./site-provider.md)。
 
-启用这个类型时，包必须由受信密钥签名，并且每次启用都要再次确认完整的 `hosts`。确认结果记成 `host:<主机名>`。确认之后，站点 `base_url`、通用适配器发出的请求和网关转发的上游地址，主机都必须在这份列表里：按主机名精确匹配（不含端口，不做子域通配），重定向也不得离开列表。分步钩子在同源限制之外再做一次同样的主机检查。
+启用这个类型时，包必须由受信密钥签名，并且每次启用都要再次确认完整的 `hosts`。确认结果记成 `host:<主机名>`。确认之后，站点 `base_url`、通用适配器发出的请求和网关转发的上游地址，主机都必须命中这份列表：普通项按主机名精确匹配（不含端口），`*.example.com` 只匹配子域、不匹配裸域。重定向也不得离开列表。分步钩子在同源限制之外再做一次同样的主机检查。
 
 ## 图标
 

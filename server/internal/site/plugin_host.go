@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+
+	"xlyra/server/internal/httpclient"
 )
 
 // HostNotAllowedError is returned when a plugin site type cannot call a host.
@@ -37,9 +39,9 @@ func PluginSiteTypeHosts(siteType string) ([]string, bool) {
 
 // CheckPluginHost reports whether rawURL's hostname is allowed for siteType.
 // Built-in site types (no slash) are always allowed. An enabled plugin site
-// type must match one allow-list entry exactly: lowercase, port stripped, no
-// subdomain or wildcard match. A slash type that is disabled or not in the
-// enabled snapshot is rejected, because there is no allow-list to apply.
+// type must match one allow-list entry: lowercase, port stripped. An entry
+// starting with "*." matches subdomains only. A slash type that is disabled
+// or not in the enabled snapshot is rejected, because there is no allow-list.
 func CheckPluginHost(siteType, rawURL string) error {
 	key := strings.ToLower(strings.TrimSpace(siteType))
 	if !strings.Contains(key, "/") {
@@ -52,7 +54,7 @@ func CheckPluginHost(siteType, rawURL string) error {
 	}
 	if host != "" {
 		for _, allowed := range item.Hosts {
-			if strings.ToLower(allowed) == host {
+			if httpclient.MatchHostPattern(allowed, host) {
 				return nil
 			}
 		}

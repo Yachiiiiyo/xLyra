@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/upstream"
 )
 
@@ -328,10 +329,7 @@ func HTTPClientWithAllowedHosts(base *http.Client, hosts []string) *http.Client 
 		base = http.DefaultClient
 	}
 	clone := *base
-	allowed := make(map[string]struct{}, len(hosts))
-	for _, host := range hosts {
-		allowed[strings.ToLower(strings.TrimSpace(host))] = struct{}{}
-	}
+	allowed := append([]string(nil), hosts...)
 	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) > 5 {
 			return fmt.Errorf("stopped after 5 redirects")
@@ -351,10 +349,12 @@ func HTTPClientWithAllowedHosts(base *http.Client, hosts []string) *http.Client 
 			return fmt.Errorf("redirect scheme %q is not allowed", req.URL.Scheme)
 		}
 		host := strings.ToLower(req.URL.Hostname())
-		if _, ok := allowed[host]; !ok {
-			return fmt.Errorf("redirect host %q is not allowed", host)
+		for _, pattern := range allowed {
+			if httpclient.MatchHostPattern(pattern, host) {
+				return nil
+			}
 		}
-		return nil
+		return fmt.Errorf("redirect host %q is not allowed", host)
 	}
 	return &clone
 }

@@ -63,6 +63,11 @@ func (s *Service) runQuotaProbes(ctx context.Context, item store.Site) store.Sit
 	}
 
 	client := &http.Client{Timeout: quotaProbeRequestTimeout}
+	if plugin, ok := s.quotaProbePlugin(probeType, item.SiteType); ok {
+		if profiled, clientErr := s.pluginProfileClient(ctx, item, plugin); clientErr == nil && profiled != nil {
+			client = profiled
+		}
+	}
 	summary := map[string]any{
 		"probe_type": probeType,
 		"fetched_at": time.Now().UTC().Format(time.RFC3339),

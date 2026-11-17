@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 
 	"xlyra/server/internal/adapter"
-	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/store"
 	"xlyra/server/internal/upstream"
 )
@@ -341,14 +340,10 @@ func (s *Service) runSiteHealthCheck(ctx context.Context, item store.Site) siteH
 	}
 
 	if plugin, ok := s.siteHookPlugin(item, "check"); ok {
-		return s.runPluginHealthCheck(ctx, item, pluginCredentialValidator{
-			plugin: plugin, hook: "check", resultKind: jsplugin.KindCredentialCheck,
-		}, start, check)
+		return s.runPluginHealthCheck(ctx, item, s.pluginCheckValidator(item, plugin), start, check)
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "check"); ok {
-		return s.runPluginHealthCheck(ctx, item, pluginCredentialValidator{
-			plugin: plugin, hook: "check", resultKind: jsplugin.KindCredentialCheck,
-		}, start, check)
+		return s.runPluginHealthCheck(ctx, item, s.pluginCheckValidator(item, plugin), start, check)
 	}
 
 	if probe, ok := adapter.AsHealthProbe(module); ok {

@@ -384,6 +384,12 @@ func normalizeProfile(profile Profile) Profile {
 	return profile
 }
 
+// NewClient builds one outbound client for profile. A non-empty TLSFingerprint
+// selects that handshake. There is no proxy and no connection cache.
+func NewClient(profile Profile) (*http.Client, error) {
+	return newHTTPClient(profile, nil)
+}
+
 func newHTTPClient(profile Profile, proxyProfile *ProxyProfile) (*http.Client, error) {
 	profile = normalizeProfile(profile)
 	transport := http.DefaultTransport.(*http.Transport).Clone()

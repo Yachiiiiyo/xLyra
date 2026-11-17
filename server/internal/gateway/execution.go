@@ -345,7 +345,7 @@ func (h Handler) forwardGatewayRequest(
 			DisableCompression: isOpenCodeZenSite(candidate),
 		}
 
-		upstreamClient, siteConfig, requestHeaders, err := h.upstreamClientForSite(ctx, candidate.Site.ID, upstreamProfileRequest)
+		upstreamClient, siteConfig, requestHeaders, err := h.upstreamClientForSite(ctx, candidate.Site.ID, upstreamProfileRequest, candidate)
 		if err != nil {
 			result.statusCode = http.StatusBadGateway
 			result.errorType = "upstream_client_unavailable"

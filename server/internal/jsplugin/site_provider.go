@@ -9,6 +9,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"xlyra/server/internal/httpclient"
 )
 
 const (
@@ -231,10 +233,13 @@ func validateSiteProviderHosts(hosts []string) error {
 }
 
 func validSiteProviderHost(host string) error {
+	if rest, ok := strings.CutPrefix(host, "*."); ok {
+		host = rest
+	}
 	if net.ParseIP(host) != nil {
 		return fmt.Errorf("host %q must not be an IP address", host)
 	}
-	if host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, ":/?#@\\ ") {
+	if host == "" || strings.Contains(host, "*") || strings.Contains(host, "://") || strings.ContainsAny(host, ":/?#@\\ ") {
 		return fmt.Errorf("host %q must be a DNS hostname without a scheme, port, or path", host)
 	}
 	if len(host) > 253 || !strings.Contains(host, ".") {
@@ -296,7 +301,7 @@ func validateHTTPSURL(raw string, hosts []string, what string) error {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	for _, item := range hosts {
-		if item == host {
+		if httpclient.MatchHostPattern(item, host) {
 			return nil
 		}
 	}

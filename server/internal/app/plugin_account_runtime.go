@@ -26,6 +26,13 @@ func newAccountPoolRuntime(plugin *jsplugin.Plugin, pool *jsplugin.AccountPoolSp
 	// addresses. A proxied target is resolved by the proxy; account-pool URLs
 	// are also https plus a hostname allow-list, which cannot be an IP.
 	client := &http.Client{Transport: httpclient.NewGuardedTransport(30 * time.Second)}
+	if plugin != nil && plugin.Manifest.TransportProfile() != "" {
+		profile := httpclient.DefaultProfile()
+		profile.TLSFingerprint = plugin.Manifest.TransportProfile()
+		if fingerprinted, clientErr := httpclient.NewClient(profile); clientErr == nil {
+			client = fingerprinted
+		}
+	}
 	runtime, err := jsplugin.NewAccountProviderRuntime(plugin, client)
 	if err != nil {
 		return nil, err
