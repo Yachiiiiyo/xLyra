@@ -221,6 +221,16 @@
       "addHeader": "添加 Header",
       "removeHeader": "删除 Header"
     },
+    "pluginOrder": {
+      "title": "插件优先级",
+      "description": "越靠前优先级越高。模型列表、价格等按此顺序合并，同名条目由靠前的插件决定；错误分类与传输指纹取第一个提供该能力的插件。",
+      "save": "保存顺序",
+      "saved": "插件顺序已保存",
+      "failed": "插件顺序保存失败",
+      "drag": "拖动 {{name}} 调整顺序，也可使用上下方向键",
+      "up": "上移 {{name}}",
+      "down": "下移 {{name}}"
+    },
     "grokDeviceHint": "站点创建后再添加 Grok 账号——打开站点的账号面板，通过 xAI 设备授权登录。",
     "accountLoginHint": "站点创建后再添加账号——打开站点的账号面板，按页面提示完成登录。"
   },

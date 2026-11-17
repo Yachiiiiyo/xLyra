@@ -764,6 +764,13 @@ export async function updateSiteEnabled(
   })
 }
 
+export async function updateSitePluginOrder(siteId: string, pluginIds: string[]) {
+  return apiFetch<{ gateway_config: SiteGatewayConfig }>(`/api/v1/sites/${siteId}/plugin-order`, {
+    method: 'PUT',
+    body: { plugin_ids: pluginIds },
+  })
+}
+
 export async function deleteSite(siteId: string) {
   return apiFetch<void>(`/api/v1/sites/${siteId}`, {
     method: 'DELETE',

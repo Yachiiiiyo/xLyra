@@ -27,6 +27,7 @@ import { Switch } from '@/components/ui/switch'
 import { siteTypeIconPath } from '@/components/common/brand-utils'
 import { accountCreateHint } from '@/features/sites/components/account-provider-login'
 import { SiteTypeIcon } from '@/features/sites/components/site-type-icon'
+import { SitePluginOrderSection } from '@/features/sites/components/site-plugin-order'
 import { SiteTypePluginTag } from '@/features/sites/components/site-type-plugin-tag'
 import { cn } from '@/lib/utils'
 import {
@@ -1201,6 +1202,8 @@ export function SiteCreateDialog({
                         </div>
                       </>
                     ) : null}
+
+                    {mode === 'edit' && initialSite ? <SitePluginOrderSection site={initialSite} /> : null}
 
                     <div className="space-y-3">
                       <div>
