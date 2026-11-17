@@ -768,7 +768,8 @@
       "modelMetadata": "Model metadata",
       "pricingParse": "Pricing parser",
       "automation": "Automation",
-      "siteProvider": "Site provider"
+      "siteProvider": "Site provider",
+      "hooks": "Hooks"
     },
     "metricsEmpty": "No calls yet",
     "metricsSummary": "{{success}} succeeded · {{failed}} failed",
@@ -825,7 +826,13 @@
     "permission": {
       "apikeyResetUsage": "Reset the usage (total, daily or weekly) of the API keys bound to it",
       "notify": "Write notices to the plugin's action log",
-      "httpRequest": "Send HTTP requests to the addresses you enter in a binding (for example push notifications)"
+      "httpRequest": "Send HTTP requests to the addresses you enter in a binding (for example push notifications)",
+      "storage": "Read and write this plugin's own storage",
+      "secretUse": "Read site credentials in plain text. Grant this only to a plugin you fully trust",
+      "http": "Let the plugin make its own HTTP requests",
+      "schedule": "Run on a schedule",
+      "net": "Access the host {{host}}",
+      "event": "Subscribe to the event {{event}}"
     },
     "automation": {
       "title": "Automations",
@@ -875,7 +882,8 @@
       "model_list": "When this site syncs models, this plugin fetches the model list.",
       "credential_check": "This plugin validates keys and runs health checks for this site.",
       "error_classifier": "Upstream errors of this site are classified by this plugin (it only picks a class and cannot change cooldown length).",
-      "pricing_parse": "When this site refreshes its models, this plugin reads and saves the prices. It changes the prices shown for the site, so preview and review them first."
+      "pricing_parse": "When this site refreshes its models, this plugin reads and saves the prices. It changes the prices shown for the site, so preview and review them first.",
+      "quota_probe": "This plugin probes the quota of this site."
     },
     "globalKindHint": {
       "site_detect": "Once enabled, this plugin also runs when xLyra detects a site type; it can only point to site types xLyra already supports.",
@@ -885,7 +893,6 @@
     "trialFailed": "Trial failed",
     "siteBinding": {
       "optional": "Binding is optional: without it the plugin is loaded but not used on any site.",
-      "other": "Bound: {{id}}",
       "applied": "Bindings updated",
       "failed": "Could not update bindings",
       "enabled": "Enabled",
@@ -896,13 +903,6 @@
       "apply": "Apply",
       "noSites": "No sites yet"
     },
-    "bindQuotaTitle": "Site quota probe",
-    "bindQuotaHint": "Sets the site internal quota_probe to plugin:<id> (not shown on the site form).",
-    "bindQuotaSite": "Site",
-    "bindQuotaSitePlaceholder": "Select site",
-    "bindQuota": "Bind probe",
-    "bindQuotaSuccess": "Site quota probe bound",
-    "bindQuotaFailed": "Bind failed",
     "siteProvider": {
       "title": "Site provider",
       "versionEnabled": "Enabled",
@@ -1068,6 +1068,22 @@
         "plugin_not_owned": "This plugin does not belong to the current developer",
         "package_unsigned": "This version is unsigned and cannot be submitted"
       }
+    },
+    "exportsTitle": "Hooks this version exports",
+    "settings": {
+      "title": "Plugin settings",
+      "hint": "An empty field keeps the default from the manifest. Only values that differ from the default are saved.",
+      "defaultPlaceholder": "Default {{value}}",
+      "reset": "Restore defaults",
+      "saved": "Plugin settings saved",
+      "saveFailed": "Could not save the plugin settings",
+      "siteTitle": "Per-site overrides",
+      "noSites": "No site mounts this plugin yet. Bind a site above, then override these settings for that site.",
+      "globalPlaceholder": "Global value {{value}}",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "clearOverride": "Clear override",
+      "siteSaved": "Saved the settings for {{name}}"
     }
   },
   "xlyraCloud": {
@@ -1092,11 +1108,11 @@
       "heading": "Pairing",
       "viewCode": "View pairing code",
       "instruction": "In the signed-in xLyra Cloud console, choose Connect instance and enter this pairing code.",
-      "stepCopyOrScan": "Choose \u201cCopy and open Cloud\u201d or scan the code",
+      "stepCopyOrScan": "Choose “Copy and open Cloud” or scan the code",
       "stepApprove": "After signing in to Cloud, check that the pairing code matches the one above, then choose Approve",
       "stepReturn": "Come back here. Connected appears within a few seconds",
       "scanHint": "Scan with your phone, sign in to xLyra Cloud, then check the pairing code and approve",
-      "dismissHint": "Closing this window does not cancel pairing. Approving in Cloud still connects automatically. To give up, choose \u201cCancel pairing.\u201d",
+      "dismissHint": "Closing this window does not cancel pairing. Approving in Cloud still connects automatically. To give up, choose “Cancel pairing.”",
       "open": "Open in xLyra Cloud",
       "cancel": "Cancel",
       "cancelPairing": "Cancel pairing",

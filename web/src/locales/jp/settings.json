@@ -768,7 +768,8 @@
       "modelMetadata": "モデルメタデータ",
       "pricingParse": "価格解析",
       "automation": "自動化",
-      "siteProvider": "サイトプロバイダー"
+      "siteProvider": "サイトプロバイダー",
+      "hooks": "複数フック"
     },
     "metricsEmpty": "呼び出しなし",
     "metricsSummary": "成功 {{success}} · 失敗 {{failed}}",
@@ -825,7 +826,13 @@
     "permission": {
       "apikeyResetUsage": "紐づけた API キーの使用量（合計・日次・週次）をリセット",
       "notify": "プラグインの操作履歴に通知を書き込む",
-      "httpRequest": "バインドで入力したアドレスへ HTTP リクエストを送信（プッシュ通知など）"
+      "httpRequest": "バインドで入力したアドレスへ HTTP リクエストを送信（プッシュ通知など）",
+      "storage": "このプラグイン自身のストレージを読み書き",
+      "secretUse": "サイトの認証情報を平文で読み取ります。完全に信頼できるプラグインにだけ付与してください",
+      "http": "プラグイン自身が HTTP リクエストを送信",
+      "schedule": "スケジュールに従って実行",
+      "net": "ホスト {{host}} にアクセス",
+      "event": "イベント {{event}} を購読"
     },
     "automation": {
       "title": "自動化",
@@ -875,7 +882,8 @@
       "model_list": "このサイトのモデル同期で、このプラグインがモデル一覧を取得します。",
       "credential_check": "このサイトのキー検証とヘルスチェックにこのプラグインを使います。",
       "error_classifier": "このサイトのアップストリームエラーをこのプラグインが分類します（クールダウン時間は変更できません）。",
-      "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。"
+      "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。",
+      "quota_probe": "このサイトのクォータ取得にこのプラグインを使います。"
     },
     "globalKindHint": {
       "site_detect": "有効にすると、サイト種別の判別時にこのプラグインも実行されます。xLyra が対応済みの種別のみ指定できます。",
@@ -885,7 +893,6 @@
     "trialFailed": "試行に失敗",
     "siteBinding": {
       "optional": "紐付けは任意です。紐付けなしでもプラグインは読み込まれますが、どのサイトでも使われません。",
-      "other": "紐付け済み: {{id}}",
       "applied": "紐付けを更新しました",
       "failed": "紐付けを更新できませんでした",
       "enabled": "有効",
@@ -896,13 +903,6 @@
       "apply": "適用",
       "noSites": "サイトがありません"
     },
-    "bindQuotaTitle": "サイトクォータプローブ",
-    "bindQuotaHint": "サイト内部の quota_probe を plugin:<id> に設定（サイト編集 UI には表示しません）。",
-    "bindQuotaSite": "サイト",
-    "bindQuotaSitePlaceholder": "サイトを選択",
-    "bindQuota": "プローブを紐付け",
-    "bindQuotaSuccess": "サイトクォータを紐付けました",
-    "bindQuotaFailed": "紐付け失敗",
     "siteProvider": {
       "title": "サイトプロバイダー",
       "versionEnabled": "現在有効",
@@ -1068,6 +1068,22 @@
         "plugin_not_owned": "このプラグインは現在の開発者のものではありません",
         "package_unsigned": "このバージョンは署名されていないため提出できません"
       }
+    },
+    "exportsTitle": "このバージョンがエクスポートするフック",
+    "settings": {
+      "title": "プラグイン設定",
+      "hint": "空欄はマニフェストの既定値を使います。既定値と異なる値だけを保存します。",
+      "defaultPlaceholder": "既定 {{value}}",
+      "reset": "既定に戻す",
+      "saved": "プラグイン設定を保存しました",
+      "saveFailed": "プラグイン設定を保存できませんでした",
+      "siteTitle": "サイトごとの上書き",
+      "noSites": "このプラグインをマウントしているサイトはまだありません。上でサイトを紐づけてから、サイトごとに上書きできます。",
+      "globalPlaceholder": "全体の値 {{value}}",
+      "expand": "開く",
+      "collapse": "閉じる",
+      "clearOverride": "上書きをクリア",
+      "siteSaved": "{{name}} のサイト設定を保存しました"
     }
   },
   "xlyraCloud": {

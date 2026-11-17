@@ -8,13 +8,14 @@ export type EnableFlowState = {
   trust: EnableTrust
   signer?: string
   permissions: string[]
-  /** site_provider never offers the untrusted checkbox. confirm_untrusted cannot bypass it. */
-  siteProvider: boolean
+  /** A declared site type, or secret.use, can never skip the trusted signature. */
+  requiresTrusted: boolean
   trustAccepted: boolean
   hosts: string[]
-  hostsRequired: boolean
   hostsAccepted: boolean
-  dialog: 'trust' | 'hosts' | null
+  /** Hooks the package exports, shown next to the permissions and hosts. */
+  exports: string[]
+  dialog: 'confirm' | null
 }
 
 export type EnableRequest = {
@@ -38,7 +39,10 @@ export type BeginEnableInput = {
   trust?: EnableTrust
   signer?: string
   permissions?: string[]
-  siteProvider?: boolean
+  requiresTrusted?: boolean
+  /** Hosts already known from the manifest (siteProvider.hosts and net: permissions). */
+  hosts?: string[]
+  exports?: string[]
 }
 
 export type EnableFailure = {
@@ -47,7 +51,9 @@ export type EnableFailure = {
   trust?: EnableTrust
   signer?: string
   permissions?: string[]
-  siteProvider?: boolean
+  requiresTrusted?: boolean
+  hosts?: string[]
+  exports?: string[]
 }
 
 function countsAsTrusted(trust: EnableTrust) {
@@ -55,28 +61,30 @@ function countsAsTrusted(trust: EnableTrust) {
 }
 
 export function enableFlowOffersUntrusted(state: EnableFlowState) {
-  return !state.siteProvider && !countsAsTrusted(state.trust)
+  return !state.requiresTrusted && !countsAsTrusted(state.trust)
 }
 
-function needsTrust(state: EnableFlowState) {
-  if (state.trustAccepted) return false
-  if (state.permissions.length > 0) return true
-  if (state.siteProvider) return false
-  return !countsAsTrusted(state.trust)
+function needsConfirm(state: EnableFlowState) {
+  if (!countsAsTrusted(state.trust) && !state.trustAccepted) return true
+  if (state.permissions.length > 0 && !state.trustAccepted) return true
+  if (state.hosts.length > 0 && !state.hostsAccepted) return true
+  return false
 }
 
 function requestOf(state: EnableFlowState): EnableRequest {
   const request: EnableRequest = { pluginId: state.pluginId, version: state.version }
   if (state.trustAccepted && enableFlowOffersUntrusted(state)) request.confirmUntrusted = true
   if (state.trustAccepted && state.permissions.length > 0) request.grantPermissions = [...state.permissions]
-  if (state.hostsAccepted) request.confirmHosts = [...state.hosts]
+  if (state.hostsAccepted && state.hosts.length > 0) request.confirmHosts = [...state.hosts]
   return request
 }
 
-/** Trust and automation permissions come first. A pending host list is next, and is not dropped. */
+/** One dialog covers trust, permissions, hosts and exports. Nothing to confirm sends the request. */
 function present(state: EnableFlowState): EnableFlowStep {
-  if (needsTrust(state)) return { type: 'dialog', state: { ...state, dialog: 'trust' } }
-  if (state.hostsRequired && !state.hostsAccepted) return { type: 'dialog', state: { ...state, dialog: 'hosts' } }
+  if (state.requiresTrusted && !countsAsTrusted(state.trust)) {
+    return { type: 'toast', state: { ...state, dialog: null }, code: 'js_plugin_untrusted_not_allowed', fields: {} }
+  }
+  if (needsConfirm(state)) return { type: 'dialog', state: { ...state, dialog: 'confirm' } }
   return { type: 'request', state: { ...state, dialog: null }, request: requestOf(state) }
 }
 
@@ -87,11 +95,11 @@ export function beginEnable(input: BeginEnableInput): EnableFlowStep {
     trust: input.trust ?? 'trusted',
     signer: input.signer,
     permissions: input.permissions ?? [],
-    siteProvider: input.siteProvider ?? false,
+    requiresTrusted: input.requiresTrusted ?? false,
     trustAccepted: false,
-    hosts: [],
-    hostsRequired: false,
+    hosts: input.hosts ?? [],
     hostsAccepted: false,
+    exports: input.exports ?? [],
     dialog: null,
   })
 }
@@ -112,23 +120,35 @@ export function resumeEnableFlow(input: BeginEnableInput & {
     trust,
     signer: input.signer,
     permissions: (input.permissions ?? []).length > 0 ? (input.permissions ?? []) : granted,
-    siteProvider: input.siteProvider ?? false,
+    requiresTrusted: input.requiresTrusted ?? false,
     trustAccepted: Boolean(input.confirmUntrusted) || granted.length > 0,
-    hosts: hosts ?? [],
-    hostsRequired: Array.isArray(hosts),
+    hosts: hosts ?? input.hosts ?? [],
     hostsAccepted: Array.isArray(hosts),
+    exports: input.exports ?? [],
     dialog: null,
   }
 }
 
 export function acceptEnableDialog(state: EnableFlowState): EnableFlowStep {
-  if (state.dialog === 'trust') return present({ ...state, trustAccepted: true })
-  if (state.dialog === 'hosts') return present({ ...state, hostsAccepted: true })
-  return present(state)
+  if (state.dialog !== 'confirm') return present(state)
+  return present({ ...state, trustAccepted: true, hostsAccepted: true })
 }
 
 export function cancelEnable(): EnableFlowStep {
   return { type: 'cancel' }
+}
+
+function union(current: string[], extra?: string[]) {
+  if (!extra || extra.length === 0) return current
+  const seen = new Set(current)
+  const out = [...current]
+  for (const item of extra) {
+    if (!seen.has(item)) {
+      seen.add(item)
+      out.push(item)
+    }
+  }
+  return out
 }
 
 export function failEnable(state: EnableFlowState, failure: EnableFailure): EnableFlowStep {
@@ -138,24 +158,30 @@ export function failEnable(state: EnableFlowState, failure: EnableFailure): Enab
     trust: failure.trust ?? state.trust,
     signer: failure.signer ?? state.signer,
     permissions: failure.permissions ?? state.permissions,
-    siteProvider: failure.siteProvider ?? state.siteProvider,
+    requiresTrusted: failure.requiresTrusted ?? state.requiresTrusted,
+    exports: failure.exports ?? state.exports,
   }
   const fields = failure.fields ?? {}
   switch (failure.code) {
     case 'js_plugin_untrusted_not_allowed':
       return { type: 'toast', state: next, code: failure.code, fields }
     case 'js_plugin_confirm_required':
-      if (next.siteProvider) {
+      if (next.requiresTrusted) {
         return { type: 'toast', state: next, code: 'js_plugin_untrusted_not_allowed', fields }
       }
       return present({ ...next, trustAccepted: false })
     case 'js_plugin_permissions_required':
-      return present({ ...next, trustAccepted: false })
+      return present({
+        ...next,
+        permissions: union(next.permissions, failure.permissions ?? fields.required),
+        trustAccepted: false,
+      })
     case 'js_plugin_hosts_required': {
-      if (!fields.hosts || fields.hosts.length === 0) {
+      const hosts = failure.hosts ?? fields.hosts
+      if (!hosts || hosts.length === 0) {
         return { type: 'toast', state: next, code: failure.code, fields }
       }
-      return present({ ...next, hosts: [...fields.hosts], hostsRequired: true, hostsAccepted: false })
+      return present({ ...next, hosts: union(next.hosts, hosts), hostsAccepted: false })
     }
     case 'js_plugin_site_type_locked':
     case 'js_plugin_in_use':

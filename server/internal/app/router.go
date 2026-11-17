@@ -362,6 +362,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Get("/js-plugins/{id}", adminHandler.GetJSPlugin)
 				protected.Get("/js-plugins/{id}/settings", adminHandler.GetJSPluginSettings)
 				protected.Put("/js-plugins/{id}/settings", adminHandler.UpdateJSPluginSettings)
+				protected.Put("/js-plugins/{id}/sites/{site_id}/settings", adminHandler.UpdateJSPluginSiteSettings)
 				protected.Put("/js-plugins/{id}/subscription", adminHandler.UpdateJSPluginSubscription)
 				protected.Post("/js-plugins/{id}/versions/{version}/enable", adminHandler.EnableJSPluginVersion)
 				protected.Post("/js-plugins/{id}/disable", adminHandler.DisableJSPlugin)

@@ -201,7 +201,7 @@ func (h Handler) EnableJSPluginVersion(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &permissionsErr) {
 			code = "js_plugin_permissions_required"
 			h.recordJSPluginAudit(r, "js_plugin.enable", pluginID, false, code, map[string]any{"version": version, "required": permissionsErr.Required})
-			h.writeError(w, r, status, code, err.Error())
+			h.writeErrorFields(w, r, status, code, err.Error(), map[string]any{"required": permissionsErr.Required})
 			return
 		}
 		var confirmErr *jsplugin.ConfirmRequiredError
@@ -935,6 +935,76 @@ func (h Handler) UpdateJSPluginSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, true, "", nil)
 	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "resolved": resolved})
+}
+
+// UpdateJSPluginSiteSettings stores per-site setting overrides for one mounted
+// plugin. An empty values map clears that plugin's overrides. The plugin must
+// already be in the site's mounted plugin list.
+func (h Handler) UpdateJSPluginSiteSettings(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil || h.sites == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	siteID := strings.TrimSpace(chi.URLParam(r, "site_id"))
+	siteUUID, err := uuid.Parse(siteID)
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_site_id", "site_id must be a uuid")
+		return
+	}
+	var body struct {
+		Values map[string]any `json:"values"`
+	}
+	if err := httpx.DecodeJSONBody(r, &body); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	meta := map[string]any{"site_id": siteUUID.String()}
+	specs, _, _, err := h.jsPlugins.GetPluginSettings(r.Context(), pluginID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_failed", meta)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to read plugin settings")
+		return
+	}
+	normalized, err := jsplugin.ValidateSettingValues(specs, body.Values)
+	if err != nil {
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_invalid", meta)
+		h.writeError(w, r, http.StatusBadRequest, "js_plugin_settings_invalid", err.Error())
+		return
+	}
+	site, err := h.sites.Get(r.Context(), siteUUID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "site was not found")
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_failed", meta)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to read the site")
+		return
+	}
+	bound := false
+	for _, id := range sitepkg.SitePluginIDs(sitepkg.GatewayConfigFromSiteMeta(site.Meta)) {
+		if id == pluginID {
+			bound = true
+			break
+		}
+	}
+	if !bound {
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_not_bound", meta)
+		h.writeError(w, r, http.StatusConflict, "js_plugin_not_bound", "this site is not bound to this plugin")
+		return
+	}
+	if _, err := h.sites.PatchGatewayPluginSettings(r.Context(), siteUUID, pluginID, normalized); err != nil {
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_failed", meta)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to update site plugin settings")
+		return
+	}
+	h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, true, "", meta)
+	httpx.JSON(w, http.StatusOK, map[string]any{"values": normalized})
 }
 
 // statusClientClosedRequest is the conventional status for a request the client

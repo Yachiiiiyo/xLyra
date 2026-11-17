@@ -81,3 +81,49 @@ func (s *Service) patchGatewayPluginIDs(ctx context.Context, siteID uuid.UUID, e
 	})
 	return updated, err
 }
+
+// PatchGatewayPluginSettings writes one plugin's per-site setting overrides.
+// An empty values map clears that plugin's overrides. Other plugins are left
+// as they are. The plugin must already be mounted; this only stores settings.
+func (s *Service) PatchGatewayPluginSettings(ctx context.Context, siteID uuid.UUID, pluginID string, values map[string]any) (store.Site, error) {
+	pluginID = strings.TrimSpace(pluginID)
+	if pluginID == "" || strings.ContainsAny(pluginID, " \t\r\n") {
+		return store.Site{}, fmt.Errorf("plugin id is required")
+	}
+	if values == nil {
+		values = map[string]any{}
+	}
+	if s == nil || s.db == nil {
+		return store.Site{}, fmt.Errorf("site service is not available")
+	}
+	if siteID == uuid.Nil {
+		return store.Site{}, fmt.Errorf("site id is required")
+	}
+	var updated store.Site
+	err := s.db.WithinTx(ctx, func(tx store.Tx) error {
+		siteRepo := store.NewSiteRepository(tx)
+		existing, err := siteRepo.GetByID(ctx, siteID)
+		if err != nil {
+			return err
+		}
+		meta, err := MergeSiteGatewayConfig(existing.Meta, &GatewayConfig{
+			PluginSettings: map[string]map[string]any{pluginID: values},
+		})
+		if err != nil {
+			return err
+		}
+		updated, err = siteRepo.Update(ctx, store.UpdateSiteParams{
+			ID:              existing.ID,
+			Name:            existing.Name,
+			Slug:            existing.Slug,
+			SiteType:        existing.SiteType,
+			BaseURL:         existing.BaseURL,
+			Status:          existing.Status,
+			Enabled:         existing.Enabled,
+			RoutingPriority: existing.RoutingPriority,
+			Meta:            meta,
+		})
+		return err
+	})
+	return updated, err
+}

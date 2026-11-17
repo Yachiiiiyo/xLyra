@@ -1,5 +1,7 @@
 export type JSPluginErrorFields = {
   hosts?: string[]
+  /** Permissions the server still wants granted (js_plugin_permissions_required). */
+  required?: string[]
   from?: string
   to?: string
   count?: number
@@ -16,6 +18,9 @@ export function readJSPluginErrorFields(details: Record<string, unknown> | null 
   const fields: JSPluginErrorFields = {}
   if (Array.isArray(details.hosts) && details.hosts.every((item) => typeof item === 'string' && item.trim() !== '')) {
     fields.hosts = details.hosts
+  }
+  if (Array.isArray(details.required) && details.required.every((item) => typeof item === 'string' && item.trim() !== '')) {
+    fields.required = details.required
   }
   if (typeof details.from === 'string') fields.from = details.from
   if (typeof details.to === 'string') fields.to = details.to

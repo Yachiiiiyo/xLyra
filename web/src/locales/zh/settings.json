@@ -768,7 +768,8 @@
       "modelMetadata": "模型元数据",
       "pricingParse": "价格解析",
       "automation": "自动化",
-      "siteProvider": "站点类型"
+      "siteProvider": "站点类型",
+      "hooks": "多钩子插件"
     },
     "metricsEmpty": "暂无调用",
     "metricsSummary": "成功 {{success}} · 失败 {{failed}}",
@@ -825,7 +826,13 @@
     "permission": {
       "apikeyResetUsage": "清零已绑定 API 密钥的用量（总额度、日额度或周额度）",
       "notify": "在插件的操作记录中写入通知",
-      "httpRequest": "向管理员在绑定里填写的地址发送 HTTP 请求（比如推送通知）"
+      "httpRequest": "向管理员在绑定里填写的地址发送 HTTP 请求（比如推送通知）",
+      "storage": "读写该插件自己的存储",
+      "secretUse": "读取站点密钥明文。只授予你完全信任的插件",
+      "http": "由插件自行发起 HTTP 请求",
+      "schedule": "按计划定时运行",
+      "net": "访问主机 {{host}}",
+      "event": "订阅事件 {{event}}"
     },
     "automation": {
       "title": "自动化",
@@ -875,7 +882,8 @@
       "model_list": "该站点同步模型时，改用这个插件拉取模型列表。",
       "credential_check": "该站点校验密钥和做健康检查时，改用这个插件。",
       "error_classifier": "该站点的上游错误改由这个插件归类（只能选类别，不影响冷却时长）。",
-      "pricing_parse": "刷新该站点模型时，用这个插件读取并保存价格。会改变该站点展示的价格，请先预览核对。"
+      "pricing_parse": "刷新该站点模型时，用这个插件读取并保存价格。会改变该站点展示的价格，请先预览核对。",
+      "quota_probe": "该站点探测额度时，改用这个插件。"
     },
     "globalKindHint": {
       "site_detect": "启用后，识别站点类型时会同时运行这个插件；它只能指向 xLyra 已支持的站点类型。",
@@ -885,7 +893,6 @@
     "trialFailed": "试跑失败",
     "siteBinding": {
       "optional": "绑定是可选的：不绑定时插件只是被加载，不会用于任何站点。",
-      "other": "已绑定：{{id}}",
       "applied": "已更新绑定",
       "failed": "更新绑定失败",
       "enabled": "启用",
@@ -896,13 +903,6 @@
       "apply": "应用",
       "noSites": "暂无站点"
     },
-    "bindQuotaTitle": "站点额度探测",
-    "bindQuotaHint": "将站点的内部 quota_probe 设为 plugin:<id>（不在站点编辑页展示）。",
-    "bindQuotaSite": "站点",
-    "bindQuotaSitePlaceholder": "选择站点",
-    "bindQuota": "绑定探测",
-    "bindQuotaSuccess": "已绑定站点额度探测",
-    "bindQuotaFailed": "绑定失败",
     "siteProvider": {
       "title": "站点提供方",
       "versionEnabled": "当前启用",
@@ -1068,6 +1068,22 @@
         "plugin_not_owned": "这个插件不属于当前开发者",
         "package_unsigned": "这个版本没有签名，不能提交"
       }
+    },
+    "exportsTitle": "此版本导出的钩子",
+    "settings": {
+      "title": "插件设置",
+      "hint": "留空的项使用清单里的默认值。只保存与默认值不同的项。",
+      "defaultPlaceholder": "默认 {{value}}",
+      "reset": "恢复默认",
+      "saved": "插件设置已保存",
+      "saveFailed": "保存插件设置失败",
+      "siteTitle": "站点级覆盖",
+      "noSites": "还没有站点挂载这个插件。先在上方绑定站点，再为单个站点覆盖这些设置。",
+      "globalPlaceholder": "全局值 {{value}}",
+      "expand": "展开",
+      "collapse": "收起",
+      "clearOverride": "清除覆盖",
+      "siteSaved": "已保存 {{name}} 的站点设置"
     }
   },
   "xlyraCloud": {
