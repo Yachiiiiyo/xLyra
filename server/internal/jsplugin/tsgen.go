@@ -32,7 +32,7 @@ type tsEnum struct {
 //	ts:"-"                                          skip the field
 var tsTypes = []tsType{
 	{value: ProbeContext{}, name: "ProbeContext", section: "quota_probe"},
-	{value: ProbeRequest{}, name: "ProbeRequest"},
+	{value: ProbeRequest{}, name: "ProbeRequest", enum: &tsEnum{"ProbeEndpoint", ProbeEndpoints}},
 	{value: ProbeResponse{}, name: "ProbeResponse"},
 	{value: ProbeStep{}, name: "ProbeStep"},
 	{value: ProbeEntry{}, name: "ProbeEntry", enum: &tsEnum{"ProbeEntryKind", ProbeEntryKinds}},
@@ -109,15 +109,15 @@ func TypeDeclarations() (string, error) {
 		if item.section != "" {
 			fmt.Fprintf(&out, "// ---- %s ----\n\n", item.section)
 		}
+		if item.name == "ProbeRequest" {
+			fmt.Fprintf(&out, "export type ProbeMethod = %s;\n\n", strings.Join(methods, " | "))
+		}
 		if item.enum != nil {
 			quoted := make([]string, len(item.enum.values))
 			for i, value := range item.enum.values {
 				quoted[i] = fmt.Sprintf("%q", value)
 			}
 			fmt.Fprintf(&out, "export type %s = %s;\n\n", item.enum.name, strings.Join(quoted, " | "))
-		}
-		if item.name == "ProbeRequest" {
-			fmt.Fprintf(&out, "export type ProbeMethod = %s;\n\n", strings.Join(methods, " | "))
 		}
 		body, err := renderInterface(item, names)
 		if err != nil {

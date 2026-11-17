@@ -1,12 +1,19 @@
 package jsplugin
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"maps"
 	"net/http"
@@ -178,10 +185,12 @@ type loginSession struct {
 // accountCall is one stepped exchange. The bag is not safe for concurrent use;
 // the caller holds the session lock, or the call is local to one goroutine.
 type accountCall struct {
-	bag   *SecretBag
-	jar   http.CookieJar
-	steps []ProbeStep
-	base  string
+	bag      *SecretBag
+	jar      http.CookieJar
+	steps    []ProbeStep
+	base     string
+	regionID string
+	fields   map[string]string
 }
 
 // NewAccountProviderRuntime builds a runtime from an account-pool plugin.
@@ -297,12 +306,13 @@ func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot Account
 	if !r.plugin.HasHook(hookSummarizeAccount) {
 		return AccountSummary{}, fmt.Errorf("%s hook is missing", hookSummarizeAccount)
 	}
-	base, err := r.resolveBase(snapshot.BaseURL, nil)
+	regionID := r.regionIDFor(snapshot.Fields, nil)
+	base, err := r.resolveBase(snapshot.BaseURL, map[string]string{"region": regionID})
 	if err != nil {
 		return AccountSummary{}, err
 	}
 	bag := r.seedBag(snapshot.Fields)
-	call := &accountCall{bag: bag, base: base}
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: snapshot.Fields}
 	ctxValue := r.credentialContext(base, r.publicFields(snapshot.Fields, bag))
 	result, err := r.drive(ctx, call, hookSummarizeAccount, KindAccountSummary, ctxValue, nil)
 	if err != nil {
@@ -328,13 +338,16 @@ func (r *AccountProviderRuntime) RunSchedule(ctx context.Context, snapshot Accou
 	if !r.plugin.Manifest.AllowsSchedule() {
 		return nil, permissionDeniedError("schedule permission is required")
 	}
-	base, err := r.resolveBase(snapshot.BaseURL, nil)
+	regionID := r.regionIDFor(snapshot.Fields, nil)
+	base, err := r.resolveBase(snapshot.BaseURL, map[string]string{"region": regionID})
 	if err != nil {
 		return nil, err
 	}
 	bag := r.seedBag(snapshot.Fields)
-	call := &accountCall{bag: bag, base: base}
-	ctxValue := r.credentialContext(base, r.publicFields(snapshot.Fields, bag))
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: snapshot.Fields}
+	accountFields := r.accountContextFields(snapshot.Fields, bag)
+	ctxValue := r.credentialContext(base, accountFields)
+	ctxValue["account"] = accountFields
 	allowed := r.allowedSecrets()
 	client := r.hookedClient(nil, base)
 	for step := 0; step < MaxProbeSteps; step++ {
@@ -405,12 +418,13 @@ func (r *AccountProviderRuntime) ListModels(ctx context.Context, fields map[stri
 	if !r.plugin.HasHook("listModels") {
 		return nil, fmt.Errorf("%s hook is missing", "listModels")
 	}
+	regionID := r.regionIDFor(fields, nil)
 	base, err := r.accountBase(fields)
 	if err != nil {
 		return nil, err
 	}
 	bag := r.seedBag(fields)
-	call := &accountCall{bag: bag, base: base}
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: fields}
 	probe := ProbeContext{
 		SiteType:       r.plugin.Manifest.SiteProvider.SiteType,
 		BaseURL:        base,
@@ -565,6 +579,7 @@ func (r *AccountProviderRuntime) startCustomInner(ctx context.Context, params ma
 	if err != nil {
 		return LoginSession{}, err
 	}
+	state.call.regionID = r.regionIDFor(nil, params)
 	state.expiresAt = time.Now().Add(accountLoginSessionTTL)
 	state.params = params
 	state.mu.Lock()
@@ -655,16 +670,17 @@ func (r *AccountProviderRuntime) refreshCustom(ctx context.Context, credentialFi
 }
 
 func (r *AccountProviderRuntime) refreshCustomInner(ctx context.Context, credentialFields map[string]string) (map[string]string, error) {
+	regionID := r.regionIDFor(credentialFields, nil)
 	params := map[string]string{}
-	if id := AccountRegionID(r.spec.Regions, credentialFields); id != "" {
-		params["region"] = id
+	if regionID != "" {
+		params["region"] = regionID
 	}
 	base, err := r.baseFor(params)
 	if err != nil {
 		return nil, err
 	}
 	bag := r.seedBag(credentialFields)
-	call := &accountCall{bag: bag, base: base}
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: credentialFields}
 	result, err := r.drive(ctx, call, hookRefreshTokens, KindAccountRefresh, r.credentialContext(base, r.publicFields(credentialFields, bag)), r.spec.Refresh.SecretPaths)
 	if err != nil {
 		return nil, bag.ScrubError(err)
@@ -833,7 +849,14 @@ func accountNonJSONMode(hook, onNonJSON string) string {
 }
 
 func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http.Client, call *accountCall, allowed map[string]bool, rules map[string]string, template ProbeRequest, hook string) (ProbeResponse, error) {
-	before, err := ResolveProbeURL(call.base, template.Path, template.Query)
+	stepBase, err := r.stepBaseFor(call, template.Endpoint)
+	if err != nil {
+		return ProbeResponse{}, err
+	}
+	if stepBase != call.base {
+		client = r.hookedClient(call.jar, stepBase)
+	}
+	before, err := ResolveProbeURL(stepBase, template.Path, template.Query)
 	if err != nil {
 		return ProbeResponse{}, &CallError{Kind: KindURLRejected, Detail: err.Error()}
 	}
@@ -847,7 +870,7 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 			return ProbeResponse{}, call.bag.ScrubError(err)
 		}
 	}
-	after, err := ResolveProbeURL(call.base, request.Path, request.Query)
+	after, err := ResolveProbeURL(stepBase, request.Path, request.Query)
 	if err != nil {
 		return ProbeResponse{}, call.bag.ScrubError(&CallError{Kind: KindURLRejected, Detail: err.Error()})
 	}
@@ -864,13 +887,15 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 	if err != nil {
 		return ProbeResponse{}, err
 	}
+	var encodedBody []byte
 	var body io.Reader
 	if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Body != nil {
 		encoded, err := encodeAccountBody(request.Body)
 		if err != nil {
 			return ProbeResponse{}, err
 		}
-		body = strings.NewReader(string(encoded))
+		encodedBody = encoded
+		body = bytes.NewReader(encoded)
 		if _, isString := request.Body.(string); !isString {
 			if _, exists := headers["Content-Type"]; !exists {
 				headers["Content-Type"] = "application/json"
@@ -886,6 +911,11 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 	}
 	if httpReq.Header.Get("Accept") == "" {
 		httpReq.Header.Set("Accept", "application/json")
+	}
+	if template.Sign {
+		if err := r.applyAccountSignRequest(ctx, httpReq, call, stepBase, encodedBody); err != nil {
+			return ProbeResponse{}, call.bag.ScrubError(err)
+		}
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -932,6 +962,135 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 		headersOut[key] = call.bag.Scrub(value)
 	}
 	return ProbeResponse{Status: resp.StatusCode, Headers: headersOut, Body: redactedBody, JSON: payload}, nil
+}
+
+func (r *AccountProviderRuntime) applyAccountSignRequest(ctx context.Context, httpReq *http.Request, call *accountCall, stepBase string, encodedBody []byte) error {
+	if !r.plugin.HasHook(HookSignRequest) {
+		return shapeError("request.sign: %s hook is missing", HookSignRequest)
+	}
+	if len(encodedBody) > MaxSignBodyBytes {
+		return fmt.Errorf("signRequest: request body exceeds %d bytes", MaxSignBodyBytes)
+	}
+	flat := make(map[string]string, len(httpReq.Header))
+	for name, values := range httpReq.Header {
+		flat[name] = strings.Join(values, ", ")
+	}
+	visible, err := FilterRequestHeaders(flat)
+	if err != nil {
+		return fmt.Errorf("signRequest: %w", err)
+	}
+	usesSecret := contains(r.plugin.Manifest.Permissions, "secret.use")
+	buildCtx := ProtocolBuildContext{
+		Candidate: ProtocolCandidateContext{
+			SiteType: r.plugin.Manifest.SiteProvider.SiteType,
+			BaseURL:  stepBase,
+		},
+		Now: time.Now().UnixMilli(),
+	}
+	if usesSecret {
+		buildCtx.Credential = r.signCredentialFields(call)
+	}
+	signCtx := WithDiscardLogs(ctx)
+	signed, _, _, err := r.plugin.CallSignRequest(signCtx, buildCtx, ProtocolSignInput{
+		Method:  httpReq.Method,
+		URL:     httpReq.URL.String(),
+		Headers: visible,
+		Body:    string(encodedBody),
+	})
+	if err != nil {
+		return fmt.Errorf("signRequest: %w", err)
+	}
+	switch signed.Mode {
+	case "rewrite":
+		for name, value := range signed.Headers {
+			httpReq.Header.Set(name, value)
+		}
+		if len(signed.Query) > 0 {
+			query := httpReq.URL.Query()
+			for key, value := range signed.Query {
+				query.Set(key, value)
+			}
+			httpReq.URL.RawQuery = query.Encode()
+		}
+		if signed.Body != nil {
+			next := []byte(*signed.Body)
+			httpReq.Body = io.NopCloser(bytes.NewReader(next))
+			httpReq.ContentLength = int64(len(next))
+			httpReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(next)), nil
+			}
+		}
+	case "sign":
+		if !usesSecret {
+			return errors.New("signRequest sign mode needs secret.use")
+		}
+		accessToken := ""
+		if call.bag != nil {
+			accessToken, _ = call.bag.Get(r.accessField())
+		}
+		signature, err := signAccountString(signed, accessToken)
+		if err != nil {
+			return fmt.Errorf("signRequest: %w", err)
+		}
+		for name, value := range signed.Headers {
+			httpReq.Header.Set(name, value)
+		}
+		httpReq.Header.Set(signed.Header, signed.Prefix+signature)
+	default:
+		return fmt.Errorf("signRequest: unknown mode %q", signed.Mode)
+	}
+	if err := SameOrigin(stepBase, httpReq.URL.String()); err != nil {
+		return &CallError{Kind: KindURLRejected, Detail: err.Error()}
+	}
+	if err := r.checkURL(httpReq.URL.String()); err != nil {
+		return err
+	}
+	if err := rejectSecretInURL(call.bag, httpReq.URL.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func signAccountString(signed ProtocolSignResult, key string) (string, error) {
+	var newHash func() hash.Hash
+	switch signed.Algorithm {
+	case "hmac-sha256":
+		newHash = sha256.New
+	case "hmac-sha1":
+		newHash = sha1.New
+	case "hmac-sha512":
+		newHash = sha512.New
+	default:
+		return "", fmt.Errorf("unsupported algorithm %q", signed.Algorithm)
+	}
+	mac := hmac.New(newHash, []byte(key))
+	mac.Write([]byte(signed.StringToSign))
+	sum := mac.Sum(nil)
+	if signed.Encoding == "base64" {
+		return base64.StdEncoding.EncodeToString(sum), nil
+	}
+	return hex.EncodeToString(sum), nil
+}
+
+func (r *AccountProviderRuntime) signCredentialFields(call *accountCall) map[string]string {
+	out := r.accountContextFields(call.fields, call.bag)
+	if call.bag != nil {
+		for _, field := range r.spec.Credential.Fields {
+			if !field.Secret {
+				continue
+			}
+			if value, ok := call.bag.Get(field.Name); ok && value != "" {
+				out[field.Name] = value
+			}
+		}
+		accessName := r.accessField()
+		if _, exists := out[accessName]; !exists {
+			if value, ok := call.bag.Get(accessName); ok && value != "" {
+				out[accessName] = value
+			}
+		}
+	}
+	return out
 }
 
 func (r *AccountProviderRuntime) oauthConfig(tokenURL string) (accountauth.OAuth2Config, error) {
@@ -989,6 +1148,46 @@ func cloneSteps(in []ProbeStep) []ProbeStep {
 	out := make([]ProbeStep, len(in))
 	copy(out, in)
 	return out
+}
+
+func (r *AccountProviderRuntime) regionIDFor(fields, params map[string]string) string {
+	if params != nil {
+		if id := strings.TrimSpace(params["region"]); id != "" {
+			return id
+		}
+	}
+	if id := AccountRegionID(r.spec.Regions, fields); id != "" {
+		return id
+	}
+	return r.spec.DefaultRegion
+}
+
+func (r *AccountProviderRuntime) stepBaseFor(call *accountCall, endpoint string) (string, error) {
+	if endpoint == "" || endpoint == "control" {
+		return call.base, nil
+	}
+	if endpoint != "gateway" {
+		return "", shapeError("request.endpoint: unsupported value %q", endpoint)
+	}
+	id := call.regionID
+	if id == "" {
+		id = r.spec.DefaultRegion
+	}
+	for _, region := range r.spec.Regions {
+		if region.ID != id {
+			continue
+		}
+		urls := RegionGatewayURLs(region)
+		if len(urls) == 0 {
+			break
+		}
+		base := urls[0]
+		if err := r.checkURL(base); err != nil {
+			return "", err
+		}
+		return base, nil
+	}
+	return "", fmt.Errorf("region %q is not configured", id)
 }
 
 func (r *AccountProviderRuntime) baseFor(params map[string]string) (string, error) {
@@ -1439,6 +1638,8 @@ func (s *loginSession) wipe() {
 	s.call.bag = nil
 	s.call.jar = nil
 	s.call.steps = nil
+	s.call.fields = nil
+	s.call.regionID = ""
 }
 
 func (s *loginSession) public(status string) LoginSession {

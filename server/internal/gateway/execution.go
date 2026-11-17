@@ -428,7 +428,11 @@ credentialLoop:
 			if isOpenCodeZenSite(candidate) {
 				applyOpenCodeGoGatewayHeaders(req, request, upstreamKey, siteConfig != nil && gatewayConfigBool(siteConfig.ImpersonateOpencodeClient))
 			}
-			if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, candidate.Model.PluginMeta, h.cacheObservationKey); err != nil {
+			modelMeta := candidate.Model.PluginMeta
+			if len(selectedCredential.ModelPluginMeta) > 0 {
+				modelMeta = selectedCredential.ModelPluginMeta
+			}
+			if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, modelMeta, h.cacheObservationKey); err != nil {
 				result.statusCode = http.StatusBadGateway
 				result.errorType = "plugin_header_template_failed"
 				result.errorMessage = err.Error()
@@ -436,7 +440,7 @@ credentialLoop:
 				result = recordCredentialAttempt(result, nil, false)
 				return result
 			}
-			body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, candidate.Model.PluginMeta, h.cacheObservationKey)
+			body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, modelMeta, h.cacheObservationKey)
 			if err != nil {
 				result.statusCode = http.StatusBadGateway
 				result.errorType = "upstream_sign_failed"
@@ -808,6 +812,9 @@ func (h Handler) finishBufferedSemanticFailure(
 	failure *upstreamSemanticFailure,
 ) gatewayAttemptResult {
 	result.statusCode = http.StatusBadGateway
+	if failure != nil && failure.Status >= 400 {
+		result.upstreamStatusCode = failure.Status
+	}
 	result.contentType = "application/json"
 	result.errorType = "upstream_response_failed"
 	result.errorMessage = failure.Error()
@@ -898,6 +905,12 @@ func (h Handler) handleStreamResponse(
 	}
 	result = applyStreamUsage(result, streamUsage)
 	result.latencyMS = time.Since(startedAt).Milliseconds()
+	if !responseStarted && capture.semanticFailure == nil && proxyErr != nil {
+		var semanticFailure *upstreamSemanticFailure
+		if errors.As(proxyErr, &semanticFailure) {
+			capture.semanticFailure = semanticFailure
+		}
+	}
 	if !responseStarted && capture.semanticFailure != nil {
 		return h.finishStreamSemanticFailure(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, capture)
 	}
@@ -983,9 +996,15 @@ func (h Handler) finishStreamSemanticFailure(
 	failure := capture.semanticFailure
 	classificationBody := semanticFailureClassificationBody(failure)
 	result.statusCode = http.StatusBadGateway
+	if failure != nil && failure.Status >= 400 {
+		result.upstreamStatusCode = failure.Status
+	}
 	result.contentType = "application/json"
 	result.errorType = "upstream_response_failed"
 	result.errorMessage = failure.Error()
+	if failure != nil {
+		result.upstreamErrorCode = failure.Code
+	}
 	result.body = classificationBody
 	result.failureResponse = diagnosticFailureResponse(failure.Body)
 	result = classifyGatewayUpstreamErrorWithTimeZone(candidate, result, classificationBody, time.Now(), h.timeZone)

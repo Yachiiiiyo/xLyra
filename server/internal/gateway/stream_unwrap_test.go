@@ -200,3 +200,63 @@ export function transformStream(ctx, ev) {
 		t.Fatalf("events after done should not be emitted: %q", got)
 	}
 }
+
+func TestStreamUnwrapJSONStringDoneAndClose(t *testing.T) {
+	t.Parallel()
+	raw := strings.Join([]string{
+		`data: {"statusCodeValue":200,"body":"{\"id\":\"chunk-1\"}"}`,
+		``,
+		`data: {"statusCodeValue":200,"body":"[DONE]"}`,
+		``,
+		`data: {"statusCodeValue":200,"body":"{\"id\":\"unreachable\"}"}`,
+		``,
+		``,
+	}, "\n")
+	spy := &closeSpy{Reader: strings.NewReader(raw)}
+	section := &jsplugin.StreamSection{
+		Unwrap: &jsplugin.StreamUnwrap{
+			Path:       "body",
+			Format:     "json_string",
+			StatusPath: "statusCodeValue",
+			OKStatuses: []int{200},
+		},
+		Done: &jsplugin.StreamDone{
+			UnwrappedEquals: []string{"[DONE]"},
+			CloseOnDone:     true,
+		},
+	}
+	got := readAllString(t, newStreamTransformer(spy, section))
+	if !strings.Contains(got, `data: {"id":"chunk-1"}`) || !strings.Contains(got, "data: [DONE]\n") {
+		t.Fatalf("unexpected output: %q", got)
+	}
+	if strings.Contains(got, "unreachable") {
+		t.Fatalf("read past [DONE]: %q", got)
+	}
+	if !spy.closed {
+		t.Fatal("underlying ReadCloser was not closed on [DONE]")
+	}
+}
+
+func TestStreamUnwrapStatusErrorCarriesSemanticFailure(t *testing.T) {
+	t.Parallel()
+	raw := "data: {\"statusCodeValue\":401,\"body\":\"{\\\"code\\\":\\\"105\\\",\\\"message\\\":\\\"Login expired\\\"}\"}\n\n"
+	section := &jsplugin.StreamSection{
+		Unwrap: &jsplugin.StreamUnwrap{
+			Path:       "body",
+			Format:     "json_string",
+			StatusPath: "statusCodeValue",
+			OKStatuses: []int{200},
+		},
+	}
+	_, err := io.ReadAll(newStreamTransformer(io.NopCloser(strings.NewReader(raw)), section))
+	if !errors.Is(err, errUpstreamStreamStatus) {
+		t.Fatalf("err = %v, want errUpstreamStreamStatus", err)
+	}
+	var semantic *upstreamSemanticFailure
+	if !errors.As(err, &semantic) || semantic == nil {
+		t.Fatalf("err = %T %v, want *upstreamSemanticFailure", err, err)
+	}
+	if semantic.Status != 401 || semantic.Code != "105" || semantic.Message != "Login expired" {
+		t.Fatalf("semantic = %+v", semantic)
+	}
+}

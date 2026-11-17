@@ -73,6 +73,8 @@ type FixtureMatch struct {
 	Method     string `json:"method"`
 	Path       string `json:"path"`
 	PathPrefix string `json:"pathPrefix"`
+	Endpoint   string `json:"endpoint,omitempty"`
+	Sign       *bool  `json:"sign,omitempty"`
 }
 
 type fixtureExpectation struct {
@@ -641,6 +643,12 @@ func (m FixtureMatch) matches(request *ProbeRequest) bool {
 		return false
 	}
 	if m.PathPrefix != "" && !strings.HasPrefix(request.Path, m.PathPrefix) {
+		return false
+	}
+	if m.Endpoint != "" && request.Endpoint != m.Endpoint {
+		return false
+	}
+	if m.Sign != nil && request.Sign != *m.Sign {
 		return false
 	}
 	return m.Path != "" || m.PathPrefix != ""

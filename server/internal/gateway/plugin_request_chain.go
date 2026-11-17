@@ -185,11 +185,11 @@ func applySignRewrite(req *http.Request, signed jsplugin.ProtocolSignResult, bod
 func sameSignBodyFields(before, after []byte) error {
 	var previous map[string]any
 	var next map[string]any
-	if err := json.Unmarshal(before, &previous); err != nil {
-		return fmt.Errorf("signRequest body is not json")
+	if err := json.Unmarshal(before, &previous); err != nil || previous == nil {
+		return nil
 	}
-	if err := json.Unmarshal(after, &next); err != nil {
-		return fmt.Errorf("signRequest body is not json")
+	if err := json.Unmarshal(after, &next); err != nil || next == nil {
+		return nil
 	}
 	model, hasModel := payloadField(previous, "model")
 	stream, hasStream := payloadField(previous, "stream")

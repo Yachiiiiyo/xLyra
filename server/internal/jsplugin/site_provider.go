@@ -179,7 +179,7 @@ func validateSiteProvider(manifest Manifest, files map[string][]byte) error {
 			return err
 		}
 	}
-	if err := ValidateSiteProviderRequest(section.Request, siteProviderHeaderFields(section), regionTemplateKeys(section.Regions)); err != nil {
+	if err := ValidateSiteProviderRequest(section.Request, siteProviderHeaderFields(section), regionTemplateKeys(section.Regions), manifestSettingKeys(manifest.Settings)); err != nil {
 		return err
 	}
 	if err := validateRequestBaseURLFrom(section); err != nil {

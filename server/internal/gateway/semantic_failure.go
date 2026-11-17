@@ -7,9 +7,18 @@ import (
 )
 
 type upstreamSemanticFailure struct {
+	Status  int
 	Code    string
 	Message string
 	Body    []byte
+	Cause   error
+}
+
+func (e *upstreamSemanticFailure) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
 }
 
 func (e *upstreamSemanticFailure) Error() string {

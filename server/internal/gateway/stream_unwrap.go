@@ -165,7 +165,7 @@ func (t *streamTransformer) fill() error {
 		}
 		rewritten, stop, convErr := t.convert(event)
 		if errors.Is(convErr, errUpstreamStreamStatus) {
-			t.err = errUpstreamStreamStatus
+			t.err = convErr
 			_ = t.Close()
 			return t.err
 		}
@@ -272,12 +272,15 @@ func (t *streamTransformer) convert(event *sseEvent) ([]byte, bool, error) {
 	unwrap := section.Unwrap
 	if unwrap.StatusPath != "" && len(unwrap.OKStatuses) > 0 {
 		if status, ok := statusAt(root, unwrap.StatusPath); ok && !statusAllowed(unwrap.OKStatuses, status) {
-			return nil, false, errUpstreamStreamStatus
+			return nil, false, streamStatusSemanticFailure(status, root, unwrap.Path, payload)
 		}
 	}
 	value, ok := valueAt(root, unwrap.Path)
 	if !ok {
 		return nil, false, errors.New("unwrap path missing")
+	}
+	if text, ok := value.(string); ok && section.Done != nil && markerEquals(section.Done.UnwrappedEquals, text) {
+		return t.finish(event, text, true)
 	}
 	next, err := formatUnwrapped(unwrap.Format, value)
 	if err != nil {
@@ -511,6 +514,58 @@ func statusAllowed(allowed []int, status int) bool {
 		}
 	}
 	return false
+}
+
+const streamStatusErrorBodyLimit = 4096
+
+func streamStatusSemanticFailure(status int, root map[string]any, unwrapPath, rawPayload string) error {
+	var body []byte
+	if unwrapPath != "" {
+		if value, ok := valueAt(root, unwrapPath); ok && value != nil {
+			switch typed := value.(type) {
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					body = []byte(typed)
+				}
+			case map[string]any, []any:
+				if encoded, err := json.Marshal(typed); err == nil {
+					body = encoded
+				}
+			}
+		}
+	}
+	if len(body) == 0 {
+		body = []byte(rawPayload)
+	}
+	if len(body) > streamStatusErrorBodyLimit {
+		body = body[:streamStatusErrorBodyLimit]
+	}
+	if failure, ok := semanticFailureFromJSON(body); ok {
+		failure.Status = status
+		failure.Cause = errUpstreamStreamStatus
+		return failure
+	}
+	code, message := "", ""
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err == nil && obj != nil {
+		code, message = semanticFailureDetails(obj)
+		if message == "" {
+			message = strings.TrimSpace(anyString(obj["detail"]))
+		}
+		if message == "" {
+			message = strings.TrimSpace(anyString(obj["msg"]))
+		}
+	}
+	if message == "" {
+		message = fmt.Sprintf("upstream stream status %d", status)
+	}
+	return &upstreamSemanticFailure{
+		Status:  status,
+		Code:    code,
+		Message: message,
+		Body:    append([]byte(nil), body...),
+		Cause:   errUpstreamStreamStatus,
+	}
 }
 
 func formatUnwrapped(format string, value any) (string, error) {

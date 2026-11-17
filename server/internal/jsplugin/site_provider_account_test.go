@@ -1011,3 +1011,135 @@ export function listModels(ctx, steps) {
 	}
 	assertNoLeak(t, []string{logs.String(), seen.joined(), err.Error()}, leakAccess, leakRefresh)
 }
+
+func TestAccountHooksGatewayEndpointAndSignRequest(t *testing.T) {
+	logs := captureLogs(t)
+	controlHits := 0
+	controlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		controlHits++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"unexpected":true}`)
+	}))
+	defer controlSrv.Close()
+
+	var gatewayPaths []string
+	var gatewaySignedHeaders []string
+	var gatewayRegions []string
+	gatewaySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayPaths = append(gatewayPaths, r.URL.Path)
+		gatewaySignedHeaders = append(gatewaySignedHeaders, r.Header.Get("X-Signed-Token"))
+		gatewayRegions = append(gatewayRegions, r.Header.Get("X-Signed-Region"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/algo/api/v2/model/list" {
+			fmt.Fprint(w, `{"models":[{"id":"q-1"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer gatewaySrv.Close()
+
+	section := poolSection()
+	section.Models.PerAccount = true
+
+	source := poolSource("acme.example", "summarizeAccount", "startLogin", "pollLogin", "refreshTokens") + `
+export function signRequest(ctx, req) {
+  const token = (ctx.credential && ctx.credential.access_token) || "";
+  log.info("sign-secret=" + token);
+  return {
+    headers: {
+      "X-Signed-Token": "sig:" + crypto.sha256(token + "|" + req.method + "|" + req.url),
+      "X-Signed-Region": (ctx.credential && ctx.credential.region) || "",
+    },
+  };
+}
+export function listModels(ctx, steps) {
+  if (steps.length === 0) {
+    return { request: { method: "GET", path: "/algo/api/v2/model/list", endpoint: "gateway", sign: true } };
+  }
+  const req = steps[0].request || {};
+  if (req.endpoint !== "gateway" || req.sign !== true) {
+    return { error: "step metadata missing" };
+  }
+  if (req.headers && req.headers["X-Signed-Token"]) {
+    return { error: "signed header leaked into steps" };
+  }
+  return {
+    result: {
+      models: [{
+        name: "q-1",
+        displayName: "Q1",
+        meta: {
+          model_config: { context_window: 128000, modalities: ["text", "image"] },
+        },
+      }],
+    },
+  };
+}
+export function onSchedule(ctx, steps) {
+  if (steps.length === 0) {
+    return { request: { method: "POST", path: "/algo/api/v2/daily", endpoint: "gateway", sign: true, body: { ping: true } } };
+  }
+  return { result: { status: "ok" } };
+}
+`
+	manifest := Manifest{
+		ID: "acme.example", Name: "Acme", Version: "1.0.0", APIVersion: 1, HostAPI: 2, Kind: KindSiteProvider,
+		Permissions:  []string{"secret.use", "schedule"},
+		Schedule:     ScheduleSection{EveryMinutes: 60},
+		SiteProvider: section,
+		SHA256:       map[string]string{"plugin.js": hashSource(source)},
+	}
+	plugin, err := NewPlugin(manifest, source, nil, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin: %v", err)
+	}
+	rt := testRuntime(t, plugin, gatewaySrv)
+	rt.spec.Regions = []SiteProviderRegion{{
+		ID:      "cn",
+		BaseURL: controlSrv.URL,
+		Endpoints: &SiteProviderRegionEndpoints{
+			Control: controlSrv.URL,
+			Gateway: []string{gatewaySrv.URL},
+		},
+	}}
+	rt.spec.DefaultRegion = "cn"
+	seen := &hookSeen{}
+	rt.observe = seen.add
+	fields := map[string]string{
+		"access_token": leakAccess, "refresh_token": leakRefresh,
+		"domain": "tenant.example", "realm": "cn",
+	}
+	models, err := rt.ListModels(context.Background(), fields)
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "q-1" {
+		t.Fatalf("models = %+v", models)
+	}
+	cfg, ok := models[0].Meta["model_config"].(map[string]any)
+	if !ok || cfg["context_window"] == nil {
+		t.Fatalf("nested meta = %#v", models[0].Meta)
+	}
+	schedOut, err := rt.RunSchedule(context.Background(), AccountSnapshot{BaseURL: controlSrv.URL, Fields: fields})
+	if err != nil {
+		t.Fatalf("RunSchedule: %v", err)
+	}
+	if schedOut["status"] != "ok" {
+		t.Fatalf("schedule result = %#v", schedOut)
+	}
+	if controlHits != 0 {
+		t.Fatalf("control endpoint was hit %d times, want 0", controlHits)
+	}
+	if len(gatewayPaths) != 2 || gatewayPaths[0] != "/algo/api/v2/model/list" || gatewayPaths[1] != "/algo/api/v2/daily" {
+		t.Fatalf("gatewayPaths = %v", gatewayPaths)
+	}
+	for i, sig := range gatewaySignedHeaders {
+		if !strings.HasPrefix(sig, "sig:") || gatewayRegions[i] != "cn" {
+			t.Fatalf("step %d sig=%q region=%q", i, sig, gatewayRegions[i])
+		}
+		if strings.Contains(seen.joined(), sig) || strings.Contains(logs.String(), sig) {
+			t.Fatalf("signature header leaked into steps or logs")
+		}
+	}
+	assertNoLeak(t, []string{logs.String(), seen.joined()}, leakAccess, leakRefresh)
+}

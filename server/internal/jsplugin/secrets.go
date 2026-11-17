@@ -744,11 +744,14 @@ func SubstituteSecrets(req ProbeRequest, bag *SecretBag, allowed map[string]bool
 		return ProbeRequest{}, err
 	}
 	return ProbeRequest{
-		Method:  req.Method,
-		Path:    req.Path,
-		Headers: headers,
-		Query:   query,
-		Body:    body,
+		Method:    req.Method,
+		Path:      req.Path,
+		Headers:   headers,
+		Query:     query,
+		Body:      body,
+		OnNonJSON: req.OnNonJSON,
+		Endpoint:  req.Endpoint,
+		Sign:      req.Sign,
 	}, nil
 }
 

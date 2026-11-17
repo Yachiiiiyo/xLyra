@@ -449,7 +449,11 @@ func (h Handler) forwardSiteModelTestRequest(
 	if isOpenCodeZenSite(candidate) {
 		applyOpenCodeGoGatewayHeaders(req, request, upstreamKey, siteConfig != nil && gatewayConfigBool(siteConfig.ImpersonateOpencodeClient))
 	}
-	if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, candidate.Model.PluginMeta, h.cacheObservationKey); err != nil {
+	modelMeta := candidate.Model.PluginMeta
+	if selectedCredential != nil && len(selectedCredential.ModelPluginMeta) > 0 {
+		modelMeta = selectedCredential.ModelPluginMeta
+	}
+	if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, modelMeta, h.cacheObservationKey); err != nil {
 		result.statusCode = http.StatusBadGateway
 		result.errorType = "plugin_header_template_failed"
 		result.errorMessage = err.Error()
@@ -457,7 +461,7 @@ func (h Handler) forwardSiteModelTestRequest(
 		result.requestLogID = h.recordAttempt(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, nil)
 		return result
 	}
-	body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, candidate.Model.PluginMeta, h.cacheObservationKey)
+	body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, modelMeta, h.cacheObservationKey)
 	if err != nil {
 		result.statusCode = http.StatusBadGateway
 		result.errorType = "upstream_sign_failed"
@@ -695,6 +699,15 @@ func (h Handler) handleSiteModelTestStreamResponse(
 	result = applyEstimatedCostBillingAdjustment(result)
 	result.cacheWriteCost = cacheWriteCostForAttempt(capture.usage, result)
 	result.latencyMS = time.Since(startedAt).Milliseconds()
+	if !responseStarted && capture.semanticFailure == nil && proxyErr != nil {
+		var semanticFailure *upstreamSemanticFailure
+		if errors.As(proxyErr, &semanticFailure) {
+			capture.semanticFailure = semanticFailure
+		}
+	}
+	if !responseStarted && capture.semanticFailure != nil {
+		return h.finishStreamSemanticFailure(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, capture)
+	}
 	if proxyErr != nil {
 		if errors.Is(proxyErr, errUpstreamStreamStatus) {
 			result.statusCode = http.StatusBadGateway

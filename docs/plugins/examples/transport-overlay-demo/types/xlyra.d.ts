@@ -18,6 +18,8 @@ export interface ProbeContext {
 
 export type ProbeMethod = "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
 
+export type ProbeEndpoint = "control" | "gateway";
+
 export interface ProbeRequest {
   method: ProbeMethod;
   /** Path under the site base URL. Absolute URLs are rejected. */
@@ -27,6 +29,10 @@ export interface ProbeRequest {
   body?: Json;
   /** Account-pool hooks. pending on pollLogin treats a non-JSON body as still waiting. pending elsewhere, and ignore, return the status with an empty body. */
   onNonJSON?: string;
+  /** Account-pool hooks only. Selects regions[].endpoints.gateway[0] instead of control. Defaults to "control". */
+  endpoint?: ProbeEndpoint;
+  /** Account-pool hooks only. Runs the plugin's signRequest on the outgoing request after {{secret.*}} substitution. Requires "secret.use" when credentials are needed. */
+  sign?: boolean;
 }
 
 export interface ProbeResponse {

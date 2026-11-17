@@ -85,6 +85,9 @@ type ProbeStep struct {
 	Response ProbeResponse `ts:"response"`
 }
 
+// ProbeEndpoints are the values of ProbeRequest.Endpoint. Empty means control.
+var ProbeEndpoints = []string{"control", "gateway"}
+
 // ProbeRequest is a plugin-authored HTTP request before the host joins the URL.
 // OnNonJSON applies to every account-pool hook. "pending" on pollLogin treats a
 // body that is not one JSON object as still waiting. "pending" on any other
@@ -98,6 +101,8 @@ type ProbeRequest struct {
 	Query     map[string]string `ts:"query,optional"`
 	Body      any               `ts:"body,optional,type=Json"`
 	OnNonJSON string            `ts:"onNonJSON,optional,doc=Account-pool hooks. pending on pollLogin treats a non-JSON body as still waiting. pending elsewhere, and ignore, return the status with an empty body."`
+	Endpoint  string            `ts:"endpoint,optional,type=ProbeEndpoint,doc=Account-pool hooks only. Selects regions[].endpoints.gateway[0] instead of control. Defaults to \"control\"."`
+	Sign      bool              `ts:"sign,optional,doc=Account-pool hooks only. Runs the plugin's signRequest on the outgoing request after {{secret.*}} substitution. Requires \"secret.use\" when credentials are needed."`
 }
 
 // ProbeResponse is the HTTP result shown to the plugin. JSON is nil when the body is not JSON.
@@ -196,6 +201,12 @@ func stepsAsValue(steps []ProbeStep) []any {
 		if step.Request.OnNonJSON != "" {
 			request["onNonJSON"] = step.Request.OnNonJSON
 		}
+		if step.Request.Endpoint != "" {
+			request["endpoint"] = step.Request.Endpoint
+		}
+		if step.Request.Sign {
+			request["sign"] = true
+		}
 		out[i] = map[string]any{"request": request, "response": response}
 	}
 	return out
@@ -257,7 +268,7 @@ func decodeRequest(value any) (ProbeRequest, error) {
 	}
 	for key := range object {
 		switch key {
-		case "method", "path", "headers", "query", "body", "onNonJSON":
+		case "method", "path", "headers", "query", "body", "onNonJSON", "endpoint", "sign":
 		default:
 			return ProbeRequest{}, shapeError("request: unknown field %q", key)
 		}
@@ -300,7 +311,22 @@ func decodeRequest(value any) (ProbeRequest, error) {
 	if onNonJSON != "" && onNonJSON != "pending" && onNonJSON != "ignore" {
 		return ProbeRequest{}, shapeError("request.onNonJSON: unsupported value %q", onNonJSON)
 	}
-	return ProbeRequest{Method: method, Path: path, Headers: headers, Query: query, Body: body, OnNonJSON: onNonJSON}, nil
+	endpoint, err := optionalString(object["endpoint"], "request.endpoint")
+	if err != nil {
+		return ProbeRequest{}, err
+	}
+	if endpoint != "" && endpoint != "control" && endpoint != "gateway" {
+		return ProbeRequest{}, shapeError("request.endpoint: unsupported value %q", endpoint)
+	}
+	sign := false
+	if raw, ok := object["sign"]; ok && raw != nil {
+		value, ok := raw.(bool)
+		if !ok {
+			return ProbeRequest{}, shapeError("request.sign: expected boolean")
+		}
+		sign = value
+	}
+	return ProbeRequest{Method: method, Path: path, Headers: headers, Query: query, Body: body, OnNonJSON: onNonJSON, Endpoint: endpoint, Sign: sign}, nil
 }
 
 func decodeResult(value any) (ProbeResult, error) {
@@ -568,26 +594,61 @@ func stringMap(value any, path string) (map[string]string, error) {
 }
 
 const maxModelMetaKeyBytes = 64
-const maxModelMetaBytes = 4 << 10
+const maxModelMetaBytes = 8 << 10
+const maxModelMetaDepth = 8
 
-// modelMetaMap checks one meta object: keys stay short, values are string,
-// number, or bool, and the JSON form stays within 4 KiB.
+// modelMetaMap checks one meta object: keys stay short, values are valid JSON
+// nested at most 8 levels deep, and the JSON form stays within 8 KiB.
 func modelMetaMap(object map[string]any, path string) (map[string]any, error) {
+	checked, err := modelMetaObject(object, path, 1)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(checked)
+	if err != nil || len(encoded) > maxModelMetaBytes {
+		return nil, shapeError("%s: longer than %d bytes", path, maxModelMetaBytes)
+	}
+	return checked, nil
+}
+
+func modelMetaObject(object map[string]any, path string, depth int) (map[string]any, error) {
+	if depth > maxModelMetaDepth {
+		return nil, shapeError("%s: nested deeper than %d levels", path, maxModelMetaDepth)
+	}
 	out := make(map[string]any, len(object))
 	for key, item := range object {
 		if key == "" || len(key) > maxModelMetaKeyBytes {
 			return nil, shapeError("%s: key longer than %d bytes", path, maxModelMetaKeyBytes)
 		}
-		switch item.(type) {
-		case string, bool, float64, int, int64, json.Number:
-			out[key] = item
-		default:
-			return nil, shapeError("%s.%s: expected string, number, or boolean", path, key)
+		checked, err := modelMetaValue(item, path+"."+key, depth)
+		if err != nil {
+			return nil, err
 		}
-	}
-	encoded, err := json.Marshal(out)
-	if err != nil || len(encoded) > maxModelMetaBytes {
-		return nil, shapeError("%s: longer than %d bytes", path, maxModelMetaBytes)
+		out[key] = checked
 	}
 	return out, nil
+}
+
+func modelMetaValue(value any, path string, depth int) (any, error) {
+	switch typed := value.(type) {
+	case nil, string, bool, float64, int, int64, json.Number:
+		return value, nil
+	case map[string]any:
+		return modelMetaObject(typed, path, depth+1)
+	case []any:
+		if depth+1 > maxModelMetaDepth {
+			return nil, shapeError("%s: nested deeper than %d levels", path, maxModelMetaDepth)
+		}
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			checked, err := modelMetaValue(child, fmt.Sprintf("%s[%d]", path, i), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = checked
+		}
+		return out, nil
+	default:
+		return nil, shapeError("%s: expected JSON value", path)
+	}
 }

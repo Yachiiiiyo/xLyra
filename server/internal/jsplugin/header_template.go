@@ -123,57 +123,26 @@ func ValidateHeaderTemplateOptions(template string, opts HeaderTemplateOptions) 
 
 // ValidateSiteProviderRequest checks request header names and templates.
 // allowed is the cred field set. regionKeys are attributes present on every region.
-func ValidateSiteProviderRequest(section SiteProviderRequest, allowed, regionKeys map[string]struct{}) error {
-	if len(section.Headers) > maxSiteProviderRequestHeaders {
-		return fmt.Errorf("siteProvider.request.headers must list at most %d headers", maxSiteProviderRequestHeaders)
+func ValidateSiteProviderRequest(section SiteProviderRequest, allowed, regionKeys map[string]struct{}, settingKeys ...map[string]struct{}) error {
+	var settings map[string]struct{}
+	if len(settingKeys) > 0 {
+		settings = settingKeys[0]
 	}
-	names := make([]string, 0, len(section.Headers))
-	for name := range section.Headers {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	seen := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		if !validHeaderToken(name) {
-			return fmt.Errorf("siteProvider.request.headers: %q is not a valid HTTP token", name)
-		}
-		lower := strings.ToLower(name)
-		if _, ok := seen[lower]; ok {
-			return fmt.Errorf("siteProvider.request.headers: duplicate header %q", name)
-		}
-		seen[lower] = struct{}{}
-		if forbiddenRequestHeader(lower) {
-			return fmt.Errorf("siteProvider.request.headers: %q is not allowed", name)
-		}
-		if err := validateHeaderSpec(section.Headers[name], allowed, regionKeys); err != nil {
-			return fmt.Errorf("siteProvider.request.headers[%q]: %w", name, err)
-		}
-	}
-	return nil
+	return validateRequestSection(section, "siteProvider.request", HeaderTemplateOptions{
+		CredFields:  allowed,
+		RegionKeys:  regionKeys,
+		SettingKeys: settings,
+		AllowRegion: true,
+		AllowCred:   true,
+	})
 }
 
 func validateHeaderSpec(spec HeaderSpec, allowed, regionKeys map[string]struct{}) error {
-	if spec.When != "" && spec.Unless != "" {
-		return errors.New("when and unless are mutually exclusive")
-	}
-	condition := spec.When
-	if condition == "" {
-		condition = spec.Unless
-	}
-	if condition != "" {
-		if spec.Value == "" {
-			return errors.New("conditional header value is empty")
-		}
-		field, ok := strings.CutPrefix(condition, "cred.")
-		if !ok || !validHeaderTemplateField(field) {
-			return fmt.Errorf("condition %q is invalid", condition)
-		}
-		if _, exists := allowed[field]; !exists {
-			return fmt.Errorf("unknown field %q", field)
-		}
-	}
-	return ValidateHeaderTemplateOptions(spec.Value, HeaderTemplateOptions{
-		CredFields: allowed, RegionKeys: regionKeys, AllowRegion: true, AllowCred: true,
+	return validateHeaderSpecOptions(spec, HeaderTemplateOptions{
+		CredFields:  allowed,
+		RegionKeys:  regionKeys,
+		AllowRegion: true,
+		AllowCred:   true,
 	})
 }
 

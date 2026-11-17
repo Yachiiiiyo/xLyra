@@ -400,6 +400,7 @@ func (p *Plugin) runSteppedFixtureHook(ctx context.Context, fixture Fixture, hoo
 		BaseURL:        fixture.Ctx.BaseURL,
 		CredentialType: fixture.Ctx.CredentialType,
 		Now:            fixture.Ctx.Now,
+		Account:        fixture.Ctx.Account,
 	}
 	var steps []ProbeStep
 	var requests []ProbeRequest

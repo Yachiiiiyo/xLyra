@@ -177,7 +177,13 @@ func applyPluginRequestHeaders(req *http.Request, candidate routeengine.Candidat
 	kept := map[string]struct{}{}
 	item, ok := site.LookupPluginSiteType(candidate.Site.SiteType)
 	if ok && (len(item.Request.Headers) > 0 || item.Request.StripDownstreamHeaders) {
-		dynamic := headerDynamicFor(nil, candidate, request, modelName, meta, sessionSecret)
+		var basePlugin *jsplugin.Plugin
+		if item.PluginID != "" {
+			if registry := jsplugin.DefaultCatalog().Registry(); registry != nil {
+				basePlugin, _ = registry.ByPluginID(item.PluginID)
+			}
+		}
+		dynamic := headerDynamicFor(basePlugin, candidate, request, modelName, meta, sessionSecret)
 		if err := renderRequestHeaders(req, item.Request.Headers, item.Request.StripDownstreamHeaders, false, kept, vars, dynamic); err != nil {
 			return err
 		}

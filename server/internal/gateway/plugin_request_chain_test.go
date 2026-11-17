@@ -312,6 +312,66 @@ func TestOverlayStripDownstreamHeadersPreservesAuthAndChain(t *testing.T) {
 	}
 }
 
+func TestSignRewriteAllowsNonJSONBodyAndChain(t *testing.T) {
+	site.ClearPluginSiteTypes()
+	t.Cleanup(site.ClearPluginSiteTypes)
+
+	first := mustChainPlugin(t, "encode.example", kindlessChainSource("encode.example", `
+export function signRequest(ctx, req) {
+  const encoded = "ENC:" + codec.base64Encode(req.body);
+  return {
+    body: encoded,
+    headers: { "X-Digest": crypto.sha256(encoded) },
+  };
+}`), nil)
+	second := mustChainPlugin(t, "wrap.example", kindlessChainSource("wrap.example", `
+export function signRequest(ctx, req) {
+  const next = req.body + "|WRAP";
+  return {
+    body: next,
+    headers: { "X-Wrap-Digest": crypto.sha256(next), "X-Prev-Digest": req.headers["X-Digest"] || "" },
+  };
+}`), nil)
+	restore := installChainPlugins(t, first, second)
+	t.Cleanup(restore)
+
+	var mu sync.Mutex
+	var gotBody []byte
+	var gotHeaders http.Header
+	var gotContentLength int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		gotBody = raw
+		gotHeaders = r.Header.Clone()
+		gotContentLength = r.ContentLength
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	handler, candidate := pluginUpstreamFixture(t, "openai", server.URL, nil, true, server.Client(), 1)
+	candidate.Site.PluginIDs = []string{first.Manifest.ID, second.Manifest.ID}
+	result := handler.forwardGatewayRequest(context.Background(), httptest.NewRecorder(), "req-nonjson-body", 1, uuid.New(), uuid.New(), candidate, gatewayRequest{
+		DownstreamPath: gatewayEndpointChatCompletions,
+	}, nil, &testGatewayProtocol{payload: map[string]any{"model": "test-upstream", "stream": false}})
+	if !result.success {
+		t.Fatalf("success=%v type=%s message=%s", result.success, result.errorType, result.errorMessage)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.HasPrefix(string(gotBody), "ENC:") || !strings.HasSuffix(string(gotBody), "|WRAP") {
+		t.Fatalf("unexpected upstream body: %q", string(gotBody))
+	}
+	if gotContentLength != int64(len(gotBody)) {
+		t.Fatalf("Content-Length=%d want=%d", gotContentLength, len(gotBody))
+	}
+	if gotHeaders.Get("X-Digest") == "" || gotHeaders.Get("X-Prev-Digest") != gotHeaders.Get("X-Digest") || gotHeaders.Get("X-Wrap-Digest") == "" {
+		t.Fatalf("headers:\n%s", formatHeaders(gotHeaders))
+	}
+}
+
 func kindlessChainSource(id, body string) string {
 	return "export const meta = { apiVersion: 1, id: " + jsQuote(id) + " };\n" + body
 }

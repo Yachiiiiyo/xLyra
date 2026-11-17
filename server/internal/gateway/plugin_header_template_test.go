@@ -255,6 +255,93 @@ func TestPluginHeaderTemplateDiagnostic(t *testing.T) {
 	}
 }
 
+func TestSiteProviderHeaderTemplateSettingsAndSessionKeyMatchSignRequest(t *testing.T) {
+	site.ClearPluginSiteTypes()
+	t.Cleanup(site.ClearPluginSiteTypes)
+
+	source := `export const meta = { apiVersion: 1, id: "base.settings", kind: "site_provider" };
+export function listModels() { return { result: { models: [] } }; }
+export function signRequest(ctx) {
+  return {
+    headers: {
+      "X-Sign-Version": String((ctx.settings && ctx.settings.clientVersion) || ""),
+      "X-Sign-Session": ctx.sessionKey || "",
+    },
+  };
+}`
+	headers := jsplugin.HeaderMap(map[string]string{
+		"X-Header-Version": "{{setting.clientVersion}}",
+		"X-Header-Session": "{{session.key}}",
+	})
+	manifest := jsplugin.Manifest{
+		ID: "base.settings", Name: "Base Settings", Version: "1.0.0", APIVersion: 1, HostAPI: 2, Kind: jsplugin.KindSiteProvider,
+		Settings: []jsplugin.SettingSpec{{
+			Key:     "clientVersion",
+			Type:    "string",
+			Default: "1.0.0",
+			Label:   jsplugin.LocalizedText{"en": "Client Version"},
+		}},
+		SiteProvider: jsplugin.SiteProviderSection{
+			SiteType:   "base.settings/chat",
+			Display:    jsplugin.SiteProviderDisplay{Name: jsplugin.LocalizedText{"en": "Base"}},
+			Hosts:      []string{"api.base.example"},
+			Credential: jsplugin.SiteProviderCredential{Model: "api_key"},
+			Protocol: jsplugin.SiteProviderProtocol{
+				Kind: "openai_chat", Path: "/v1/chat/completions", OfficialBaseURL: "https://api.base.example",
+				DefaultEndpointTypes: []string{"openai"},
+			},
+			Request: jsplugin.SiteProviderRequest{Headers: headers},
+		},
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(source)},
+	}
+	basePlugin, err := jsplugin.NewPlugin(manifest, source, nil, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin failed: %v", err)
+	}
+	restore := installChainPlugins(t, basePlugin)
+	t.Cleanup(restore)
+
+	if err := site.SetPluginSiteTypes([]site.PluginSiteType{{
+		Descriptor: site.SiteTypeDescriptor{SiteType: "base.settings/chat", DisplayName: "Base"},
+		PluginID:   basePlugin.Manifest.ID,
+		Enabled:    true,
+		Hosts:      []string{"api.base.example"},
+		Request:    site.PluginSiteRequest{Headers: headers},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "https://api.base.example/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := routeengine.Candidate{
+		Site: routeengine.CandidateSite{
+			ID:       uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+			SiteType: "base.settings/chat",
+			BaseURL:  "https://api.base.example",
+			PluginSettings: map[string]map[string]any{
+				"base.settings": {"clientVersion": "2.4.0"},
+			},
+		},
+		Model: routeengine.CandidateModel{UpstreamName: "m"},
+	}
+	gwReq := gatewayRequest{Payload: map[string]any{"prompt_cache_key": "conv-123"}}
+	secret := []byte("session-secret")
+	if err := applyPluginRequestHeaders(req, candidate, gwReq, nil, "sk-test", "https://api.base.example", "m", nil, secret); err != nil {
+		t.Fatalf("applyPluginRequestHeaders: %v", err)
+	}
+	if _, err := applyPluginSignChain(context.Background(), req, candidate, gwReq, &testGatewayProtocol{}, []byte(`{"model":"m"}`), "sk-test", nil, nil, secret); err != nil {
+		t.Fatalf("applyPluginSignChain: %v", err)
+	}
+	if req.Header.Get("X-Header-Version") != "2.4.0" || req.Header.Get("X-Sign-Version") != "2.4.0" {
+		t.Fatalf("setting mismatch: header=%q sign=%q", req.Header.Get("X-Header-Version"), req.Header.Get("X-Sign-Version"))
+	}
+	if req.Header.Get("X-Header-Session") == "" || req.Header.Get("X-Header-Session") != req.Header.Get("X-Sign-Session") {
+		t.Fatalf("session.key mismatch: header=%q sign=%q", req.Header.Get("X-Header-Session"), req.Header.Get("X-Sign-Session"))
+	}
+}
+
 func assertHeaderTemplateFailure(t *testing.T, secret string, request site.PluginSiteRequest, hits *atomic.Int32, headerName, reason string) {
 	t.Helper()
 	handler, candidate := pluginHeaderFailureFixture(t, secret, request, hits)
