@@ -189,3 +189,45 @@ func TestRefreshCodexConnectionDoesNotRetryAfterWaitedRefreshFailure(t *testing.
 		t.Fatalf("refresh queries = %d, want lease wait followed by failure-state read", queries.Load())
 	}
 }
+
+func TestRefreshCodexConnectionRateLimitKeepsConnectedStatus(t *testing.T) {
+	t.Parallel()
+
+	connectionID := uuid.New()
+	bootstrap := NewService(nil, "master-key")
+	encryptedRefresh, _, err := bootstrap.credentials.Encrypt("refresh-token")
+	if err != nil {
+		t.Fatalf("encrypt refresh token: %v", err)
+	}
+	connection := store.OAuthConnection{
+		ID:                    connectionID,
+		Provider:              codexProvider,
+		Status:                "connected",
+		EncryptedRefreshToken: encryptedRefresh,
+	}
+	var saved *store.OAuthConnection
+	service := oauthServiceWithQueryUpdate(t, func(tx *gorm.DB) {
+		if item, ok := tx.Statement.Dest.(*store.OAuthConnection); ok {
+			*item = connection
+			tx.Statement.RowsAffected = 1
+			return
+		}
+		tx.Statement.RowsAffected = 0
+	}, func(tx *gorm.DB) {
+		if item, ok := tx.Statement.Dest.(*store.OAuthConnection); ok {
+			copy := *item
+			saved = &copy
+		}
+		tx.Statement.RowsAffected = 1
+	})
+	service.httpClient = &http.Client{Transport: oauthRoundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return oauthHTTPResponse(http.StatusTooManyRequests, ` rate_limited `), nil
+	})}
+
+	if _, err := service.RefreshCodexConnection(context.Background(), connectionID); err == nil {
+		t.Fatal("RefreshCodexConnection returned nil error, want rate limit failure")
+	}
+	if saved == nil || saved.Status != "connected" {
+		t.Fatalf("saved connection = %#v, want status kept connected on 429", saved)
+	}
+}
