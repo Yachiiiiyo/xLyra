@@ -93,6 +93,10 @@ func (a accountPoolRuntimeAdapter) Summarize(ctx context.Context, baseURL string
 	}, nil
 }
 
+func (a accountPoolRuntimeAdapter) RunSchedule(ctx context.Context, baseURL string, fields map[string]string) (map[string]any, error) {
+	return a.runtime.RunSchedule(ctx, jsplugin.AccountSnapshot{BaseURL: baseURL, Fields: fields})
+}
+
 func (a accountPoolRuntimeAdapter) ListModels(ctx context.Context, fields map[string]string) ([]adapter.Model, error) {
 	entries, err := a.runtime.ListModels(ctx, fields)
 	if err != nil {

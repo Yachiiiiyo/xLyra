@@ -315,6 +315,82 @@ func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot Account
 	return scrubSummary(bag, *parsed), nil
 }
 
+// RunSchedule runs onSchedule for one account using the account's SecretBag and
+// {{secret.<field>}} placeholder substitution. Secret values never enter JS.
+func (r *AccountProviderRuntime) RunSchedule(ctx context.Context, snapshot AccountSnapshot) (result map[string]any, err error) {
+	defer func() { r.record(HookOnSchedule, err) }()
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !r.plugin.HasHook(HookOnSchedule) {
+		return nil, fmt.Errorf("%s hook is missing", HookOnSchedule)
+	}
+	if !r.plugin.Manifest.AllowsSchedule() {
+		return nil, permissionDeniedError("schedule permission is required")
+	}
+	base, err := r.resolveBase(snapshot.BaseURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	bag := r.seedBag(snapshot.Fields)
+	call := &accountCall{bag: bag, base: base}
+	ctxValue := r.credentialContext(base, r.publicFields(snapshot.Fields, bag))
+	allowed := r.allowedSecrets()
+	client := r.hookedClient(nil, base)
+	for step := 0; step < MaxProbeSteps; step++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if r.observe != nil {
+			r.observe(HookOnSchedule, []any{ctxValue, stepsAsValue(call.steps)})
+		}
+		decision, callErr := r.plugin.CallSchedule(WithCallSecretBag(ctx, bag), ctxValue, call.steps)
+		logs, dropped := decision.Logs, decision.DroppedLogs
+		if ce, ok := callErr.(*CallError); ok && len(logs) == 0 {
+			logs, dropped = ce.Logs, ce.DroppedLogs
+		}
+		r.emit(ctx, HookOnSchedule, step, bag, logs, dropped, callErr)
+		if callErr != nil {
+			return nil, bag.ScrubError(callErr)
+		}
+		if decision.Error != "" {
+			return nil, fmt.Errorf("plugin %s: %s", r.plugin.Manifest.ID, bag.Scrub(decision.Error))
+		}
+		if decision.Request == nil {
+			return scrubScheduleResult(bag, decision.Result), nil
+		}
+		if step == MaxProbeSteps-1 {
+			return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
+		}
+		template := *decision.Request
+		response, reqErr := r.doAccountHTTP(ctx, client, call, allowed, nil, template, HookOnSchedule)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		call.steps = append(call.steps, ProbeStep{
+			Request:  scrubProbeRequest(bag, template),
+			Response: response,
+		})
+	}
+	return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
+}
+
+func scrubScheduleResult(bag *SecretBag, in map[string]any) map[string]any {
+	if len(in) == 0 || bag == nil {
+		return in
+	}
+	encoded, err := json.Marshal(in)
+	if err != nil {
+		return map[string]any{}
+	}
+	scrubbed := bag.Scrub(string(encoded))
+	var out map[string]any
+	if json.Unmarshal([]byte(scrubbed), &out) != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
 // ListModels calls listModels for one account.
 // fields may contain secrets. The hook receives only non-secret fields, plus
 // the resolved region id when the bag does not already store region. The base

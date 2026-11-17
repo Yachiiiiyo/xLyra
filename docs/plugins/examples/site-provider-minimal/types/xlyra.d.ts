@@ -481,6 +481,27 @@ export interface StreamSection {
   usage?: StreamUsage;
 }
 
+// ---- schedule ----
+
+export interface ScheduleContext {
+  siteType?: string;
+  baseURL?: string;
+  /** Non-secret account fields when running for an account pool. */
+  fields?: Record<string, string>;
+  account?: Record<string, string>;
+  /** Unix time in milliseconds. */
+  now: number;
+  /** Resolved admin settings when manifest declares settings. */
+  settings?: Record<string, SettingValue>;
+}
+
+export interface ScheduleSection {
+  /** Interval in minutes (5..10080) between onSchedule ticks. */
+  everyMinutes?: number;
+  /** Localized label shown in the admin schedule toggle. */
+  label?: Record<string, string>;
+}
+
 export type PluginKind = "quota_probe" | "protocol" | "model_list" | "credential_check" | "site_detect" | "error_classifier" | "model_metadata" | "pricing_parse" | "automation" | "site_provider";
 
 export interface PluginManifest {
@@ -494,6 +515,8 @@ export interface PluginManifest {
   transport?: TransportProfile;
   /** Declarative SSE transform. On a protocol plugin this is protocol.stream. On a site type it is siteProvider.protocol.stream. */
   stream?: StreamSection;
+  /** Periodic onSchedule configuration. Requires schedule in permissions. */
+  schedule?: ScheduleSection;
 }
 
 export interface PluginMeta {
@@ -531,6 +554,7 @@ export type AutomationInputValue = AutomationEntity | AutomationEntity[] | strin
 export type ModelListDecision = SteppedDecision<ModelListResult>;
 export type CredentialCheckDecision = SteppedDecision<CredentialCheckResult>;
 export type SiteDetectDecision = SteppedDecision<SiteDetectResult>;
+export type ScheduleDecision = SteppedDecision<JsonObject>;
 
 export type ProtocolDecodeResult =
   | { model: string; error?: never }
@@ -651,6 +675,7 @@ export type SiteProviderStartLogin = (ctx: AccountLoginContext, steps: ProbeStep
 export type SiteProviderPollLogin = (ctx: AccountLoginContext, steps: ProbeStep[]) => AccountLoginDecision;
 export type SiteProviderRefreshTokens = (ctx: AccountCredentialContext, steps: ProbeStep[]) => AccountRefreshDecision;
 export type SiteProviderSummarizeAccount = (ctx: AccountCredentialContext, steps: ProbeStep[]) => AccountSummaryDecision;
+export type SiteProviderOnSchedule = (ctx: ScheduleContext, steps: ProbeStep[]) => ScheduleDecision;
 
 export interface SiteProviderHooks {
   probe?: SiteProviderProbe;
@@ -662,4 +687,5 @@ export interface SiteProviderHooks {
   pollLogin?: SiteProviderPollLogin;
   refreshTokens?: SiteProviderRefreshTokens;
   summarizeAccount?: SiteProviderSummarizeAccount;
+  onSchedule?: SiteProviderOnSchedule;
 }

@@ -114,6 +114,7 @@ export const jsPluginQueryKeys = {
   uploaded: () => [...jsPluginQueryKeys.all, 'uploaded'] as const,
   detail: (id: string) => [...jsPluginQueryKeys.all, 'detail', id] as const,
   settings: (id: string) => [...jsPluginQueryKeys.detail(id), 'settings'] as const,
+  schedule: (id: string) => [...jsPluginQueryKeys.detail(id), 'schedule'] as const,
   trustedKeys: () => [...jsPluginQueryKeys.all, 'trusted-keys'] as const,
 }
 
@@ -281,6 +282,38 @@ export async function updateJSPluginSiteSettings(id: string, siteId: string, val
     `/api/v1/js-plugins/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/settings`,
     { method: 'PUT', body: { values } },
   )
+}
+
+export type JSPluginScheduleView = {
+  supported: boolean
+  enabled: boolean
+  every_minutes?: number
+  label?: LocalizedText
+  next_tick_at?: string
+}
+
+export function pluginDeclaresSchedule(versions: JSPluginVersion[] | undefined) {
+  for (const row of versions ?? []) {
+    const manifest = row.manifest
+    if (!manifest || typeof manifest !== 'object') continue
+    const exportsList = Array.isArray(manifest.exports) ? manifest.exports : []
+    if (exportsList.includes('onSchedule')) return true
+    const perms = Array.isArray(manifest.permissions) ? manifest.permissions : []
+    if (perms.includes('schedule')) return true
+    if (manifest.schedule && typeof manifest.schedule === 'object') return true
+  }
+  return false
+}
+
+export async function getJSPluginSchedule(id: string, signal?: AbortSignal) {
+  return apiFetch<JSPluginScheduleView>(`/api/v1/js-plugins/${encodeURIComponent(id)}/schedule`, { signal })
+}
+
+export async function updateJSPluginSchedule(id: string, enabled: boolean) {
+  return apiFetch<JSPluginScheduleView>(`/api/v1/js-plugins/${encodeURIComponent(id)}/schedule`, {
+    method: 'PUT',
+    body: { enabled },
+  })
 }
 
 export async function previewJSPluginPricing(pluginId: string, siteId: string) {

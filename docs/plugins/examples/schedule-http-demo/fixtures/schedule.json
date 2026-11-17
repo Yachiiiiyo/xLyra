@@ -1,0 +1,24 @@
+{
+  "name": "scheduled checkin increments storage",
+  "hook": "onSchedule",
+  "ctx": {
+    "siteType": "openai",
+    "baseURL": "https://api.example.com",
+    "now": 1700000000000
+  },
+  "storage": {
+    "checkinRuns": 2
+  },
+  "responses": [
+    {
+      "match": { "method": "POST", "path": "/v1/checkin" },
+      "status": 200,
+      "json": { "ok": true }
+    }
+  ],
+  "expect": {
+    "requests": [{ "method": "POST", "path": "/v1/checkin" }],
+    "result": { "ok": true, "runs": 3 },
+    "storage": { "checkinRuns": 3 }
+  }
+}

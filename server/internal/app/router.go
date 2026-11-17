@@ -169,13 +169,13 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		if oauthService == nil {
 			oauthService = oauthsvc.NewService(db, masterKey, confFile)
 		}
-		wireJSPluginAutomation(oauthService, jsPluginManager, authService, defaultHTTPClient)
 		// sharedSite is the instance background jobs already hold. Plugin modules
 		// have to land on it; a second service never sees them.
 		siteService = sharedSite
 		if siteService == nil {
 			siteService = site.NewServiceWithOAuthService(db, masterKey, appTimeZone, oauthService, confFile)
 		}
+		wireJSPluginAutomation(oauthService, siteService, jsPluginManager, authService, defaultHTTPClient)
 		siteProviderCurrent = func() *jsplugin.Registry {
 			return jsPluginManager.Catalog().Registry()
 		}
@@ -363,6 +363,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Get("/js-plugins/{id}/settings", adminHandler.GetJSPluginSettings)
 				protected.Put("/js-plugins/{id}/settings", adminHandler.UpdateJSPluginSettings)
 				protected.Put("/js-plugins/{id}/sites/{site_id}/settings", adminHandler.UpdateJSPluginSiteSettings)
+				protected.Get("/js-plugins/{id}/schedule", adminHandler.GetJSPluginSchedule)
+				protected.Put("/js-plugins/{id}/schedule", adminHandler.UpdateJSPluginSchedule)
 				protected.Put("/js-plugins/{id}/subscription", adminHandler.UpdateJSPluginSubscription)
 				protected.Post("/js-plugins/{id}/versions/{version}/enable", adminHandler.EnableJSPluginVersion)
 				protected.Post("/js-plugins/{id}/disable", adminHandler.DisableJSPlugin)

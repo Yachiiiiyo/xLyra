@@ -44,6 +44,7 @@ type Manifest struct {
 	// only when siteProvider.request is empty. Other plugins may set headers.
 	Request   SiteProviderRequest `json:"request,omitempty"`
 	Transport TransportSection    `json:"transport,omitempty"`
+	Schedule  ScheduleSection     `json:"schedule,omitempty"`
 	SHA256    map[string]string   `json:"sha256"`
 
 	// hasQuotaProbe and hasSite record that the JSON object contained the
@@ -443,6 +444,9 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err := exportsMatchManifest(manifest, program); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
+	if err := validateProgramScheduleHook(manifest, program); err != nil {
+		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+	}
 	if err := aliasHookNames(program); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
@@ -649,6 +653,9 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 		return err
 	}
 	if err := validateTransport(manifest.Transport); err != nil {
+		return err
+	}
+	if err := validateManifestSchedule(manifest); err != nil {
 		return err
 	}
 	switch manifest.Kind {

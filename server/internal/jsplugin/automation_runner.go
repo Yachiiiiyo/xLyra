@@ -40,6 +40,14 @@ type AutomationHost interface {
 	DoHTTP(ctx context.Context, request HTTPRequest) (status int, err error)
 }
 
+// ScheduleExecutionHost is an optional extension of AutomationHost that runs
+// a plugin's periodic onSchedule hook across account pools, mounted sites, or
+// global scope. When AutomationHost does not implement it, DriveSchedule runs
+// directly in global scope.
+type ScheduleExecutionHost interface {
+	RunPluginSchedule(ctx context.Context, plugin *Plugin) (note string, err error)
+}
+
 // HTTPRequest is an outgoing request an automation plugin asked for, already
 // checked against the addresses the admin entered.
 type HTTPRequest struct {
@@ -136,6 +144,23 @@ func (m *Manager) queueTicks(ctx context.Context) {
 	}
 	for _, binding := range due {
 		plugin, ok := m.catalog.Registry().ByPluginID(binding.PluginID)
+		if binding.Kind == "schedule" {
+			if !ok || plugin == nil || !plugin.HasHook(HookOnSchedule) || !plugin.Manifest.AllowsSchedule() {
+				_ = m.repo.PostponeTick(ctx, binding.ID, time.Now().Add(tickRetry))
+				continue
+			}
+			minutes := plugin.Manifest.EffectiveScheduleMinutes()
+			if minutes <= 0 {
+				_ = m.repo.PostponeTick(ctx, binding.ID, time.Now().Add(tickRetry))
+				continue
+			}
+			payload, _ := json.Marshal(map[string]any{"type": EventScheduleTick, "schedule": true})
+			next := time.Now().Add(time.Duration(minutes) * time.Minute)
+			if err := m.repo.QueueTicks(ctx, binding.ID, EventScheduleTick, []store.JSON{payload}, next); err != nil && ctx.Err() == nil {
+				slog.Warn("js plugin schedule tick not queued", "binding_id", binding.ID.String(), "error", err)
+			}
+			continue
+		}
 		if !ok || plugin.Manifest.Kind != KindAutomation || plugin.Manifest.Automation.Schedule.EveryMinutes <= 0 {
 			_ = m.repo.PostponeTick(ctx, binding.ID, time.Now().Add(tickRetry))
 			continue
@@ -235,6 +260,9 @@ func (m *Manager) runEvent(ctx context.Context, host AutomationHost, event store
 	if err != nil {
 		return store.JSPluginEventSkipped, "binding no longer exists", false
 	}
+	if binding.Kind == "schedule" {
+		return m.runScheduleEvent(ctx, host, binding, event)
+	}
 	plugin, ok := m.catalog.Registry().ByPluginID(binding.PluginID)
 	if !ok || plugin.Manifest.Kind != KindAutomation {
 		return store.JSPluginEventSkipped, "plugin is not enabled", false
@@ -289,6 +317,37 @@ func (m *Manager) runEvent(ctx context.Context, host AutomationHost, event store
 		}
 	}
 	return store.JSPluginEventDone, "", false
+}
+
+func (m *Manager) runScheduleEvent(ctx context.Context, host AutomationHost, binding store.JSPluginBinding, event store.JSPluginEvent) (status, detail string, retry bool) {
+	plugin, ok := m.catalog.Registry().ByPluginID(binding.PluginID)
+	if !ok || plugin == nil || !plugin.HasHook(HookOnSchedule) || !plugin.Manifest.AllowsSchedule() {
+		return store.JSPluginEventSkipped, "plugin schedule is not enabled", false
+	}
+	version, err := m.repo.GetVersion(ctx, binding.PluginID, plugin.Manifest.Version)
+	if err != nil {
+		return "", err.Error(), true
+	}
+	granted := grantedSet(version.GrantedPermissions)
+	if !granted[PermissionSchedule] {
+		return store.JSPluginEventSkipped, "schedule permission was not granted", false
+	}
+	if plugin.Manifest.AllowsHTTP() && !granted[PermissionHTTP] {
+		return store.JSPluginEventSkipped, "http permission was not granted", false
+	}
+	action := AutomationAction{Type: HookOnSchedule}
+	var note string
+	if sh, ok := host.(ScheduleExecutionHost); ok && sh != nil {
+		note, err = sh.RunPluginSchedule(ctx, plugin)
+	} else {
+		_, err = plugin.DriveSchedule(ctx, nil, ScheduleContext{Now: time.Now().UnixMilli()})
+	}
+	if err != nil {
+		m.logAction(ctx, binding, plugin, event, action, "", store.JSPluginActionFailed, err.Error())
+		return "", err.Error(), true
+	}
+	m.logAction(ctx, binding, plugin, event, action, "", store.JSPluginActionApplied, note)
+	return store.JSPluginEventDone, note, false
 }
 
 // performAction carries out one granted action.

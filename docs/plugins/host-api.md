@@ -99,6 +99,14 @@
 
 钩子抛错、超时或返回不合法时，这次尝试记为 `upstream_sign_failed` 并中止（可换下一个凭据），不会带着缺头的请求发出去。
 
+## onSchedule(ctx, steps)
+
+声明了 `"schedule"` 权限并导出 `onSchedule(ctx, steps)` 的插件，在管理员开启周期计划后由宿主按周期调用（单步时限 **1 秒**，最多 4 步请求）。
+
+- **账号池站点底座插件**：宿主会按该站点类型下的每个已启用账号分别调用 `onSchedule(ctx, steps)`。`ctx.account` 提供非敏感字段与 `region`，请求头、路径或正文可使用 `{{secret.<field>}}` 占位符，由宿主在校验 `hosts`（或区域 `controlEndpoint`）后填入凭据并自动对返回结果脱敏，JS 全程看不到明文密钥；存储自动绑定到 `credential` 作用域。
+- **叠加插件 / 通用周期插件**：若挂载到了站点，宿主按每个挂载站点调用（`ctx.site` 含 `id`、`name`、`baseURL`、`siteType`，存储为 `site` 作用域）；未挂载站点时按全局调用一次（存储为 `global` 作用域）。返回 `{ request }` 时必须同时声明 `"http"` 权限与目标主机的 `"net:<host>"`（支持 `net:*.example.com`），相对路径基于 `ctx.site.baseURL`（或清单 `defaultBaseURL`）解析，也可直接写完整的 `http(s)://` URL。
+- 完成后返回 `{ result: { status?: "ok" | "skipped", summary?: string } }` 或 `{ error: { code, message } }`，执行结果记入插件动作日志。
+
 ## utils 与 log
 
 - `utils.uuid()`：随机 UUID v4。头模板 `{{uuid}}` 每次渲染也生成一个新的。

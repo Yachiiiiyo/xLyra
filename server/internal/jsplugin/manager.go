@@ -355,6 +355,9 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 	if err := m.repo.EnableVersion(ctx, pluginID, version, map[string]any{"ok": true}, granted); err != nil {
 		return err
 	}
+	if !plugin.HasHook(HookOnSchedule) || !plugin.Manifest.AllowsSchedule() {
+		_ = m.repo.ClearScheduleTick(ctx, pluginID)
+	}
 	if pkg.Manifest.Kind == KindAutomation {
 		// The new version may subscribe to different events.
 		if err := m.repo.SetAutomationEvents(ctx, pluginID, pkg.Manifest.Automation.Subscribes); err != nil {
@@ -376,6 +379,7 @@ func (m *Manager) Disable(ctx context.Context, pluginID string) error {
 			}
 		}
 	}
+	_ = m.repo.ClearScheduleTick(ctx, pluginID)
 	return m.publishCatalog(ctx)
 }
 

@@ -48,6 +48,12 @@ type StreamSectionSpec struct {
 	Usage  *StreamUsageSpec  `ts:"usage,optional"`
 }
 
+// ScheduleSectionSpec is the manifest schedule block in the plugin SDK.
+type ScheduleSectionSpec struct {
+	EveryMinutes int            `ts:"everyMinutes,optional,doc=Interval in minutes (5..10080) between onSchedule ticks."`
+	Label        map[string]any `ts:"label,optional,type=Record<string, string>,doc=Localized label shown in the admin schedule toggle."`
+}
+
 // PluginManifestSpec is the hand-written part of the plugin manifest in the SDK.
 type PluginManifestSpec struct {
 	APIVersion int                   `ts:"apiVersion"`
@@ -59,6 +65,7 @@ type PluginManifestSpec struct {
 	Exports    []string              `ts:"exports,optional"`
 	Transport  *TransportProfileSpec `ts:"transport,optional"`
 	Stream     *StreamSectionSpec    `ts:"stream,optional,doc=Declarative SSE transform. On a protocol plugin this is protocol.stream. On a site type it is siteProvider.protocol.stream."`
+	Schedule   *ScheduleSectionSpec  `ts:"schedule,optional,doc=Periodic onSchedule configuration. Requires schedule in permissions."`
 }
 
 // ProbeContext is the credential-free object passed to a quota probe hook.

@@ -26,6 +26,8 @@ import { JSPluginSiteProviderSection } from '@/features/settings/components/js-p
 import { jsPluginErrorNotice, readJSPluginErrorFields } from '@/features/settings/components/js-plugins/js-plugin-errors'
 import { isSecretUsePermission, permissionLabelKey, permissionLabelParams } from '@/features/settings/components/js-plugins/permissions'
 import { JSPluginSettingsSection } from '@/features/settings/components/js-plugins/js-plugin-settings'
+import { JSPluginScheduleSection } from '@/features/settings/components/js-plugins/js-plugin-schedule'
+import { pluginDeclaresSchedule } from '@/features/settings/api/js-plugins'
 import { JSPluginSiteBindingSection } from '@/features/settings/components/js-plugins/js-plugin-site-binding'
 import { jsPluginKindLabel } from '@/features/settings/components/js-plugins/kind-label'
 import { useSiteBinding } from '@/features/settings/components/js-plugins/use-site-binding'
@@ -614,6 +616,7 @@ export function JSPluginsSettingsWorkspace() {
     managePlugin ? (site.gateway_config?.plugin_ids?.includes(managePlugin.id) ?? false) : false,
   )
   const showSettings = pluginDeclaresSettings(enabledVersionRow ? [enabledVersionRow] : [])
+  const showSchedule = pluginDeclaresSchedule(enabledVersionRow ? [enabledVersionRow] : [])
   const closeManage = () => {
     setManagePlugin(null)
     setProtocolSlug('')
@@ -966,6 +969,10 @@ export function JSPluginsSettingsWorkspace() {
 
                 {showSettings && managePlugin ? (
                   <JSPluginSettingsSection pluginId={managePlugin.id} sites={mountedSites} />
+                ) : null}
+
+                {showSchedule && managePlugin ? (
+                  <JSPluginScheduleSection pluginId={managePlugin.id} />
                 ) : null}
 
                 {enabledVersionRow && managePlugin?.scope === 'global' && globalHintKey(managePlugin) ? (

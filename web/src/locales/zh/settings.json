@@ -1084,6 +1084,16 @@
       "collapse": "收起",
       "clearOverride": "清除覆盖",
       "siteSaved": "已保存 {{name}} 的站点设置"
+    },
+    "schedule": {
+      "title": "定时计划",
+      "hint": "周期性触发 onSchedule 钩子（如签到或保活）。默认关闭，需手动开启。",
+      "switchLabel": "启用周期计划（每 {{minutes}} 分钟）",
+      "intervalDescription": "开启后每隔 {{minutes}} 分钟自动执行一次 onSchedule",
+      "nextTick": "下次执行时间：{{time}}",
+      "enabledToast": "已开启定时计划",
+      "disabledToast": "已关闭定时计划",
+      "saveFailed": "更新定时计划失败"
     }
   },
   "xlyraCloud": {

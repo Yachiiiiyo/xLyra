@@ -1022,3 +1022,57 @@ func abandonIfClientGone(w http.ResponseWriter, r *http.Request) bool {
 	w.WriteHeader(statusClientClosedRequest)
 	return true
 }
+
+func (h Handler) GetJSPluginSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	view, err := h.jsPlugins.GetPluginSchedule(r.Context(), pluginID)
+	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_schedule_failed", "failed to read plugin schedule")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, view)
+}
+
+func (h Handler) UpdateJSPluginSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := httpx.DecodeJSONBody(r, &body); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	view, err := h.jsPlugins.UpdatePluginSchedule(r.Context(), pluginID, body.Enabled)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		var inputErr *jsplugin.AutomationInputError
+		if errors.As(err, &inputErr) {
+			h.recordJSPluginAudit(r, "js_plugin.schedule", pluginID, false, "js_plugin_schedule_invalid", map[string]any{"enabled": body.Enabled})
+			h.writeError(w, r, http.StatusBadRequest, "js_plugin_schedule_invalid", inputErr.Message)
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.schedule", pluginID, false, "js_plugin_schedule_failed", map[string]any{"enabled": body.Enabled})
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_schedule_failed", "failed to update plugin schedule")
+		return
+	}
+	h.recordJSPluginAudit(r, "js_plugin.schedule", pluginID, true, "", map[string]any{"enabled": view.Enabled})
+	httpx.JSON(w, http.StatusOK, view)
+}

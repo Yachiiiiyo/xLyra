@@ -78,6 +78,8 @@ var tsTypes = []tsType{
 	{value: StreamDoneSpec{}, name: "StreamDone"},
 	{value: StreamUsageSpec{}, name: "StreamUsage"},
 	{value: StreamSectionSpec{}, name: "StreamSection"},
+	{value: ScheduleContext{}, name: "ScheduleContext", section: "schedule"},
+	{value: ScheduleSectionSpec{}, name: "ScheduleSection"},
 }
 
 // TypeDeclarations renders the plugin SDK .d.ts: interfaces generated from the
@@ -89,6 +91,7 @@ func TypeDeclarations() (string, error) {
 	}
 	names[reflect.TypeOf(TransportProfileSpec{})] = "TransportProfile"
 	names[reflect.TypeOf(StreamSectionSpec{})] = "StreamSection"
+	names[reflect.TypeOf(ScheduleSectionSpec{})] = "ScheduleSection"
 	names[reflect.TypeOf(PluginManifestSpec{})] = "PluginManifest"
 	var out strings.Builder
 	fmt.Fprintf(&out, "// xLyra plugin API v1 (apiVersion %d, hostApi %d).\n", hookAPIVersion, hostAPIVersion)
@@ -158,6 +161,7 @@ export type SiteProviderStartLogin = (ctx: AccountLoginContext, steps: ProbeStep
 export type SiteProviderPollLogin = (ctx: AccountLoginContext, steps: ProbeStep[]) => AccountLoginDecision;
 export type SiteProviderRefreshTokens = (ctx: AccountCredentialContext, steps: ProbeStep[]) => AccountRefreshDecision;
 export type SiteProviderSummarizeAccount = (ctx: AccountCredentialContext, steps: ProbeStep[]) => AccountSummaryDecision;
+export type SiteProviderOnSchedule = (ctx: ScheduleContext, steps: ProbeStep[]) => ScheduleDecision;
 
 export interface SiteProviderHooks {
   probe?: SiteProviderProbe;
@@ -169,6 +173,7 @@ export interface SiteProviderHooks {
   pollLogin?: SiteProviderPollLogin;
   refreshTokens?: SiteProviderRefreshTokens;
   summarizeAccount?: SiteProviderSummarizeAccount;
+  onSchedule?: SiteProviderOnSchedule;
 }
 `
 

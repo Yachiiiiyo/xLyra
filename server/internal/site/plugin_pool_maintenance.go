@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/store"
 )
 
@@ -403,4 +404,100 @@ func pluginHealthAccountName(credential store.SiteCredential) string {
 		return name
 	}
 	return strings.TrimSpace(credential.MaskedSecret)
+}
+
+// RunPluginSchedule executes onSchedule for one enabled plugin.
+// Account-pool site_provider plugins run per enabled account via SecretBag;
+// site-mounted plugins run per mounted enabled site; global plugins run once.
+func (s *Service) RunPluginSchedule(ctx context.Context, plugin *jsplugin.Plugin) (string, error) {
+	if s == nil || s.db == nil {
+		return "", errors.New("site service is not available")
+	}
+	if plugin == nil {
+		return "", errors.New("plugin is required")
+	}
+	sites, err := store.NewSiteRepository(s.db.DB()).List(ctx)
+	if err != nil {
+		return "", err
+	}
+	if plugin.Manifest.DeclaresSiteType() && plugin.Manifest.SiteProvider.Credential.Model == "account_pool" {
+		targetType := plugin.Manifest.SiteProvider.SiteType
+		provider, ok := s.pluginAccountProvider(targetType)
+		if !ok {
+			return "", fmt.Errorf("account pool runtime for %q is not available", targetType)
+		}
+		api, ok := provider.(pluginAccountAPI)
+		if !ok {
+			return "", fmt.Errorf("account pool runtime for %q is not available", targetType)
+		}
+		totalRan, totalFailed := 0, 0
+		var firstErr error
+		for _, item := range sites {
+			if !item.Enabled || !strings.EqualFold(item.SiteType, targetType) {
+				continue
+			}
+			ran, failed, runErr := api.runSchedule(ctx, item)
+			totalRan += ran
+			totalFailed += failed
+			if runErr != nil && firstErr == nil {
+				firstErr = runErr
+			}
+		}
+		if totalRan == 0 && totalFailed > 0 && firstErr != nil {
+			return "", firstErr
+		}
+		if totalFailed > 0 {
+			return fmt.Sprintf("accounts=%d failed=%d", totalRan, totalFailed), nil
+		}
+		return fmt.Sprintf("accounts=%d", totalRan), nil
+	}
+
+	var mounted []store.Site
+	for _, item := range sites {
+		if !item.Enabled {
+			continue
+		}
+		if plugin.Manifest.DeclaresSiteType() && strings.EqualFold(item.SiteType, plugin.Manifest.SiteProvider.SiteType) {
+			mounted = append(mounted, item)
+			continue
+		}
+		for _, id := range SitePluginIDs(GatewayConfigFromSiteMeta(item.Meta)) {
+			if id == plugin.Manifest.ID {
+				mounted = append(mounted, item)
+				break
+			}
+		}
+	}
+	if len(mounted) > 0 {
+		ran, failed := 0, 0
+		var firstErr error
+		for _, item := range mounted {
+			callCtx := s.withSitePluginContext(ctx, item, plugin)
+			client, _ := s.pluginProfileClient(callCtx, item, plugin)
+			_, runErr := plugin.DriveSchedule(callCtx, client, jsplugin.ScheduleContext{
+				SiteType: item.SiteType,
+				BaseURL:  item.BaseURL,
+				Now:      time.Now().UnixMilli(),
+			})
+			if runErr != nil {
+				failed++
+				if firstErr == nil {
+					firstErr = runErr
+				}
+				continue
+			}
+			ran++
+		}
+		if ran == 0 && failed > 0 && firstErr != nil {
+			return "", firstErr
+		}
+		return fmt.Sprintf("sites=%d", ran), nil
+	}
+
+	client, _ := s.pluginProfileClient(ctx, store.Site{}, plugin)
+	_, err = plugin.DriveSchedule(ctx, client, jsplugin.ScheduleContext{Now: time.Now().UnixMilli()})
+	if err != nil {
+		return "", err
+	}
+	return "global", nil
 }

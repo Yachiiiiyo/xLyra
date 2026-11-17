@@ -27,6 +27,7 @@ export type AutomationInputValue = AutomationEntity | AutomationEntity[] | strin
 export type ModelListDecision = SteppedDecision<ModelListResult>;
 export type CredentialCheckDecision = SteppedDecision<CredentialCheckResult>;
 export type SiteDetectDecision = SteppedDecision<SiteDetectResult>;
+export type ScheduleDecision = SteppedDecision<JsonObject>;
 
 export type ProtocolDecodeResult =
   | { model: string; error?: never }

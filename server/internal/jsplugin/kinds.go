@@ -191,13 +191,13 @@ func ScopeOfManifest(manifest Manifest, exports []string) Scope {
 	if manifest.DeclaresSiteType() {
 		return ScopeSiteType
 	}
-	siteHooks := []string{"probe", "listModels", "check", "classify", "classifyError", "parsePricing"}
+	siteHooks := []string{"probe", "listModels", "check", "classify", "classifyError", "parsePricing", "rewritePayload", HookSignRequest}
 	for _, name := range siteHooks {
 		if contains(exports, name) {
 			return ScopeSite
 		}
 	}
-	for _, name := range []string{"detect", "describeModels"} {
+	for _, name := range []string{"detect", "describeModels", HookOnSchedule} {
 		if contains(exports, name) {
 			return ScopeGlobal
 		}

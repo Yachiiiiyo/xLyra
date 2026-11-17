@@ -60,6 +60,12 @@ type PluginAccountRuntime interface {
 	ParseImport(raw []byte) ([]PluginImportedAccount, error)
 }
 
+// PluginAccountScheduleRuntime is an optional extension of PluginAccountRuntime
+// for account-pool plugins that export onSchedule.
+type PluginAccountScheduleRuntime interface {
+	RunSchedule(ctx context.Context, baseURL string, fields map[string]string) (map[string]any, error)
+}
+
 // PluginLoginStart is one login attempt. Credential is set only when Status
 // is complete, and only for the host. It is not an API field.
 type PluginLoginStart struct {
@@ -242,6 +248,83 @@ func (p pluginAccountAPI) withAccountPluginContext(ctx context.Context, site sto
 		return jsplugin.WithStorageScope(ctx, jsplugin.StorageScopeSite, site.ID.String())
 	}
 	return ctx
+}
+
+func (p pluginAccountAPI) runSchedule(ctx context.Context, site store.Site) (ran int, failed int, err error) {
+	sched, ok := p.runtime.(PluginAccountScheduleRuntime)
+	if !ok || sched == nil {
+		return 0, 0, errors.New("plugin account runtime does not support onSchedule")
+	}
+	repo := store.NewSiteCredentialRepository(p.s.db.DB())
+	credentials, err := repo.ListBySite(ctx, site.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	states, err := store.NewSiteAPIKeyStateRepository(p.s.db.DB()).ListBySite(ctx, site.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	stateByID := make(map[uuid.UUID]store.SiteAPIKeyState, len(states))
+	for _, state := range states {
+		stateByID[state.SiteCredentialID] = state
+	}
+	var lastErr error
+	for _, credential := range credentials {
+		if !store.IsAccountCredentialTypeOf(credential.CredentialType, p.siteType) {
+			continue
+		}
+		meta := accountMetaMap(credential.Meta)
+		if !pluginAccountSyncEligible(meta) {
+			continue
+		}
+		if state, hasState := stateByID[credential.ID]; hasState && !state.Enabled {
+			continue
+		}
+		fields, readErr := p.readCredentialFields(credential)
+		if readErr != nil {
+			if contextCanceled(ctx, readErr) {
+				return ran, failed, readErr
+			}
+			failed++
+			lastErr = readErr
+			continue
+		}
+		if p.refreshesTokens() && p.pool != nil && PluginAccountNeedsRefresh(*p.pool, fields, time.Now()) {
+			_ = p.s.withPluginRefreshLease(ctx, credential.ID, func(ctx context.Context) error {
+				refreshed, refreshErr := p.runtime.Refresh(p.withAccountPluginContext(ctx, site, credential.ID), cloneStringMap(fields))
+				if refreshErr != nil {
+					return refreshErr
+				}
+				if strings.TrimSpace(refreshed[p.accessField()]) == "" {
+					return fmt.Errorf("refreshed account is missing %s", p.accessField())
+				}
+				if _, saveErr := p.saveCredentialFields(ctx, credential, refreshed, true); saveErr != nil {
+					return saveErr
+				}
+				fields = refreshed
+				return nil
+			})
+		}
+		region := anyString(meta["region"])
+		if region == "" && p.pool != nil {
+			region = jsplugin.AccountRegionID(p.pool.Regions, fields)
+		}
+		base := p.baseURL(region)
+		callCtx := p.withAccountPluginContext(ctx, site, credential.ID)
+		if _, runErr := sched.RunSchedule(callCtx, base, cloneStringMap(fields)); runErr != nil {
+			if contextCanceled(ctx, runErr) {
+				return ran, failed, runErr
+			}
+			failed++
+			lastErr = redactCredentialError(runErr, fields, p.secretNames())
+			continue
+		}
+		ran++
+	}
+	if ran == 0 && failed > 0 {
+		return 0, failed, lastErr
+	}
+	return ran, failed, nil
 }
 
 func (p pluginAccountAPI) syncModels(ctx context.Context, site store.Site) (SyncResult, error) {

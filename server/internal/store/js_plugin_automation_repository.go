@@ -103,7 +103,7 @@ func (r JSPluginRepository) CreateAutomationBinding(ctx context.Context, binding
 // Objects that stay keep their idempotency record.
 func (r JSPluginRepository) UpdateAutomationBinding(ctx context.Context, id uuid.UUID, config JSON, inputs []JSPluginBindingInput) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&JSPluginBinding{}).Where("id = ? AND scope_type = ?", id, JSPluginScopeAutomation).
+		result := tx.Model(&JSPluginBinding{}).Where("id = ? AND scope_type = ? AND kind <> ?", id, JSPluginScopeAutomation, "schedule").
 			Update("config", config)
 		if result.Error != nil {
 			return result.Error
@@ -154,9 +154,70 @@ func (r JSPluginRepository) GetBinding(ctx context.Context, id uuid.UUID) (JSPlu
 func (r JSPluginRepository) ListAutomationBindings(ctx context.Context, pluginID string) ([]JSPluginBinding, error) {
 	var items []JSPluginBinding
 	err := r.db.WithContext(ctx).
-		Where("plugin_id = ? AND scope_type = ?", pluginID, JSPluginScopeAutomation).
+		Where("plugin_id = ? AND scope_type = ? AND kind <> ?", pluginID, JSPluginScopeAutomation, "schedule").
 		Order("created_at ASC").Find(&items).Error
 	return items, err
+}
+
+// GetScheduleBinding returns the periodic schedule binding of one plugin.
+func (r JSPluginRepository) GetScheduleBinding(ctx context.Context, pluginID string) (JSPluginBinding, error) {
+	var item JSPluginBinding
+	err := r.db.WithContext(ctx).
+		Where("plugin_id = ? AND scope_type = ? AND slot = ?", pluginID, JSPluginScopeAutomation, "schedule").
+		First(&item).Error
+	return item, err
+}
+
+// UpsertScheduleBinding creates or updates the schedule toggle binding for one plugin.
+func (r JSPluginRepository) UpsertScheduleBinding(ctx context.Context, pluginID, version string, enabled bool, nextTickAt *time.Time) (JSPluginBinding, error) {
+	events := JSON("[]")
+	if enabled {
+		events = JSON(`["schedule.tick"]`)
+	}
+	cfg, _ := json.Marshal(map[string]any{"enabled": enabled})
+	var out JSPluginBinding
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing JSPluginBinding
+		findErr := tx.Where("scope_type = ? AND scope_id = ? AND slot = ?", JSPluginScopeAutomation, pluginID, "schedule").First(&existing).Error
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			out = JSPluginBinding{
+				ID:         uuid.New(),
+				PluginID:   pluginID,
+				Version:    version,
+				Kind:       "schedule",
+				ScopeType:  JSPluginScopeAutomation,
+				ScopeID:    pluginID,
+				Slot:       "schedule",
+				Config:     JSON(cfg),
+				Events:     events,
+				State:      JSON("{}"),
+				NextTickAt: nextTickAt,
+				CreatedAt:  time.Now().UTC(),
+			}
+			return tx.Create(&out).Error
+		}
+		if findErr != nil {
+			return findErr
+		}
+		if err := tx.Exec(`
+			UPDATE js_plugin_bindings
+			SET plugin_id = ?, version = ?, kind = 'schedule', config = ?::jsonb, events = ?::jsonb, next_tick_at = ?
+			WHERE id = ?
+		`, pluginID, version, string(cfg), string(events), nextTickAt, existing.ID).Error; err != nil {
+			return err
+		}
+		return tx.Where("id = ?", existing.ID).First(&out).Error
+	})
+	return out, err
+}
+
+// ClearScheduleTick pauses a plugin's schedule binding when the plugin is disabled.
+func (r JSPluginRepository) ClearScheduleTick(ctx context.Context, pluginID string) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE js_plugin_bindings
+		SET next_tick_at = NULL, events = '[]'::jsonb, config = '{"enabled":false}'::jsonb
+		WHERE plugin_id = ? AND scope_type = ? AND slot = 'schedule'
+	`, pluginID, JSPluginScopeAutomation).Error
 }
 
 // ListBindingInputs returns the objects a binding picked.
@@ -168,7 +229,7 @@ func (r JSPluginRepository) ListBindingInputs(ctx context.Context, bindingID uui
 
 // DeleteAutomationBinding removes a binding with its inputs and queued events.
 func (r JSPluginRepository) DeleteAutomationBinding(ctx context.Context, id uuid.UUID) error {
-	result := r.db.WithContext(ctx).Where("id = ? AND scope_type = ?", id, JSPluginScopeAutomation).Delete(&JSPluginBinding{})
+	result := r.db.WithContext(ctx).Where("id = ? AND scope_type = ? AND kind <> ?", id, JSPluginScopeAutomation, "schedule").Delete(&JSPluginBinding{})
 	if result.Error != nil {
 		return result.Error
 	}

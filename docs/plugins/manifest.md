@@ -58,6 +58,25 @@
 
 `siteProvider.hosts` 和 `permissions` 里的 `net:` 都可以写 `*.example.com`。`*.` 只匹配**一个**标签（`*.example.com` 匹配 `a.example.com`，不匹配 `a.b.example.com`），也不匹配裸域 `example.com`，不匹配 `example.com.evil.com`。通配后缀本身至少再含一个 `.`，所以 `*.com` 不合法。星号不在开头、或写 IP，都不合法。其余仍是小写 DNS 主机名，不能带端口。
 
+## schedule 部分
+
+导出 `onSchedule` 的插件必须声明 `"schedule"` 权限，并可在清单里声明默认周期和展示名称（不写 `schedule.everyMinutes` 时默认 60 分钟）：
+
+```json
+"permissions": ["schedule", "http", "net:api.example.com"],
+"schedule": {
+  "everyMinutes": 60,
+  "label": { "zh": "每小时签到与巡检", "en": "Hourly check-in" }
+}
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `everyMinutes` | 否 | 周期分钟数，范围 `5..10080`（5 分钟至 7 天），省略时默认 `60` |
+| `label` | 否 | 周期计划在管理端的展示名，规则与 `display.name` 相同 |
+
+启用插件后周期计划**默认关闭**，需由管理员在插件详情弹窗中单独开启或修改周期。若 `onSchedule` 需要由宿主代发通用 HTTP 请求，还需在 `permissions` 中声明 `"http"` 与对应的 `"net:<host>"`。
+
 ## quota_probe 部分
 
 ```json
