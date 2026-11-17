@@ -89,6 +89,12 @@ xLyra 在某件事发生后把事件放进队列，后台依次交给插件，�
 
 每个类型的文档都用同样的结构：什么时候被调用、用什么凭据、是否只读、导出哪些函数、输出的字段、时限、怎么写 fixtures。
 
+## 不写 kind
+
+kind 只是起步模板。清单可以省略 `kind`，导出哪些钩子就接入哪些位置；`xlyra-plugin init --template <name>` 仍按上表生成起步项目（`--kind` 是同一选项的别名）。
+
+旧导出名继续可用：只导出 `classify` 时按 `classifyError` 调用也能命中，只导出 `handle` 时按 `onEvent` 也能命中，反过来一样。`protocol` 和 `automation` 这一阶段仍要写 kind。权限与钩子无关，启用时按清单 `permissions` 授予；`secret.use` 或站点类型（`siteProvider` 段）必须有受信签名。
+
 ## 需要的类型不在表里
 
 请到仓库提 issue，说明场景和上游返回的样例。新类型需要 xLyra 本身增加支持。

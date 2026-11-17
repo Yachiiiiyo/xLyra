@@ -191,7 +191,7 @@ func NewAccountProviderRuntime(plugin *Plugin, client *http.Client) (*AccountPro
 	if plugin == nil {
 		return nil, errors.New("plugin is required")
 	}
-	if plugin.Manifest.Kind != KindSiteProvider {
+	if !plugin.Manifest.DeclaresSiteType() {
 		return nil, fmt.Errorf("plugin %s is not a site_provider", plugin.Manifest.ID)
 	}
 	spec, err := NewAccountPoolSpec(plugin.Manifest.SiteProvider)
@@ -217,7 +217,6 @@ func NewAccountProviderRuntime(plugin *Plugin, client *http.Client) (*AccountPro
 // StartLogin begins a device-code or custom_poll login.
 // params carries login UI values such as region. Tokens are not accepted here.
 func (r *AccountProviderRuntime) StartLogin(ctx context.Context, params map[string]string) (session LoginSession, err error) {
-	defer func() { r.record(err) }()
 	if err = ctx.Err(); err != nil {
 		return LoginSession{}, err
 	}
@@ -238,7 +237,6 @@ func (r *AccountProviderRuntime) StartLogin(ctx context.Context, params map[stri
 // PollLogin continues the session started by StartLogin.
 // A session id from another process returns ErrLoginSessionNotFound.
 func (r *AccountProviderRuntime) PollLogin(ctx context.Context, session LoginSession) (poll LoginPoll, err error) {
-	defer func() { r.record(err) }()
 	if err = ctx.Err(); err != nil {
 		return LoginPoll{}, err
 	}
@@ -273,7 +271,6 @@ func (r *AccountProviderRuntime) PollLogin(ctx context.Context, session LoginSes
 // region field, then realm, then domain) and otherwise the default region.
 // leadSeconds is not applied here.
 func (r *AccountProviderRuntime) Refresh(ctx context.Context, credentialFields map[string]string) (fields map[string]string, err error) {
-	defer func() { r.record(err) }()
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -292,7 +289,7 @@ func (r *AccountProviderRuntime) Refresh(ctx context.Context, credentialFields m
 // Summarize calls summarizeAccount. snapshot.Fields may contain secrets;
 // the hook receives only non-secret fields and redacted responses.
 func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot AccountSnapshot) (summary AccountSummary, err error) {
-	defer func() { r.record(err) }()
+	defer func() { r.record("summarizeAccount", err) }()
 	if err = ctx.Err(); err != nil {
 		return AccountSummary{}, err
 	}
@@ -324,7 +321,7 @@ func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot Account
 // substitute {{secret.<field>}} from the bag. A secret never enters JS. An
 // HTTP 401 is reauthorization and is not shown to the hook.
 func (r *AccountProviderRuntime) ListModels(ctx context.Context, fields map[string]string) (entries []ModelListEntry, err error) {
-	defer func() { r.record(err) }()
+	defer func() { r.record("listModels", err) }()
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -472,6 +469,12 @@ func (r *AccountProviderRuntime) refreshOAuth(ctx context.Context, credentialFie
 }
 
 func (r *AccountProviderRuntime) startCustom(ctx context.Context, params map[string]string) (LoginSession, error) {
+	session, err := r.startCustomInner(ctx, params)
+	r.record(hookStartLogin, err)
+	return session, err
+}
+
+func (r *AccountProviderRuntime) startCustomInner(ctx context.Context, params map[string]string) (LoginSession, error) {
 	base, err := r.baseFor(params)
 	if err != nil {
 		return LoginSession{}, err
@@ -523,6 +526,12 @@ func (r *AccountProviderRuntime) startCustom(ctx context.Context, params map[str
 }
 
 func (r *AccountProviderRuntime) pollCustom(ctx context.Context, state *loginSession) (LoginPoll, error) {
+	poll, err := r.pollCustomInner(ctx, state)
+	r.record(hookPollLogin, err)
+	return poll, err
+}
+
+func (r *AccountProviderRuntime) pollCustomInner(ctx context.Context, state *loginSession) (LoginPoll, error) {
 	if len(state.baseline) > 0 {
 		state.call.steps = cloneSteps(state.baseline)
 	}
@@ -563,6 +572,12 @@ func (r *AccountProviderRuntime) finishCustom(state *loginSession, parsed *Accou
 }
 
 func (r *AccountProviderRuntime) refreshCustom(ctx context.Context, credentialFields map[string]string) (map[string]string, error) {
+	fields, err := r.refreshCustomInner(ctx, credentialFields)
+	r.record(hookRefreshTokens, err)
+	return fields, err
+}
+
+func (r *AccountProviderRuntime) refreshCustomInner(ctx context.Context, credentialFields map[string]string) (map[string]string, error) {
 	params := map[string]string{}
 	if id := AccountRegionID(r.spec.Regions, credentialFields); id != "" {
 		params["region"] = id
@@ -1335,12 +1350,12 @@ func (s *loginSession) public(status string) LoginSession {
 	}
 }
 
-func (r *AccountProviderRuntime) record(err error) {
-	if r == nil || r.plugin == nil {
+func (r *AccountProviderRuntime) record(hook string, err error) {
+	if r == nil || r.plugin == nil || hook == "" {
 		return
 	}
 	if breaker := DefaultCatalog().Breaker(); breaker != nil {
-		breaker.RecordProbeResult(r.plugin, err == nil)
+		breaker.RecordProbeResult(r.plugin, hook, err == nil)
 	}
 }
 

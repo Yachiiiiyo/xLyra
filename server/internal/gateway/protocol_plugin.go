@@ -252,7 +252,7 @@ func (a *jsProtocolAdapter) recordProtocolResult(failed bool, interrupted bool) 
 		return
 	}
 	if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
-		breaker.RecordProtocolCall(a.plugin, failed, interrupted)
+		breaker.RecordProtocolCall(a.plugin, "parseResponse", failed, interrupted)
 	}
 }
 

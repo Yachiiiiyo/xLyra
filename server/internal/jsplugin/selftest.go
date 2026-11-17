@@ -90,7 +90,7 @@ type fixtureExpectation struct {
 // no samples still passes: enabling the package is enough.
 func (p *Plugin) SelfTest(ctx context.Context) error {
 	if len(p.fixtures) == 0 {
-		if p.Manifest.Kind == KindSiteProvider {
+		if p.Manifest.DeclaresSiteType() {
 			return nil
 		}
 		return fmt.Errorf("%s: no fixtures", p.Manifest.ID)
@@ -136,6 +136,9 @@ func (p *Plugin) dispatchFixture(ctx context.Context, fixture Fixture) error {
 	if fixture.Hook != "" {
 		return p.runHookFixture(ctx, fixture)
 	}
+	if p.Manifest.Kind == "" {
+		return fmt.Errorf("%s: fixture.hook is required for plugins without kind", fixtureRef(fixture))
+	}
 	switch p.Manifest.Kind {
 	case KindQuotaProbe:
 		return p.runProbeFixture(ctx, fixture)
@@ -180,16 +183,19 @@ func isValidSiteProviderFixtureHook(hook string) bool {
 // checkFixtureHook enforces the site_provider hook field. Other single-hook kinds reject a hook.
 func (p *Plugin) checkFixtureHook(fixture Fixture) error {
 	ref := fixtureRef(fixture)
-	if p.Manifest.Kind != KindSiteProvider && p.Manifest.Kind != "" {
+	if !p.Manifest.DeclaresSiteType() && p.Manifest.Kind != "" {
 		if fixture.Hook != "" {
 			return fmt.Errorf("%s: hook is not allowed for %s fixtures", ref, p.Manifest.Kind)
 		}
 		return nil
 	}
 	if fixture.Hook == "" {
+		if p.Manifest.Kind == "" && !p.Manifest.DeclaresSiteType() {
+			return nil
+		}
 		return fmt.Errorf("%s: hook is required", ref)
 	}
-	if p.Manifest.Kind == KindSiteProvider {
+	if p.Manifest.DeclaresSiteType() {
 		if !isValidSiteProviderFixtureHook(fixture.Hook) {
 			return fmt.Errorf("%s: unknown hook %q", ref, fixture.Hook)
 		}

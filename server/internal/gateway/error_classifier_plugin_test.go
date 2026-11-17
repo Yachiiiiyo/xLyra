@@ -45,9 +45,16 @@ func withClassifier(t *testing.T, plugin *jsplugin.Plugin) {
 	})
 }
 
+func pluginIDs(pluginID string) []string {
+	if pluginID == "" {
+		return nil
+	}
+	return []string{pluginID}
+}
+
 func classifierCandidate(pluginID string) routeengine.Candidate {
 	return routeengine.Candidate{
-		Site:  routeengine.CandidateSite{ID: uuid.New(), SiteType: "custom", ErrorClassifierPlugin: pluginID},
+		Site: routeengine.CandidateSite{ID: uuid.New(), SiteType: "custom", PluginIDs: pluginIDs(pluginID)},
 		Model: routeengine.CandidateModel{SiteModelID: uuid.New(), UpstreamName: "m"},
 	}
 }
@@ -110,6 +117,30 @@ func TestErrorClassifierPluginFailureKeepsDefault(t *testing.T) {
 		if got.errorType != baseline.errorType || got.cooldownDuration != baseline.cooldownDuration {
 			t.Fatalf("%s: outcome changed: got %#v, want %#v", name, got, baseline)
 		}
+	}
+}
+
+func TestMountedKindlessClassifierAppliesToBuiltinSite(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	source := `export const meta = { apiVersion: 1, id: "acme.kindless" };
+export function classifyError(ctx, input) {
+  return input.code === "acme_wallet_empty" ? { class: "credential_invalid", reason: "mounted" } : { class: "unknown" };
+}`
+	plugin, err := jsplugin.NewPlugin(jsplugin.Manifest{
+		ID: "acme.kindless", Name: "acme.kindless", Version: "1.0.0", APIVersion: 1, HostAPI: 1,
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(source)},
+	}, source, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withClassifier(t, plugin)
+	got := classifyGatewayUpstreamError(classifierCandidate("acme.kindless"), classifierResult(), []byte(weirdBody), now)
+	if got.cooldownReason != store.CooldownReasonUpstreamCredentialUnauthorized || got.errorType != "upstream_credential_invalid" {
+		t.Fatalf("kindless mount was not applied to a builtin site: %#v", got)
+	}
+	baseline := classifyGatewayUpstreamError(classifierCandidate(""), classifierResult(), []byte(weirdBody), now)
+	if baseline.cooldownReason == store.CooldownReasonUpstreamCredentialUnauthorized {
+		t.Fatalf("no mount changed the builtin site: %#v", baseline)
 	}
 }
 

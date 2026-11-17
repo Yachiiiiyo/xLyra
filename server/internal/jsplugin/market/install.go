@@ -438,10 +438,21 @@ func packageFacts(pkg jsplugin.Package) marketproto.PackageFacts {
 		SignerFingerprint: pkg.Signer,
 		PluginID:          pkg.Manifest.ID,
 		Version:           pkg.Manifest.Version,
-		Kind:              pkg.Manifest.Kind,
+		Kind:              pkg.Manifest.KindLabel(),
 		Hosts:             sortedSet(pkg.Manifest.SiteProvider.Hosts),
-		Permissions:       sortedSet(pkg.Manifest.Automation.Permissions),
+		Permissions:       sortedSet(manifestGrantPermissions(pkg.Manifest)),
 	}
+}
+
+// manifestGrantPermissions is the automation permissions plus the manifest
+// permissions, sorted and deduplicated, the set a version fact records.
+func manifestGrantPermissions(manifest jsplugin.Manifest) []string {
+	var out []string
+	if manifest.Kind == jsplugin.KindAutomation {
+		out = append(out, manifest.Automation.Permissions...)
+	}
+	out = append(out, manifest.Permissions...)
+	return sortedSet(out)
 }
 
 func sortedSet(in []string) []string {

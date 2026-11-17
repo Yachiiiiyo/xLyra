@@ -101,12 +101,12 @@ func TestModelListerForPrefersBoundPlugin(t *testing.T) {
 		t.Fatalf("lister = %T, want the plugin", lister)
 	}
 	// A binding to a plugin that is not enabled falls back to the adapter.
-	if _, ok := s.boundSitePlugin(siteWithPlugins(map[string]string{"model_list": "gone"}), jsplugin.KindModelList); ok {
+	if _, ok := s.siteHookPlugin(siteWithPlugins(map[string]string{"model_list": "gone"}), "listModels"); ok {
 		t.Fatal("a missing plugin was treated as bound")
 	}
-	// A binding must point at a plugin of the right kind.
-	if _, ok := s.boundSitePlugin(siteWithPlugins(map[string]string{"credential_check": "acme-models"}), jsplugin.KindCredentialCheck); ok {
-		t.Fatal("a plugin of another kind was accepted")
+	// A binding is only used for a hook the plugin exports.
+	if _, ok := s.siteHookPlugin(siteWithPlugins(map[string]string{"credential_check": "acme-models"}), "check"); ok {
+		t.Fatal("a plugin that does not export the hook was accepted")
 	}
 }
 

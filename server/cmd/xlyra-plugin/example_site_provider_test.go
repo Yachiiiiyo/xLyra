@@ -88,7 +88,7 @@ func TestSiteProviderExampleTypesMatchTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, exampleDir := range []string{"site-provider-minimal", "stage1-primitives-demo"} {
+	for _, exampleDir := range []string{"site-provider-minimal", "stage1-primitives-demo", "hooks-overlay-demo"} {
 		examplePath := filepath.Join(root, "docs", "plugins", "examples", exampleDir, "types", "xlyra.d.ts")
 		example, err := os.ReadFile(examplePath)
 		if err != nil {
@@ -139,6 +139,52 @@ func TestStage1PrimitivesExamplePackage(t *testing.T) {
 	verifyOut := captureStdout(t, func() { err = verifyPackage(raw) })
 	if err != nil {
 		t.Fatalf("verify: %v\n%s", err, verifyOut)
+	}
+	if dirStamp(t, src) != before {
+		t.Fatal("example package in the repo changed")
+	}
+}
+
+func TestHooksOverlayExamplePackage(t *testing.T) {
+	root := repoRoot(t)
+	src := filepath.Join(root, "docs", "plugins", "examples", "hooks-overlay-demo")
+	before := dirStamp(t, src)
+	dir := filepath.Join(t.TempDir(), "hooks-overlay-demo")
+	copyDir(t, src, dir)
+
+	var passed bool
+	out := captureStdout(t, func() { passed = testOnce(dir) })
+	if !passed {
+		t.Fatalf("test failed:\n%s", out)
+	}
+	for _, needle := range []string{"example.hooks@1.0.0", "probe balance", "rate limit", "model list", "3 passed, 0 failed"} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("test output missing %q:\n%s", needle, out)
+		}
+	}
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, pkg, plugin, err := built.assemble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Manifest.Kind != "" {
+		t.Fatalf("kind = %q, want empty", pkg.Manifest.Kind)
+	}
+	if strings.Join(pkg.Manifest.Exports, ",") != "classifyError,listModels,probe" {
+		t.Fatalf("exports = %v", pkg.Manifest.Exports)
+	}
+	if err := plugin.SelfTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	verifyOut := captureStdout(t, func() { err = verifyPackage(raw) })
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, verifyOut)
+	}
+	if !strings.Contains(verifyOut, "(hooks)") {
+		t.Fatalf("verify kind label missing:\n%s", verifyOut)
 	}
 	if dirStamp(t, src) != before {
 		t.Fatal("example package in the repo changed")

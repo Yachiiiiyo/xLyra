@@ -51,11 +51,14 @@ func executeRun(args []string) error {
 		return err
 	}
 	kind := pkg.Manifest.Kind
-	if kind == jsplugin.KindSiteProvider {
+	if pkg.Manifest.DeclaresSiteType() {
 		return runSiteProvider(plugin, pkg, *hook, *keyEnv, *baseURL, *siteType, *credType)
 	}
+	if kind == "" {
+		return runKindless(plugin, pkg, *hook, *keyEnv, *baseURL, *siteType, *credType)
+	}
 	if *hook != "" {
-		return fmt.Errorf("--hook is only for site_provider plugins, not %q", kind)
+		return fmt.Errorf("--hook is only for site_provider and kindless plugins, not %q", kind)
 	}
 	spec := findKind(kind)
 	if spec == nil || spec.Family != jsplugin.FamilyStepped {
@@ -87,6 +90,29 @@ func runSiteProvider(plugin *jsplugin.Plugin, pkg jsplugin.Package, hook, keyEnv
 	credential := "api_key"
 	if info != nil && info.Credential != "" {
 		credential = info.Credential
+	}
+	return runSteppedPlugin(siteProviderCaller(plugin, hook), pkg, credential, keyEnv, baseURL, siteType, credType)
+}
+
+// steppedRunHooks are the hooks `run` can drive itself.
+var steppedRunHooks = []string{"probe", "listModels", "check", "detect"}
+
+func runKindless(plugin *jsplugin.Plugin, pkg jsplugin.Package, hook, keyEnv, baseURL, siteType, credType string) error {
+	exported := exportedHooks(plugin, jsplugin.KnownHookNames())
+	if hook == "" {
+		return fmt.Errorf("--hook is required for plugins without kind; exported hooks: %s. run supports probe, listModels, check, detect", formatHookList(exported))
+	}
+	switch hook {
+	case "probe", "listModels", "check", "detect":
+	default:
+		return fmt.Errorf("unknown hook %q; run supports probe, listModels, check, detect (exported: %s)", hook, formatHookList(exported))
+	}
+	if !plugin.HasHook(hook) {
+		return fmt.Errorf("hook %q is not exported; exported hooks: %s", hook, formatHookList(exported))
+	}
+	credential := "api_key"
+	if hook == "detect" {
+		credential = "none"
 	}
 	return runSteppedPlugin(siteProviderCaller(plugin, hook), pkg, credential, keyEnv, baseURL, siteType, credType)
 }
@@ -189,8 +215,11 @@ func siteProviderCaller(plugin *jsplugin.Plugin, hook string) stepCaller {
 			return outcome, err
 		}
 		resultKind := jsplugin.KindModelList
-		if hook == "check" {
+		switch hook {
+		case "check":
 			resultKind = jsplugin.KindCredentialCheck
+		case "detect":
+			resultKind = jsplugin.KindSiteDetect
 		}
 		decision, err := plugin.CallSteppedHook(ctx, hook, resultKind, probeCtx, steps)
 		outcome := stepOutcome{Request: decision.Request, Error: decision.Error, Logs: decision.Logs}

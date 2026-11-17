@@ -1,0 +1,7 @@
+{
+  "name": "rate limit",
+  "hook": "classifyError",
+  "ctx": { "siteType": "openai" },
+  "input": { "status": 429, "message": "slow down" },
+  "expect": { "result": { "class": "limited", "reason": "slow down" } }
+}

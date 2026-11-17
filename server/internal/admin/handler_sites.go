@@ -1769,6 +1769,23 @@ func siteAPIKeyCopySecret(_ string, apiKey sitepkg.APIKeyCredential) string {
 	return ""
 }
 
+// siteGatewayConfigPayload is the gateway config shown to the admin UI.
+// plugin_ids is the normalized mount list, so the UI does not merge the legacy
+// plugins map and quota_probe itself. The stored meta is unchanged.
+func siteGatewayConfigPayload(meta []byte) *sitepkg.GatewayConfig {
+	cfg := sitepkg.GatewayConfigFromSiteMeta(meta)
+	ids := sitepkg.SitePluginIDs(cfg)
+	if cfg == nil {
+		if len(ids) == 0 {
+			return nil
+		}
+		return &sitepkg.GatewayConfig{PluginIDs: ids}
+	}
+	copied := *cfg
+	copied.PluginIDs = ids
+	return &copied
+}
+
 func sitePayload(item store.Site) map[string]any {
 	meta := jsonRaw(item.Meta)
 	payload := map[string]any{
@@ -1781,7 +1798,7 @@ func sitePayload(item store.Site) map[string]any {
 		"status":           item.Status,
 		"enabled":          item.Enabled,
 		"routing_priority": item.RoutingPriority,
-		"gateway_config":   sitepkg.GatewayConfigFromSiteMeta(item.Meta),
+		"gateway_config":   siteGatewayConfigPayload(item.Meta),
 		"meta":             meta,
 		"created_at":       timeString(item.CreatedAt),
 		"updated_at":       timeString(item.UpdatedAt),

@@ -1,0 +1,17 @@
+{
+  "name": "model list",
+  "hook": "listModels",
+  "ctx": {
+    "siteType": "openai",
+    "baseURL": "https://api.example.com",
+    "credentialType": "api_key",
+    "now": 0
+  },
+  "responses": [
+    { "match": { "method": "GET", "path": "/v1/models" }, "status": 200, "json": { "data": [{ "id": "m1" }] } }
+  ],
+  "expect": {
+    "requests": [{ "method": "GET", "path": "/v1/models" }],
+    "result": { "models": [{ "name": "m1" }] }
+  }
+}

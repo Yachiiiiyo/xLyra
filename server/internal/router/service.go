@@ -75,8 +75,8 @@ type CandidateSite struct {
 	RoutingPriority        float64
 	ResponsesToolPolicy    string
 	DisabledResponsesTools []string
-	// ErrorClassifierPlugin is the error_classifier plugin an admin bound to the site, if any.
-	ErrorClassifierPlugin string
+	// PluginIDs are the plugins mounted on the site, in hook-search order.
+	PluginIDs []string
 	// PluginSettings maps a plugin id to the site's setting overrides.
 	PluginSettings map[string]map[string]any
 }
@@ -271,7 +271,7 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 				RoutingPriority:        row.SiteRoutingPriority,
 				ResponsesToolPolicy:    siteResponsesToolPolicy(row.SiteMeta),
 				DisabledResponsesTools: siteDisabledResponsesTools(row.SiteMeta),
-				ErrorClassifierPlugin:  sitepkg.SitePluginID(gatewayCfg, "error_classifier"),
+				PluginIDs:              sitepkg.SitePluginIDs(gatewayCfg),
 				PluginSettings:         pluginSettings,
 			},
 			Model: CandidateModel{

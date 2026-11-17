@@ -51,10 +51,7 @@ type QuotaProbeResult struct {
 }
 
 func (s *Service) runQuotaProbes(ctx context.Context, item store.Site) store.Site {
-	probeType := QuotaProbeTypeFromConfig(GatewayConfigFromSiteMeta(item.Meta))
-	if probeType == "" {
-		probeType = s.defaultQuotaProbeTypeForSite(item)
-	}
+	probeType := quotaProbeTypeForSite(s, item)
 	if probeType == "" {
 		return item
 	}
@@ -386,6 +383,28 @@ func codingPlanQuotaCooldownDeadline(result QuotaProbeResult, now time.Time) (ti
 		}
 	}
 	return deadline, windows
+}
+
+// quotaProbeTypeForSite picks the probe a site runs. A built-in type in the
+// config wins. Otherwise the first mounted plugin that exports probe is used,
+// including a legacy plugin: binding. With neither, the site type's default applies.
+func quotaProbeTypeForSite(s *Service, item store.Site) string {
+	probeType := QuotaProbeTypeFromConfig(GatewayConfigFromSiteMeta(item.Meta))
+	if probeType != "" && !strings.HasPrefix(probeType, QuotaProbePluginPrefix) {
+		return probeType
+	}
+	if s != nil {
+		if plugin, ok := s.siteHookPlugin(item, "probe"); ok {
+			return QuotaProbePluginPrefix + plugin.Manifest.ID
+		}
+	}
+	if probeType != "" {
+		return probeType
+	}
+	if s == nil {
+		return ""
+	}
+	return s.defaultQuotaProbeTypeForSite(item)
 }
 
 // defaultQuotaProbeTypeForSite 给未显式配置 quota_probe 的站点类型提供默认探测。

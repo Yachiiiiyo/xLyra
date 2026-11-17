@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,8 @@ type Manifest struct {
 	APIVersion   int                 `json:"apiVersion"`
 	HostAPI      int                 `json:"hostApi"`
 	XLyra        string              `json:"xlyra"`
-	Kind         string              `json:"kind"`
+	Kind         string              `json:"kind,omitempty"`
+	Exports      []string            `json:"exports,omitempty"`
 	Description  string              `json:"description"`
 	License      string              `json:"license"`
 	Icon         string              `json:"icon,omitempty"`
@@ -39,6 +41,12 @@ type Manifest struct {
 	Automation   AutomationSection   `json:"automation"`
 	SiteProvider SiteProviderSection `json:"siteProvider,omitzero"`
 	SHA256       map[string]string   `json:"sha256"`
+
+	// hasQuotaProbe and hasSite record that the JSON object contained the
+	// section, including {}. Kindless manifests use them to tell an empty
+	// section from a missing one.
+	hasQuotaProbe bool `json:"-"`
+	hasSite       bool `json:"-"`
 }
 
 // QuotaProbeSection is the quota_probe manifest block.
@@ -58,6 +66,28 @@ type SiteSection struct {
 	PricingPath string `json:"pricingPath,omitempty"`
 }
 
+// DeclaresSiteType reports whether the package declares a site type, either
+// as a site_provider kind or as a kindless manifest with a siteProvider section.
+func (m Manifest) DeclaresSiteType() bool {
+	if m.Kind == KindSiteProvider {
+		return true
+	}
+	return m.Kind == "" && strings.TrimSpace(m.SiteProvider.SiteType) != ""
+}
+
+// KindLabel is the kind to show and compare. A kindless site type is
+// site_provider; any other kindless package is KindHooks. KindHooks is not a
+// manifest kind: writing "kind": "hooks" is still unsupported.
+func (m Manifest) KindLabel() string {
+	if m.Kind != "" {
+		return m.Kind
+	}
+	if m.DeclaresSiteType() {
+		return KindSiteProvider
+	}
+	return KindHooks
+}
+
 // BaseURLSettings returns how the site address is prepared for the plugin.
 func (m Manifest) BaseURLSettings() (mode, defaultBase string) {
 	switch m.Kind {
@@ -66,6 +96,22 @@ func (m Manifest) BaseURLSettings() (mode, defaultBase string) {
 	case KindSiteProvider:
 		// No site section. An empty mode is as_is, the same default quota probes use.
 		return "as_is", m.SiteProvider.Protocol.OfficialBaseURL
+	case "":
+		if m.DeclaresSiteType() {
+			return "as_is", m.SiteProvider.Protocol.OfficialBaseURL
+		}
+		if m.hasQuotaProbe {
+			mode := m.QuotaProbe.BaseURLMode
+			if mode == "" {
+				mode = "as_is"
+			}
+			return mode, m.QuotaProbe.DefaultBaseURL
+		}
+		mode := m.Site.BaseURLMode
+		if mode == "" {
+			mode = "as_is"
+		}
+		return mode, m.Site.DefaultBaseURL
 	default:
 		return m.Site.BaseURLMode, m.Site.DefaultBaseURL
 	}
@@ -328,8 +374,10 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 		}
 	}
-	if err := program.requireHooks(accountPoolRequiredExports(manifest.SiteProvider)); err != nil {
-		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+	if manifest.DeclaresSiteType() {
+		if err := program.requireHooks(accountPoolRequiredExports(manifest.SiteProvider)); err != nil {
+			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+		}
 	}
 	// Register any additional known hooks exported by the module so selftest and
 	// multi-hook dispatch can invoke them.
@@ -356,7 +404,23 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err := loaded.requireCallableHooks(allKnownOptionalHooks); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
-	if err := loaded.requireExports(accountPoolRequiredExports(manifest.SiteProvider)); err != nil {
+	if manifest.DeclaresSiteType() {
+		if err := loaded.requireExports(accountPoolRequiredExports(manifest.SiteProvider)); err != nil {
+			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+		}
+	}
+	if manifest.Kind == "" {
+		if err := rejectKindlessRestrictedHooks(program); err != nil {
+			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+		}
+		if !manifest.DeclaresSiteType() && len(program.knownHooks()) == 0 {
+			return nil, fmt.Errorf("%s: plugin exports no known hook", manifest.ID)
+		}
+	}
+	if err := exportsMatchManifest(manifest, program); err != nil {
+		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
+	}
+	if err := aliasHookNames(program); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
 	meta, err := loaded.exportMeta()
@@ -408,6 +472,11 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 		plugin.hotPool = hotPool
 	}
 	return plugin, nil
+}
+
+// KnownHookNames lists every hook a module may export, in a stable order.
+func KnownHookNames() []string {
+	return append([]string(nil), allKnownOptionalHooks...)
 }
 
 var allKnownOptionalHooks = []string{
@@ -550,8 +619,8 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 	if err := validateSettingSpecs(manifest.Settings); err != nil {
 		return err
 	}
-	if manifest.Kind != KindSiteProvider && siteProviderRequestPresent(manifest.SiteProvider.Request) {
-		return fmt.Errorf("request is not allowed for %s", manifest.Kind)
+	if !manifest.DeclaresSiteType() && siteProviderRequestPresent(manifest.SiteProvider.Request) {
+		return fmt.Errorf("request is not allowed for %s", manifest.KindLabel())
 	}
 	switch manifest.Kind {
 	case KindQuotaProbe:
@@ -603,8 +672,144 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 		if err := validateSiteProvider(manifest, files); err != nil {
 			return err
 		}
+	case "":
+		if err := validateKindlessManifest(manifest, files); err != nil {
+			return err
+		}
 	default:
 		return unsupportedKindError(manifest.Kind)
+	}
+	return nil
+}
+
+// validateKindlessManifest checks a manifest that omits kind. protocol and
+// automation still need a kind in this stage.
+func validateKindlessManifest(manifest Manifest, files map[string][]byte) error {
+	if manifest.Protocol != (ProtocolSection{}) {
+		return fmt.Errorf("protocol requires \"kind\": \"protocol\"")
+	}
+	if automationSectionPresent(manifest) {
+		return fmt.Errorf("automation requires \"kind\": \"automation\"")
+	}
+	if manifest.hasQuotaProbe {
+		mode := manifest.QuotaProbe.BaseURLMode
+		if mode == "" {
+			mode = "as_is"
+		}
+		if err := validateBaseURLMode(mode); err != nil {
+			return fmt.Errorf("quotaProbe.%w", err)
+		}
+		if manifest.QuotaProbe.Replaces != "" && !strings.HasPrefix(manifest.ID, "xlyra.") {
+			return fmt.Errorf("only xlyra plugins can set quotaProbe.replaces")
+		}
+	}
+	if manifest.hasSite {
+		mode := manifest.Site.BaseURLMode
+		if mode == "" {
+			mode = "as_is"
+		}
+		if err := validateBaseURLMode(mode); err != nil {
+			return fmt.Errorf("site.%w", err)
+		}
+		if manifest.Site.PricingPath != "" {
+			if err := validatePluginPath(manifest.Site.PricingPath); err != nil {
+				return fmt.Errorf("site.pricingPath: %w", err)
+			}
+		}
+	}
+	if manifest.DeclaresSiteType() {
+		if err := validateSiteProvider(manifest, files); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func automationSectionPresent(manifest Manifest) bool {
+	form := manifest.Automation.Form
+	return len(manifest.Automation.Subscribes) > 0 || len(manifest.Automation.Permissions) > 0 || len(manifest.Automation.Inputs) > 0 ||
+		manifest.Automation.Schedule != (AutomationSchedule{}) ||
+		len(form.Title) > 0 || len(form.Description) > 0 || len(form.AddLabel) > 0 || len(form.EmptyText) > 0
+}
+
+// kindlessRestrictedHooks still belong to a kind in this stage.
+var kindlessRestrictedHooks = []string{"decodeRequest", "buildRequest", "parseResponse", "handle", "onEvent"}
+
+func rejectKindlessRestrictedHooks(program *program) error {
+	for _, name := range kindlessRestrictedHooks {
+		if _, ok := program.hooks[name]; ok {
+			switch name {
+			case "decodeRequest", "buildRequest", "parseResponse":
+				return fmt.Errorf("export %s requires \"kind\": \"protocol\"", name)
+			default:
+				return fmt.Errorf("export %s requires \"kind\": \"automation\"", name)
+			}
+		}
+	}
+	return nil
+}
+
+// aliasHookNames registers the other name of a pair when the module exported
+// only one of them, so callers of either name hit the same function.
+func aliasHookNames(program *program) error {
+	pairs := [][2]string{{"classify", "classifyError"}, {"handle", "onEvent"}}
+	for _, pair := range pairs {
+		left, right := pair[0], pair[1]
+		_, hasLeft := program.hooks[left]
+		_, hasRight := program.hooks[right]
+		if hasLeft == hasRight {
+			continue
+		}
+		source, target := left, right
+		if hasRight {
+			source, target = right, left
+		}
+		hook, err := program.mod.Hook(source)
+		if err != nil {
+			return fmt.Errorf("%s hook: %w", source, err)
+		}
+		program.hooks[target] = hook
+	}
+	return nil
+}
+
+// ExportedHooks returns the known hooks a module exports, sorted. Aliases are
+// not included. The CLI writes them into the built manifest.
+func ExportedHooks(source string) ([]string, error) {
+	program, err := compileProgram("plugin.js", source)
+	if err != nil {
+		return nil, err
+	}
+	if err := program.addOptionalHooks(allKnownOptionalHooks); err != nil {
+		return nil, err
+	}
+	return program.knownHooks(), nil
+}
+
+// knownHooks lists the known hooks the module itself exported, before aliases.
+func (p *program) knownHooks() []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range allKnownOptionalHooks {
+		if _, ok := p.hooks[name]; ok {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func exportsMatchManifest(manifest Manifest, program *program) error {
+	if len(manifest.Exports) == 0 {
+		return nil
+	}
+	got := program.knownHooks()
+	want := append([]string(nil), manifest.Exports...)
+	sort.Strings(want)
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		return fmt.Errorf("manifest exports do not match the module")
 	}
 	return nil
 }
@@ -613,7 +818,12 @@ func metaMatches(manifest Manifest, meta map[string]any) error {
 	if got, _ := meta["id"].(string); got != manifest.ID {
 		return fmt.Errorf("meta.id %q does not match manifest", got)
 	}
-	if got, _ := meta["kind"].(string); got != manifest.Kind {
+	got, hasKind := meta["kind"].(string)
+	if manifest.Kind == "" {
+		if hasKind && got != "" {
+			return fmt.Errorf("meta.kind %q does not match manifest", got)
+		}
+	} else if got != manifest.Kind {
 		return fmt.Errorf("meta.kind %q does not match manifest", got)
 	}
 	if !metaVersion(meta["apiVersion"], int64(manifest.APIVersion)) {
@@ -781,5 +991,11 @@ func ParseManifest(raw []byte) (Manifest, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return Manifest{}, err
 	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
+		return Manifest{}, err
+	}
+	_, manifest.hasQuotaProbe = present["quotaProbe"]
+	_, manifest.hasSite = present["site"]
 	return manifest, nil
 }

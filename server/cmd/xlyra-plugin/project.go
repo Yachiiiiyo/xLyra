@@ -48,6 +48,13 @@ func buildProject(dir string) (*builtProject, error) {
 	if err != nil {
 		return nil, err
 	}
+	exports, err := jsplugin.ExportedHooks(string(source))
+	if err != nil {
+		return nil, err
+	}
+	if len(exports) > 0 {
+		manifest["exports"] = exports
+	}
 	manifest["sha256"] = map[string]string{"plugin.js": jsplugin.HashSource(string(source))}
 	manifestOut, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

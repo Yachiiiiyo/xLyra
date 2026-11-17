@@ -22,7 +22,7 @@
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `id` | 是 | 3–64 位，只能含小写字母、数字、`.`、`-`，首尾必须是字母或数字。**不能以 `xlyra.` 开头**（保留给内置插件），不能是 `builtins`。上架市场的插件必须写成 `<命名空间>.<名字>`，命名空间是你在 xLyra Cloud 申请批准的那个，见[发布](./publishing.md#上架市场的前置条件一次性) |
-| `kind` | 是 | 十种之一：`quota_probe`、`protocol`、`model_list`、`credential_check`、`site_detect`、`error_classifier`、`model_metadata`、`pricing_parse`、`automation`、`site_provider`，详见[选择类型](./kinds.md)。不支持自定义类型 |
+| `kind` | 旧清单必填 | 十种之一：`quota_probe`、`protocol`、`model_list`、`credential_check`、`site_detect`、`error_classifier`、`model_metadata`、`pricing_parse`、`automation`、`site_provider`，详见[选择类型](./kinds.md)。不支持自定义类型 |
 | `version` | 是 | 语义化版本，如 `0.1.0`。同一个 id 的同一个版本号不能用不同内容重复上传 |
 | `apiVersion` | 是 | 钩子契约版本，目前只能是 `1` |
 | `hostApi` | 是 | 你用到的宿主 API 最低版本，目前是 `1`。高于当前 xLyra 支持的版本会被拒绝 |
@@ -31,6 +31,17 @@
 | `xlyra` | 否 | 兼容的 xLyra 版本。只支持 `>=x.y.z`，可用空格写多个条件。当前 xLyra 版本低于要求时，插件会被拒绝上传或加载（本地开发版本不检查） |
 | `icon` | 否 | 包内 PNG 的相对路径，可选。规则见[图标](#图标) |
 | `sha256` | 自动 | `{"plugin.js": "<hex>"}`，必须与包内 `plugin.js` 一致，否则拒绝 |
+
+## 省略 kind
+
+新插件可以不写 `kind`。导出哪些已知钩子，就接入哪些位置，例如同时导出 `probe` 和 `classifyError`。`xlyra-plugin build` 会把实际导出的钩子名写进 `exports`。
+
+- `classify` 与 `classifyError`、`handle` 与 `onEvent` 互为别名：只导出其中一个时，另一个名字也能被调用。
+- `export const meta` 的 `kind` 只在清单写了 `kind` 时才要一致；无 kind 时 meta 里不能再写 kind。
+- 清单写了 `exports` 时，必须和模块实际导出的已知钩子一致（别名展开之前）。
+- `protocol` 与 `automation` 这一阶段仍必须写 `kind`，无 kind 时出现这两段或导出 `decodeRequest`、`buildRequest`、`parseResponse`、`handle`、`onEvent` 会被拒绝。
+- 声明站点类型仍用 `siteProvider` 段，不写 kind 也可以；`site` 段仍只表示地址整理（`baseURLMode`、`pricingPath`）。
+- 清单 `permissions` 非空时，启用必须一次授予全部权限（含 automation 权限）。声明了 `secret.use`，或声明了站点类型，必须有受信签名或市场证明，`confirmUntrusted` 不能跳过。
 
 ## quota_probe 部分
 

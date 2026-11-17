@@ -307,7 +307,7 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 		return err
 	}
 	marketplace := trust == TrustTrusted || trust == TrustMarketplace
-	if pkg.Manifest.Kind == KindSiteProvider {
+	if pkg.Manifest.DeclaresSiteType() || contains(pkg.Manifest.Permissions, "secret.use") {
 		if !marketplace {
 			return &SiteProviderUntrustedError{Trust: trust}
 		}
@@ -318,7 +318,7 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 		return &KindNotConnectedError{Kind: pkg.Manifest.Kind}
 	}
 	var granted []string
-	if pkg.Manifest.Kind == KindSiteProvider {
+	if pkg.Manifest.DeclaresSiteType() {
 		if !sameStringSet(opts.ConfirmedHosts, pkg.Manifest.SiteProvider.Hosts) {
 			return &HostsConfirmationRequiredError{Hosts: append([]string(nil), pkg.Manifest.SiteProvider.Hosts...)}
 		}
@@ -330,17 +330,18 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 			return err
 		}
 	}
-	if pkg.Manifest.Kind == KindAutomation {
+	required := requiredGrantPermissions(pkg.Manifest)
+	if len(required) > 0 {
 		var missing []string
-		for _, permission := range pkg.Manifest.Automation.Permissions {
+		for _, permission := range required {
 			if contains(opts.GrantPermissions, permission) {
-				granted = append(granted, permission)
+				granted = appendUnique(granted, permission)
 			} else {
 				missing = append(missing, permission)
 			}
 		}
 		if len(missing) > 0 {
-			return &PermissionsRequiredError{Required: pkg.Manifest.Automation.Permissions}
+			return &PermissionsRequiredError{Required: required}
 		}
 	}
 	plugin, err := CompilePackage(pkg)
@@ -417,10 +418,10 @@ func (m *Manager) DeletePlugin(ctx context.Context, pluginID string) error {
 	return m.publishCatalog(ctx)
 }
 
-// CheckSiteBinding checks that an enabled plugin version may be bound to a
-// site, and returns its kind. Which plugin serves which site is kept in the
-// site's gateway config, which routing and the site pages already read, so this
-// only validates; there is no second copy to keep in step.
+// CheckSiteBinding checks that an enabled plugin version may be mounted on a
+// site, and returns its kind label. The version must be enabled, must not
+// declare a site type, and its exported hooks must be site scope. Which plugin
+// serves which site is kept in the site's gateway config, so this only validates.
 func (m *Manager) CheckSiteBinding(ctx context.Context, pluginID, version string) (string, error) {
 	row, err := m.repo.GetVersion(ctx, pluginID, version)
 	if err != nil {
@@ -433,14 +434,36 @@ func (m *Manager) CheckSiteBinding(ctx context.Context, pluginID, version string
 	if err != nil {
 		return "", err
 	}
-	kind := pkg.Manifest.Kind
-	if kind == KindSiteProvider {
-		return "", fmt.Errorf("kind %q does not support per-site binding; it takes effect automatically for its site type", kind)
+	if pkg.Manifest.DeclaresSiteType() {
+		return "", fmt.Errorf("kind %q does not support per-site binding; it takes effect automatically for its site type", pkg.Manifest.KindLabel())
 	}
-	if !SiteBound(kind) {
-		return "", fmt.Errorf("kind %q is not bound to a site", kind)
+	exports := bindingExports(m, pluginID, pkg.Source)
+	if ScopeOfManifest(pkg.Manifest, exports) != ScopeSite {
+		return "", fmt.Errorf("kind %q is not bound to a site", pkg.Manifest.KindLabel())
 	}
-	return kind, nil
+	return pkg.Manifest.KindLabel(), nil
+}
+
+// bindingExports prefers the hooks the enabled plugin actually registered, and
+// falls back to compiling the package source when it is not in the catalog yet.
+// Aliases are included, matching the hooks a call can hit.
+func bindingExports(m *Manager, pluginID, source string) []string {
+	if m != nil && m.catalog != nil {
+		if plugin, ok := m.catalog.Registry().ByPluginID(pluginID); ok && plugin != nil {
+			var hooks []string
+			for _, name := range allKnownOptionalHooks {
+				if plugin.HasHook(name) {
+					hooks = append(hooks, name)
+				}
+			}
+			return hooks
+		}
+	}
+	exports, err := ExportedHooks(source)
+	if err != nil {
+		return nil
+	}
+	return exports
 }
 
 func (m *Manager) ensureSiteProviderUnused(ctx context.Context, pluginID string) error {
@@ -532,7 +555,7 @@ func manifestSiteProviderType(raw store.JSON) (string, bool, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return "", false, fmt.Errorf("read plugin manifest: %w", err)
 	}
-	if manifest.Kind != KindSiteProvider {
+	if !manifest.DeclaresSiteType() {
 		return "", false, nil
 	}
 	siteType := pluginSiteTypeKey(manifest.SiteProvider.SiteType)
@@ -544,6 +567,26 @@ func manifestSiteProviderType(raw store.JSON) (string, bool, error) {
 
 func pluginSiteTypeKey(siteType string) string {
 	return strings.ToLower(strings.TrimSpace(siteType))
+}
+
+// requiredGrantPermissions is the automation permissions plus the manifest
+// permissions, in declaration order, without duplicates.
+func requiredGrantPermissions(manifest Manifest) []string {
+	var out []string
+	if manifest.Kind == KindAutomation {
+		out = appendUnique(out, manifest.Automation.Permissions...)
+	}
+	out = appendUnique(out, manifest.Permissions...)
+	return out
+}
+
+func appendUnique(out []string, items ...string) []string {
+	for _, item := range items {
+		if !contains(out, item) {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func sameStringSet(a, b []string) bool {

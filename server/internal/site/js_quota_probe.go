@@ -42,7 +42,11 @@ func (s *Service) quotaProbePlugin(probeType, siteType string) (*jsplugin.Plugin
 		if registry == nil {
 			return nil, false
 		}
-		return registry.ByPluginID(strings.TrimPrefix(probeType, QuotaProbePluginPrefix))
+		plugin, ok := registry.ByPluginID(strings.TrimPrefix(probeType, QuotaProbePluginPrefix))
+		if !ok || plugin == nil || !plugin.HasHook("probe") {
+			return nil, false
+		}
+		return plugin, true
 	}
 	if strings.Contains(probeType, "/") {
 		return s.siteTypeHookPlugin(siteType, "probe")
@@ -126,7 +130,7 @@ func probeQuotaJS(ctx context.Context, client *http.Client, plugin *jsplugin.Plu
 	result := QuotaProbeResult{Status: "error", FetchedAt: time.Now().UTC()}
 	defer func() {
 		if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
-			breaker.RecordProbeResult(plugin, result.Status == "ok")
+			breaker.RecordProbeResult(plugin, "probe", result.Status == "ok")
 		}
 	}()
 	canonical, err := canonicalQuotaBase(plugin, baseURL)

@@ -340,8 +340,10 @@ func (s *Service) runSiteHealthCheck(ctx context.Context, item store.Site) siteH
 		return check
 	}
 
-	if plugin, ok := s.boundSitePlugin(item, jsplugin.KindCredentialCheck); ok {
-		return s.runPluginHealthCheck(ctx, item, pluginCredentialValidator{plugin: plugin}, start, check)
+	if plugin, ok := s.siteHookPlugin(item, "check"); ok {
+		return s.runPluginHealthCheck(ctx, item, pluginCredentialValidator{
+			plugin: plugin, hook: "check", resultKind: jsplugin.KindCredentialCheck,
+		}, start, check)
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "check"); ok {
 		return s.runPluginHealthCheck(ctx, item, pluginCredentialValidator{

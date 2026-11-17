@@ -106,7 +106,7 @@ func restoreSiteProviders(siteSvc *site.Service, logger *slog.Logger) {
 func collectSiteProviders(registry *jsplugin.Registry, logger *slog.Logger) (map[string]json.RawMessage, []adapter.Module, []site.PluginSiteType, map[string]site.PluginAccountRuntime) {
 	var plugins []*jsplugin.Plugin
 	if registry != nil {
-		plugins = registry.ByKind(jsplugin.KindSiteProvider)
+		plugins = registry.SiteTypePlugins()
 	}
 	specs := map[string]json.RawMessage{}
 	var modules []adapter.Module

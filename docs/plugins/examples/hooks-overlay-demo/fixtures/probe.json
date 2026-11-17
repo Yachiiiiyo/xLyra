@@ -1,0 +1,23 @@
+{
+  "name": "probe balance",
+  "hook": "probe",
+  "ctx": {
+    "siteType": "openai",
+    "baseURL": "https://api.example.com",
+    "credentialType": "api_key",
+    "now": 1791331200000
+  },
+  "storage": { "probeCount": 1 },
+  "responses": [
+    { "match": { "method": "GET", "path": "/v1/quota" }, "status": 200, "json": { "remaining": 40 } }
+  ],
+  "expect": {
+    "requests": [{ "method": "GET", "path": "/v1/quota" }],
+    "result": {
+      "kind": "balance",
+      "plan": "api_key",
+      "entries": [{ "label": "balance", "unit": "usd", "remaining": 40, "limit": 100, "used": 60 }]
+    },
+    "storage": { "probeCount": 2 }
+  }
+}

@@ -118,7 +118,8 @@ func TypeDeclarations() (string, error) {
 		quoted[i] = fmt.Sprintf("%q", info.Name)
 	}
 	fmt.Fprintf(&out, "export type PluginKind = %s;\n\n", strings.Join(quoted, " | "))
-	out.WriteString("export interface PluginMeta {\n  apiVersion: number;\n  id: string;\n  kind: PluginKind;\n}\n\n")
+	out.WriteString("export interface PluginManifest {\n  apiVersion: number;\n  hostApi: number;\n  id: string;\n  name: string;\n  version: string;\n  kind?: PluginKind;\n  exports?: string[];\n}\n\n")
+	out.WriteString("export interface PluginMeta {\n  apiVersion: number;\n  id: string;\n  kind?: PluginKind;\n}\n\n")
 	out.WriteString(strings.TrimLeft(tsStatic, "\n"))
 	if !strings.HasSuffix(out.String(), "\n") {
 		out.WriteByte('\n')

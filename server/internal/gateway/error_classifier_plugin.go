@@ -28,10 +28,10 @@ const (
 // classifier already read from the body. It can pick a class and nothing else:
 // cooldown length, retry timing and routing are still computed here from the
 // class. A verdict of "unknown", an unrecognized class, a missing plugin or
-// any failure leaves the default classification untouched. A bound
-// error_classifier wins over the site type hook.
+// any failure leaves the default classification untouched. A mounted plugin
+// that exports classify wins over the site type hook, including on a built-in site.
 func applyErrorClassifierPlugin(candidate routeengine.Candidate, statusCode int, failure upstream.Failure) upstream.Failure {
-	plugin, pluginID := classifyPlugin(candidate)
+	plugin, pluginID, hook := classifyPlugin(candidate)
 	if plugin == nil {
 		return failure
 	}
@@ -44,22 +44,10 @@ func applyErrorClassifierPlugin(candidate routeengine.Candidate, statusCode int,
 		Type:    failure.Type,
 		Message: clipMessage(failure.Message, errorClassifierMessageLimit),
 	}
-	var (
-		verdict jsplugin.ErrorClassifyResult
-		err     error
-	)
 	callCtx := withCandidatePluginContext(ctx, candidate, plugin)
-	if plugin.Manifest.Kind == jsplugin.KindSiteProvider {
-		verdict, err = plugin.CallErrorClassifyHook(callCtx, "classify", classifyCtx, input)
-	} else {
-		verdict, err = plugin.CallErrorClassify(callCtx, classifyCtx, input)
-	}
+	verdict, err := plugin.CallErrorClassifyHook(callCtx, hook, classifyCtx, input)
 	if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
-		if plugin.Manifest.Kind == jsplugin.KindSiteProvider {
-			breaker.RecordProbeResult(plugin, err == nil)
-		} else {
-			breaker.RecordProtocolCall(plugin, err != nil, isInterruption(err))
-		}
+		breaker.RecordProtocolCall(plugin, hook, err != nil, isInterruption(err))
 	}
 	if err != nil {
 		slog.Default().Warn("error_classifier plugin failed", "plugin_id", pluginID, "site_id", candidate.Site.ID, "error", err)
@@ -75,25 +63,31 @@ func applyErrorClassifierPlugin(candidate routeengine.Candidate, statusCode int,
 	}
 }
 
-// classifyPlugin resolves the classifier for one candidate. A bound
-// error_classifier wins. Otherwise a plugin site type's classify hook is used.
-// Built-in site types (no "/") are not looked up.
-func classifyPlugin(candidate routeengine.Candidate) (*jsplugin.Plugin, string) {
-	if pluginID := candidate.Site.ErrorClassifierPlugin; pluginID != "" {
-		if registry := jsplugin.DefaultCatalog().Registry(); registry != nil {
-			if plugin, ok := registry.ByPluginID(pluginID); ok && plugin.Manifest.Kind == jsplugin.KindErrorClassifier {
-				return plugin, pluginID
+// classifyPlugin resolves the classifier for one candidate. The first mounted
+// plugin that exports classify and does not declare a site type wins, including
+// on a built-in site. Otherwise a plugin site type's classify hook is used.
+// Built-in site types (no "/") have no base hook. The third result is the hook
+// name actually called.
+func classifyPlugin(candidate routeengine.Candidate) (*jsplugin.Plugin, string, string) {
+	if registry := jsplugin.DefaultCatalog().Registry(); registry != nil {
+		for _, pluginID := range candidate.Site.PluginIDs {
+			plugin, ok := registry.ByPluginID(pluginID)
+			if !ok || plugin == nil || plugin.Manifest.DeclaresSiteType() {
+				continue
+			}
+			if plugin.HasHook("classifyError") || plugin.HasHook("classify") {
+				return plugin, pluginID, "classifyError"
 			}
 		}
 	}
 	if !strings.Contains(candidate.Site.SiteType, "/") {
-		return nil, ""
+		return nil, "", ""
 	}
 	plugin, ok := sitepkg.ProviderHookPlugin(jsplugin.DefaultCatalog().Registry(), candidate.Site.SiteType, "classify")
 	if !ok {
-		return nil, ""
+		return nil, "", ""
 	}
-	return plugin, plugin.Manifest.ID
+	return plugin, plugin.Manifest.ID, "classify"
 }
 
 func isInterruption(err error) bool {

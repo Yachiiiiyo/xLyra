@@ -28,7 +28,8 @@ var idSanitize = regexp.MustCompile(`[^a-z0-9.-]+`)
 
 func runInit(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	kind := fs.String("kind", jsplugin.KindQuotaProbe, "plugin kind; run `xlyra-plugin kinds` to list them")
+	kind := fs.String("kind", "", "plugin kind, an alias of --template; run `xlyra-plugin kinds` to list them")
+	templateName := fs.String("template", "", "starter template; same names as --kind")
 	id := fs.String("id", "", "plugin id (default: derived from the directory name)")
 	name := fs.String("name", "", "display name (default: the id)")
 	_ = fs.Parse(args)
@@ -36,14 +37,18 @@ func runInit(args []string) {
 		fatal(fmt.Errorf("target directory is required"))
 	}
 	dir := fs.Arg(0)
+	chosen, err := chooseTemplate(*templateName, *kind)
+	if err != nil {
+		fatal(err)
+	}
 	pluginID := *id
 	if pluginID == "" {
 		pluginID = strings.Trim(idSanitize.ReplaceAllString(strings.ToLower(filepath.Base(mustAbs(dir))), "-"), "-.")
 	}
-	if err := scaffold(dir, *kind, pluginID, *name); err != nil {
+	if err := scaffold(dir, chosen, pluginID, *name); err != nil {
 		fatal(err)
 	}
-	fmt.Fprintf(os.Stdout, "Created %s plugin %q in %s\nNext: cd %s && xlyra-plugin test\n可选：在 manifest 里加 \"icon\": \"assets/icon.png\"，规范见文档\n", *kind, pluginID, dir, dir)
+	fmt.Fprintf(os.Stdout, "Created %s plugin %q in %s\nNext: cd %s && xlyra-plugin test\n可选：在 manifest 里加 \"icon\": \"assets/icon.png\"，规范见文档\n", chosen, pluginID, dir, dir)
 }
 
 // scaffold writes a new plugin project into dir, which must be empty or missing.
@@ -122,6 +127,20 @@ func renderTemplate(source string, data initData) ([]byte, error) {
 		return nil, err
 	}
 	return []byte(out.String()), nil
+}
+
+// chooseTemplate resolves --template and its --kind alias. Both empty means quota_probe.
+func chooseTemplate(templateName, kind string) (string, error) {
+	if templateName != "" && kind != "" && templateName != kind {
+		return "", fmt.Errorf("--template %q and --kind %q disagree", templateName, kind)
+	}
+	if templateName != "" {
+		return templateName, nil
+	}
+	if kind != "" {
+		return kind, nil
+	}
+	return jsplugin.KindQuotaProbe, nil
 }
 
 func validKind(kind string) bool {

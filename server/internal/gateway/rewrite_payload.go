@@ -40,7 +40,7 @@ func applyProviderRewrite(ctx context.Context, candidate routeengine.Candidate, 
 		err = immutableRewriteFields(rewritten, hasModel, modelValue, hasStream, streamValue)
 	}
 	if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
-		breaker.RecordProbeResult(plugin, err == nil)
+		breaker.RecordProtocolCall(plugin, "rewritePayload", err != nil, isInterruption(err))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("plugin %s: %s", plugin.Manifest.ID, err.Error())

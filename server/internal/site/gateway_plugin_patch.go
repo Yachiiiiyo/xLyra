@@ -10,24 +10,47 @@ import (
 	"xlyra/server/internal/store"
 )
 
-// PatchGatewayPlugin binds a plugin to a site for one per-site kind. An empty
-// pluginID removes the binding. Only the plugins entry of the gateway config
-// changes.
-func (s *Service) PatchGatewayPlugin(ctx context.Context, siteID uuid.UUID, kind, pluginID string) (store.Site, error) {
+// AttachGatewayPlugin appends pluginID to the site's mounted plugin list when
+// it is not already there. Writing the list clears the legacy plugins map and
+// a plugin: quota probe; a built-in quota probe is left as it is.
+func (s *Service) AttachGatewayPlugin(ctx context.Context, siteID uuid.UUID, pluginID string) (store.Site, error) {
+	pluginID = strings.TrimSpace(pluginID)
+	if pluginID == "" || strings.ContainsAny(pluginID, " \t\r\n") {
+		return store.Site{}, fmt.Errorf("plugin id is required")
+	}
+	return s.patchGatewayPluginIDs(ctx, siteID, func(ids []string) []string {
+		for _, id := range ids {
+			if id == pluginID {
+				return ids
+			}
+		}
+		return append(ids, pluginID)
+	})
+}
+
+// DetachGatewayPlugin removes pluginID from the site's mounted plugin list.
+// The list is written back even when that leaves it empty, so the legacy
+// fields are cleared too.
+func (s *Service) DetachGatewayPlugin(ctx context.Context, siteID uuid.UUID, pluginID string) (store.Site, error) {
+	pluginID = strings.TrimSpace(pluginID)
+	return s.patchGatewayPluginIDs(ctx, siteID, func(ids []string) []string {
+		out := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if id != pluginID {
+				out = append(out, id)
+			}
+		}
+		return out
+	})
+}
+
+func (s *Service) patchGatewayPluginIDs(ctx context.Context, siteID uuid.UUID, edit func([]string) []string) (store.Site, error) {
 	if s == nil || s.db == nil {
 		return store.Site{}, fmt.Errorf("site service is not available")
 	}
 	if siteID == uuid.Nil {
 		return store.Site{}, fmt.Errorf("site id is required")
 	}
-	known := false
-	for _, candidate := range SitePluginKinds {
-		known = known || candidate == kind
-	}
-	if !known {
-		return store.Site{}, fmt.Errorf("kind %q is not bound to a site", kind)
-	}
-	pluginID = strings.TrimSpace(pluginID)
 	var updated store.Site
 	err := s.db.WithinTx(ctx, func(tx store.Tx) error {
 		siteRepo := store.NewSiteRepository(tx)
@@ -35,7 +58,11 @@ func (s *Service) PatchGatewayPlugin(ctx context.Context, siteID uuid.UUID, kind
 		if err != nil {
 			return err
 		}
-		meta, err := MergeSiteGatewayConfig(existing.Meta, &GatewayConfig{Plugins: map[string]string{kind: pluginID}})
+		ids := edit(append([]string(nil), SitePluginIDs(GatewayConfigFromSiteMeta(existing.Meta))...))
+		if ids == nil {
+			ids = []string{}
+		}
+		meta, err := MergeSiteGatewayConfig(existing.Meta, &GatewayConfig{PluginIDs: ids})
 		if err != nil {
 			return err
 		}

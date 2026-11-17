@@ -416,10 +416,20 @@ export interface AccountSummaryResult {
 
 export type PluginKind = "quota_probe" | "protocol" | "model_list" | "credential_check" | "site_detect" | "error_classifier" | "model_metadata" | "pricing_parse" | "automation" | "site_provider";
 
+export interface PluginManifest {
+  apiVersion: number;
+  hostApi: number;
+  id: string;
+  name: string;
+  version: string;
+  kind?: PluginKind;
+  exports?: string[];
+}
+
 export interface PluginMeta {
   apiVersion: number;
   id: string;
-  kind: PluginKind;
+  kind?: PluginKind;
 }
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };

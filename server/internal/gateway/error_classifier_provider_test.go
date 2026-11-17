@@ -80,7 +80,7 @@ func providerCandidate(siteType, classifierID string) routeengine.Candidate {
 		Site: routeengine.CandidateSite{
 			ID:                    uuid.New(),
 			SiteType:              siteType,
-			ErrorClassifierPlugin: classifierID,
+			PluginIDs: pluginIDs(classifierID),
 		},
 		Model: routeengine.CandidateModel{SiteModelID: uuid.New(), UpstreamName: "m"},
 	}
