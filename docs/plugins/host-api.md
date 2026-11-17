@@ -84,11 +84,24 @@
 
 ## settings（`ctx.settings`）
 
-当清单声明了 `settings` 数组时，每个钩子的 `ctx.settings` 会注入合并后的只读配置值（合并优先级：`站点级覆盖 > 插件全局配置 > 清单 default`）。
+当清单声明了 `settings` 数组时，每个钩子的 `ctx.settings` 会注入合并后的只读配置值（合并优先级：`站点级覆盖 > 插件全局配置 > 清单 default`）。头模板里的 `{{setting.<key>}}` 用同一份值。
+
+## signRequest(ctx, req)
+
+任何插件都可以导出 `signRequest`。挂到站点上之后，按「站点类型底座 → 挂载顺序」依次调用，后一个看到前一个改过的请求。protocol 插件自己的代签不进这条链。
+
+`ctx` 在 `candidate`、`settings` 之外还有只读字段：`model`、`stream`、`protocol`、`now`（Unix 毫秒）、`sessionKey`（与 `{{session.key}}` 相同，取不到会话时为空串）、`modelMeta`（模型 meta）。只有清单声明了 `secret.use` 时才有 `credential`：API Key 站点是 `{ api_key }`，账号池是去掉 `cred.` 前缀后的字段表。这次调用里 `log.*` 会被丢弃，插件也不能发网络请求。
+
+`req` 是 `{ method, url, headers, body }`。返回两种形状之一：
+
+- 直接改写：`{ headers?, query?, body? }`，至少一项。`headers` 与 `query` 各最多 32 项，值不能含控制字符。`body` 替换整段正文（最大 1 MiB），且 JSON 里的 `model`、`stream` 必须与改写前相同。不需要 `secret.use`。
+- 代签：`{ stringToSign, algorithm, header, encoding?, prefix?, headers? }`。必须声明 `secret.use`，由宿主用当前凭据做 HMAC。
+
+钩子抛错、超时或返回不合法时，这次尝试记为 `upstream_sign_failed` 并中止（可换下一个凭据），不会带着缺头的请求发出去。
 
 ## utils 与 log
 
-- `utils.uuid()`：随机 UUID v4。
+- `utils.uuid()`：随机 UUID v4。头模板 `{{uuid}}` 每次渲染也生成一个新的。
 - `log.debug(msg, fields?)` / `log.info(...)` / `log.warn(...)`：每次调用最多保留 **50** 条，每条最多 **2048** 字节，超出会截断或丢弃。**不要把响应里的敏感内容写进日志。**
 
 ## 语言环境

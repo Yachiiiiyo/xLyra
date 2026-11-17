@@ -41,6 +41,7 @@
 - 清单写了 `exports` 时，必须和模块实际导出的已知钩子一致（别名展开之前）。
 - `protocol` 与 `automation` 这一阶段仍必须写 `kind`，无 kind 时出现这两段或导出 `decodeRequest`、`buildRequest`、`parseResponse`、`handle`、`onEvent` 会被拒绝。
 - 声明站点类型仍用 `siteProvider` 段，不写 kind 也可以；`site` 段仍只表示地址整理（`baseURLMode`、`pricingPath`）。
+- 顶层 `request` 与 `siteProvider.request` 结构相同，任何插件都可以写。叠加插件只用 `headers`（不能写 `stripDownstreamHeaders`、`upstreamStreamOnly`、`baseURLFrom`，也不能用 `{{cred.*}}`）。声明站点类型的插件二者只能写一处；只写顶层时，作为该站点类型的底座头模板。`{{region.*}}` 与 `stripDownstreamHeaders` 只允许声明站点类型的插件。
 - 清单 `permissions` 非空时，启用必须一次授予全部权限（含 automation 权限）。声明了 `secret.use`，或声明了站点类型，必须有受信签名或市场证明，`confirmUntrusted` 不能跳过。
 
 ## quota_probe 部分
@@ -150,7 +151,7 @@
 | `models.path` | 否 | 只用于 `api_key`。拉模型列表的路径，不写等于 `/v1/models`。写了就要符合 `protocol.path` 的路径规则。没有 `listModels` 钩子时，通用适配器用它。`account_pool` 写 `path` 会被拒绝 |
 | `models.auth` | 否 | 只用于 `api_key`。不写或 `bearer` 表示 Bearer；也可以是 `header:<Name>`，`Name` 是非空的 HTTP 头字段名。只用于通用适配器的列模型、验 Key 和健康检查，不决定网关转发的头。`account_pool` 写 `auth` 会被拒绝 |
 | `models.perAccount` | 否 | 只用于 `account_pool`。为 true 时必须导出 `listModels`，宿主按账号调用它并写入模型。不能和 `path`、`auth` 一起写。`api_key` 写了会被拒绝。省略 `models` 表示不做按账号同步。空对象 `{}` 会被拒绝 |
-| `request.headers` | 否 | 最多 16 项。值是模板字符串，或 `{ "value", "when" \| "unless" }`。`when` / `unless` 互斥，只能是 `cred.<已声明字段>`；条件不成立就省略该头。头名是 HTTP token，忽略大小写后不能重复。不能是 `Host`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Upgrade`、`TE`、`Trailer`、`Proxy-Authorization`、`Proxy-Connection`、`Cookie`、`Set-Cookie`、`Content-Type`、`Accept`，也不能是 `X-Forwarded-*`。`Authorization` 可以写。模板只允许 `{{cred.<field>}}`、`{{region.origin}}`、`{{region.referer}}` 和 `{{site.baseURL}}`，花括号内不能有空格。`region` 键必须在每个区域的 `attrs` 里。`api_key` 的 `<field>` 只有 `api_key`，且不能用 `region`。`account_pool` 的 `<field>` 是已声明的凭据字段名；网关运行时只填入非密钥字段、access token 字段和区域属性。字面量不能含 CR、LF 或其它控制字符。这里声明 `Authorization` 不会和 `models.auth` 冲突。规则见 [请求头模板](./site-provider.md#请求头模板) |
+| `request.headers` | 否 | 最多 16 项。值是模板字符串，或 `{ "value", "when" \| "unless" }`。`when` / `unless` 互斥，只能是 `cred.<已声明字段>`；条件不成立就省略该头。头名是 HTTP token，忽略大小写后不能重复。不能是 `Host`、`Content-Length`、`Transfer-Encoding`、`Connection`、`Upgrade`、`TE`、`Trailer`、`Proxy-Authorization`、`Proxy-Connection`、`Cookie`、`Set-Cookie`、`Content-Type`、`Accept`，也不能是 `X-Forwarded-*`。`Authorization` 可以写。模板允许 `{{cred.<field>}}`、`{{region.origin}}`、`{{region.referer}}`、`{{site.baseURL}}`，以及 `{{random.hex:<n>}}`（n 为 1–128）、`{{uuid}}`、`{{now.unix}}`、`{{now.unix_ms}}`、`{{now.iso}}`、`{{model.name}}`、`{{model.meta.<key>}}`、`{{setting.<key>}}`、`{{session.key}}`。`setting` 的键必须在清单 `settings` 里声明。花括号内不能有空格。`region` 键必须在每个区域的 `attrs` 里。`api_key` 的 `<field>` 只有 `api_key`，且不能用 `region`。`account_pool` 的 `<field>` 是已声明的凭据字段名；网关运行时只填入非密钥字段、access token 字段和区域属性。字面量不能含 CR、LF 或其它控制字符。这里声明 `Authorization` 不会和 `models.auth` 冲突。规则见 [请求头模板](./site-provider.md#请求头模板) |
 | `request.stripDownstreamHeaders` | 否 | 默认 `false`。为 `true` 时，转发前只保留模板声明的头，外加 `Content-Type` 和 `Accept` |
 | `request.upstreamStreamOnly` | 否 | 默认 false。为 true 时强制上游 `stream: true`；下游没要流且上游是 chat SSE 时聚合响应 |
 | `request.baseURLFrom` | 否 | 空，或 `region`。`region` 要求已声明 `regions`，用账号区域的 `baseURL` |

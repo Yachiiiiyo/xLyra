@@ -24,6 +24,7 @@ type ModelListEntry struct {
 	Name         string         `ts:"name,doc=Upstream model name, as clients must send it."`
 	DisplayName  string         `ts:"displayName,optional"`
 	Capabilities map[string]any `ts:"capabilities,optional,type=JsonObject" max:"64"`
+	Meta         map[string]any `ts:"meta,optional,type=JsonObject" max:"32"`
 }
 
 // ModelListResult is the final result of a model_list plugin.
@@ -102,6 +103,7 @@ type ModelMetadataEntry struct {
 	ID           string         `ts:"id,doc=Must be one of the input model names."`
 	Name         string         `ts:"name,optional,doc=Official display name."`
 	Capabilities map[string]any `ts:"capabilities,optional,type=JsonObject" max:"64"`
+	Meta         map[string]any `ts:"meta,optional,type=JsonObject" max:"32"`
 }
 
 // ModelMetadataResult is the result of a model_metadata plugin.

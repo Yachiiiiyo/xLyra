@@ -40,7 +40,10 @@ type Manifest struct {
 	Protocol     ProtocolSection     `json:"protocol"`
 	Automation   AutomationSection   `json:"automation"`
 	SiteProvider SiteProviderSection `json:"siteProvider,omitzero"`
-	SHA256       map[string]string   `json:"sha256"`
+	// Request is the top-level upstream header template. A site type uses it
+	// only when siteProvider.request is empty. Other plugins may set headers.
+	Request SiteProviderRequest `json:"request,omitempty"`
+	SHA256  map[string]string   `json:"sha256"`
 
 	// hasQuotaProbe and hasSite record that the JSON object contained the
 	// section, including {}. Kindless manifests use them to tell an empty
@@ -161,6 +164,7 @@ type callStorageCtxKey struct{}
 type callSecretBagCtxKey struct{}
 type callSiteSettingsCtxKey struct{}
 type callStorageScopeCtxKey struct{}
+type discardLogsCtxKey struct{}
 
 type storageScope struct {
 	scopeType string
@@ -191,6 +195,23 @@ func WithCallSecretBag(ctx context.Context, bag *SecretBag) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, callSecretBagCtxKey{}, bag)
+}
+
+// WithDiscardLogs drops log lines collected during a hook call. signRequest
+// uses it while a plain credential is visible to the plugin.
+func WithDiscardLogs(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, discardLogsCtxKey{}, true)
+}
+
+func discardLogsFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	discard, _ := ctx.Value(discardLogsCtxKey{}).(bool)
+	return discard
 }
 
 // WithSiteSettings attaches per-site setting overrides for a hook call.
@@ -622,6 +643,9 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 	if !manifest.DeclaresSiteType() && siteProviderRequestPresent(manifest.SiteProvider.Request) {
 		return fmt.Errorf("request is not allowed for %s", manifest.KindLabel())
 	}
+	if err := validateManifestRequest(manifest); err != nil {
+		return err
+	}
 	switch manifest.Kind {
 	case KindQuotaProbe:
 		if err := validateBaseURLMode(manifest.QuotaProbe.BaseURLMode); err != nil {
@@ -976,6 +1000,13 @@ func (p *Plugin) callHook(ctx context.Context, hookName string, timeout time.Dur
 	out, logs, dropped, discard, callErr := session.callWithEnv(ctx, timeout, hook, p.buildCallEnv(ctx), args)
 	targetPool.Release(session, discard || fatalRuntime(callErr))
 	duration := time.Since(started).Milliseconds()
+	if discardLogsFromContext(ctx) {
+		logs, dropped = nil, 0
+		if call, ok := callErr.(*CallError); ok {
+			call.Logs = nil
+			call.DroppedLogs = 0
+		}
+	}
 	if callErr != nil {
 		return nil, logs, dropped, annotate(p, callErr, hookName, step, duration)
 	}

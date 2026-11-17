@@ -16,7 +16,7 @@ export function listModels() {
     { name: " grok-4 ", displayName: " Grok 4 " },
     { name: "plain" },
     { name: "spaced", displayName: "   " },
-    { name: "vision", displayName: "Vision", capabilities: { vision: true } }
+    { name: "vision", displayName: "Vision", capabilities: { vision: true }, meta: { vendor: "acme" } }
   ] } };
 }
 `)
@@ -38,6 +38,10 @@ export function listModels() {
 	}
 	if models[3].UpstreamName != "vision" || models[3].Capabilities["vision"] != true {
 		t.Fatalf("capabilities = %+v", models[3])
+	}
+	meta, _ := models[3].Capabilities["plugin_meta"].(map[string]any)
+	if meta["vendor"] != "acme" {
+		t.Fatalf("plugin_meta = %#v", models[3].Capabilities["plugin_meta"])
 	}
 	for _, model := range models {
 		if model.UpstreamName == "" || model.DisplayName == "" || strings.Contains(model.UpstreamName, "ACCESS-list-9f3c") {

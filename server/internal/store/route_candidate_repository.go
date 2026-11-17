@@ -59,6 +59,8 @@ type RouteCandidateRow struct {
 	PricingQuotaType                   sql.NullInt64
 	PricingVariants                    JSON
 	SupportedEndpointTypes             []string
+	// SiteModelCapabilities is the site model's capabilities JSON.
+	SiteModelCapabilities JSON
 }
 
 type RouteCandidateRepository struct {
@@ -180,6 +182,7 @@ func (r RouteCandidateRepository) ListByCanonicalModel(ctx context.Context, cano
 			return nil, fmt.Errorf("resolve route candidate endpoint policy: %w", err)
 		}
 		row.SupportedEndpointTypes = endpointPolicy.SupportedEndpointTypes
+		row.SiteModelCapabilities = model.Capabilities
 		items = append(items, row)
 	}
 	sort.SliceStable(items, func(i, j int) bool {

@@ -51,11 +51,14 @@ type fixtureContext struct {
 	BindingID      string            `json:"bindingId,omitempty"`
 	// Inputs and State stand in for what the admin picked and the binding's
 	// saved state in an automation fixture.
-	Inputs   map[string]any `json:"inputs"`
-	State    map[string]any `json:"state"`
-	Model    string         `json:"model"`
-	Stream   bool           `json:"stream"`
-	Protocol string         `json:"protocol"`
+	Inputs     map[string]any    `json:"inputs"`
+	State      map[string]any    `json:"state"`
+	Model      string            `json:"model"`
+	Stream     bool              `json:"stream"`
+	Protocol   string            `json:"protocol"`
+	SessionKey string            `json:"sessionKey,omitempty"`
+	ModelMeta  map[string]any    `json:"modelMeta,omitempty"`
+	Credential map[string]string `json:"credential,omitempty"`
 }
 
 type FixtureResponse struct {

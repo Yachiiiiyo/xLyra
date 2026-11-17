@@ -89,6 +89,8 @@ type CandidateModel struct {
 	MatchConfidence        int
 	SupportedEndpointTypes []string
 	PricingVariants        store.JSON
+	// PluginMeta is site_models.capabilities.plugin_meta.
+	PluginMeta map[string]any
 }
 
 type CandidateHealth struct {
@@ -282,6 +284,7 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 				MatchConfidence:        row.MatchConfidence,
 				SupportedEndpointTypes: append([]string(nil), row.SupportedEndpointTypes...),
 				PricingVariants:        row.PricingVariants,
+				PluginMeta:             pluginMetaFromCapabilities(row.SiteModelCapabilities),
 			},
 			Health: CandidateHealth{
 				Status:              row.SiteHealthStatus,
@@ -376,6 +379,18 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 		CanonicalModel: canonicalModel,
 		Items:          candidates,
 	}, nil
+}
+
+func pluginMetaFromCapabilities(raw store.JSON) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var capabilities map[string]any
+	if json.Unmarshal(raw, &capabilities) != nil {
+		return nil
+	}
+	meta, _ := capabilities["plugin_meta"].(map[string]any)
+	return meta
 }
 
 func routeCandidateSupportsEndpoint(row store.RouteCandidateRow, endpointType string) bool {

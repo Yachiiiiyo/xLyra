@@ -6,7 +6,11 @@ import (
 )
 
 // EmitLogs writes plugin log lines collected during one hook call.
+// A context from WithDiscardLogs writes nothing, including the dropped count.
 func EmitLogs(ctx context.Context, plugin *Plugin, hook string, step int, logs []LogEntry, dropped int) {
+	if discardLogsFromContext(ctx) {
+		return
+	}
 	for _, entry := range logs {
 		level := slog.LevelInfo
 		switch entry.Level {

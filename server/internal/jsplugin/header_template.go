@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -83,12 +84,24 @@ type HeaderTemplatePiece struct {
 	Key     string
 }
 
+// HeaderTemplateOptions selects which placeholders a template may use.
+// A nil SettingKeys rejects every {{setting.<key>}}. AllowRegion is false for
+// plugins that do not declare a site type. AllowCred is false for a top-level
+// request template, which must not read credentials.
+type HeaderTemplateOptions struct {
+	CredFields    map[string]struct{}
+	RegionKeys    map[string]struct{}
+	SettingKeys   map[string]struct{}
+	AllowRegion   bool
+	AllowCred     bool
+	EnforceFields bool
+}
+
 // SplitHeaderTemplate splits template into literals and placeholders.
-// It checks syntax only: {{cred.<field>}}, {{region.<key>}}, and {{site.baseURL}},
-// with no spaces, nesting, or unclosed braces. Allow-lists are applied by
-// ValidateHeaderTemplate.
+// It checks syntax only. Allow-lists are applied by ValidateHeaderTemplate.
 func SplitHeaderTemplate(template string) ([]HeaderTemplatePiece, error) {
-	return splitHeaderTemplate(template, nil, nil, false)
+	_, pieces, err := splitHeaderTemplate(template, HeaderTemplateOptions{})
+	return pieces, err
 }
 
 // ValidateHeaderTemplate checks template syntax, {{cred.<field>}} against
@@ -96,7 +109,15 @@ func SplitHeaderTemplate(template string) ([]HeaderTemplatePiece, error) {
 // attributes declared on every region. A nil or empty set allows no cred
 // fields and no region keys. {{site.baseURL}} does not use either set.
 func ValidateHeaderTemplate(template string, allowed, regionKeys map[string]struct{}) error {
-	_, err := splitHeaderTemplate(template, allowed, regionKeys, true)
+	return ValidateHeaderTemplateOptions(template, HeaderTemplateOptions{
+		CredFields: allowed, RegionKeys: regionKeys, AllowRegion: true, AllowCred: true, EnforceFields: true,
+	})
+}
+
+// ValidateHeaderTemplateOptions checks template syntax against opts.
+func ValidateHeaderTemplateOptions(template string, opts HeaderTemplateOptions) error {
+	opts.EnforceFields = true
+	_, _, err := splitHeaderTemplate(template, opts)
 	return err
 }
 
@@ -151,7 +172,9 @@ func validateHeaderSpec(spec HeaderSpec, allowed, regionKeys map[string]struct{}
 			return fmt.Errorf("unknown field %q", field)
 		}
 	}
-	return ValidateHeaderTemplate(spec.Value, allowed, regionKeys)
+	return ValidateHeaderTemplateOptions(spec.Value, HeaderTemplateOptions{
+		CredFields: allowed, RegionKeys: regionKeys, AllowRegion: true, AllowCred: true,
+	})
 }
 
 func headerTemplateFields(model string) map[string]struct{} {
@@ -180,6 +203,102 @@ func siteProviderRequestPresent(section SiteProviderRequest) bool {
 	return len(section.Headers) > 0 || section.StripDownstreamHeaders || section.UpstreamStreamOnly || section.BaseURLFrom != ""
 }
 
+func manifestSettingKeys(specs []SettingSpec) map[string]struct{} {
+	keys := make(map[string]struct{}, len(specs))
+	for _, spec := range specs {
+		if spec.Key != "" {
+			keys[spec.Key] = struct{}{}
+		}
+	}
+	return keys
+}
+
+// validateManifestRequest checks the top-level request template and, for a
+// site type, that it is not combined with siteProvider.request.
+func validateManifestRequest(manifest Manifest) error {
+	top := manifest.Request
+	if manifest.DeclaresSiteType() {
+		if siteProviderRequestPresent(top) && siteProviderRequestPresent(manifest.SiteProvider.Request) {
+			return fmt.Errorf("request conflicts with siteProvider.request")
+		}
+		if !siteProviderRequestPresent(top) {
+			return nil
+		}
+		return validateRequestSection(top, "request", HeaderTemplateOptions{
+			CredFields:  siteProviderHeaderFields(manifest.SiteProvider),
+			RegionKeys:  regionTemplateKeys(manifest.SiteProvider.Regions),
+			SettingKeys: manifestSettingKeys(manifest.Settings),
+			AllowRegion: true,
+			AllowCred:   true,
+		})
+	}
+	if !siteProviderRequestPresent(top) {
+		return nil
+	}
+	if top.StripDownstreamHeaders || top.UpstreamStreamOnly || top.BaseURLFrom != "" {
+		return fmt.Errorf("request.stripDownstreamHeaders is not allowed without a site type")
+	}
+	return validateRequestSection(top, "request", HeaderTemplateOptions{
+		SettingKeys: manifestSettingKeys(manifest.Settings),
+	})
+}
+
+func validateRequestSection(section SiteProviderRequest, label string, opts HeaderTemplateOptions) error {
+	if len(section.Headers) > maxSiteProviderRequestHeaders {
+		return fmt.Errorf("%s.headers must list at most %d headers", label, maxSiteProviderRequestHeaders)
+	}
+	names := make([]string, 0, len(section.Headers))
+	for name := range section.Headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if !validHeaderToken(name) {
+			return fmt.Errorf("%s.headers: %q is not a valid HTTP token", label, name)
+		}
+		lower := strings.ToLower(name)
+		if _, ok := seen[lower]; ok {
+			return fmt.Errorf("%s.headers: duplicate header %q", label, name)
+		}
+		seen[lower] = struct{}{}
+		if forbiddenRequestHeader(lower) {
+			return fmt.Errorf("%s.headers: %q is not allowed", label, name)
+		}
+		spec := section.Headers[name]
+		if err := validateHeaderSpecOptions(spec, opts); err != nil {
+			return fmt.Errorf("%s.headers[%q]: %w", label, name, err)
+		}
+	}
+	return nil
+}
+
+func validateHeaderSpecOptions(spec HeaderSpec, opts HeaderTemplateOptions) error {
+	if spec.When != "" && spec.Unless != "" {
+		return errors.New("when and unless are mutually exclusive")
+	}
+	condition := spec.When
+	if condition == "" {
+		condition = spec.Unless
+	}
+	if condition != "" {
+		if spec.Value == "" {
+			return errors.New("conditional header value is empty")
+		}
+		field, ok := strings.CutPrefix(condition, "cred.")
+		if !ok || !validHeaderTemplateField(field) {
+			return fmt.Errorf("condition %q is invalid", condition)
+		}
+		if !opts.AllowCred {
+			return fmt.Errorf("condition %q is not allowed", condition)
+		}
+		if _, exists := opts.CredFields[field]; !exists {
+			return fmt.Errorf("unknown field %q", field)
+		}
+	}
+	return ValidateHeaderTemplateOptions(spec.Value, opts)
+}
+
 var forbiddenPluginRequestHeaders = map[string]struct{}{
 	"host":                {},
 	"content-length":      {},
@@ -203,8 +322,7 @@ func forbiddenRequestHeader(lowerName string) bool {
 	return strings.HasPrefix(lowerName, "x-forwarded-")
 }
 
-func splitHeaderTemplate(template string, allowed, regionKeys map[string]struct{}, enforceFields bool) ([]HeaderTemplatePiece, error) {
-	var pieces []HeaderTemplatePiece
+func splitHeaderTemplate(template string, opts HeaderTemplateOptions) (dynamic bool, pieces []HeaderTemplatePiece, err error) {
 	var literal strings.Builder
 	flush := func() {
 		if literal.Len() == 0 {
@@ -218,21 +336,24 @@ func splitHeaderTemplate(template string, allowed, regionKeys map[string]struct{
 			rest := template[i+2:]
 			end := strings.Index(rest, "}}")
 			if end < 0 {
-				return nil, errors.New("unclosed {{")
+				return false, nil, errors.New("unclosed {{")
 			}
 			body := rest[:end]
 			if strings.Contains(body, "{") || strings.Contains(body, "}") {
-				return nil, errors.New("nested placeholder")
+				return false, nil, errors.New("nested placeholder")
 			}
 			if strings.IndexFunc(body, unicode.IsControl) >= 0 {
-				return nil, errors.New("template contains a control character")
+				return false, nil, errors.New("template contains a control character")
 			}
 			if strings.IndexFunc(body, unicode.IsSpace) >= 0 {
-				return nil, errors.New("placeholder must not contain spaces")
+				return false, nil, errors.New("placeholder must not contain spaces")
 			}
-			key, err := headerTemplateKey(body, allowed, regionKeys, enforceFields)
+			key, dyn, err := headerTemplateKey(body, opts)
 			if err != nil {
-				return nil, err
+				return false, nil, err
+			}
+			if dyn {
+				dynamic = true
 			}
 			flush()
 			pieces = append(pieces, HeaderTemplatePiece{Key: key})
@@ -241,40 +362,65 @@ func splitHeaderTemplate(template string, allowed, regionKeys map[string]struct{
 		}
 		r, size := utf8.DecodeRuneInString(template[i:])
 		if (r == utf8.RuneError && size == 1) || unicode.IsControl(r) {
-			return nil, errors.New("template contains a control character")
+			return false, nil, errors.New("template contains a control character")
 		}
 		literal.WriteRune(r)
 		i += size
 	}
 	flush()
-	return pieces, nil
+	return dynamic, pieces, nil
 }
 
-func headerTemplateKey(body string, allowed, regionKeys map[string]struct{}, enforceFields bool) (string, error) {
-	if body == "site.baseURL" {
-		return "site.baseURL", nil
+func headerTemplateKey(body string, opts HeaderTemplateOptions) (string, bool, error) {
+	switch body {
+	case "site.baseURL", "uuid", "now.unix", "now.unix_ms", "now.iso", "model.name", "session.key":
+		return body, body != "site.baseURL", nil
 	}
-	if key, ok := strings.CutPrefix(body, "region."); ok {
-		if _, allowedKey := regionAttrKeys[key]; !allowedKey || !validHeaderTemplateField(key) {
-			return "", fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
+	if n, ok := strings.CutPrefix(body, "random.hex:"); ok {
+		size, err := strconv.Atoi(n)
+		if err != nil || size < 1 || size > 128 || strconv.Itoa(size) != n {
+			return "", false, fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
 		}
-		if enforceFields {
-			if _, ok := regionKeys[key]; !ok {
-				return "", fmt.Errorf("unknown region attribute %q", key)
+		return body, true, nil
+	}
+	if key, ok := strings.CutPrefix(body, "model.meta."); ok && validHeaderTemplateField(key) {
+		return body, true, nil
+	}
+	if key, ok := strings.CutPrefix(body, "setting."); ok && validHeaderTemplateField(key) {
+		if opts.EnforceFields {
+			if _, allowedKey := opts.SettingKeys[key]; !allowedKey {
+				return "", false, fmt.Errorf("unknown setting %q", key)
 			}
 		}
-		return "region." + key, nil
+		return body, true, nil
+	}
+	if key, ok := strings.CutPrefix(body, "region."); ok {
+		if !opts.AllowRegion && opts.EnforceFields {
+			return "", false, fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
+		}
+		if _, allowedKey := regionAttrKeys[key]; !allowedKey || !validHeaderTemplateField(key) {
+			return "", false, fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
+		}
+		if opts.EnforceFields {
+			if _, ok := opts.RegionKeys[key]; !ok {
+				return "", false, fmt.Errorf("unknown region attribute %q", key)
+			}
+		}
+		return "region." + key, false, nil
 	}
 	field, ok := strings.CutPrefix(body, "cred.")
 	if !ok || !validHeaderTemplateField(field) {
-		return "", fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
+		return "", false, fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
 	}
-	if enforceFields {
-		if _, ok := allowed[field]; !ok {
-			return "", fmt.Errorf("unknown field %q", field)
+	if !opts.AllowCred && opts.EnforceFields {
+		return "", false, fmt.Errorf("unknown placeholder %q", "{{"+body+"}}")
+	}
+	if opts.EnforceFields {
+		if _, ok := opts.CredFields[field]; !ok {
+			return "", false, fmt.Errorf("unknown field %q", field)
 		}
 	}
-	return "cred." + field, nil
+	return "cred." + field, false, nil
 }
 
 func validHeaderTemplateField(field string) bool {

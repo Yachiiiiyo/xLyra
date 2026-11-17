@@ -406,12 +406,28 @@ func (h Handler) forwardGatewayRequest(
 		if isOpenCodeZenSite(candidate) {
 			applyOpenCodeGoGatewayHeaders(req, request, upstreamKey)
 		}
-		if err := applyPluginRequestHeaders(req, candidate.Site.SiteType, headerVars, upstreamKey, upstreamBaseURL); err != nil {
+		if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, candidate.Model.PluginMeta, h.cacheObservationKey); err != nil {
 			result.statusCode = http.StatusBadGateway
 			result.errorType = "plugin_header_template_failed"
 			result.errorMessage = err.Error()
 			result.latencyMS = time.Since(startedAt).Milliseconds()
 			result = recordCredentialAttempt(result, nil, false)
+			return result
+		}
+		body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, candidate.Model.PluginMeta, h.cacheObservationKey)
+		if err != nil {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_sign_failed"
+			result.errorMessage = err.Error()
+			result.latencyMS = time.Since(startedAt).Milliseconds()
+			result = recordCredentialAttempt(result, nil, true)
+			lastResult = result
+			if result.credentialDecision.ShouldTryNextCredential {
+				if releaseCredentialSelection != nil {
+					releaseCredentialSelection()
+				}
+				continue
+			}
 			return result
 		}
 		if err := signUpstreamRequest(req, protocol, body, upstreamKey); err != nil {

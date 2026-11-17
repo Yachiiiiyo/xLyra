@@ -33,10 +33,18 @@ type ProtocolCandidateContext struct {
 	UpstreamModel string `ts:"upstreamModel"`
 }
 
-// ProtocolBuildContext is passed to buildRequest and parseResponse.
+// ProtocolBuildContext is passed to buildRequest, parseResponse, and signRequest.
 type ProtocolBuildContext struct {
-	Candidate ProtocolCandidateContext `ts:"candidate"`
-	Settings  map[string]any           `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
+	Candidate  ProtocolCandidateContext `ts:"candidate"`
+	Settings   map[string]any           `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
+	Model      string                   `ts:"model,optional,doc=Upstream model name."`
+	Stream     bool                     `ts:"stream,optional"`
+	Protocol   string                   `ts:"protocol,optional,doc=Canonical protocol name."`
+	Now        int64                    `ts:"now,optional,doc=Unix time in milliseconds."`
+	SessionKey string                   `ts:"sessionKey,optional,doc=HMAC of the conversation hint, scoped to this site and plugin. Empty when no hint exists."`
+	ModelMeta  map[string]any           `ts:"modelMeta,optional,type=JsonObject,doc=Model meta from the site model capabilities."`
+	// Credential is filled only for plugins that declare secret.use, and only for signRequest.
+	Credential map[string]string `ts:"credential,optional,doc=Plain credential, only when the plugin declares secret.use and only inside signRequest."`
 }
 
 // ProtocolDecodeResult is a successful decodeRequest return.
@@ -93,14 +101,19 @@ type ProtocolSignInput struct {
 	Body    string            `ts:"body,doc=The exact request body that will be sent (at most 1 MiB)."`
 }
 
-// ProtocolSignResult tells Go what to sign and where to put the signature.
+// ProtocolSignResult is either a sign-mode result or a rewrite-mode result.
+// Mode is "sign" when StringToSign is set, and "rewrite" when the plugin
+// returns headers, query, or body without stringToSign.
 type ProtocolSignResult struct {
-	StringToSign string            `ts:"stringToSign,doc=The exact text to sign. At most 64 KiB."`
-	Algorithm    string            `ts:"algorithm,type=SignAlgorithm"`
+	Mode         string            `ts:"mode,type=SignRequestMode,doc=sign asks Go to HMAC stringToSign. rewrite applies headers, query, and body directly."`
+	StringToSign string            `ts:"stringToSign,optional,doc=The exact text to sign. At most 64 KiB. Required in sign mode."`
+	Algorithm    string            `ts:"algorithm,optional,type=SignAlgorithm"`
 	Encoding     string            `ts:"encoding,optional,type=SignEncoding,doc=Defaults to hex."`
-	Header       string            `ts:"header,doc=Header that carries the signature, such as Authorization or X-Signature."`
+	Header       string            `ts:"header,optional,doc=Header that carries the signature, such as Authorization or X-Signature."`
 	Prefix       string            `ts:"prefix,optional,doc=Text put before the encoded signature, such as 'HMAC-SHA256 '."`
 	Headers      map[string]string `ts:"headers,optional,doc=Extra non-secret headers to send, such as a timestamp or nonce."`
+	Query        map[string]string `ts:"query,optional,doc=Query parameters to set on the upstream URL. Rewrite mode only."`
+	Body         *string           `ts:"body,optional,doc=Replaces the whole upstream body. At most 1 MiB. Rewrite mode only."`
 }
 
 // ProtocolErrorInput is the non-2xx upstream response shown to parseError.
@@ -132,6 +145,27 @@ func (bc ProtocolBuildContext) asMap() map[string]any {
 	}
 	if len(bc.Settings) > 0 {
 		out["settings"] = bc.Settings
+	}
+	if bc.Model != "" {
+		out["model"] = bc.Model
+	}
+	if bc.Stream {
+		out["stream"] = true
+	}
+	if bc.Protocol != "" {
+		out["protocol"] = bc.Protocol
+	}
+	if bc.Now != 0 {
+		out["now"] = bc.Now
+	}
+	if bc.SessionKey != "" {
+		out["sessionKey"] = bc.SessionKey
+	}
+	if len(bc.ModelMeta) > 0 {
+		out["modelMeta"] = bc.ModelMeta
+	}
+	if len(bc.Credential) > 0 {
+		out["credential"] = bc.Credential
 	}
 	return out
 }
@@ -410,6 +444,8 @@ func validSignHeaderName(name string) bool {
 	return !forbidden
 }
 
+const maxSignRewriteItems = 32
+
 func decodeProtocolSign(value any) (ProtocolSignResult, error) {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -417,7 +453,7 @@ func decodeProtocolSign(value any) (ProtocolSignResult, error) {
 	}
 	for key := range object {
 		switch key {
-		case "stringToSign", "algorithm", "encoding", "header", "prefix", "headers", "error":
+		case "stringToSign", "algorithm", "encoding", "header", "prefix", "headers", "query", "body", "error":
 		default:
 			return ProtocolSignResult{}, shapeError("signRequest return value: unknown field %q", key)
 		}
@@ -429,7 +465,11 @@ func decodeProtocolSign(value any) (ProtocolSignResult, error) {
 		}
 		return ProtocolSignResult{}, shapeError("%s", strings.TrimSpace(message))
 	}
+	if _, hasSign := object["stringToSign"]; !hasSign {
+		return decodeProtocolSignRewrite(object)
+	}
 	var out ProtocolSignResult
+	out.Mode = "sign"
 	text, ok := object["stringToSign"].(string)
 	if !ok || text == "" {
 		return out, shapeError("stringToSign: expected non-empty string")
@@ -468,16 +508,83 @@ func decodeProtocolSign(value any) (ProtocolSignResult, error) {
 	if err != nil {
 		return out, err
 	}
-	for name, value := range extra {
-		if !validSignHeaderName(name) || strings.EqualFold(name, header) {
-			return out, shapeError("headers.%s: not allowed", name)
-		}
-		if strings.ContainsAny(value, "\r\n") {
-			return out, shapeError("headers.%s: must be a single line", name)
-		}
+	if err := validateSignHeaders(extra, header); err != nil {
+		return out, err
+	}
+	if _, hasQuery := object["query"]; hasQuery {
+		return out, shapeError("query: not allowed in sign mode")
+	}
+	if _, hasBody := object["body"]; hasBody {
+		return out, shapeError("body: not allowed in sign mode")
 	}
 	out.Headers = extra
 	return out, nil
+}
+
+func decodeProtocolSignRewrite(object map[string]any) (ProtocolSignResult, error) {
+	for _, key := range []string{"algorithm", "encoding", "header", "prefix"} {
+		if _, ok := object[key]; ok {
+			return ProtocolSignResult{}, shapeError("%s: not allowed without stringToSign", key)
+		}
+	}
+	headers, err := stringMap(object["headers"], "headers")
+	if err != nil {
+		return ProtocolSignResult{}, err
+	}
+	if err := validateSignHeaders(headers, ""); err != nil {
+		return ProtocolSignResult{}, err
+	}
+	query, err := stringMap(object["query"], "query")
+	if err != nil {
+		return ProtocolSignResult{}, err
+	}
+	if len(query) > maxSignRewriteItems {
+		return ProtocolSignResult{}, shapeError("query: more than %d items", maxSignRewriteItems)
+	}
+	for key, value := range query {
+		if key == "" || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") || hasControl(key) || hasControl(value) {
+			return ProtocolSignResult{}, shapeError("query.%s: must be a single line", key)
+		}
+	}
+	var body *string
+	if raw, ok := object["body"]; ok && raw != nil {
+		text, ok := raw.(string)
+		if !ok {
+			return ProtocolSignResult{}, shapeError("body: expected string")
+		}
+		if len(text) > MaxSignBodyBytes {
+			return ProtocolSignResult{}, shapeError("body: longer than %d bytes", MaxSignBodyBytes)
+		}
+		body = &text
+	}
+	if len(headers) == 0 && len(query) == 0 && body == nil {
+		return ProtocolSignResult{}, shapeError("signRequest return value: expected stringToSign, headers, query, or body")
+	}
+	return ProtocolSignResult{Mode: "rewrite", Headers: headers, Query: query, Body: body}, nil
+}
+
+func validateSignHeaders(headers map[string]string, signatureHeader string) error {
+	if len(headers) > maxSignRewriteItems {
+		return shapeError("headers: more than %d items", maxSignRewriteItems)
+	}
+	for name, value := range headers {
+		if !validSignHeaderName(name) || (signatureHeader != "" && strings.EqualFold(name, signatureHeader)) {
+			return shapeError("headers.%s: not allowed", name)
+		}
+		if hasControl(value) {
+			return shapeError("headers.%s: must be a single line", name)
+		}
+	}
+	return nil
+}
+
+func hasControl(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] < 0x20 || value[i] == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeProtocolError(value any) (ProtocolErrorResult, error) {

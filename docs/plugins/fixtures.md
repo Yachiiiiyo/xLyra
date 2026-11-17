@@ -109,7 +109,7 @@ fixtures 是放在 `fixtures/*.json` 里的录制样本：给定上游的响应�
 | `expect.sign` | 插件导出了 `signRequest` 时，期望的签名结果 |
 | `expect.parseError` | `response.status` 为非 2xx 且插件导出了 `parseError` 时，期望的错误改写结果 |
 
-`expect.sign` 可以写 `stringToSign`、`algorithm`、`encoding`、`header`、`prefix`、`headers` 中的任意几项，写了就逐项精确比对，写了不认识的字段会报错。样本里请求体按键名排序的 JSON 给出，和 xLyra 实际发送的一致；请求头是 `buildRequest` 返回的头再加 `Content-Type: application/json`。样本里没写 `expect.sign` 时，`signRequest` 仍会被调用，只检查返回格式是否合法。
+`expect.sign` 可以写 `mode`、`stringToSign`、`algorithm`、`encoding`、`header`、`prefix`、`headers`、`query`、`body` 中的任意几项，写了就逐项精确比对，写了不认识的字段会报错。直接改写模式的样本把 `ctx.model`、`ctx.stream`、`ctx.protocol`、`ctx.sessionKey`、`ctx.modelMeta` 写在 `ctx` 里。样本里请求体按键名排序的 JSON 给出，和 xLyra 实际发送的一致；请求头是 `buildRequest` 返回的头再加 `Content-Type: application/json`。样本里没写 `expect.sign` 时，`signRequest` 仍会被调用，只检查返回格式是否合法。
 
 `expect.parseError` 可以写 `body`、`contentType`。插件没有导出对应钩子却写了 `expect.sign` 或 `expect.parseError`，样本会失败，避免期望被悄悄忽略。
 

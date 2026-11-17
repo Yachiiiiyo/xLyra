@@ -3,6 +3,7 @@ package site
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,7 +62,7 @@ const modelListSource = `
 export function listModels(ctx, steps) {
   if (steps.length === 0) return { request: { method: "GET", path: "/api/models" } };
   const rows = steps[0].response.json.data || [];
-  return { result: { models: rows.map((m) => ({ name: m.id, displayName: m.title, capabilities: { vision: !!m.vision } })) } };
+  return { result: { models: rows.map((m) => ({ name: m.id, displayName: m.title, capabilities: { vision: !!m.vision }, meta: { vendor: "acme", rank: 2 } })) } };
 }`
 
 func TestPluginModelListerSendsKeyAndConvertsModels(t *testing.T) {
@@ -83,6 +84,10 @@ func TestPluginModelListerSendsKeyAndConvertsModels(t *testing.T) {
 	}
 	if len(models) != 2 || models[0].UpstreamName != "m-1" || models[0].DisplayName != "Model One" || models[0].Capabilities["vision"] != true {
 		t.Fatalf("models = %+v", models)
+	}
+	meta, _ := models[0].Capabilities["plugin_meta"].(map[string]any)
+	if meta["vendor"] != "acme" || fmt.Sprint(meta["rank"]) != "2" {
+		t.Fatalf("plugin_meta = %#v", models[0].Capabilities["plugin_meta"])
 	}
 	if models[1].DisplayName != "m-2" {
 		t.Fatalf("display name should default to the model name, got %q", models[1].DisplayName)
@@ -173,7 +178,7 @@ export function listModels() { return { request: { method: "GET", path: "//evil.
 func TestModelMetadataOnlyFillsGaps(t *testing.T) {
 	plugin := kindsTestPlugin(t, jsplugin.KindModelMetadata, "acme-meta", header("acme-meta", jsplugin.KindModelMetadata)+`
 export function describeModels(ctx, input) {
-  return { models: input.models.map((id) => ({ id, name: "Acme Vision", capabilities: { vision: true, reasoning: true } })) };
+  return { models: input.models.map((id) => ({ id, name: "Acme Vision", capabilities: { vision: true, reasoning: true }, meta: { vendor: "acme" } })) };
 }`)
 	useCatalog(t, plugin)
 	s := &Service{}
@@ -187,6 +192,16 @@ export function describeModels(ctx, input) {
 	}
 	if model.Capabilities["reasoning"] != true {
 		t.Fatalf("plugin did not fill a missing capability: %+v", model.Capabilities)
+	}
+	if meta, _ := model.Capabilities["plugin_meta"].(map[string]any); meta["vendor"] != "acme" {
+		t.Fatalf("plugin_meta = %#v", model.Capabilities["plugin_meta"])
+	}
+	kept := s.applyModelMetadataPlugins(context.Background(), store.Site{SiteType: "custom"}, adapter.Model{
+		UpstreamName: "acme-vision-1",
+		Capabilities: map[string]any{"plugin_meta": map[string]any{"vendor": "upstream"}},
+	})
+	if meta, _ := kept.Capabilities["plugin_meta"].(map[string]any); meta["vendor"] != "upstream" {
+		t.Fatalf("describeModels replaced plugin_meta: %#v", kept.Capabilities["plugin_meta"])
 	}
 	if model.DisplayName != "Acme Vision" {
 		t.Fatalf("display name = %q", model.DisplayName)

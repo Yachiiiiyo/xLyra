@@ -9,7 +9,7 @@
 - 插件设置的 `Authorization`、`Cookie`、`Proxy-Authorization`、`Host` 等头会被丢弃。
 - 响应里的 `Set-Cookie` 不会交给插件。
 
-这样即使第三方插件有恶意代码，也无法读取或外发上游密钥。`automation` 插件是唯一能让 xLyra 代发请求的类型（`http.request`），目的地被限制在管理员填写的地址，见下文"自动化插件的权限"。
+这样即使第三方插件有恶意代码，也无法读取或外发上游密钥。例外只有声明了 `secret.use` 的插件：明文凭据只在它的 `signRequest` 调用里、通过 `ctx.credential` 可见。这次调用的 `log.*` 全部丢弃，不进入日志；沙箱本来就没有网络原语，签完名也不能自己把密钥发出去。返回值仍然只是头、query 或正文，发出前再过一次主机检查。`automation` 插件是唯一能让 xLyra 代发请求的类型（`http.request`），目的地被限制在管理员填写的地址，见下文"自动化插件的权限"。
 
 ## URL 规则
 

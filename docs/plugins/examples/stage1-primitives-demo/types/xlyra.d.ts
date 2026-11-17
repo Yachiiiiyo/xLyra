@@ -77,6 +77,7 @@ export interface ModelListEntry {
   name: string;
   displayName?: string;
   capabilities?: JsonObject;
+  meta?: JsonObject;
 }
 
 export interface ModelListResult {
@@ -131,6 +132,19 @@ export interface ProtocolBuildContext {
   candidate: ProtocolCandidateContext;
   /** Resolved admin settings when manifest declares settings. */
   settings?: Record<string, SettingValue>;
+  /** Upstream model name. */
+  model?: string;
+  stream?: boolean;
+  /** Canonical protocol name. */
+  protocol?: string;
+  /** Unix time in milliseconds. */
+  now?: number;
+  /** HMAC of the conversation hint, scoped to this site and plugin. Empty when no hint exists. */
+  sessionKey?: string;
+  /** Model meta from the site model capabilities. */
+  modelMeta?: JsonObject;
+  /** Plain credential, only when the plugin declares secret.use and only inside signRequest. */
+  credential?: Record<string, string>;
 }
 
 export interface ProtocolBuiltRequest {
@@ -163,17 +177,23 @@ export interface ProtocolSignInput {
 }
 
 export interface ProtocolSignResult {
-  /** The exact text to sign. At most 64 KiB. */
-  stringToSign: string;
-  algorithm: SignAlgorithm;
+  /** sign asks Go to HMAC stringToSign. rewrite applies headers, query, and body directly. */
+  mode: SignRequestMode;
+  /** The exact text to sign. At most 64 KiB. Required in sign mode. */
+  stringToSign?: string;
+  algorithm?: SignAlgorithm;
   /** Defaults to hex. */
   encoding?: SignEncoding;
   /** Header that carries the signature, such as Authorization or X-Signature. */
-  header: string;
+  header?: string;
   /** Text put before the encoded signature, such as 'HMAC-SHA256 '. */
   prefix?: string;
   /** Extra non-secret headers to send, such as a timestamp or nonce. */
   headers?: Record<string, string>;
+  /** Query parameters to set on the upstream URL. Rewrite mode only. */
+  query?: Record<string, string>;
+  /** Replaces the whole upstream body. At most 1 MiB. Rewrite mode only. */
+  body?: string;
 }
 
 export interface ProtocolErrorResult {
@@ -226,6 +246,7 @@ export interface ModelMetadataEntry {
   /** Official display name. */
   name?: string;
   capabilities?: JsonObject;
+  meta?: JsonObject;
 }
 
 export interface ModelMetadataResult {
@@ -468,6 +489,30 @@ export type ProtocolDecodeResult =
 
 export type SignAlgorithm = "hmac-sha256" | "hmac-sha1" | "hmac-sha512";
 export type SignEncoding = "hex" | "base64";
+export type SignRequestMode = "sign" | "rewrite";
+
+/** signRequest return: ask the host to sign, or rewrite the request directly. */
+export type SignRequestResult =
+  | {
+      stringToSign: string;
+      algorithm: SignAlgorithm;
+      encoding?: SignEncoding;
+      header: string;
+      prefix?: string;
+      headers?: Record<string, string>;
+      query?: never;
+      body?: never;
+    }
+  | {
+      headers?: Record<string, string>;
+      query?: Record<string, string>;
+      body?: string;
+      stringToSign?: never;
+      algorithm?: never;
+      encoding?: never;
+      header?: never;
+      prefix?: never;
+    };
 
 export interface ProtocolParsedResponse {
   /** Send the upstream body to the client unchanged. */

@@ -215,6 +215,9 @@ func (l pluginModelLister) ListModels(ctx context.Context, site adapter.SiteConf
 		for key, value := range entry.Capabilities {
 			capabilities[key] = value
 		}
+		if len(entry.Meta) > 0 {
+			capabilities["plugin_meta"] = entry.Meta
+		}
 		display := entry.DisplayName
 		if display == "" {
 			display = entry.Name
@@ -451,12 +454,17 @@ func (s *Service) applyModelMetadataPlugins(ctx context.Context, item store.Site
 					model.DisplayName = entry.Name
 				}
 			}
-			if len(entry.Capabilities) > 0 && model.Capabilities == nil {
+			if (len(entry.Capabilities) > 0 || len(entry.Meta) > 0) && model.Capabilities == nil {
 				model.Capabilities = map[string]any{}
 			}
 			for key, value := range entry.Capabilities {
 				if _, present := model.Capabilities[key]; !present {
 					model.Capabilities[key] = value
+				}
+			}
+			if len(entry.Meta) > 0 {
+				if _, present := model.Capabilities["plugin_meta"]; !present {
+					model.Capabilities["plugin_meta"] = entry.Meta
 				}
 			}
 		}

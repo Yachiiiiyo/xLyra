@@ -507,3 +507,28 @@ func stringMap(value any, path string) (map[string]string, error) {
 		return nil, shapeError("%s: expected object", path)
 	}
 }
+
+const maxModelMetaKeyBytes = 64
+const maxModelMetaBytes = 4 << 10
+
+// modelMetaMap checks one meta object: keys stay short, values are string,
+// number, or bool, and the JSON form stays within 4 KiB.
+func modelMetaMap(object map[string]any, path string) (map[string]any, error) {
+	out := make(map[string]any, len(object))
+	for key, item := range object {
+		if key == "" || len(key) > maxModelMetaKeyBytes {
+			return nil, shapeError("%s: key longer than %d bytes", path, maxModelMetaKeyBytes)
+		}
+		switch item.(type) {
+		case string, bool, float64, int, int64, json.Number:
+			out[key] = item
+		default:
+			return nil, shapeError("%s.%s: expected string, number, or boolean", path, key)
+		}
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil || len(encoded) > maxModelMetaBytes {
+		return nil, shapeError("%s: longer than %d bytes", path, maxModelMetaBytes)
+	}
+	return out, nil
+}

@@ -1,23 +1,41 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
+	"github.com/google/uuid"
+
 	"xlyra/server/internal/jsplugin"
+	routeengine "xlyra/server/internal/router"
 	"xlyra/server/internal/site"
 )
 
-// RenderHeaderTemplate replaces {{cred.<field>}}, {{region.<key>}}, and {{site.baseURL}} using vars.
-// A missing variable is an error. The rendered text must not contain CR, LF,
-// or any other control character.
-func RenderHeaderTemplate(template string, vars map[string]string) (string, error) {
+// headerTemplateDynamic resolves placeholders that are not in the static var map.
+// A false ok leaves the placeholder missing, which is an error except for the
+// keys RenderHeaderTemplate treats as empty.
+type headerTemplateDynamic func(key string) (string, bool)
+
+// RenderHeaderTemplate replaces placeholders using vars and, when set, dynamic.
+// A missing static variable is an error. {{model.meta.*}} and {{session.key}}
+// render as an empty string when dynamic does not supply them. The rendered
+// text must not contain CR, LF, or any other control character.
+func RenderHeaderTemplate(template string, vars map[string]string, dynamic ...headerTemplateDynamic) (string, error) {
 	pieces, err := jsplugin.SplitHeaderTemplate(template)
 	if err != nil {
 		return "", err
+	}
+	var lookup headerTemplateDynamic
+	if len(dynamic) > 0 {
+		lookup = dynamic[0]
 	}
 	var b strings.Builder
 	for _, piece := range pieces {
@@ -26,6 +44,12 @@ func RenderHeaderTemplate(template string, vars map[string]string) (string, erro
 			continue
 		}
 		value, ok := vars[piece.Key]
+		if !ok && lookup != nil {
+			value, ok = lookup(piece.Key)
+		}
+		if !ok && (piece.Key == "session.key" || strings.HasPrefix(piece.Key, "model.meta.")) {
+			value, ok = "", true
+		}
 		if !ok {
 			return "", fmt.Errorf("missing variable %s", piece.Key)
 		}
@@ -36,6 +60,79 @@ func RenderHeaderTemplate(template string, vars map[string]string) (string, erro
 		return "", fmt.Errorf("value contains a control character")
 	}
 	return rendered, nil
+}
+
+func dynamicHeaderValue(key, modelName, sessionKey string, meta map[string]any, settings map[string]any) (string, bool) {
+	switch {
+	case key == "uuid":
+		return uuid.NewString(), true
+	case key == "now.unix":
+		return strconv.FormatInt(time.Now().UTC().Unix(), 10), true
+	case key == "now.unix_ms":
+		return strconv.FormatInt(time.Now().UTC().UnixMilli(), 10), true
+	case key == "now.iso":
+		return time.Now().UTC().Format(time.RFC3339), true
+	case key == "model.name":
+		return modelName, true
+	case key == "session.key":
+		return sessionKey, true
+	case strings.HasPrefix(key, "random.hex:"):
+		n, err := strconv.Atoi(strings.TrimPrefix(key, "random.hex:"))
+		if err != nil || n < 1 || n > 128 {
+			return "", false
+		}
+		buf := make([]byte, (n+1)/2)
+		if _, err := rand.Read(buf); err != nil {
+			return "", false
+		}
+		return hex.EncodeToString(buf)[:n], true
+	case strings.HasPrefix(key, "model.meta."):
+		return modelMetaString(meta, strings.TrimPrefix(key, "model.meta.")), true
+	case strings.HasPrefix(key, "setting."):
+		return settingString(settings, strings.TrimPrefix(key, "setting.")), true
+	default:
+		return "", false
+	}
+}
+
+func modelMetaString(meta map[string]any, key string) string {
+	if meta == nil {
+		return ""
+	}
+	switch value := meta[key].(type) {
+	case string:
+		return value
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case json.Number:
+		return value.String()
+	default:
+		return ""
+	}
+}
+
+func settingString(settings map[string]any, key string) string {
+	if settings == nil {
+		return ""
+	}
+	switch value := settings[key].(type) {
+	case string:
+		return value
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(value)
+	case int64:
+		return strconv.FormatInt(value, 10)
+	case bool:
+		return strconv.FormatBool(value)
+	default:
+		return ""
+	}
 }
 
 func headerValueHasControl(value string) bool {
@@ -68,40 +165,69 @@ func pluginHeaderTemplateVars(headerVars map[string]string, upstreamKey, baseURL
 	return vars
 }
 
-// applyPluginRequestHeaders renders a plugin site type's header template onto req.
-// It runs after protocol headers, downstream passthrough, and built-in site
-// headers, and before the request is signed. Built-in site types and plugin
-// types with no request config are left unchanged.
-func applyPluginRequestHeaders(req *http.Request, siteType string, headerVars map[string]string, upstreamKey, baseURL string) error {
+// applyPluginRequestHeaders renders the site type base template, then each
+// mounted plugin's top-level request headers. Later plugins overwrite earlier
+// headers of the same name. It runs after protocol headers and before signing.
+func applyPluginRequestHeaders(req *http.Request, candidate routeengine.Candidate, request gatewayRequest, headerVars map[string]string, upstreamKey, baseURL, modelName string, meta map[string]any, sessionSecret []byte) error {
 	if req == nil {
 		return nil
 	}
-	item, ok := site.LookupPluginSiteType(siteType)
-	if !ok || (len(item.Request.Headers) == 0 && !item.Request.StripDownstreamHeaders) {
-		return nil
+	vars := pluginHeaderTemplateVars(headerVars, upstreamKey, baseURL)
+	vars["model.name"] = modelName
+	item, ok := site.LookupPluginSiteType(candidate.Site.SiteType)
+	if ok && (len(item.Request.Headers) > 0 || item.Request.StripDownstreamHeaders) {
+		dynamic := headerDynamicFor(nil, candidate, request, modelName, meta, sessionSecret)
+		if err := renderRequestHeaders(req, item.Request.Headers, item.Request.StripDownstreamHeaders, vars, dynamic); err != nil {
+			return err
+		}
 	}
-	names := make([]string, 0, len(item.Request.Headers))
-	for name := range item.Request.Headers {
+	for _, plugin := range requestChainPlugins(candidate) {
+		if plugin.Manifest.DeclaresSiteType() || len(plugin.Manifest.Request.Headers) == 0 {
+			continue
+		}
+		dynamic := headerDynamicFor(plugin, candidate, request, modelName, meta, sessionSecret)
+		if err := renderRequestHeaders(req, plugin.Manifest.Request.Headers, false, vars, dynamic); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func headerDynamicFor(plugin *jsplugin.Plugin, candidate routeengine.Candidate, request gatewayRequest, modelName string, meta map[string]any, sessionSecret []byte) headerTemplateDynamic {
+	pluginID := ""
+	var settings map[string]any
+	if plugin != nil {
+		pluginID = plugin.Manifest.ID
+		settings = plugin.EffectiveSettings(candidate.Site.PluginSettings[pluginID])
+	}
+	sessionKey := gatewaySessionKey(request, candidate.Site.ID, pluginID, sessionSecret)
+	return func(key string) (string, bool) {
+		return dynamicHeaderValue(key, modelName, sessionKey, meta, settings)
+	}
+}
+
+func renderRequestHeaders(req *http.Request, headers map[string]jsplugin.HeaderSpec, strip bool, vars map[string]string, dynamic headerTemplateDynamic) error {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	vars := pluginHeaderTemplateVars(headerVars, upstreamKey, baseURL)
 	rendered := make([]renderedPluginHeader, 0, len(names))
 	var omitted []string
 	for _, name := range names {
-		spec := item.Request.Headers[name]
+		spec := headers[name]
 		if !headerSpecIncluded(spec, vars) {
 			omitted = append(omitted, name)
 			continue
 		}
-		value, err := RenderHeaderTemplate(spec.Value, vars)
+		value, err := RenderHeaderTemplate(spec.Value, vars, dynamic)
 		if err != nil {
 			return fmt.Errorf("header %s: %s", name, err.Error())
 		}
 		rendered = append(rendered, renderedPluginHeader{name: name, value: value})
 	}
-	if item.Request.StripDownstreamHeaders {
-		stripPluginDownstreamHeaders(req, item.Request.Headers)
+	if strip {
+		stripPluginDownstreamHeaders(req, headers)
 	}
 	for _, name := range omitted {
 		req.Header.Del(name)

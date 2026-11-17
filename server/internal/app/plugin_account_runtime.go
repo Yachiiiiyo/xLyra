@@ -105,6 +105,9 @@ func (a accountPoolRuntimeAdapter) ListModels(ctx context.Context, fields map[st
 		for key, value := range entry.Capabilities {
 			capabilities[key] = value
 		}
+		if len(entry.Meta) > 0 {
+			capabilities["plugin_meta"] = entry.Meta
+		}
 		models = append(models, adapter.Model{UpstreamName: name, DisplayName: display, Capabilities: capabilities})
 	}
 	return models, nil

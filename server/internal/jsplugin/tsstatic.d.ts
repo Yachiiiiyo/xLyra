@@ -34,6 +34,30 @@ export type ProtocolDecodeResult =
 
 export type SignAlgorithm = "hmac-sha256" | "hmac-sha1" | "hmac-sha512";
 export type SignEncoding = "hex" | "base64";
+export type SignRequestMode = "sign" | "rewrite";
+
+/** signRequest return: ask the host to sign, or rewrite the request directly. */
+export type SignRequestResult =
+  | {
+      stringToSign: string;
+      algorithm: SignAlgorithm;
+      encoding?: SignEncoding;
+      header: string;
+      prefix?: string;
+      headers?: Record<string, string>;
+      query?: never;
+      body?: never;
+    }
+  | {
+      headers?: Record<string, string>;
+      query?: Record<string, string>;
+      body?: string;
+      stringToSign?: never;
+      algorithm?: never;
+      encoding?: never;
+      header?: never;
+      prefix?: never;
+    };
 
 export interface ProtocolParsedResponse {
   /** Send the upstream body to the client unchanged. */

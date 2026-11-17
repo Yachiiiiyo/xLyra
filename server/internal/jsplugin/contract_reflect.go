@@ -143,6 +143,13 @@ func decodeValue(item any, out reflect.Value, field reflect.StructField, path st
 			out.Set(reflect.ValueOf(strings))
 			break
 		}
+		if strings.HasSuffix(path, "meta") || path == "meta" {
+			checked, err := modelMetaMap(object, path)
+			if err != nil {
+				return err
+			}
+			object = checked
+		}
 		out.Set(reflect.ValueOf(object))
 	case reflect.Struct:
 		return decodeStruct(item, out, path)

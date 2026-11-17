@@ -1,0 +1,23 @@
+{
+  "name": "rewrite a header",
+  "hook": "signRequest",
+  "ctx": {
+    "model": "demo",
+    "stream": false,
+    "protocol": "openai_chat",
+    "sessionKey": "abc123",
+    "modelMeta": { "vendor": "acme" }
+  },
+  "input": {
+    "method": "POST",
+    "url": "https://api.example.com/v1/chat/completions",
+    "headers": {},
+    "body": "{\"model\":\"demo\"}"
+  },
+  "expect": {
+    "sign": {
+      "mode": "rewrite",
+      "headers": { "X-Request-Plugin": "session" }
+    }
+  }
+}

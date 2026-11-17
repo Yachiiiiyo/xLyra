@@ -88,7 +88,7 @@ func TestSiteProviderExampleTypesMatchTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, exampleDir := range []string{"site-provider-minimal", "stage1-primitives-demo", "hooks-overlay-demo"} {
+	for _, exampleDir := range []string{"site-provider-minimal", "stage1-primitives-demo", "hooks-overlay-demo", "request-overlay-demo"} {
 		examplePath := filepath.Join(root, "docs", "plugins", "examples", exampleDir, "types", "xlyra.d.ts")
 		example, err := os.ReadFile(examplePath)
 		if err != nil {
@@ -185,6 +185,52 @@ func TestHooksOverlayExamplePackage(t *testing.T) {
 	}
 	if !strings.Contains(verifyOut, "(hooks)") {
 		t.Fatalf("verify kind label missing:\n%s", verifyOut)
+	}
+	if dirStamp(t, src) != before {
+		t.Fatal("example package in the repo changed")
+	}
+}
+
+func TestRequestOverlayExamplePackage(t *testing.T) {
+	root := repoRoot(t)
+	src := filepath.Join(root, "docs", "plugins", "examples", "request-overlay-demo")
+	before := dirStamp(t, src)
+	dir := filepath.Join(t.TempDir(), "request-overlay-demo")
+	copyDir(t, src, dir)
+
+	var passed bool
+	out := captureStdout(t, func() { passed = testOnce(dir) })
+	if !passed {
+		t.Fatalf("test failed:\n%s", out)
+	}
+	for _, needle := range []string{"example.request@1.0.0", "rewrite a header", "1 passed, 0 failed"} {
+		if !strings.Contains(out, needle) {
+			t.Fatalf("test output missing %q:\n%s", needle, out)
+		}
+	}
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, pkg, plugin, err := built.assemble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Manifest.Kind != "" || pkg.Manifest.DeclaresSiteType() {
+		t.Fatalf("kind = %q site type = %v", pkg.Manifest.Kind, pkg.Manifest.DeclaresSiteType())
+	}
+	if strings.Join(pkg.Manifest.Exports, ",") != "signRequest" {
+		t.Fatalf("exports = %v", pkg.Manifest.Exports)
+	}
+	if pkg.Manifest.Request.Headers["X-Trace"].Value != "{{random.hex:40}}" || pkg.Manifest.Request.Headers["X-Session"].Value != "{{session.key}}" {
+		t.Fatalf("request = %#v", pkg.Manifest.Request.Headers)
+	}
+	if err := plugin.SelfTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	verifyOut := captureStdout(t, func() { err = verifyPackage(raw) })
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, verifyOut)
 	}
 	if dirStamp(t, src) != before {
 		t.Fatal("example package in the repo changed")
