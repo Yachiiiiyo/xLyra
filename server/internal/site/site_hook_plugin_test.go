@@ -43,8 +43,9 @@ func TestSiteHookPluginUsesFirstExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(models) != 1 || models[0].UpstreamName != "from-second" {
-		t.Fatalf("models = %+v, want the first mounted exporter", models)
+	// listModels 现在按优先级合并：靠前的插件覆盖同名模型，其余插件的独有模型保留。
+	if len(models) != 2 || models[0].UpstreamName != "from-second" || models[1].UpstreamName != "from-first" {
+		t.Fatalf("models = %+v, want the first mounted exporter ahead of the second", models)
 	}
 }
 

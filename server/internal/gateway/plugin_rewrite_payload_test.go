@@ -296,6 +296,67 @@ export function rewritePayload(ctx, payload) {
 	}
 }
 
+func TestRewritePayloadChain(t *testing.T) {
+	site.ClearPluginSiteTypes()
+	t.Cleanup(site.ClearPluginSiteTypes)
+	base := providerClassifierPlugin(t, "acme.base", `export function rewritePayload(ctx, payload) { payload.steps = ["base"]; return payload; }`)
+	first := kindlessRewritePlugin(t, "acme.first", `export function rewritePayload(ctx, payload) { payload.steps = (payload.steps || []).concat(["first"]); return payload; }`)
+	second := kindlessRewritePlugin(t, "acme.second", `export function rewritePayload(ctx, payload) { payload.steps.push("second"); return payload; }`)
+	useGatewayPlugins(t, base, first, second)
+	if err := site.SetPluginSiteTypes([]site.PluginSiteType{{
+		Descriptor: site.SiteTypeDescriptor{SiteType: "acme.base/chat"},
+		PluginID:   base.Manifest.ID, Enabled: true, Hosts: []string{"api.example.com"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := routeengine.Candidate{Site: routeengine.CandidateSite{
+		SiteType: "acme.base/chat", PluginIDs: []string{"acme.second", "acme.first"},
+	}}
+	got, err := applyProviderRewrite(context.Background(), candidate, &testGatewayProtocol{}, map[string]any{"model": "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(stepNames(got["steps"]), ",") != "base,second,first" || got["model"] != "m" {
+		t.Fatalf("chain = %#v", got)
+	}
+
+	builtin := routeengine.Candidate{Site: routeengine.CandidateSite{SiteType: "openai", PluginIDs: []string{"acme.first"}}}
+	got, err = applyProviderRewrite(context.Background(), builtin, &testGatewayProtocol{}, map[string]any{"model": "m"})
+	if err != nil || got["model"] != "m" || strings.Join(stepNames(got["steps"]), ",") != "first" {
+		t.Fatalf("builtin = %#v err = %v", got, err)
+	}
+
+	bad := kindlessRewritePlugin(t, "acme.bad", `export function rewritePayload(ctx, payload) { payload.model = "other"; return payload; }`)
+	useGatewayPlugins(t, base, first, bad)
+	candidate.Site.PluginIDs = []string{"acme.first", "acme.bad"}
+	if _, err = applyProviderRewrite(context.Background(), candidate, &testGatewayProtocol{}, map[string]any{"model": "m"}); err == nil || !strings.Contains(err.Error(), "acme.bad") || !strings.Contains(err.Error(), `"model"`) {
+		t.Fatalf("second step err = %v", err)
+	}
+}
+
+func kindlessRewritePlugin(t *testing.T, id, body string) *jsplugin.Plugin {
+	t.Helper()
+	source := "export const meta = { apiVersion: 1, id: \"" + id + "\" };\n" + body
+	manifest := jsplugin.Manifest{
+		ID: id, Name: id, Version: "1.0.0", APIVersion: 1, HostAPI: 1,
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(source)},
+	}
+	plugin, err := jsplugin.NewPlugin(manifest, source, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plugin
+}
+
+func stepNames(value any) []string {
+	items, _ := value.([]any)
+	out := make([]string, len(items))
+	for i, item := range items {
+		out[i], _ = item.(string)
+	}
+	return out
+}
+
 func TestRewritePayloadCallOrder(t *testing.T) {
 	forward := functionSource(t, "execution.go", "func (h Handler) forwardGatewayRequest(")
 	assertCallOrder(t, forward,

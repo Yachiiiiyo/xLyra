@@ -31,26 +31,43 @@ const (
 	pluginPricingTimeout = 30 * time.Second
 )
 
-// siteHookPlugin returns the first mounted plugin that exports hook and does
-// not declare a site type. A site-type package is the base for its own type
-// and does not take effect through a mount. A plugin that is no longer enabled
-// is skipped, so disabling it returns the site to the next plugin or the default.
-func (s *Service) siteHookPlugin(item store.Site, hook string) (*jsplugin.Plugin, bool) {
+// siteHookPlugins returns the mounted plugins that export hook and do not
+// declare a site type, in plugin_ids order. A site-type package is the base
+// for its own type and does not take effect through a mount. A plugin that is
+// no longer enabled is skipped. Duplicate ids are returned once.
+func (s *Service) siteHookPlugins(item store.Site, hook string) []*jsplugin.Plugin {
 	if s == nil || hook == "" {
-		return nil, false
+		return nil
 	}
 	registry := s.activeJSRegistry()
 	if registry == nil {
-		return nil, false
+		return nil
 	}
+	var out []*jsplugin.Plugin
+	seen := map[string]bool{}
 	for _, id := range SitePluginIDs(GatewayConfigFromSiteMeta(item.Meta)) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		plugin, ok := registry.ByPluginID(id)
 		if !ok || plugin == nil || plugin.Manifest.DeclaresSiteType() || !plugin.HasHook(hook) {
 			continue
 		}
-		return plugin, true
+		out = append(out, plugin)
 	}
-	return nil, false
+	return out
+}
+
+// siteHookPlugin returns the first mounted plugin that exports hook and does
+// not declare a site type. A plugin that is no longer enabled is skipped, so
+// disabling it returns the site to the next plugin or the default.
+func (s *Service) siteHookPlugin(item store.Site, hook string) (*jsplugin.Plugin, bool) {
+	plugins := s.siteHookPlugins(item, hook)
+	if len(plugins) == 0 {
+		return nil, false
+	}
+	return plugins[0], true
 }
 
 // siteTypeHookPlugin returns the enabled site_provider for siteType when it
@@ -233,28 +250,75 @@ func (l pluginModelLister) ListModels(ctx context.Context, site adapter.SiteConf
 	return models, nil
 }
 
-// modelListerFor returns the model source for a site. A model_list plugin bound
-// to the site wins, then the site type's listModels hook, then the adapter.
+// modelListerFor returns the model source for a site. Mounted listModels
+// plugins are merged with the site type's hook and the adapter: a higher
+// priority source overrides a lower one for the same upstream name, and names
+// only a lower source has are kept. A single source is returned as itself, so
+// a site with one plugin behaves exactly as before. With no plugin source the
+// adapter is used, including when it does not support listing models.
 func (s *Service) modelListerFor(item store.Site, module adapter.Module) (adapter.GatewayModelLister, bool) {
-	if plugin, ok := s.siteHookPlugin(item, "listModels"); ok {
-		return pluginModelLister{
-			plugin:     plugin,
-			hook:       "listModels",
-			resultKind: jsplugin.KindModelList,
-			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
-			clientFor:  func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
-		}, true
+	var sources []adapter.GatewayModelLister
+	for _, plugin := range s.siteHookPlugins(item, "listModels") {
+		sources = append(sources, s.pluginModelSource(item, plugin))
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "listModels"); ok {
-		return pluginModelLister{
-			plugin:     plugin,
-			hook:       "listModels",
-			resultKind: jsplugin.KindModelList,
-			wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
-			clientFor:  func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
-		}, true
+		sources = append(sources, s.pluginModelSource(item, plugin))
 	}
-	return adapter.AsGatewayModelLister(module)
+	switch len(sources) {
+	case 0:
+		return adapter.AsGatewayModelLister(module)
+	case 1:
+		return sources[0], true
+	default:
+		if fallback, ok := adapter.AsGatewayModelLister(module); ok {
+			sources = append(sources, fallback)
+		}
+		return mergedModelLister{sources: sources}, true
+	}
+}
+
+// pluginModelSource is one plugin's listModels hook as a model lister.
+func (s *Service) pluginModelSource(item store.Site, plugin *jsplugin.Plugin) pluginModelLister {
+	return pluginModelLister{
+		plugin:     plugin,
+		hook:       "listModels",
+		resultKind: jsplugin.KindModelList,
+		wrapCtx:    func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) },
+		clientFor:  func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
+	}
+}
+
+// mergedModelLister calls each source from highest priority to lowest. An
+// entry with an upstream name already produced is skipped, so the first source
+// wins. A source that fails is logged and skipped; the error is returned only
+// when every source failed or none produced a model.
+type mergedModelLister struct {
+	sources []adapter.GatewayModelLister
+}
+
+func (l mergedModelLister) ListModels(ctx context.Context, site adapter.SiteConfig, apiKey string) ([]adapter.Model, error) {
+	var merged []adapter.Model
+	seen := map[string]bool{}
+	var failures []error
+	for _, source := range l.sources {
+		models, err := source.ListModels(ctx, site, apiKey)
+		if err != nil {
+			slog.Default().Debug("listModels source failed", "error", err)
+			failures = append(failures, err)
+			continue
+		}
+		for _, model := range models {
+			if seen[model.UpstreamName] {
+				continue
+			}
+			seen[model.UpstreamName] = true
+			merged = append(merged, model)
+		}
+	}
+	if len(merged) == 0 && len(failures) > 0 {
+		return nil, failures[0]
+	}
+	return merged, nil
 }
 
 // ---- credential_check ----
@@ -328,21 +392,71 @@ func nonEmpty(value, fallback string) string {
 	return fallback
 }
 
-// credentialValidatorFor returns the credential check for a site. A
-// credential_check plugin bound to the site wins, then the site type's check
-// hook, then the adapter.
-func (s *Service) credentialValidatorFor(item store.Site, module adapter.Module) (adapter.CredentialValidator, bool) {
-	if plugin, ok := s.siteHookPlugin(item, "check"); ok {
-		validator := s.pluginCheckValidator(item, plugin)
-		validator.wrapCtx = func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) }
-		return validator, true
+// credentialValidatorFor returns the credential check for a site. Every
+// mounted check plugin and the site type's check hook must pass. A single
+// plugin is returned as itself, so a site with one check behaves exactly as
+// before. With no plugin check the adapter is used.
+// checkPlugins is every check for a site, highest priority first: mounted
+// plugins, then the site type's own hook.
+func (s *Service) checkPlugins(item store.Site) []pluginCredentialValidator {
+	var validators []pluginCredentialValidator
+	for _, plugin := range s.siteHookPlugins(item, "check") {
+		validators = append(validators, s.pluginCheckSource(item, plugin))
 	}
 	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "check"); ok {
-		validator := s.pluginCheckValidator(item, plugin)
-		validator.wrapCtx = func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) }
-		return validator, true
+		validators = append(validators, s.pluginCheckSource(item, plugin))
 	}
-	return adapter.AsCredentialValidator(module)
+	return validators
+}
+
+func (s *Service) credentialValidatorFor(item store.Site, module adapter.Module) (adapter.CredentialValidator, bool) {
+	validators := s.checkPlugins(item)
+	switch len(validators) {
+	case 0:
+		return adapter.AsCredentialValidator(module)
+	case 1:
+		return validators[0], true
+	default:
+		return mergedCredentialValidator{validators: validators}, true
+	}
+}
+
+// pluginCheckSource is one plugin's check hook, with the site's settings.
+func (s *Service) pluginCheckSource(item store.Site, plugin *jsplugin.Plugin) pluginCredentialValidator {
+	validator := s.pluginCheckValidator(item, plugin)
+	validator.wrapCtx = func(ctx context.Context) context.Context { return s.withSitePluginContext(ctx, item, plugin) }
+	return validator
+}
+
+// mergedCredentialValidator passes only when every check passes. The first
+// invalid verdict wins; otherwise the first failure or unusable answer wins.
+// A hook that errors is treated as unavailable and the remaining checks still run.
+type mergedCredentialValidator struct {
+	validators []pluginCredentialValidator
+}
+
+func (v mergedCredentialValidator) ValidateCredentials(ctx context.Context, site adapter.SiteConfig, apiKey string) error {
+	var firstInvalid, firstOther error
+	for _, validator := range v.validators {
+		err := validator.ValidateCredentials(ctx, site, apiKey)
+		if err == nil {
+			continue
+		}
+		if upstream.ClassifyError(err).CredentialInvalid() {
+			if firstInvalid == nil {
+				firstInvalid = err
+			}
+			continue
+		}
+		slog.Default().Debug("check plugin failed", "plugin_id", validator.plugin.Manifest.ID, "error", err)
+		if firstOther == nil {
+			firstOther = err
+		}
+	}
+	if firstInvalid != nil {
+		return firstInvalid
+	}
+	return firstOther
 }
 
 // pluginCheckValidator is the check hook for one plugin, with its transport profile.
@@ -351,6 +465,45 @@ func (s *Service) pluginCheckValidator(item store.Site, plugin *jsplugin.Plugin)
 		plugin: plugin, hook: "check", resultKind: jsplugin.KindCredentialCheck,
 		clientFor: func(ctx context.Context) (*http.Client, error) { return s.pluginProfileClient(ctx, item, plugin) },
 	}
+}
+
+// runMergedHealthCheck runs every check plugin for the site. All of them must
+// pass; the first invalid verdict, otherwise the first failure, is the result.
+func (s *Service) runMergedHealthCheck(ctx context.Context, item store.Site, validator mergedCredentialValidator, start time.Time, check siteHealthCheck) siteHealthCheck {
+	ids := make([]string, 0, len(validator.validators))
+	for _, source := range validator.validators {
+		ids = append(ids, source.plugin.Manifest.ID)
+	}
+	check.endpoint = "credential_check " + strings.Join(ids, ",")
+	check.metadata["plugins"] = ids
+	_, credential, err := s.siteWithAPIKeyCredential(ctx, item.ID)
+	if err != nil {
+		check.latency = time.Since(start)
+		check.errorType = "missing_credential"
+		check.message = err.Error()
+		return check
+	}
+	err = validator.ValidateCredentials(ctx, s.toAdapterSite(ctx, item), credential.Secret)
+	check.latency = time.Since(start)
+	if err == nil {
+		check.success = true
+		check.message = "ok"
+		return check
+	}
+	failure := upstream.ClassifyError(err)
+	switch {
+	case failure.CredentialInvalid():
+		check.errorType = "validation_failed"
+	case failure.Limited():
+		check.success = true
+		check.message = "ok"
+		check.metadata["credential_limited"] = healthFailureMetadata(failure)
+		return check
+	default:
+		check.errorType = "upstream_unreachable"
+	}
+	check.message = err.Error()
+	return check
 }
 
 // runPluginHealthCheck runs a credential_check plugin, or a site_provider
@@ -442,6 +595,37 @@ func (s *Service) detectWithPlugins(ctx context.Context, baseURL string) (Detect
 
 // ---- model_metadata ----
 
+// describeModelsPlugins orders the plugins that fill model metadata: the
+// site's mounted plugins first (highest priority), then the other enabled
+// plugins by id, and the site type's own hook last. A plugin appears once.
+func describeModelsPlugins(registry *jsplugin.Registry, item store.Site) []*jsplugin.Plugin {
+	if registry == nil {
+		return nil
+	}
+	var out []*jsplugin.Plugin
+	seen := map[string]bool{}
+	add := func(plugin *jsplugin.Plugin) {
+		if plugin == nil || seen[plugin.Manifest.ID] || !plugin.HasHook("describeModels") {
+			return
+		}
+		seen[plugin.Manifest.ID] = true
+		out = append(out, plugin)
+	}
+	cfg := GatewayConfigFromSiteMeta(item.Meta)
+	for _, id := range SitePluginIDs(cfg) {
+		if plugin, ok := registry.ByPluginID(id); ok {
+			add(plugin)
+		}
+	}
+	for _, plugin := range registry.WithHook("describeModels") {
+		add(plugin)
+	}
+	if plugin, ok := ProviderHookPlugin(registry, item.SiteType, "describeModels"); ok {
+		add(plugin)
+	}
+	return out
+}
+
 // applyModelMetadataPlugins lets enabled model_metadata plugins fill in what is
 // still missing on a model. Plugins have the lowest priority: they never
 // replace a value the upstream, the curated list or the catalog already gave.
@@ -450,7 +634,7 @@ func (s *Service) applyModelMetadataPlugins(ctx context.Context, item store.Site
 	if registry == nil || strings.TrimSpace(model.UpstreamName) == "" {
 		return model
 	}
-	for _, plugin := range registry.WithHook("describeModels") {
+	for _, plugin := range describeModelsPlugins(registry, item) {
 		callCtx := s.withSitePluginContext(ctx, item, plugin)
 		result, err := plugin.CallModelMetadataHook(callCtx,
 			jsplugin.ModelMetadataContext{SiteType: item.SiteType},
@@ -611,17 +795,42 @@ func pricingSnapshotFromPlugin(parsed jsplugin.PricingParseResult, raw any) adap
 	return snapshot
 }
 
+// pricingPlugins returns the parsePricing plugins for a site, highest
+// priority first: mounted plugins in plugin_ids order, then the site type's
+// own hook as the fallback.
+func (s *Service) pricingPlugins(item store.Site) []*jsplugin.Plugin {
+	plugins := s.siteHookPlugins(item, "parsePricing")
+	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "parsePricing"); ok {
+		plugins = append(plugins, plugin)
+	}
+	return plugins
+}
+
 // syncPluginPricing is the pricing step of a model refresh for a site with a
 // pricing_parse plugin bound. bound is false when there is nothing to do.
+// Several plugins are merged: a higher priority item or group replaces a lower
+// one with the same name, and scalar fields keep the highest priority value.
+// One plugin failing is logged and skipped; every plugin failing is an error.
 func (s *Service) syncPluginPricing(ctx context.Context, item store.Site, models []store.SiteModel, now time.Time) (snapshot adapter.PricingSnapshot, groups []store.SitePricingGroup, pricings []store.SiteModelPricing, bound bool, err error) {
-	plugin, ok := s.siteHookPlugin(item, "parsePricing")
-	if !ok {
+	plugins := s.pricingPlugins(item)
+	if len(plugins) == 0 {
 		return adapter.PricingSnapshot{}, nil, nil, false, nil
 	}
-	snapshot, err = s.fetchPluginPricing(ctx, item, plugin)
-	if err != nil {
-		return adapter.PricingSnapshot{}, nil, nil, true, fmt.Errorf("pricing plugin %s: %w", plugin.Manifest.ID, err)
+	var failures []error
+	var parts []adapter.PricingSnapshot
+	for _, plugin := range plugins {
+		part, fetchErr := s.fetchPluginPricing(ctx, item, plugin)
+		if fetchErr != nil {
+			slog.Default().Debug("parsePricing plugin failed", "plugin_id", plugin.Manifest.ID, "error", fetchErr)
+			failures = append(failures, fmt.Errorf("pricing plugin %s: %w", plugin.Manifest.ID, fetchErr))
+			continue
+		}
+		parts = append(parts, part)
 	}
+	if len(parts) == 0 {
+		return adapter.PricingSnapshot{}, nil, nil, true, failures[0]
+	}
+	snapshot = mergePricingSnapshots(parts)
 	byName := make(map[string]store.SiteModel, len(models))
 	for _, model := range models {
 		byName[model.UpstreamName] = model
@@ -630,9 +839,42 @@ func (s *Service) syncPluginPricing(ctx context.Context, item store.Site, models
 	groups, pricings, err = syncPricingState(ctx, item.ID, item.SiteType, snapshot, byName,
 		store.NewSitePricingGroupRepository(s.db.DB()), store.NewSiteModelPricingRepository(s.db.DB()), now)
 	if err != nil {
-		return snapshot, nil, nil, true, fmt.Errorf("pricing plugin %s: %w", plugin.Manifest.ID, err)
+		return snapshot, nil, nil, true, fmt.Errorf("pricing plugin %s: %w", plugins[0].Manifest.ID, err)
 	}
 	return snapshot, groups, pricings, true, nil
+}
+
+// mergePricingSnapshots combines snapshots from highest priority to lowest.
+// The first item for a model and group, and the first group of a name, win.
+// Scalar fields are taken from the highest priority snapshot that sets them.
+func mergePricingSnapshots(parts []adapter.PricingSnapshot) adapter.PricingSnapshot {
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	var merged adapter.PricingSnapshot
+	groups := map[string]bool{}
+	items := map[string]bool{}
+	for _, part := range parts {
+		if merged.Raw == nil && part.Raw != nil {
+			merged.Raw = part.Raw
+		}
+		for _, group := range part.Groups {
+			if groups[group.GroupName] {
+				continue
+			}
+			groups[group.GroupName] = true
+			merged.Groups = append(merged.Groups, group)
+		}
+		for _, item := range part.Items {
+			key := item.ModelName + "\x00" + item.GroupName
+			if items[key] {
+				continue
+			}
+			items[key] = true
+			merged.Items = append(merged.Items, item)
+		}
+	}
+	return merged
 }
 
 // PreviewPluginPricing fetches and parses a site's price table without saving

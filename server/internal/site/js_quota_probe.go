@@ -16,6 +16,43 @@ import (
 	"xlyra/server/internal/jsplugin"
 )
 
+// probeQuotaSources runs every source and concatenates the entries in priority
+// order. A source that fails contributes one entry carrying its error and does
+// not fail the whole probe. The result is ok when at least one source is.
+func (s *Service) probeQuotaSources(ctx context.Context, client *http.Client, sources []string, siteType, credentialType, baseURL, secret string) QuotaProbeResult {
+	combined := QuotaProbeResult{Status: "error", FetchedAt: time.Now().UTC()}
+	var errors []string
+	for _, source := range sources {
+		result := s.probeQuota(ctx, client, source, siteType, credentialType, baseURL, secret)
+		if result.Status == "ok" {
+			combined.Status = "ok"
+			combined.Entries = append(combined.Entries, result.Entries...)
+			if combined.Plan == "" {
+				combined.Plan = result.Plan
+			}
+			if combined.ExpiresAt == nil {
+				combined.ExpiresAt = result.ExpiresAt
+			}
+			if combined.IsAvailable == nil {
+				combined.IsAvailable = result.IsAvailable
+			}
+			continue
+		}
+		if result.Error != "" {
+			errors = append(errors, strings.TrimPrefix(source, QuotaProbePluginPrefix)+": "+result.Error)
+			combined.Entries = append(combined.Entries, QuotaProbeEntry{
+				Label: strings.TrimPrefix(source, QuotaProbePluginPrefix),
+				Name:  result.Error,
+			})
+		}
+	}
+	if combined.Status != "ok" {
+		combined.Error = strings.Join(errors, "; ")
+		combined.Entries = nil
+	}
+	return combined
+}
+
 func (s *Service) probeQuota(ctx context.Context, client *http.Client, probeType, siteType, credentialType, baseURL, secret string) QuotaProbeResult {
 	if s.activeJSRegistry() == nil && !strings.Contains(probeType, "/") {
 		return quotaProbeUnavailable("js plugin registry is not available")

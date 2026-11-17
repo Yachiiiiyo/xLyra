@@ -430,6 +430,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Post("/sites/refresh", adminHandler.RefreshAllSites)
 				protected.Get("/sites/{siteID}", adminHandler.GetSite)
 				protected.Put("/sites/{siteID}", adminHandler.UpdateSite)
+				protected.Put("/sites/{siteID}/plugin-order", adminHandler.UpdateSitePluginOrder)
 				protected.Put("/sites/{siteID}/enabled", adminHandler.UpdateSiteEnabled)
 				protected.Delete("/sites/{siteID}", adminHandler.DeleteSite)
 				protected.Post("/sites/{siteID}/refresh", adminHandler.RefreshSite)

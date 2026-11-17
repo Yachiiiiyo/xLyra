@@ -209,6 +209,48 @@ func (h Handler) UpdateSite(w http.ResponseWriter, r *http.Request) {
 	h.writePayload(w, http.StatusOK, response)
 }
 
+// UpdateSitePluginOrder replaces the site's mounted plugin order. Every id
+// must name an enabled plugin that does not declare a site type.
+func (h Handler) UpdateSitePluginOrder(w http.ResponseWriter, r *http.Request) {
+	if h.sites == nil || h.jsPlugins == nil || h.jsPlugins.Catalog() == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "site_service_unavailable", "site service is not available")
+		return
+	}
+	siteID, ok := siteIDParam(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		PluginIDs []string `json:"plugin_ids"`
+	}
+	if !h.decodeJSON(w, r, &body) {
+		return
+	}
+	if _, err := h.sites.Get(r.Context(), siteID); err != nil {
+		h.writeError(w, r, http.StatusNotFound, "not_found", "site was not found")
+		return
+	}
+	registry := h.jsPlugins.Catalog().Registry()
+	for _, id := range body.PluginIDs {
+		plugin, found := registry.ByPluginID(strings.TrimSpace(id))
+		if !found || plugin == nil || plugin.Manifest.DeclaresSiteType() {
+			h.recordAudit(r, currentAdminActor(r), "site.plugin_order", "site", siteID.String(), false, "js_plugin_order_invalid", map[string]any{"plugin_ids": body.PluginIDs})
+			h.writeError(w, r, http.StatusBadRequest, "js_plugin_order_invalid", "plugin_ids must name enabled plugins that do not declare a site type")
+			return
+		}
+	}
+	updated, err := h.sites.SetGatewayPluginIDs(r.Context(), siteID, body.PluginIDs)
+	if err != nil {
+		h.recordAudit(r, currentAdminActor(r), "site.plugin_order", "site", siteID.String(), false, "site_plugin_patch_failed", map[string]any{"plugin_ids": body.PluginIDs})
+		h.writeError(w, r, http.StatusBadRequest, "site_plugin_patch_failed", err.Error())
+		return
+	}
+	h.recordAudit(r, currentAdminActor(r), "site.plugin_order", "site", siteID.String(), true, "", map[string]any{"plugin_ids": body.PluginIDs})
+	h.writePayload(w, http.StatusOK, map[string]any{
+		"gateway_config": siteGatewayConfigPayload(updated.Meta),
+	})
+}
+
 func (h Handler) DeleteSite(w http.ResponseWriter, r *http.Request) {
 	if h.sites == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "site_service_unavailable", "site service is not available")

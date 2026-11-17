@@ -28,6 +28,26 @@ func (s *Service) AttachGatewayPlugin(ctx context.Context, siteID uuid.UUID, plu
 	})
 }
 
+// SetGatewayPluginIDs replaces the site's mounted plugin list. ids are trimmed,
+// rejected when blank or containing whitespace, and deduplicated while keeping
+// the first occurrence. Everything else in the gateway config is left as it is.
+func (s *Service) SetGatewayPluginIDs(ctx context.Context, siteID uuid.UUID, ids []string) (store.Site, error) {
+	clean := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || strings.ContainsAny(id, " \t\r\n") {
+			return store.Site{}, fmt.Errorf("plugin id is required")
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		clean = append(clean, id)
+	}
+	return s.patchGatewayPluginIDs(ctx, siteID, func([]string) []string { return clean })
+}
+
 // DetachGatewayPlugin removes pluginID from the site's mounted plugin list.
 // The list is written back even when that leaves it empty, so the legacy
 // fields are cleared too.

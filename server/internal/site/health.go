@@ -339,11 +339,10 @@ func (s *Service) runSiteHealthCheck(ctx context.Context, item store.Site) siteH
 		return check
 	}
 
-	if plugin, ok := s.siteHookPlugin(item, "check"); ok {
-		return s.runPluginHealthCheck(ctx, item, s.pluginCheckValidator(item, plugin), start, check)
-	}
-	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "check"); ok {
-		return s.runPluginHealthCheck(ctx, item, s.pluginCheckValidator(item, plugin), start, check)
+	if plugins := s.checkPlugins(item); len(plugins) == 1 {
+		return s.runPluginHealthCheck(ctx, item, plugins[0], start, check)
+	} else if len(plugins) > 1 {
+		return s.runMergedHealthCheck(ctx, item, mergedCredentialValidator{validators: plugins}, start, check)
 	}
 
 	if probe, ok := adapter.AsHealthProbe(module); ok {
