@@ -666,7 +666,7 @@ export function rewritePayload(_ctx: RewritePayloadContext, payload: Record<stri
 
 ## 出站限制
 
-`hosts` 按主机名精确匹配：去掉端口、忽略大小写，必须和列表中的某一项完全相同。不做子域匹配，没有通配符。
+`hosts` 按主机名匹配：去掉端口、忽略大小写。普通项必须和列表中的某一项完全相同。`*.example.com` 只匹配一个标签的子域（`a.example.com`），不匹配裸域、不匹配 `a.b.example.com`，也不匹配 `*.com`。详见[通配主机](./manifest.md#通配主机)。
 
 - 创建和更新站点时，`base_url` 的主机必须在列表里，否则拒绝保存。`base_url` 本身还要是带主机的 `http` 或 `https`。
 - 通用适配器在列模型、验 Key、健康检查之前检查 `base_url` 的主机，不在列表里就不发请求。它的客户端拒绝离开列表的重定向：最多 5 次，不能从 `https` 降到 `http`，目标协议必须是 `https` 或与第一次请求相同。

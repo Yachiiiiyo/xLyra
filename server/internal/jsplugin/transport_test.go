@@ -51,7 +51,10 @@ func TestMatchHostPattern(t *testing.T) {
 		want    bool
 	}{
 		{pattern: "*.example.com", host: "a.example.com", want: true},
-		{pattern: "*.example.com", host: "a.b.example.com", want: true},
+		{pattern: "*.example.com", host: "a.b.example.com", want: false},
+		{pattern: "*.com", host: "example.com", want: false},
+		{pattern: "*.example.com", host: "[::1]:8080", want: false},
+		{pattern: "::1", host: "[::1]:8080", want: true},
 		{pattern: " *.Example.COM ", host: "A.EXAMPLE.COM:443", want: true},
 		{pattern: "*.example.com", host: "example.com", want: false},
 		{pattern: "*.example.com", host: "example.com.evil.com", want: false},
@@ -80,7 +83,7 @@ func TestValidSiteProviderHostAllowsWildcard(t *testing.T) {
 	if err := validSiteProviderHost("*.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	for _, host := range []string{"*example.com", "example.*.com", "*.", "127.0.0.1"} {
+	for _, host := range []string{"*example.com", "example.*.com", "*.", "*.com", "127.0.0.1"} {
 		if err := validSiteProviderHost(host); err == nil {
 			t.Fatalf("validSiteProviderHost(%q) = nil", host)
 		}

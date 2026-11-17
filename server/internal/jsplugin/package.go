@@ -124,12 +124,13 @@ func (m Manifest) BaseURLSettings() (mode, defaultBase string) {
 // ProtocolSection is the protocol manifest block. Method and Auth are applied
 // by Go; the plugin never sees the upstream credential.
 type ProtocolSection struct {
-	Name           string `json:"name"`
-	DownstreamPath string `json:"downstreamPath"`
-	EndpointType   string `json:"endpointType"`
-	Method         string `json:"method"`
-	Auth           string `json:"auth"`
-	DefaultBaseURL string `json:"defaultBaseURL,omitempty"`
+	Name           string         `json:"name"`
+	DownstreamPath string         `json:"downstreamPath"`
+	EndpointType   string         `json:"endpointType"`
+	Method         string         `json:"method"`
+	Auth           string         `json:"auth"`
+	DefaultBaseURL string         `json:"defaultBaseURL,omitempty"`
+	Stream         *StreamSection `json:"stream,omitempty"`
 }
 
 // AuthHeader returns the header that carries the credential, or "" for auth "none".
@@ -674,6 +675,9 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 			if !strings.HasPrefix(manifest.Protocol.Auth, "header:") {
 				return fmt.Errorf("protocol.auth %q is not supported", manifest.Protocol.Auth)
 			}
+		}
+		if err := validateStreamSection(manifest.Protocol.Stream, "protocol.stream"); err != nil {
+			return err
 		}
 	case KindModelList, KindCredentialCheck, KindSiteDetect:
 		if mode := manifest.Site.BaseURLMode; mode != "" {

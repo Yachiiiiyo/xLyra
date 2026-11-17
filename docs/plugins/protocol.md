@@ -137,6 +137,46 @@ export function signRequest(ctx, req) {
 
 `auth` 取值：`bearer`（`Authorization: Bearer <密钥>`）、`none`、或 `header:<Header-Name>`（密钥写入指定请求头）。详见[清单](./manifest.md)。
 
+## 声明式流转换
+
+`protocol.stream` 可选。宿主在协议适配器读取响应之前，把上游 SSE 改写成标准 SSE。不写则字节流原样交给适配器。站点类型把同一段写在 `siteProvider.protocol.stream`，见[清单](./manifest.md#声明式流转换)。叠加插件不参与这层转换。
+
+```json
+"stream": {
+  "unwrap": {
+    "path": "body",
+    "format": "json_string",
+    "statusPath": "statusCode",
+    "okStatuses": [200]
+  },
+  "done": {
+    "dataEquals": ["[DONE]"],
+    "unwrappedEquals": ["[DONE]"],
+    "events": ["finish"],
+    "closeOnDone": true
+  },
+  "usage": {
+    "inputTokens": "usage.prompt_tokens",
+    "outputTokens": "usage.completion_tokens",
+    "cachedTokens": "usage.prompt_tokens_details.cached_tokens",
+    "reasoningTokens": "usage.completion_tokens_details.reasoning_tokens"
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `unwrap.path` | 每个 `data:` 载荷先解析成 JSON 对象，取该路径的值作为真正的 chunk。路径与 `secretPaths` 相同：点分键加数字下标，深度不超过 8，单条不超过 128 个字符 |
+| `unwrap.format` | `json`（值是对象或数组，默认）、`json_string`（值是 JSON 字符串，再解析一次）、`raw`（值是字符串，原样当载荷） |
+| `unwrap.statusPath` / `okStatuses` | 信封状态码。`okStatuses` 为空则不检查；不在集合内时中止读取，错误类型 `upstream_stream_status` |
+| `done.dataEquals` | 原始 `data:` 载荷与其中任一项完全相同即结束 |
+| `done.unwrappedEquals` | 解包后的载荷与其中任一项完全相同即结束 |
+| `done.events` | `event:` 名匹配即结束 |
+| `done.closeOnDone` | 为 true 时写出结束标记后立刻关闭上游，不再等连接关闭 |
+| `usage.inputTokens` 等 | 解包后的对象里，把源路径上的数值写入 `usage.prompt_tokens`、`usage.completion_tokens`、`usage.prompt_tokens_details.cached_tokens`、`usage.completion_tokens_details.reasoning_tokens`。源不是数值，或目标已有值，则不写 |
+
+载荷不是 JSON、路径不存在或类型不符时丢弃该事件。连续失败超过 8 次，错误类型为 `upstream_stream_malformed`。注释行和没有 `data:` 的事件不计入失败。`usage.cost` 与 `usage.billable` 这一阶段不处理。
+
 ## 单次调用的时限
 
 协议钩子在请求路径上，超时只有 **50 ms**，比探测插件的 200 ms 更短。不要在这里做重计算。

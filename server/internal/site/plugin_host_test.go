@@ -65,7 +65,7 @@ func TestCheckPluginHost(t *testing.T) {
 		{name: "userinfo ignored when host matches", siteType: "acme.example/chat", rawURL: "https://user:secret@api.example.com/v1"},
 		{name: "second host", siteType: "acme.example/chat", rawURL: "http://files.example.com"},
 		{name: "wildcard subdomain", siteType: "acme.example/chat", rawURL: "https://a.wild.example/v1"},
-		{name: "wildcard nested", siteType: "acme.example/chat", rawURL: "https://a.b.wild.example/v1"},
+		{name: "wildcard nested", siteType: "acme.example/chat", rawURL: "https://a.b.wild.example/v1", wantErr: true, host: "a.b.wild.example"},
 		{name: "wildcard bare domain", siteType: "acme.example/chat", rawURL: "https://wild.example/v1", wantErr: true, host: "wild.example"},
 		{name: "wildcard suffix trick", siteType: "acme.example/chat", rawURL: "https://wild.example.evil.com/v1", wantErr: true, host: "wild.example.evil.com"},
 		{name: "other subdomain", siteType: "acme.example/chat", rawURL: "https://evil.api.example.com/v1", wantErr: true, host: "evil.api.example.com"},

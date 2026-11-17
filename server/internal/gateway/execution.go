@@ -521,6 +521,7 @@ func (h Handler) forwardGatewayRequest(
 		result.upstreamStatusCode = resp.StatusCode
 		result.contentType = resp.Header.Get("Content-Type")
 		inflight.MarkResponding(requestID)
+		applyCandidateStream(resp, protocol, candidate)
 
 		if request.Stream {
 			result = h.handleStreamResponse(ctx, w, requestID, apiKeyID, canonicalModelID, candidate, protocol, resp, result, startedAt)
@@ -695,7 +696,15 @@ func (h Handler) handleBufferedResponse(
 			return h.finishBufferedSemanticFailure(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, semanticFailure)
 		}
 		result.success = false
-		result.errorType = "upstream_response_read_failed"
+		if errors.Is(readErr, errUpstreamStreamStatus) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_status"
+		} else if errors.Is(readErr, errUpstreamStreamMalformed) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_malformed"
+		} else {
+			result.errorType = "upstream_response_read_failed"
+		}
 		result.errorMessage = readErr.Error()
 		result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, nil)
 		return result
@@ -879,6 +888,14 @@ func (h Handler) handleStreamResponse(
 			if clientWriteErr.usage != (gatewayUsage{}) {
 				result = applyStreamUsage(result, clientWriteErr.usage)
 			}
+		} else if errors.Is(proxyErr, errUpstreamStreamStatus) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_status"
+			result.errorMessage = proxyErr.Error()
+		} else if errors.Is(proxyErr, errUpstreamStreamMalformed) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_malformed"
+			result.errorMessage = proxyErr.Error()
 		} else if streamSucceeded(capture) {
 			result.success = true
 		} else {

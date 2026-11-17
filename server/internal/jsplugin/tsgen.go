@@ -74,6 +74,10 @@ var tsTypes = []tsType{
 	{value: AccountRefreshResult{}, name: "AccountRefreshResult", enum: &tsEnum{"AccountRefreshStatus", AccountRefreshStatuses}},
 	{value: AccountSummaryResult{}, name: "AccountSummaryResult", enum: &tsEnum{"AccountSummaryStatus", AccountSummaryStatuses}},
 	{value: TransportProfileSpec{}, name: "TransportProfile"},
+	{value: StreamUnwrapSpec{}, name: "StreamUnwrap", section: "stream"},
+	{value: StreamDoneSpec{}, name: "StreamDone"},
+	{value: StreamUsageSpec{}, name: "StreamUsage"},
+	{value: StreamSectionSpec{}, name: "StreamSection"},
 }
 
 // TypeDeclarations renders the plugin SDK .d.ts: interfaces generated from the
@@ -84,6 +88,7 @@ func TypeDeclarations() (string, error) {
 		names[reflect.TypeOf(item.value)] = item.name
 	}
 	names[reflect.TypeOf(TransportProfileSpec{})] = "TransportProfile"
+	names[reflect.TypeOf(StreamSectionSpec{})] = "StreamSection"
 	names[reflect.TypeOf(PluginManifestSpec{})] = "PluginManifest"
 	var out strings.Builder
 	fmt.Fprintf(&out, "// xLyra plugin API v1 (apiVersion %d, hostApi %d).\n", hookAPIVersion, hostAPIVersion)

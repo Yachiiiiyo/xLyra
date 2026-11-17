@@ -56,7 +56,7 @@
 
 ## 通配主机
 
-`siteProvider.hosts` 和 `permissions` 里的 `net:` 都可以写 `*.example.com`。`*.` 只匹配子域（`a.example.com`、`a.b.example.com`），不匹配裸域 `example.com`，也不匹配 `example.com.evil.com`。星号不在开头、或写 IP，都不合法。其余仍是小写 DNS 主机名，不能带端口。
+`siteProvider.hosts` 和 `permissions` 里的 `net:` 都可以写 `*.example.com`。`*.` 只匹配**一个**标签（`*.example.com` 匹配 `a.example.com`，不匹配 `a.b.example.com`），也不匹配裸域 `example.com`，不匹配 `example.com.evil.com`。通配后缀本身至少再含一个 `.`，所以 `*.com` 不合法。星号不在开头、或写 IP，都不合法。其余仍是小写 DNS 主机名，不能带端口。
 
 ## quota_probe 部分
 
@@ -162,6 +162,7 @@
 | `protocol.officialBaseURL` | 是 | `https` URL，必须有主机，不能有用户信息、查询或片段。主机（忽略大小写，端口不算）必须在 `hosts` 里 |
 | `protocol.defaultEndpointTypes` | 是 | 至少一项，每项是 `openai`、`openai-response`、`anthropic-messages`、`google-gemini` 之一。只检查取值，不和 `protocol.kind` 做对应推断。通用适配器列模型时把它写进每个模型的 `supported_endpoint_types`；导出了 `listModels` 时以钩子返回的 `capabilities` 为准 |
 | `protocol.requestParams` | 否 | 可选。允许的键是 `unsupported`、`allowed_values`、`defaults`、`fixed`、`forced`、`validation`、`supported`。`supported` 只被合并，不过滤参数。不认识的键会让这份规格校验失败，插件被跳过。各键是否改正文见[站点类型](./site-provider.md#requestparams) |
+| `protocol.stream` | 否 | 声明式 SSE 转换，见[声明式流转换](#声明式流转换)。协议插件写在 `protocol.stream` |
 | `models.path` | 否 | 只用于 `api_key`。拉模型列表的路径，不写等于 `/v1/models`。写了就要符合 `protocol.path` 的路径规则。没有 `listModels` 钩子时，通用适配器用它。`account_pool` 写 `path` 会被拒绝 |
 | `models.auth` | 否 | 只用于 `api_key`。不写或 `bearer` 表示 Bearer；也可以是 `header:<Name>`，`Name` 是非空的 HTTP 头字段名。只用于通用适配器的列模型、验 Key 和健康检查，不决定网关转发的头。`account_pool` 写 `auth` 会被拒绝 |
 | `models.perAccount` | 否 | 只用于 `account_pool`。为 true 时必须导出 `listModels`，宿主按账号调用它并写入模型。不能和 `path`、`auth` 一起写。`api_key` 写了会被拒绝。省略 `models` 表示不做按账号同步。空对象 `{}` 会被拒绝 |
@@ -187,7 +188,11 @@
 
 `probe`、`listModels`、`check`、`classify`、`rewritePayload` 都是可选导出。账号池还要导出 `summarizeAccount`；`login.kind` 为 `custom_poll` 时再导出 `startLogin`、`pollLogin`；`refresh.kind` 为 `custom_steps` 时再导出 `refreshTokens`；`models.perAccount` 为 true 时再导出 `listModels`。调用时机和返回值见[站点类型](./site-provider.md)。
 
-启用这个类型时，包必须由受信密钥签名，并且每次启用都要再次确认完整的 `hosts`。确认结果记成 `host:<主机名>`。确认之后，站点 `base_url`、通用适配器发出的请求和网关转发的上游地址，主机都必须命中这份列表：普通项按主机名精确匹配（不含端口），`*.example.com` 只匹配子域、不匹配裸域。重定向也不得离开列表。分步钩子在同源限制之外再做一次同样的主机检查。
+启用这个类型时，包必须由受信密钥签名，并且每次启用都要再次确认完整的 `hosts`。确认结果记成 `host:<主机名>`。确认之后，站点 `base_url`、通用适配器发出的请求和网关转发的上游地址，主机都必须命中这份列表：普通项按主机名精确匹配（不含端口），`*.example.com` 只匹配一个标签的子域、不匹配裸域和更深的子域。重定向也不得离开列表。分步钩子在同源限制之外再做一次同样的主机检查。
+
+## 声明式流转换
+
+`siteProvider.protocol.stream` 与协议插件的 `protocol.stream` 是同一段配置。字段、结束标记和用量映射见[协议插件](./protocol.md#声明式流转换)。站点类型只使用底座插件上的这一段，挂载的叠加插件不会再包一层。未声明时上游字节流不变。
 
 ## 图标
 

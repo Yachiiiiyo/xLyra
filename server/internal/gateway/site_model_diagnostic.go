@@ -498,6 +498,7 @@ func (h Handler) forwardSiteModelTestRequest(
 		result.requestLogID = h.recordAttempt(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, nil)
 		return result
 	}
+	applyCandidateStream(resp, protocol, candidate)
 	if upstreamStream {
 		return h.handleSiteModelTestStreamResponse(ctx, requestID, canonicalModelID, candidate, protocol, resp, result, startedAt)
 	}
@@ -693,7 +694,15 @@ func (h Handler) handleSiteModelTestStreamResponse(
 	result.cacheWriteCost = cacheWriteCostForAttempt(capture.usage, result)
 	result.latencyMS = time.Since(startedAt).Milliseconds()
 	if proxyErr != nil {
-		if streamSucceeded(capture) {
+		if errors.Is(proxyErr, errUpstreamStreamStatus) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_status"
+			result.errorMessage = proxyErr.Error()
+		} else if errors.Is(proxyErr, errUpstreamStreamMalformed) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_malformed"
+			result.errorMessage = proxyErr.Error()
+		} else if streamSucceeded(capture) {
 			result.success = true
 		} else {
 			result.errorType = "upstream_stream_failed"

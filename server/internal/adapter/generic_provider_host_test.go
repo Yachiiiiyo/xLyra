@@ -127,6 +127,13 @@ func TestGenericProviderRedirectStaysInsideAllowedHosts(t *testing.T) {
 	if err := wildcard.CheckRedirect(bareTarget, []*http.Request{origin}); err == nil || !strings.Contains(err.Error(), `redirect host "c.test" is not allowed`) {
 		t.Fatalf("bare domain redirect = %v", err)
 	}
+	nested, err := http.NewRequest(http.MethodGet, "http://a.b.c.test/v1/models", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := wildcard.CheckRedirect(nested, []*http.Request{origin}); err == nil || !strings.Contains(err.Error(), `redirect host "a.b.c.test" is not allowed`) {
+		t.Fatalf("nested redirect = %v", err)
+	}
 }
 
 func TestGenericProviderRejectsSixthRedirect(t *testing.T) {

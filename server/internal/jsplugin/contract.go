@@ -16,6 +16,38 @@ type TransportProfileSpec struct {
 	Profile string `ts:"profile,optional,type=\"claude_code\",doc=Built-in TLS fingerprint. bun is not supported by this build."`
 }
 
+// StreamUnwrapSpec pulls the real chunk out of each SSE data payload.
+type StreamUnwrapSpec struct {
+	Path       string `ts:"path,doc=Dot path with numeric indexes, same syntax as secretPaths."`
+	Format     string `ts:"format,optional,type=\"json\" | \"json_string\" | \"raw\",doc=json reads an object or array. json_string parses a JSON string. raw uses the string as the payload. Default is json."`
+	StatusPath string `ts:"statusPath,optional,doc=Envelope status path. Checked only when okStatuses is set."`
+	OKStatuses []int  `ts:"okStatuses,optional,doc=Allowed envelope statuses. Empty skips the check."`
+}
+
+// StreamDoneSpec names extra end-of-stream markers.
+type StreamDoneSpec struct {
+	DataEquals      []string `ts:"dataEquals,optional,doc=Original data payload equals one of these."`
+	UnwrappedEquals []string `ts:"unwrappedEquals,optional,doc=Unwrapped payload equals one of these."`
+	Events          []string `ts:"events,optional,doc=SSE event name equals one of these."`
+	CloseOnDone     bool     `ts:"closeOnDone,optional,doc=Stop reading the upstream body after a done marker."`
+}
+
+// StreamUsageSpec maps token counts onto the standard usage object.
+// cost and billable are not applied.
+type StreamUsageSpec struct {
+	InputTokens     string `ts:"inputTokens,optional,doc=Copied to usage.prompt_tokens when that field is absent."`
+	OutputTokens    string `ts:"outputTokens,optional,doc=Copied to usage.completion_tokens when that field is absent."`
+	CachedTokens    string `ts:"cachedTokens,optional,doc=Copied to usage.prompt_tokens_details.cached_tokens when that field is absent."`
+	ReasoningTokens string `ts:"reasoningTokens,optional,doc=Copied to usage.completion_tokens_details.reasoning_tokens when that field is absent."`
+}
+
+// StreamSectionSpec is the declarative SSE transform.
+type StreamSectionSpec struct {
+	Unwrap *StreamUnwrapSpec `ts:"unwrap,optional"`
+	Done   *StreamDoneSpec   `ts:"done,optional"`
+	Usage  *StreamUsageSpec  `ts:"usage,optional"`
+}
+
 // PluginManifestSpec is the hand-written part of the plugin manifest in the SDK.
 type PluginManifestSpec struct {
 	APIVersion int                   `ts:"apiVersion"`
@@ -26,6 +58,7 @@ type PluginManifestSpec struct {
 	Kind       string                `ts:"kind,optional,type=PluginKind"`
 	Exports    []string              `ts:"exports,optional"`
 	Transport  *TransportProfileSpec `ts:"transport,optional"`
+	Stream     *StreamSectionSpec    `ts:"stream,optional,doc=Declarative SSE transform. On a protocol plugin this is protocol.stream. On a site type it is siteProvider.protocol.stream."`
 }
 
 // ProbeContext is the credential-free object passed to a quota probe hook.

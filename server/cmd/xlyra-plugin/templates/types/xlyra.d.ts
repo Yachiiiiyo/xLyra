@@ -440,6 +440,47 @@ export interface TransportProfile {
   profile?: "claude_code";
 }
 
+// ---- stream ----
+
+export interface StreamUnwrap {
+  /** Dot path with numeric indexes, same syntax as secretPaths. */
+  path: string;
+  /** json reads an object or array. json_string parses a JSON string. raw uses the string as the payload. Default is json. */
+  format?: "json" | "json_string" | "raw";
+  /** Envelope status path. Checked only when okStatuses is set. */
+  statusPath?: string;
+  /** Allowed envelope statuses. Empty skips the check. */
+  okStatuses?: number[];
+}
+
+export interface StreamDone {
+  /** Original data payload equals one of these. */
+  dataEquals?: string[];
+  /** Unwrapped payload equals one of these. */
+  unwrappedEquals?: string[];
+  /** SSE event name equals one of these. */
+  events?: string[];
+  /** Stop reading the upstream body after a done marker. */
+  closeOnDone?: boolean;
+}
+
+export interface StreamUsage {
+  /** Copied to usage.prompt_tokens when that field is absent. */
+  inputTokens?: string;
+  /** Copied to usage.completion_tokens when that field is absent. */
+  outputTokens?: string;
+  /** Copied to usage.prompt_tokens_details.cached_tokens when that field is absent. */
+  cachedTokens?: string;
+  /** Copied to usage.completion_tokens_details.reasoning_tokens when that field is absent. */
+  reasoningTokens?: string;
+}
+
+export interface StreamSection {
+  unwrap?: StreamUnwrap;
+  done?: StreamDone;
+  usage?: StreamUsage;
+}
+
 export type PluginKind = "quota_probe" | "protocol" | "model_list" | "credential_check" | "site_detect" | "error_classifier" | "model_metadata" | "pricing_parse" | "automation" | "site_provider";
 
 export interface PluginManifest {
@@ -451,6 +492,8 @@ export interface PluginManifest {
   kind?: PluginKind;
   exports?: string[];
   transport?: TransportProfile;
+  /** Declarative SSE transform. On a protocol plugin this is protocol.stream. On a site type it is siteProvider.protocol.stream. */
+  stream?: StreamSection;
 }
 
 export interface PluginMeta {

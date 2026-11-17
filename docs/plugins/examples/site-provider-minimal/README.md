@@ -2,7 +2,7 @@
 
 演示一个 API Key 站点类型插件：清单声明站点类型和协议，源码实现三个可选钩子。`probe` 和 `check` 没有导出，需要时按文末的片段自己加上。
 
-上游在这个示例里是虚构的 `api.example.com`。它的模型列表不是 OpenAI 的 `data[].id`，错误码用厂商自己的 `E429`，聊天请求不接受 `user` 字段。
+上游在这个示例里是虚构的 `api.example.com`。它的模型列表不是 OpenAI 的 `data[].id`，错误码用厂商自己的 `E429`，聊天请求不接受 `user` 字段。SSE 把标准 chunk 放在 `body` 里，清单 `protocol.stream` 在交给 `openai_chat` 之前解开这一层，并在 `[DONE]` 后关闭连接。
 
 ## 文件
 

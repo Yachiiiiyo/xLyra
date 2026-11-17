@@ -69,6 +69,22 @@ type secretSeg struct {
 	isIndex bool
 }
 
+// SecretSegment is one object key or array index in a secret path.
+type SecretSegment struct {
+	Key   string
+	At    int
+	Index bool
+}
+
+// Segments returns the path in order.
+func (p SecretPath) Segments() []SecretSegment {
+	out := make([]SecretSegment, len(p.segs))
+	for i, seg := range p.segs {
+		out[i] = SecretSegment{Key: seg.key, At: seg.index, Index: seg.isIndex}
+	}
+	return out
+}
+
 // String returns the canonical path. A leading-zero index is normalized.
 func (p SecretPath) String() string {
 	var b strings.Builder

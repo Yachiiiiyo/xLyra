@@ -113,6 +113,7 @@ type SiteProviderProtocol struct {
 	OfficialBaseURL      string          `json:"officialBaseURL"`
 	DefaultEndpointTypes []string        `json:"defaultEndpointTypes"`
 	RequestParams        json.RawMessage `json:"requestParams,omitempty"`
+	Stream               *StreamSection  `json:"stream,omitempty"`
 }
 
 // SiteProviderModels is the model-list request.
@@ -234,6 +235,9 @@ func validateSiteProviderHosts(hosts []string) error {
 
 func validSiteProviderHost(host string) error {
 	if rest, ok := strings.CutPrefix(host, "*."); ok {
+		if !strings.Contains(rest, ".") {
+			return fmt.Errorf("host %q wildcard must cover more than one label", host)
+		}
 		host = rest
 	}
 	if net.ParseIP(host) != nil {
@@ -277,6 +281,9 @@ func validateSiteProviderProtocol(section SiteProviderProtocol, hosts []string) 
 		if _, ok := siteProviderEndpointTypes[value]; !ok {
 			return fmt.Errorf("siteProvider.protocol.defaultEndpointTypes: %q is not supported", value)
 		}
+	}
+	if err := validateStreamSection(section.Stream, "siteProvider.protocol.stream"); err != nil {
+		return err
 	}
 	return nil
 }
