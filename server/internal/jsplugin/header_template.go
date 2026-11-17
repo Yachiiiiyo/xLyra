@@ -235,8 +235,8 @@ func validateManifestRequest(manifest Manifest) error {
 	if !siteProviderRequestPresent(top) {
 		return nil
 	}
-	if top.StripDownstreamHeaders || top.UpstreamStreamOnly || top.BaseURLFrom != "" {
-		return fmt.Errorf("request.stripDownstreamHeaders is not allowed without a site type")
+	if top.UpstreamStreamOnly || top.BaseURLFrom != "" {
+		return fmt.Errorf("request.upstreamStreamOnly and request.baseURLFrom are not allowed without a site type")
 	}
 	return validateRequestSection(top, "request", HeaderTemplateOptions{
 		SettingKeys: manifestSettingKeys(manifest.Settings),

@@ -99,6 +99,14 @@
 
 钩子抛错、超时或返回不合法时，这次尝试记为 `upstream_sign_failed` 并中止（可换下一个凭据），不会带着缺头的请求发出去。
 
+## transformStream(ctx, event)
+
+当声明式 `stream` 配置不足以覆盖自定义流协议时，底座插件、协议插件或挂载的叠加插件可以导出 `transformStream(ctx, event)`（热池运行，单事件时限 **5 毫秒**），按「协议插件 / 站点底座 → 挂载顺序」逐个 SSE 事件链式改写：
+
+- `ctx` 包含只读的 `siteType`、`model`、`protocol` 与合并后的 `settings`。
+- `event` 为 `{ event?: string, data: string }`。
+- 返回 `{ data?: string, event?: string, drop?: boolean, done?: boolean }`：`drop: true` 会丢弃当前事件不向下游写出；`done: true` 标记流在当前事件后结束。
+
 ## onSchedule(ctx, steps)
 
 声明了 `"schedule"` 权限并导出 `onSchedule(ctx, steps)` 的插件，在管理员开启周期计划后由宿主按周期调用（单步时限 **1 秒**，最多 4 步请求）。

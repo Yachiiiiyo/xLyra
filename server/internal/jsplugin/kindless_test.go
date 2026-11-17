@@ -60,14 +60,112 @@ func TestKindlessRejectsProtocolExport(t *testing.T) {
 	}
 }
 
-func TestKindlessRejectsProtocolSection(t *testing.T) {
-	source := kindlessSource(`export function probe() { return { error: "x" }; }`)
-	manifest := kindlessManifest(source, func(m *Manifest) {
-		m.Protocol.Name = "acme"
+func TestKindlessSupportsProtocolAndAutomationSections(t *testing.T) {
+	protoSource := kindlessSource(`
+export function decodeRequest() { return { model: "gpt-4" }; }
+export function buildRequest() { return { path: "/v1/chat", body: "{}" }; }
+export function parseResponse() { return { passthrough: true }; }
+`)
+	protoManifest := kindlessManifest(protoSource, func(m *Manifest) {
+		m.Protocol = ProtocolSection{
+			Name:           "acme_proto",
+			DownstreamPath: "/v1/plugins/acme",
+			EndpointType:   "acme",
+		}
 	})
-	err := validateManifest(manifest, source)
-	if err == nil || !strings.Contains(err.Error(), `"kind": "protocol"`) {
-		t.Fatalf("err = %v", err)
+	protoPlugin, err := NewPlugin(protoManifest, protoSource, nil, 1)
+	if err != nil {
+		t.Fatalf("kindless protocol = %v", err)
+	}
+	if !protoPlugin.Manifest.DeclaresProtocol() || protoPlugin.Manifest.KindLabel() != KindProtocol || ScopeOfManifest(protoPlugin.Manifest, nil) != ScopeEndpoint {
+		t.Fatalf("kindless protocol flags: declares=%v label=%q scope=%q", protoPlugin.Manifest.DeclaresProtocol(), protoPlugin.Manifest.KindLabel(), ScopeOfManifest(protoPlugin.Manifest, nil))
+	}
+
+	autoSource := kindlessSource(`export function onEvent() { return { actions: [] }; }`)
+	autoManifest := kindlessManifest(autoSource, func(m *Manifest) {
+		m.Automation = automationSection()
+	})
+	autoPlugin, err := NewPlugin(autoManifest, autoSource, nil, 1)
+	if err != nil {
+		t.Fatalf("kindless automation = %v", err)
+	}
+	if !autoPlugin.Manifest.DeclaresAutomation() || autoPlugin.Manifest.KindLabel() != KindAutomation || ScopeOfManifest(autoPlugin.Manifest, nil) != ScopeSubject {
+		t.Fatalf("kindless automation flags: declares=%v label=%q scope=%q", autoPlugin.Manifest.DeclaresAutomation(), autoPlugin.Manifest.KindLabel(), ScopeOfManifest(autoPlugin.Manifest, nil))
+	}
+}
+
+func TestSiteSectionAliasForSiteProvider(t *testing.T) {
+	raw := []byte(`{
+		"apiVersion": 1,
+		"hostApi": 1,
+		"id": "acme.hooks",
+		"version": "1.0.0",
+		"site": {
+			"siteType": "acme.hooks/chat",
+			"display": { "name": "Acme" },
+			"hosts": ["api.acme.example"],
+			"credential": { "model": "api_key" },
+			"protocol": {
+				"kind": "openai_chat",
+				"path": "/v1/chat/completions",
+				"officialBaseURL": "https://api.acme.example",
+				"defaultEndpointTypes": ["openai"]
+			}
+		},
+		"sha256": { "plugin.js": "00" }
+	}`)
+	manifest, err := ParseManifest(raw)
+	if err != nil {
+		t.Fatalf("ParseManifest site alias = %v", err)
+	}
+	if !manifest.DeclaresSiteType() || manifest.SiteProvider.SiteType != "acme.hooks/chat" || manifest.hasSite {
+		t.Fatalf("site alias result: declares=%v siteType=%q hasSite=%v", manifest.DeclaresSiteType(), manifest.SiteProvider.SiteType, manifest.hasSite)
+	}
+
+	conflict := []byte(`{
+		"apiVersion": 1,
+		"hostApi": 1,
+		"id": "acme.hooks",
+		"version": "1.0.0",
+		"site": { "siteType": "acme.hooks/a" },
+		"siteProvider": { "siteType": "acme.hooks/b" },
+		"sha256": { "plugin.js": "00" }
+	}`)
+	if _, err := ParseManifest(conflict); err == nil || !strings.Contains(err.Error(), "cannot both declare a site type") {
+		t.Fatalf("conflict err = %v", err)
+	}
+}
+
+func TestTransformStreamHookAndFixture(t *testing.T) {
+	source := kindlessSource(`
+export function transformStream(ctx, event) {
+	if (event.data === "[PING]") {
+		return { drop: true };
+	}
+	return { event: "message", data: ctx.model + ":" + event.data, done: event.data === "END" };
+}
+`)
+	plugin, err := NewPlugin(kindlessManifest(source, nil), source, []Fixture{{
+		Name:  "rewrite",
+		Hook:  HookTransformStream,
+		Ctx:   fixtureContext{Model: "gpt-4"},
+		Input: map[string]any{"data": "END"},
+		Expect: fixtureExpectation{
+			Result: map[string]any{
+				"event": "message",
+				"data":  "gpt-4:END",
+				"done":  true,
+			},
+		},
+	}}, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin transformStream = %v", err)
+	}
+	if ScopeOfManifest(plugin.Manifest, []string{HookTransformStream}) != ScopeSite {
+		t.Fatalf("scope = %q", ScopeOfManifest(plugin.Manifest, []string{HookTransformStream}))
+	}
+	if err := plugin.SelfTest(context.Background()); err != nil {
+		t.Fatalf("SelfTest transformStream = %v", err)
 	}
 }
 

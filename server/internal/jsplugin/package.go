@@ -50,8 +50,46 @@ type Manifest struct {
 	// hasQuotaProbe and hasSite record that the JSON object contained the
 	// section, including {}. Kindless manifests use them to tell an empty
 	// section from a missing one.
-	hasQuotaProbe bool `json:"-"`
-	hasSite       bool `json:"-"`
+	hasQuotaProbe         bool `json:"-"`
+	hasSite               bool `json:"-"`
+	siteAliasedToProvider bool `json:"-"`
+}
+
+// UnmarshalJSON decodes a manifest JSON document, aliasing a "site" block that
+// declares a siteType into SiteProvider.
+func (m *Manifest) UnmarshalJSON(raw []byte) error {
+	type rawManifest Manifest
+	var decoded rawManifest
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &present); err != nil {
+		return err
+	}
+	// If "site" is an object containing "siteType", treat it as a siteProvider
+	// declaration rather than a baseURLMode/pricingPath site block.
+	var siteAsProvider json.RawMessage
+	if siteRaw, ok := present["site"]; ok && len(siteRaw) > 0 && string(siteRaw) != "null" {
+		var siteMap map[string]json.RawMessage
+		if err := json.Unmarshal(siteRaw, &siteMap); err == nil {
+			if _, hasSiteType := siteMap["siteType"]; hasSiteType {
+				if spRaw, hasSP := present["siteProvider"]; hasSP && len(spRaw) > 0 && string(spRaw) != "null" {
+					return fmt.Errorf("site and siteProvider cannot both declare a site type")
+				}
+				siteAsProvider = siteRaw
+			}
+		}
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	*m = Manifest(decoded)
+	if len(siteAsProvider) > 0 {
+		m.Site = SiteSection{}
+		m.siteAliasedToProvider = true
+		if err := json.Unmarshal(siteAsProvider, &m.SiteProvider); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // QuotaProbeSection is the quota_probe manifest block.
@@ -80,8 +118,27 @@ func (m Manifest) DeclaresSiteType() bool {
 	return m.Kind == "" && strings.TrimSpace(m.SiteProvider.SiteType) != ""
 }
 
+// DeclaresProtocol reports whether the package declares a custom protocol,
+// either via kind "protocol" or via a kindless manifest with a protocol section.
+func (m Manifest) DeclaresProtocol() bool {
+	if m.Kind == KindProtocol {
+		return true
+	}
+	return m.Kind == "" && m.Protocol != (ProtocolSection{})
+}
+
+// DeclaresAutomation reports whether the package declares an event automation,
+// either via kind "automation" or via a kindless manifest with an automation section.
+func (m Manifest) DeclaresAutomation() bool {
+	if m.Kind == KindAutomation {
+		return true
+	}
+	return m.Kind == "" && automationSectionPresent(m)
+}
+
 // KindLabel is the kind to show and compare. A kindless site type is
-// site_provider; any other kindless package is KindHooks. KindHooks is not a
+// site_provider; a kindless protocol is protocol; a kindless automation is
+// automation; any other kindless package is KindHooks. KindHooks is not a
 // manifest kind: writing "kind": "hooks" is still unsupported.
 func (m Manifest) KindLabel() string {
 	if m.Kind != "" {
@@ -89,6 +146,12 @@ func (m Manifest) KindLabel() string {
 	}
 	if m.DeclaresSiteType() {
 		return KindSiteProvider
+	}
+	if m.DeclaresProtocol() {
+		return KindProtocol
+	}
+	if m.DeclaresAutomation() {
+		return KindAutomation
 	}
 	return KindHooks
 }
@@ -377,7 +440,7 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if spec, ok := lookupKind(manifest.Kind); ok && spec.Section == "site" && manifest.Site.BaseURLMode == "" {
 		manifest.Site.BaseURLMode = "as_is"
 	}
-	if manifest.Kind == KindProtocol {
+	if manifest.DeclaresProtocol() {
 		manifest.Protocol.Method = strings.ToUpper(strings.TrimSpace(manifest.Protocol.Method))
 		if manifest.Protocol.Method == "" {
 			manifest.Protocol.Method = "POST"
@@ -389,11 +452,18 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err := validateManifest(manifest, source); err != nil {
 		return nil, err
 	}
-	program, err := compileProgram(manifest.ID+".js", source, kindHooksOf(manifest.Kind)...)
+	requiredHooks := kindHooksOf(manifest.Kind)
+	if manifest.Kind == "" && manifest.DeclaresProtocol() {
+		requiredHooks = kindHooksOf(KindProtocol)
+	}
+	if manifest.DeclaresAutomation() {
+		requiredHooks = nil
+	}
+	program, err := compileProgram(manifest.ID+".js", source, requiredHooks...)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
-	if spec, ok := lookupKind(manifest.Kind); ok {
+	if spec, ok := lookupKind(manifest.KindLabel()); ok {
 		if err := program.addOptionalHooks(spec.OptionalHooks); err != nil {
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 		}
@@ -408,10 +478,17 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err := program.addOptionalHooks(allKnownOptionalHooks); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
+	if manifest.DeclaresAutomation() {
+		_, hasHandle := program.hooks["handle"]
+		_, hasOnEvent := program.hooks["onEvent"]
+		if !hasHandle && !hasOnEvent {
+			return nil, fmt.Errorf("%s: missing export \"handle\"", manifest.ID)
+		}
+	}
 	if err := rejectListModelsWithoutPerAccount(manifest, program); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
-	if manifest.Kind == KindProtocol {
+	if manifest.DeclaresProtocol() {
 		if _, signs := program.hooks[HookSignRequest]; signs && manifest.Protocol.Auth != "none" {
 			return nil, fmt.Errorf("%s: signRequest needs protocol.auth \"none\", so the credential is only used for signing", manifest.ID)
 		}
@@ -420,7 +497,7 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
-	if spec, ok := lookupKind(manifest.Kind); ok {
+	if spec, ok := lookupKind(manifest.KindLabel()); ok {
 		if err := loaded.requireCallableHooks(spec.OptionalHooks); err != nil {
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 		}
@@ -434,7 +511,7 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 		}
 	}
 	if manifest.Kind == "" {
-		if err := rejectKindlessRestrictedHooks(program); err != nil {
+		if err := rejectKindlessRestrictedHooks(manifest, program); err != nil {
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 		}
 		if !manifest.DeclaresSiteType() && len(program.knownHooks()) == 0 {
@@ -465,7 +542,7 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 			hasCold = true
 		}
 	}
-	spec, _ := lookupKind(manifest.Kind)
+	spec, _ := lookupKind(manifest.KindLabel())
 	primaryHot := spec.HotPath || (hasHot && !hasCold)
 	maxPool := probePoolMax
 	primaryResident := resident
@@ -507,7 +584,7 @@ func KnownHookNames() []string {
 }
 
 var allKnownOptionalHooks = []string{
-	"probe", "listModels", "check", "classify", "classifyError", "rewritePayload",
+	"probe", "listModels", "check", "classify", "classifyError", "rewritePayload", HookTransformStream,
 	"parsePricing", "detect", "describeModels",
 	"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
 	"decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
@@ -667,23 +744,7 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 			return fmt.Errorf("only xlyra plugins can set quotaProbe.replaces")
 		}
 	case KindProtocol:
-		if strings.TrimSpace(manifest.Protocol.Name) == "" {
-			return fmt.Errorf("protocol.name is required")
-		}
-		if strings.TrimSpace(manifest.Protocol.DownstreamPath) == "" {
-			return fmt.Errorf("protocol.downstreamPath is required")
-		}
-		if strings.TrimSpace(manifest.Protocol.EndpointType) == "" {
-			return fmt.Errorf("protocol.endpointType is required")
-		}
-		switch manifest.Protocol.Auth {
-		case "none", "bearer":
-		default:
-			if !strings.HasPrefix(manifest.Protocol.Auth, "header:") {
-				return fmt.Errorf("protocol.auth %q is not supported", manifest.Protocol.Auth)
-			}
-		}
-		if err := validateStreamSection(manifest.Protocol.Stream, "protocol.stream"); err != nil {
+		if err := validateProtocolSection(manifest.Protocol); err != nil {
 			return err
 		}
 	case KindModelList, KindCredentialCheck, KindSiteDetect:
@@ -721,14 +782,54 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 	return nil
 }
 
-// validateKindlessManifest checks a manifest that omits kind. protocol and
-// automation still need a kind in this stage.
-func validateKindlessManifest(manifest Manifest, files map[string][]byte) error {
-	if manifest.Protocol != (ProtocolSection{}) {
-		return fmt.Errorf("protocol requires \"kind\": \"protocol\"")
+func validateProtocolSection(section ProtocolSection) error {
+	if strings.TrimSpace(section.Name) == "" {
+		return fmt.Errorf("protocol.name is required")
 	}
-	if automationSectionPresent(manifest) {
-		return fmt.Errorf("automation requires \"kind\": \"automation\"")
+	if strings.TrimSpace(section.DownstreamPath) == "" {
+		return fmt.Errorf("protocol.downstreamPath is required")
+	}
+	if strings.TrimSpace(section.EndpointType) == "" {
+		return fmt.Errorf("protocol.endpointType is required")
+	}
+	auth := section.Auth
+	if auth == "" {
+		auth = "bearer"
+	}
+	switch auth {
+	case "none", "bearer":
+	default:
+		if !strings.HasPrefix(auth, "header:") {
+			return fmt.Errorf("protocol.auth %q is not supported", section.Auth)
+		}
+	}
+	return validateStreamSection(section.Stream, "protocol.stream")
+}
+
+// validateKindlessManifest checks a manifest that omits kind.
+func validateKindlessManifest(manifest Manifest, files map[string][]byte) error {
+	sections := 0
+	if manifest.DeclaresSiteType() {
+		sections++
+	}
+	if manifest.DeclaresProtocol() {
+		sections++
+	}
+	if manifest.DeclaresAutomation() {
+		sections++
+	}
+	if sections > 1 {
+		return fmt.Errorf("siteProvider, protocol, and automation cannot be combined in one plugin")
+	}
+	if manifest.DeclaresProtocol() {
+		if err := validateProtocolSection(manifest.Protocol); err != nil {
+			return err
+		}
+	}
+	if manifest.DeclaresAutomation() {
+		if err := validateAutomationSection(manifest.Automation); err != nil {
+			return err
+		}
 	}
 	if manifest.hasQuotaProbe {
 		mode := manifest.QuotaProbe.BaseURLMode
@@ -771,17 +872,21 @@ func automationSectionPresent(manifest Manifest) bool {
 		len(form.Title) > 0 || len(form.Description) > 0 || len(form.AddLabel) > 0 || len(form.EmptyText) > 0
 }
 
-// kindlessRestrictedHooks still belong to a kind in this stage.
+// kindlessRestrictedHooks require their matching manifest section when kind is omitted.
 var kindlessRestrictedHooks = []string{"decodeRequest", "buildRequest", "parseResponse", "handle", "onEvent"}
 
-func rejectKindlessRestrictedHooks(program *program) error {
+func rejectKindlessRestrictedHooks(manifest Manifest, program *program) error {
 	for _, name := range kindlessRestrictedHooks {
 		if _, ok := program.hooks[name]; ok {
 			switch name {
 			case "decodeRequest", "buildRequest", "parseResponse":
-				return fmt.Errorf("export %s requires \"kind\": \"protocol\"", name)
+				if !manifest.DeclaresProtocol() {
+					return fmt.Errorf("export %s requires \"kind\": \"protocol\" or a \"protocol\" section", name)
+				}
 			default:
-				return fmt.Errorf("export %s requires \"kind\": \"automation\"", name)
+				if !manifest.DeclaresAutomation() {
+					return fmt.Errorf("export %s requires \"kind\": \"automation\" or an \"automation\" section", name)
+				}
 			}
 		}
 	}
@@ -1042,6 +1147,8 @@ func ParseManifest(raw []byte) (Manifest, error) {
 		return Manifest{}, err
 	}
 	_, manifest.hasQuotaProbe = present["quotaProbe"]
-	_, manifest.hasSite = present["site"]
+	if !manifest.siteAliasedToProvider {
+		_, manifest.hasSite = present["site"]
+	}
 	return manifest, nil
 }

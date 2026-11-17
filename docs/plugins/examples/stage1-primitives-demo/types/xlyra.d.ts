@@ -481,6 +481,25 @@ export interface StreamSection {
   usage?: StreamUsage;
 }
 
+export interface StreamTransformContext {
+  siteType?: string;
+  model?: string;
+  protocol?: string;
+  settings?: Record<string, SettingValue>;
+}
+
+export interface StreamTransformEvent {
+  event?: string;
+  data: string;
+}
+
+export interface StreamTransformResult {
+  event?: string;
+  data?: string;
+  drop?: boolean;
+  done?: boolean;
+}
+
 // ---- schedule ----
 
 export interface ScheduleContext {
@@ -667,6 +686,7 @@ export type SiteProviderListModels = (ctx: ProbeContext, steps: ProbeStep[]) => 
 export type SiteProviderCheck = (ctx: ProbeContext, steps: ProbeStep[]) => CredentialCheckDecision;
 export type SiteProviderClassify = (ctx: ErrorClassifyContext, input: ErrorClassifyInput) => ErrorClassifyResult;
 export type SiteProviderRewritePayload = (ctx: RewritePayloadContext, payload: Record<string, unknown>) => Record<string, unknown>;
+export type SiteProviderTransformStream = (ctx: StreamTransformContext, event: StreamTransformEvent) => StreamTransformResult;
 
 export type AccountLoginDecision = SteppedDecision<AccountLoginResult>;
 export type AccountRefreshDecision = SteppedDecision<AccountRefreshResult>;
@@ -683,6 +703,7 @@ export interface SiteProviderHooks {
   check?: SiteProviderCheck;
   classify?: SiteProviderClassify;
   rewritePayload?: SiteProviderRewritePayload;
+  transformStream?: SiteProviderTransformStream;
   startLogin?: SiteProviderStartLogin;
   pollLogin?: SiteProviderPollLogin;
   refreshTokens?: SiteProviderRefreshTokens;

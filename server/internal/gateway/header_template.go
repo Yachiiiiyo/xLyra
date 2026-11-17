@@ -174,20 +174,27 @@ func applyPluginRequestHeaders(req *http.Request, candidate routeengine.Candidat
 	}
 	vars := pluginHeaderTemplateVars(headerVars, upstreamKey, baseURL)
 	vars["model.name"] = modelName
+	kept := map[string]struct{}{}
 	item, ok := site.LookupPluginSiteType(candidate.Site.SiteType)
 	if ok && (len(item.Request.Headers) > 0 || item.Request.StripDownstreamHeaders) {
 		dynamic := headerDynamicFor(nil, candidate, request, modelName, meta, sessionSecret)
-		if err := renderRequestHeaders(req, item.Request.Headers, item.Request.StripDownstreamHeaders, vars, dynamic); err != nil {
+		if err := renderRequestHeaders(req, item.Request.Headers, item.Request.StripDownstreamHeaders, false, kept, vars, dynamic); err != nil {
 			return err
+		}
+		for name := range item.Request.Headers {
+			kept[http.CanonicalHeaderKey(name)] = struct{}{}
 		}
 	}
 	for _, plugin := range requestChainPlugins(candidate) {
-		if plugin.Manifest.DeclaresSiteType() || len(plugin.Manifest.Request.Headers) == 0 {
+		if plugin.Manifest.DeclaresSiteType() || (len(plugin.Manifest.Request.Headers) == 0 && !plugin.Manifest.Request.StripDownstreamHeaders) {
 			continue
 		}
 		dynamic := headerDynamicFor(plugin, candidate, request, modelName, meta, sessionSecret)
-		if err := renderRequestHeaders(req, plugin.Manifest.Request.Headers, false, vars, dynamic); err != nil {
+		if err := renderRequestHeaders(req, plugin.Manifest.Request.Headers, plugin.Manifest.Request.StripDownstreamHeaders, true, kept, vars, dynamic); err != nil {
 			return err
+		}
+		for name := range plugin.Manifest.Request.Headers {
+			kept[http.CanonicalHeaderKey(name)] = struct{}{}
 		}
 	}
 	return nil
@@ -206,7 +213,7 @@ func headerDynamicFor(plugin *jsplugin.Plugin, candidate routeengine.Candidate, 
 	}
 }
 
-func renderRequestHeaders(req *http.Request, headers map[string]jsplugin.HeaderSpec, strip bool, vars map[string]string, dynamic headerTemplateDynamic) error {
+func renderRequestHeaders(req *http.Request, headers map[string]jsplugin.HeaderSpec, strip, overlay bool, priorKept map[string]struct{}, vars map[string]string, dynamic headerTemplateDynamic) error {
 	names := make([]string, 0, len(headers))
 	for name := range headers {
 		names = append(names, name)
@@ -227,7 +234,7 @@ func renderRequestHeaders(req *http.Request, headers map[string]jsplugin.HeaderS
 		rendered = append(rendered, renderedPluginHeader{name: name, value: value})
 	}
 	if strip {
-		stripPluginDownstreamHeaders(req, headers)
+		stripPluginDownstreamHeaders(req, headers, overlay, priorKept)
 	}
 	for _, name := range omitted {
 		req.Header.Del(name)
@@ -256,10 +263,18 @@ type renderedPluginHeader struct {
 	value string
 }
 
-func stripPluginDownstreamHeaders(req *http.Request, templates map[string]jsplugin.HeaderSpec) {
+func stripPluginDownstreamHeaders(req *http.Request, templates map[string]jsplugin.HeaderSpec, overlay bool, priorKept map[string]struct{}) {
 	keep := map[string]struct{}{
 		"Content-Type": {},
 		"Accept":       {},
+	}
+	if overlay {
+		keep["Authorization"] = struct{}{}
+		keep["X-Api-Key"] = struct{}{}
+		keep["X-Goog-Api-Key"] = struct{}{}
+	}
+	for name := range priorKept {
+		keep[name] = struct{}{}
 	}
 	for name := range templates {
 		keep[http.CanonicalHeaderKey(name)] = struct{}{}

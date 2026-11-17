@@ -78,6 +78,9 @@ var tsTypes = []tsType{
 	{value: StreamDoneSpec{}, name: "StreamDone"},
 	{value: StreamUsageSpec{}, name: "StreamUsage"},
 	{value: StreamSectionSpec{}, name: "StreamSection"},
+	{value: StreamTransformContext{}, name: "StreamTransformContext"},
+	{value: StreamTransformEvent{}, name: "StreamTransformEvent"},
+	{value: StreamTransformResult{}, name: "StreamTransformResult"},
 	{value: ScheduleContext{}, name: "ScheduleContext", section: "schedule"},
 	{value: ScheduleSectionSpec{}, name: "ScheduleSection"},
 }
@@ -153,6 +156,7 @@ export type SiteProviderListModels = (ctx: ProbeContext, steps: ProbeStep[]) => 
 export type SiteProviderCheck = (ctx: ProbeContext, steps: ProbeStep[]) => CredentialCheckDecision;
 export type SiteProviderClassify = (ctx: ErrorClassifyContext, input: ErrorClassifyInput) => ErrorClassifyResult;
 export type SiteProviderRewritePayload = (ctx: RewritePayloadContext, payload: Record<string, unknown>) => Record<string, unknown>;
+export type SiteProviderTransformStream = (ctx: StreamTransformContext, event: StreamTransformEvent) => StreamTransformResult;
 
 export type AccountLoginDecision = SteppedDecision<AccountLoginResult>;
 export type AccountRefreshDecision = SteppedDecision<AccountRefreshResult>;
@@ -169,6 +173,7 @@ export interface SiteProviderHooks {
   check?: SiteProviderCheck;
   classify?: SiteProviderClassify;
   rewritePayload?: SiteProviderRewritePayload;
+  transformStream?: SiteProviderTransformStream;
   startLogin?: SiteProviderStartLogin;
   pollLogin?: SiteProviderPollLogin;
   refreshTokens?: SiteProviderRefreshTokens;

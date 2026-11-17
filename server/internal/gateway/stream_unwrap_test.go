@@ -143,3 +143,60 @@ func TestStreamUnwrapStatusError(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestTransformStreamChainAndDrop(t *testing.T) {
+	t.Parallel()
+	src1 := `export const meta = { apiVersion: 1, id: "acme.s1" };
+export function transformStream(ctx, ev) {
+	if (ev.data === "drop-me") return { drop: true };
+	return { event: "chunk", data: ev.data + "|p1" };
+}
+`
+	p1, err := jsplugin.NewPlugin(jsplugin.Manifest{
+		ID: "acme.s1", Name: "s1", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(src1)},
+	}, src1, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src2 := `export const meta = { apiVersion: 1, id: "acme.s2" };
+export function transformStream(ctx, ev) {
+	return { data: ev.data + "|p2:" + ctx.model, done: ev.data.indexOf("stop") === 0 };
+}
+`
+	p2, err := jsplugin.NewPlugin(jsplugin.Manifest{
+		ID: "acme.s2", Name: "s2", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(src2)},
+	}, src2, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw := strings.Join([]string{
+		"data: hello",
+		"",
+		"data: drop-me",
+		"",
+		"data: stop-now",
+		"",
+		"data: unreachable",
+		"",
+		"",
+	}, "\n")
+	tr := newStreamTransformer(io.NopCloser(strings.NewReader(raw)), nil)
+	tr.hooks = []*jsplugin.Plugin{p1, p2}
+	tr.streamCtx = jsplugin.StreamTransformContext{SiteType: "openai", Model: "gpt-4o", Protocol: "openai"}
+	got := readAllString(t, tr)
+	if !strings.Contains(got, "event: chunk\ndata: hello|p1|p2:gpt-4o\n\n") {
+		t.Fatalf("first event missing: %q", got)
+	}
+	if strings.Contains(got, "drop-me") {
+		t.Fatalf("dropped event leaked: %q", got)
+	}
+	if !strings.Contains(got, "data: stop-now|p1|p2:gpt-4o\n\n") {
+		t.Fatalf("stop event missing: %q", got)
+	}
+	if strings.Contains(got, "unreachable") {
+		t.Fatalf("events after done should not be emitted: %q", got)
+	}
+}

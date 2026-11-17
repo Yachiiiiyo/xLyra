@@ -88,9 +88,14 @@ func TestTopLevelRequestValidation(t *testing.T) {
 		t.Fatalf("region = %v", err)
 	}
 	strip := manifest
-	strip.Request = SiteProviderRequest{StripDownstreamHeaders: true}
-	if err := validateManifest(strip, source); err == nil || !strings.Contains(err.Error(), "stripDownstreamHeaders") {
+	strip.Request = SiteProviderRequest{StripDownstreamHeaders: true, Headers: HeaderMap(map[string]string{"X-A": "1"})}
+	if err := validateManifest(strip, source); err != nil {
 		t.Fatalf("strip = %v", err)
+	}
+	streamOnly := manifest
+	streamOnly.Request = SiteProviderRequest{UpstreamStreamOnly: true}
+	if err := validateManifest(streamOnly, source); err == nil || !strings.Contains(err.Error(), "upstreamStreamOnly") {
+		t.Fatalf("streamOnly = %v", err)
 	}
 	unknown := manifest
 	unknown.Request = SiteProviderRequest{Headers: HeaderMap(map[string]string{"X-Ver": "{{setting.missing}}"})}

@@ -420,7 +420,9 @@ func (h Handler) forwardSiteModelTestRequest(
 	}
 	applyUpstreamAuth(req, protocol, upstreamKey)
 	req.Header.Set("Content-Type", "application/json")
-	setUpstreamAccept(req, upstreamStream)
+	if pluginTransportProfile(candidate, siteConfig) != "bun" {
+		setUpstreamAccept(req, upstreamStream)
+	}
 	if isCodexSite(candidate.Site.SiteType) {
 		applyCodexGatewayHeaders(req, accountID, upstreamStream)
 	}

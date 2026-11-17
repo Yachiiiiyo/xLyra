@@ -3,6 +3,7 @@ package gateway
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"xlyra/server/internal/jsplugin"
 	routeengine "xlyra/server/internal/router"
@@ -26,28 +29,73 @@ var (
 // streamTransformer rewrites an upstream SSE body into a standard SSE body.
 // It implements io.ReadCloser. Close closes the upstream body.
 type streamTransformer struct {
-	src     io.ReadCloser
-	section *jsplugin.StreamSection
-	scanner *bufio.Scanner
-	out     []byte
-	closed  bool
-	done    bool
-	bad     int
-	err     error
+	src          io.ReadCloser
+	section      *jsplugin.StreamSection
+	hooks        []*jsplugin.Plugin
+	streamCtx    jsplugin.StreamTransformContext
+	siteID       string
+	siteSettings map[string]map[string]any
+	scanner      *bufio.Scanner
+	out          []byte
+	closed       bool
+	done         bool
+	bad          int
+	err          error
 }
 
 // applyCandidateStream wraps a 2xx body when the candidate's protocol plugin
-// or site-type base declares stream. Overlay plugins are not consulted.
-// A non-2xx body is left unchanged so error text still reaches the classifier.
+// or site-type base declares stream, or when any plugin in the chain exports
+// transformStream. A non-2xx body is left unchanged so error text still reaches
+// the classifier.
 func applyCandidateStream(resp *http.Response, protocol gatewayProtocolAdapter, candidate routeengine.Candidate) {
 	if resp == nil || resp.Body == nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return
 	}
 	section := streamConfigForCandidate(protocol, candidate)
-	if section == nil || section.Empty() {
+	hooks := streamHookPluginsForCandidate(protocol, candidate)
+	if (section == nil || section.Empty()) && len(hooks) == 0 {
 		return
 	}
-	resp.Body = newStreamTransformer(resp.Body, section)
+	protoName := ""
+	if protocol != nil {
+		protoName = protocol.ProtocolName()
+	}
+	siteID := ""
+	if candidate.Site.ID != uuid.Nil {
+		siteID = candidate.Site.ID.String()
+	}
+	t := newStreamTransformer(resp.Body, section)
+	t.hooks = hooks
+	t.streamCtx = jsplugin.StreamTransformContext{
+		SiteType: candidate.Site.SiteType,
+		Model:    candidate.Model.UpstreamName,
+		Protocol: protoName,
+	}
+	t.siteID = siteID
+	t.siteSettings = candidate.Site.PluginSettings
+	resp.Body = t
+}
+
+func streamHookPluginsForCandidate(protocol gatewayProtocolAdapter, candidate routeengine.Candidate) []*jsplugin.Plugin {
+	var out []*jsplugin.Plugin
+	seen := map[string]struct{}{}
+	add := func(plugin *jsplugin.Plugin) {
+		if plugin == nil || !plugin.HasHook(jsplugin.HookTransformStream) {
+			return
+		}
+		if _, ok := seen[plugin.Manifest.ID]; ok {
+			return
+		}
+		seen[plugin.Manifest.ID] = struct{}{}
+		out = append(out, plugin)
+	}
+	if adapter, ok := protocol.(*jsProtocolAdapter); ok && adapter != nil {
+		add(adapter.plugin)
+	}
+	for _, plugin := range requestChainPlugins(candidate) {
+		add(plugin)
+	}
+	return out
 }
 
 func streamConfigForCandidate(protocol gatewayProtocolAdapter, candidate routeengine.Candidate) *jsplugin.StreamSection {
@@ -246,7 +294,76 @@ func (t *streamTransformer) convert(event *sseEvent) ([]byte, bool, error) {
 }
 
 func (t *streamTransformer) finish(event *sseEvent, payload string, stop bool) ([]byte, bool, error) {
+	if len(t.hooks) > 0 {
+		var dropped bool
+		var err error
+		payload, stop, dropped, err = t.applyHooks(event, payload, stop)
+		if err != nil {
+			return nil, false, err
+		}
+		if dropped {
+			return nil, stop, nil
+		}
+	}
 	return writeEvent(event.lines, &payload), stop, nil
+}
+
+func (t *streamTransformer) applyHooks(event *sseEvent, payload string, stop bool) (string, bool, bool, error) {
+	breaker := jsplugin.DefaultCatalog().Breaker()
+	for _, plugin := range t.hooks {
+		if plugin == nil || !plugin.HasHook(jsplugin.HookTransformStream) {
+			continue
+		}
+		callCtx := jsplugin.WithStorageScope(context.Background(), jsplugin.StorageScopeSite, t.siteID)
+		if t.siteSettings != nil {
+			callCtx = jsplugin.WithSiteSettings(callCtx, t.siteSettings[plugin.Manifest.ID])
+		}
+		res, _, _, err := plugin.CallTransformStream(callCtx, t.streamCtx, jsplugin.StreamTransformEvent{
+			Event: event.event,
+			Data:  payload,
+		})
+		if breaker != nil {
+			breaker.RecordProtocolCall(plugin, jsplugin.HookTransformStream, err != nil, isInterruption(err))
+		}
+		if err != nil {
+			return "", false, false, err
+		}
+		if res.Done {
+			stop = true
+		}
+		if res.Drop {
+			return "", stop, true, nil
+		}
+		if res.Event != nil {
+			setSSEEventName(event, *res.Event)
+		}
+		if res.Data != nil {
+			payload = *res.Data
+		}
+	}
+	return payload, stop, false, nil
+}
+
+func setSSEEventName(event *sseEvent, name string) {
+	event.event = name
+	if name == "" {
+		kept := event.lines[:0]
+		for _, line := range event.lines {
+			if line.kind != "event" {
+				kept = append(kept, line)
+			}
+		}
+		event.lines = kept
+		return
+	}
+	raw := "event: " + name
+	for i := range event.lines {
+		if event.lines[i].kind == "event" {
+			event.lines[i].raw = raw
+			return
+		}
+	}
+	event.lines = append([]sseLine{{kind: "event", raw: raw}}, event.lines...)
 }
 
 func (t *streamTransformer) applyUsage(payload string, unwrapped bool) (string, bool, error) {

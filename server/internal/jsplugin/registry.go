@@ -43,7 +43,7 @@ func (r *Registry) add(plugin *Plugin, protocolSlug string) {
 		return
 	}
 	r.byID[plugin.Manifest.ID] = plugin
-	switch plugin.Manifest.Kind {
+	switch plugin.Manifest.KindLabel() {
 	case KindQuotaProbe:
 		if replaces := plugin.ProbeType(); replaces != "" {
 			r.probes[replaces] = plugin
@@ -133,7 +133,7 @@ func (r *Registry) ByKind(kind string) []*Plugin {
 	}
 	var out []*Plugin
 	for _, plugin := range r.byID {
-		if plugin.Manifest.Kind == kind {
+		if plugin.Manifest.Kind == kind || plugin.Manifest.KindLabel() == kind {
 			out = append(out, plugin)
 		}
 	}

@@ -358,7 +358,7 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 	if !plugin.HasHook(HookOnSchedule) || !plugin.Manifest.AllowsSchedule() {
 		_ = m.repo.ClearScheduleTick(ctx, pluginID)
 	}
-	if pkg.Manifest.Kind == KindAutomation {
+	if pkg.Manifest.DeclaresAutomation() {
 		// The new version may subscribe to different events.
 		if err := m.repo.SetAutomationEvents(ctx, pluginID, pkg.Manifest.Automation.Subscribes); err != nil {
 			return err
@@ -577,7 +577,7 @@ func pluginSiteTypeKey(siteType string) string {
 // permissions, in declaration order, without duplicates.
 func requiredGrantPermissions(manifest Manifest) []string {
 	var out []string
-	if manifest.Kind == KindAutomation {
+	if manifest.DeclaresAutomation() {
 		out = appendUnique(out, manifest.Automation.Permissions...)
 	}
 	out = appendUnique(out, manifest.Permissions...)

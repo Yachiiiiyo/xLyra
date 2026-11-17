@@ -161,7 +161,7 @@ func (m *Manager) queueTicks(ctx context.Context) {
 			}
 			continue
 		}
-		if !ok || plugin.Manifest.Kind != KindAutomation || plugin.Manifest.Automation.Schedule.EveryMinutes <= 0 {
+		if !ok || !plugin.Manifest.DeclaresAutomation() || plugin.Manifest.Automation.Schedule.EveryMinutes <= 0 {
 			_ = m.repo.PostponeTick(ctx, binding.ID, time.Now().Add(tickRetry))
 			continue
 		}
@@ -264,7 +264,7 @@ func (m *Manager) runEvent(ctx context.Context, host AutomationHost, event store
 		return m.runScheduleEvent(ctx, host, binding, event)
 	}
 	plugin, ok := m.catalog.Registry().ByPluginID(binding.PluginID)
-	if !ok || plugin.Manifest.Kind != KindAutomation {
+	if !ok || !plugin.Manifest.DeclaresAutomation() {
 		return store.JSPluginEventSkipped, "plugin is not enabled", false
 	}
 	version, err := m.repo.GetVersion(ctx, binding.PluginID, plugin.Manifest.Version)

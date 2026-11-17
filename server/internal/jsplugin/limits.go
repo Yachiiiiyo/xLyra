@@ -15,6 +15,8 @@ const (
 	protocolHookTimeout = 50 * time.Millisecond
 	// signHookTimeout is the budget for signRequest (request shaping and cryptographic signing).
 	signHookTimeout = 100 * time.Millisecond
+	// streamHookTimeout is the per-event budget for transformStream.
+	streamHookTimeout = 5 * time.Millisecond
 	// scheduleHookTimeout is the budget for periodic onSchedule calls.
 	scheduleHookTimeout = time.Second
 	// MaxProtocolResponseBody is the largest upstream body passed to parseResponse.

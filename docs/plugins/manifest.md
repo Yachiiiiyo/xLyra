@@ -39,9 +39,9 @@
 - `classify` 与 `classifyError`、`handle` 与 `onEvent` 互为别名：只导出其中一个时，另一个名字也能被调用。
 - `export const meta` 的 `kind` 只在清单写了 `kind` 时才要一致；无 kind 时 meta 里不能再写 kind。
 - 清单写了 `exports` 时，必须和模块实际导出的已知钩子一致（别名展开之前）。
-- `protocol` 与 `automation` 这一阶段仍必须写 `kind`，无 kind 时出现这两段或导出 `decodeRequest`、`buildRequest`、`parseResponse`、`handle`、`onEvent` 会被拒绝。
-- 声明站点类型仍用 `siteProvider` 段，不写 kind 也可以；`site` 段仍只表示地址整理（`baseURLMode`、`pricingPath`）。
-- 顶层 `request` 与 `siteProvider.request` 结构相同，任何插件都可以写。叠加插件只用 `headers`（不能写 `stripDownstreamHeaders`、`upstreamStreamOnly`、`baseURLFrom`，也不能用 `{{cred.*}}`）。声明站点类型的插件二者只能写一处；只写顶层时，作为该站点类型的底座头模板。`{{region.*}}` 与 `stripDownstreamHeaders` 只允许声明站点类型的插件。
+- 无 `kind` 清单如果包含 `protocol` 段或 `automation` 段，自动按协议插件或自动化插件处理（不可在同一插件内混写 `siteProvider`、`protocol`、`automation` 多段）。
+- 声明站点类型可用 `siteProvider` 段，也可用包含 `siteType` 的 `site` 段（二者不能同时声明站点类型）；仅包含 `baseURLMode`、`pricingPath` 的 `site` 段仍表示地址整理。
+- 顶层 `request` 与 `siteProvider.request` 结构相同，任何插件都可以写。叠加插件可以使用 `headers` 与 `stripDownstreamHeaders`（保留网关认证头、`Content-Type`、`Accept` 及前序插件头，不能写 `upstreamStreamOnly`、`baseURLFrom`，也不能用 `{{cred.*}}`）。声明站点类型的插件二者只能写一处；只写顶层时，作为该站点类型的底座头模板。`{{region.*}}` 仅允许声明站点类型的插件。
 - 清单 `permissions` 非空时，启用必须一次授予全部权限（含 automation 权限）。声明了 `secret.use`，或声明了站点类型，必须有受信签名或市场证明，`confirmUntrusted` 不能跳过。
 
 ## transport 部分

@@ -69,7 +69,7 @@ type AutomationOption struct {
 
 func (m *Manager) enabledAutomation(pluginID string) (*Plugin, error) {
 	plugin, ok := m.catalog.Registry().ByPluginID(pluginID)
-	if !ok || plugin.Manifest.Kind != KindAutomation {
+	if !ok || !plugin.Manifest.DeclaresAutomation() {
 		return nil, inputErrorf("plugin %q is not an enabled automation plugin", pluginID)
 	}
 	return plugin, nil

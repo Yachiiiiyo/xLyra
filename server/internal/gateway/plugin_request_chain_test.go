@@ -265,6 +265,53 @@ func TestModelMetaHeaderTemplate(t *testing.T) {
 	}
 }
 
+func TestOverlayStripDownstreamHeadersPreservesAuthAndChain(t *testing.T) {
+	firstSrc := kindlessChainSource("overlay.first", `export function signRequest() { return { headers: { "X-Signed": "ok" } }; }`)
+	first := mustChainPlugin(t, "overlay.first", firstSrc, func(m *jsplugin.Manifest) {
+		m.Request = jsplugin.SiteProviderRequest{
+			Headers: jsplugin.HeaderMap(map[string]string{"X-First": "1"}),
+		}
+	})
+	secondSrc := kindlessChainSource("overlay.strip", `export function signRequest() { return { headers: { "X-Second-Sign": "ok" } }; }`)
+	second := mustChainPlugin(t, "overlay.strip", secondSrc, func(m *jsplugin.Manifest) {
+		m.Request = jsplugin.SiteProviderRequest{
+			StripDownstreamHeaders: true,
+			Headers:                jsplugin.HeaderMap(map[string]string{"X-Opencode-Client": "cli"}),
+		}
+	})
+	defer installChainPlugins(t, first, second)()
+
+	req, err := http.NewRequest(http.MethodPost, "https://opencode.ai/inference/v1/chat/completions", strings.NewReader(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer public")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Stainless-Lang", "js")
+	req.Header.Set("User-Agent", "OpenAI/JS 4.0")
+
+	candidate := routeengine.Candidate{
+		Site: routeengine.CandidateSite{
+			SiteType:  "openai",
+			BaseURL:   "https://opencode.ai/inference",
+			PluginIDs: []string{"overlay.first", "overlay.strip"},
+		},
+		Model: routeengine.CandidateModel{UpstreamName: "m"},
+	}
+	if err := applyPluginRequestHeaders(req, candidate, gatewayRequest{}, nil, "public", "https://opencode.ai/inference", "m", nil, []byte("secret")); err != nil {
+		t.Fatal(err)
+	}
+	if req.Header.Get("X-Stainless-Lang") != "" || req.Header.Get("User-Agent") != "" {
+		t.Fatalf("downstream headers were not stripped: %v", req.Header)
+	}
+	if req.Header.Get("Authorization") != "Bearer public" || req.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("auth or content-type lost: %v", req.Header)
+	}
+	if req.Header.Get("X-First") != "1" || req.Header.Get("X-Opencode-Client") != "cli" {
+		t.Fatalf("plugin headers lost: %v", req.Header)
+	}
+}
+
 func kindlessChainSource(id, body string) string {
 	return "export const meta = { apiVersion: 1, id: " + jsQuote(id) + " };\n" + body
 }

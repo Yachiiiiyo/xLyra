@@ -448,7 +448,7 @@ func packageFacts(pkg jsplugin.Package) marketproto.PackageFacts {
 // permissions, sorted and deduplicated, the set a version fact records.
 func manifestGrantPermissions(manifest jsplugin.Manifest) []string {
 	var out []string
-	if manifest.Kind == jsplugin.KindAutomation {
+	if manifest.DeclaresAutomation() {
 		out = append(out, manifest.Automation.Permissions...)
 	}
 	out = append(out, manifest.Permissions...)

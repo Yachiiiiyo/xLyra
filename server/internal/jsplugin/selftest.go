@@ -140,6 +140,12 @@ func (p *Plugin) dispatchFixture(ctx context.Context, fixture Fixture) error {
 		return p.runHookFixture(ctx, fixture)
 	}
 	if p.Manifest.Kind == "" {
+		if p.Manifest.DeclaresProtocol() {
+			return p.runProtocolFixture(ctx, fixture)
+		}
+		if p.Manifest.DeclaresAutomation() {
+			return p.runEventFixtureHook(ctx, fixture, "onEvent")
+		}
 		return fmt.Errorf("%s: fixture.hook is required for plugins without kind", fixtureRef(fixture))
 	}
 	switch p.Manifest.Kind {
@@ -173,7 +179,7 @@ func fixtureRef(fixture Fixture) string {
 
 func isValidSiteProviderFixtureHook(hook string) bool {
 	switch hook {
-	case "probe", "listModels", "check", "classify", "classifyError", "rewritePayload",
+	case "probe", "listModels", "check", "classify", "classifyError", "rewritePayload", HookTransformStream,
 		"parsePricing", "describeModels",
 		"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
 		HookSignRequest, "onEvent", "handle", "onSchedule":
@@ -243,6 +249,8 @@ func (p *Plugin) runHookFixture(ctx context.Context, fixture Fixture) error {
 		return p.runScheduleFixtureHook(ctx, fixture, "onSchedule")
 	case HookSignRequest:
 		return p.runStandaloneSignFixture(ctx, fixture)
+	case HookTransformStream:
+		return p.runTransformStreamFixture(ctx, fixture)
 	case HookParseError:
 		return p.runStandaloneParseErrorFixture(ctx, fixture)
 	case "decodeRequest", "buildRequest", "parseResponse":
@@ -334,6 +342,19 @@ func (p *Plugin) runEventFixtureHook(ctx context.Context, fixture Fixture, hook 
 		}
 	}
 	return compareOneShot(out, err, fixture)
+}
+
+func (p *Plugin) runTransformStreamFixture(ctx context.Context, fixture Fixture) error {
+	var in StreamTransformEvent
+	if err := decodeFixtureInput(fixture.Input, &in); err != nil {
+		return err
+	}
+	res, _, _, err := p.CallTransformStream(ctx, StreamTransformContext{
+		SiteType: fixture.Ctx.SiteType,
+		Model:    fixture.Ctx.Model,
+		Protocol: fixture.Ctx.Protocol,
+	}, in)
+	return compareOneShot(res, err, fixture)
 }
 
 func (p *Plugin) runScheduleFixtureHook(ctx context.Context, fixture Fixture, hook string) error {

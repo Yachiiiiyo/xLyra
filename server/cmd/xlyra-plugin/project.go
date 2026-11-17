@@ -99,6 +99,11 @@ func attachDeclaredIcon(dir string, manifest map[string]any, files map[string][]
 	}
 	section, _ := manifest["siteProvider"].(map[string]any)
 	if section == nil {
+		if siteMap, _ := manifest["site"].(map[string]any); siteMap != nil && siteMap["siteType"] != nil {
+			section = siteMap
+		}
+	}
+	if section == nil {
 		return nil
 	}
 	display, _ := section["display"].(map[string]any)
