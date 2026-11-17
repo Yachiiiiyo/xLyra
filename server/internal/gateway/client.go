@@ -80,6 +80,10 @@ func upstreamClientProfileForRequest(cfg *site.GatewayConfig, request upstreamCl
 	case request.TLSFingerprint != "":
 		config.TLSFingerprint = request.TLSFingerprint
 	}
+	if cfg != nil && gatewayConfigBool(cfg.ImpersonateOpencodeClient) {
+		// The OpenCode Zen free lane only answers the Bun fetch wire shape.
+		config.TLSFingerprint = httpclient.TLSFingerprintBun
+	}
 	return config
 }
 

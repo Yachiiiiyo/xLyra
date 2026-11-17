@@ -41,6 +41,10 @@ type GatewayConfig struct {
 	ResponsesImageGenerationPolicy string   `json:"responses_image_generation_policy,omitempty"`
 	ImpersonateCodexClient         *bool    `json:"impersonate_codex_client,omitempty"`
 	ImpersonateClaudeCodeClient    *bool    `json:"impersonate_claude_code_client,omitempty"`
+	// ImpersonateOpencodeClient sends the site's requests with the Bun fetch
+	// wire shape of the official OpenCode CLI (TLS ClientHello, HTTP/1.1-only
+	// ALPN and header layout), which the OpenCode Zen free lane requires.
+	ImpersonateOpencodeClient *bool `json:"impersonate_opencode_client,omitempty"`
 	QuotaProbe                     *string  `json:"quota_probe,omitempty"`
 	// Plugins maps a per-site plugin kind (model_list, credential_check,
 	// error_classifier, pricing_parse) to the plugin id an admin bound to this site.
