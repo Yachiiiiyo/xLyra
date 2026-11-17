@@ -52,7 +52,7 @@
 "transport": { "profile": "claude_code" }
 ```
 
-`profile` 只能是宿主内置的 `claude_code`。`bun` 以及其它值会被拒绝，不能带自己的 ClientHello。声明后，网关上游转发和站点分步请求（`probe`、`listModels`、`check`、`detect`、`parsePricing`、账号池）都用这个指纹。管理员打开「伪装 Claude Code 客户端」时优先于插件；其次是挂载顺序里第一个声明了 profile 的叠加插件，底座插件兜底。拨号仍走原来的 SSRF 防护、代理和主机白名单。
+`profile` 只能是宿主内置的 `claude_code` 或 `bun`。其它值会被拒绝，不能带自己的 ClientHello。声明后，网关上游转发和站点分步请求（`probe`、`listModels`、`check`、`detect`、`parsePricing`、账号池）都用这个指纹（`bun` 同时应用 Bun 的 HTTP/1.1 头布局与 BoringSSL 握手）。管理员打开「伪装 OpenCode 客户端」或「伪装 Claude Code 客户端」时优先于插件；其次是挂载顺序里第一个声明了 profile 的叠加插件，底座插件兜底。拨号仍走原来的 SSRF 防护、代理和主机白名单。
 
 ## 通配主机
 

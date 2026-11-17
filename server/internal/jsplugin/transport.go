@@ -6,7 +6,7 @@ import (
 )
 
 // TransportSection is the optional manifest transport block. Profile selects a
-// built-in TLS fingerprint. This build accepts only claude_code.
+// built-in TLS fingerprint (claude_code or bun).
 type TransportSection struct {
 	Profile string `json:"profile,omitempty"`
 }
@@ -22,11 +22,9 @@ func validateTransport(section TransportSection) error {
 		return nil
 	}
 	switch profile {
-	case "claude_code":
+	case "claude_code", "bun":
 		return nil
-	case "bun":
-		return fmt.Errorf("transport.profile %q is not supported by this build", profile)
 	default:
-		return fmt.Errorf("transport.profile %q is not supported (supported: claude_code)", profile)
+		return fmt.Errorf("transport.profile %q is not supported (supported: claude_code, bun)", profile)
 	}
 }

@@ -436,8 +436,8 @@ export interface AccountSummaryResult {
 }
 
 export interface TransportProfile {
-  /** Built-in TLS fingerprint. bun is not supported by this build. */
-  profile?: "claude_code";
+  /** Built-in TLS fingerprint. */
+  profile?: "claude_code" | "bun";
 }
 
 // ---- stream ----

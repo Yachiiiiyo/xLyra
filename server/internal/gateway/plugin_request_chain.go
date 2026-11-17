@@ -20,6 +20,9 @@ import (
 // declares transport.profile and does not declare a site type, then the site
 // type plugin. Empty means the default handshake.
 func pluginTransportProfile(candidate routeengine.Candidate, cfg *sitepkg.GatewayConfig) string {
+	if cfg != nil && cfg.ImpersonateOpencodeClient != nil && *cfg.ImpersonateOpencodeClient {
+		return "bun"
+	}
 	if cfg != nil && cfg.ImpersonateClaudeCodeClient != nil && *cfg.ImpersonateClaudeCodeClient {
 		return "claude_code"
 	}

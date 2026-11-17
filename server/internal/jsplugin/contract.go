@@ -11,9 +11,9 @@ var probeMethods = map[string]struct{}{
 }
 
 // TransportProfileSpec is the manifest transport block in the plugin SDK.
-// Profile is a built-in TLS fingerprint. bun is not supported by this build.
+// Profile is a built-in TLS fingerprint.
 type TransportProfileSpec struct {
-	Profile string `ts:"profile,optional,type=\"claude_code\",doc=Built-in TLS fingerprint. bun is not supported by this build."`
+	Profile string `ts:"profile,optional,type=\"claude_code\" | \"bun\",doc=Built-in TLS fingerprint."`
 }
 
 // StreamUnwrapSpec pulls the real chunk out of each SSE data payload.

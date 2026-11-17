@@ -71,6 +71,18 @@ func TestPluginTransportProfilePriority(t *testing.T) {
 	if got := pluginTransportProfile(candidate, &site.GatewayConfig{ImpersonateClaudeCodeClient: &on}); got != "claude_code" {
 		t.Fatalf("admin switch = %q", got)
 	}
+	if got := pluginTransportProfile(candidate, &site.GatewayConfig{ImpersonateOpencodeClient: &on}); got != "bun" {
+		t.Fatalf("opencode admin switch = %q", got)
+	}
+	bunPlugin := transportPlugin(t, "acme.bun", "bun")
+	installTransportPlugins(t, mounted, base, plain, bunPlugin)
+	bunCandidate := routeengine.Candidate{Site: routeengine.CandidateSite{
+		SiteType:  "acme.base/chat",
+		PluginIDs: []string{"acme.bun"},
+	}}
+	if got := upstreamClientProfileForRequest(nil, upstreamClientProfileRequest{TLSFingerprint: pluginTransportProfile(bunCandidate, nil)}, "").TLSFingerprint; got != httpclient.TLSFingerprintBun {
+		t.Fatalf("bun plugin fingerprint = %q", got)
+	}
 	if got := upstreamClientProfileForRequest(nil, upstreamClientProfileRequest{TLSFingerprint: "claude_code"}, "").TLSFingerprint; got != httpclient.TLSFingerprintClaudeCode {
 		t.Fatalf("request fingerprint = %q", got)
 	}

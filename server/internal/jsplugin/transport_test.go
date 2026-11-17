@@ -19,8 +19,8 @@ func TestValidateTransportProfile(t *testing.T) {
 		{name: "empty"},
 		{name: "claude_code", profile: "claude_code"},
 		{name: "case and space", profile: " Claude_Code "},
-		{name: "bun", profile: "bun", want: `transport.profile "bun" is not supported by this build`},
-		{name: "other", profile: "curl", want: `transport.profile "curl" is not supported (supported: claude_code)`},
+		{name: "bun", profile: "bun"},
+		{name: "other", profile: "curl", want: `transport.profile "curl" is not supported (supported: claude_code, bun)`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

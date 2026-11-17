@@ -458,6 +458,9 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 	if patch.ImpersonateClaudeCodeClient != nil {
 		merged.ImpersonateClaudeCodeClient = patch.ImpersonateClaudeCodeClient
 	}
+	if patch.ImpersonateOpencodeClient != nil {
+		merged.ImpersonateOpencodeClient = patch.ImpersonateOpencodeClient
+	}
 	if patch.Plugins != nil {
 		merged.Plugins = map[string]string{}
 		for kind, id := range existing.Plugins {
