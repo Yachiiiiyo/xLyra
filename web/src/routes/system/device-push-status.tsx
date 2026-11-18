@@ -24,47 +24,53 @@ export function DeviceCloudPushNotice() {
   )
 }
 
-export function DevicePushStatus({ device }: { device: DeviceItem }) {
-  const { t, i18n } = useTranslation('settings')
-  const queryClient = useQueryClient()
-  const [sending, setSending] = useState(false)
+export function DevicePushBadge({ device }: { device: DeviceItem }) {
+  const { t } = useTranslation('settings')
   const push = device.push
-  const registered = push?.registered === true
-
-  if (!registered || !push) {
-    return (
-      <div className="space-y-1 pt-1">
-        <Badge variant="neutral">{t('devices.push.unregistered')}</Badge>
-        <p className="text-footnote text-label-2">{t('devices.push.unregisteredHint')}</p>
-      </div>
-    )
-  }
-
+  if (push?.registered !== true) return <Badge variant="neutral">{t('devices.push.unregistered')}</Badge>
   const variant = push.state === 'invalid' || push.state === 'error' ? 'warning' : 'success'
   const label = push.state === 'invalid'
     ? t('devices.push.invalid')
     : push.state === 'error'
       ? t('devices.push.error')
       : t('devices.push.ok')
-  const meta = registeredMeta(push, i18n.language, t)
-  const offSummary = closedPrefsSummary(push.prefs, t)
+  return <Badge variant={variant}>{label}</Badge>
+}
+
+export function DevicePushDetail({ device }: { device: DeviceItem }) {
+  const { t, i18n } = useTranslation('settings')
+  const push = device.push
+  if (push?.registered !== true) {
+    return <p className="text-footnote text-label-2">{t('devices.push.unregisteredHint')}</p>
+  }
+  const parts = [
+    registeredMeta(push, i18n.language, t),
+    closedPrefsSummary(push.prefs, t),
+  ].filter(Boolean)
+  return (
+    <>
+      {push.state === 'invalid' ? <p className="text-footnote text-label-2">{t('devices.push.invalidHint')}</p> : null}
+      {parts.length > 0 ? <p className="truncate text-footnote text-label-2">{parts.join(' · ')}</p> : null}
+    </>
+  )
+}
+
+export function DevicePushTestButton({ device }: { device: DeviceItem }) {
+  const { t } = useTranslation('settings')
+  const queryClient = useQueryClient()
+  const [sending, setSending] = useState(false)
+  if (device.push?.registered !== true) return null
 
   return (
-    <div className="space-y-1 pt-1">
-      <Badge variant={variant}>{label}</Badge>
-      {meta ? <p className="text-footnote text-label-2">{meta}</p> : null}
-      {push.state === 'invalid' ? <p className="text-footnote text-label-2">{t('devices.push.invalidHint')}</p> : null}
-      {offSummary ? <p className="text-footnote text-label-2">{offSummary}</p> : null}
-      <Button
-        variant="secondary"
-        size="sm"
-        loading={sending}
-        disabled={sending}
-        onClick={() => { void sendTest() }}
-      >
-        {t('devices.push.test.send')}
-      </Button>
-    </div>
+    <Button
+      variant="secondary"
+      size="sm"
+      loading={sending}
+      disabled={sending}
+      onClick={() => { void sendTest() }}
+    >
+      {t('devices.push.test.send')}
+    </Button>
   )
 
   async function sendTest() {

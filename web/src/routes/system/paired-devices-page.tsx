@@ -32,7 +32,7 @@ import {
   type DevicePairing,
 } from '@/features/auth/api/paired-devices'
 import { cloudBindingQueryKeys, fetchCloudBinding } from '@/features/settings/api/cloud-binding'
-import { DeviceCloudPushNotice, DevicePushStatus } from '@/routes/system/device-push-status'
+import { DeviceCloudPushNotice, DevicePushBadge, DevicePushDetail, DevicePushTestButton } from '@/routes/system/device-push-status'
 
 export function DevicesSettingsPage() {
   const { t, i18n } = useTranslation('settings')
@@ -160,20 +160,24 @@ export function DevicesSettingsPage() {
         ) : (
           <ul className="divide-y divide-separator overflow-hidden rounded-card border border-separator">
             {devices.map((device) => (
-              <li key={device.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-3 sm:px-4">
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <div className="flex items-center gap-2">
+              <li key={device.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 px-3 py-3 sm:px-4">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="truncate text-body font-medium text-label">{device.name}</span>
                     {device.current ? <Badge variant="success">{t('devices.list.current')}</Badge> : null}
+                    <DevicePushBadge device={device} />
                   </div>
                   <p className="truncate text-footnote text-label-2">
                     {device.platform} · {device.last_ip ?? '-'} · {formatRelativeTime(device.last_seen_at ?? undefined, i18n.language) || '-'}
                   </p>
-                  <DevicePushStatus device={device} />
+                  <DevicePushDetail device={device} />
                 </div>
-                <Button variant="secondary" size="sm" disabled={revokeMutation.isPending} onClick={() => setRevokeTarget(device)}>
-                  {t('devices.list.revoke')}
-                </Button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <DevicePushTestButton device={device} />
+                  <Button variant="secondary" size="sm" disabled={revokeMutation.isPending} onClick={() => setRevokeTarget(device)}>
+                    {t('devices.list.revoke')}
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
