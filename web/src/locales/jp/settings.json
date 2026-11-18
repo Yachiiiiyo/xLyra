@@ -1279,6 +1279,8 @@
       "registeredAt": "登録：{{time}}",
       "cloudRequired": "プッシュには、このインスタンスを xLyra Cloud に連携する必要があります",
       "cloudLink": "連携する",
+      "cloudUnbound": "Cloud 未連携",
+      "cloudUnboundHint": "通知は一時送信されません。xLyra Cloud を連携すると自動で復旧します",
       "prefsOff": "オフ：{{names}}",
       "listSeparator": "、",
       "kinds": {

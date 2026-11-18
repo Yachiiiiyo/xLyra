@@ -24,10 +24,11 @@ export function DeviceCloudPushNotice() {
   )
 }
 
-export function DevicePushBadge({ device }: { device: DeviceItem }) {
+export function DevicePushBadge({ device, cloudBound }: { device: DeviceItem, cloudBound?: boolean }) {
   const { t } = useTranslation('settings')
   const push = device.push
   if (push?.registered !== true) return <Badge variant="neutral">{t('devices.push.unregistered')}</Badge>
+  if (cloudBound === false) return <Badge variant="warning">{t('devices.push.cloudUnbound')}</Badge>
   const variant = push.state === 'invalid' || push.state === 'error' ? 'warning' : 'success'
   const label = push.state === 'invalid'
     ? t('devices.push.invalid')
@@ -37,7 +38,7 @@ export function DevicePushBadge({ device }: { device: DeviceItem }) {
   return <Badge variant={variant}>{label}</Badge>
 }
 
-export function DevicePushDetail({ device }: { device: DeviceItem }) {
+export function DevicePushDetail({ device, cloudBound }: { device: DeviceItem, cloudBound?: boolean }) {
   const { t, i18n } = useTranslation('settings')
   const push = device.push
   if (push?.registered !== true) {
@@ -49,24 +50,27 @@ export function DevicePushDetail({ device }: { device: DeviceItem }) {
   ].filter(Boolean)
   return (
     <>
+      {cloudBound === false ? <p className="text-footnote text-label-2">{t('devices.push.cloudUnboundHint')}</p> : null}
       {push.state === 'invalid' ? <p className="text-footnote text-label-2">{t('devices.push.invalidHint')}</p> : null}
       {parts.length > 0 ? <p className="truncate text-footnote text-label-2">{parts.join(' · ')}</p> : null}
     </>
   )
 }
 
-export function DevicePushTestButton({ device }: { device: DeviceItem }) {
+export function DevicePushTestButton({ device, cloudBound }: { device: DeviceItem, cloudBound?: boolean }) {
   const { t } = useTranslation('settings')
   const queryClient = useQueryClient()
   const [sending, setSending] = useState(false)
   if (device.push?.registered !== true) return null
+  const blocked = cloudBound === false
 
   return (
     <Button
       variant="secondary"
       size="sm"
       loading={sending}
-      disabled={sending}
+      disabled={sending || blocked}
+      title={blocked ? t('devices.push.test.cloudNotBound') : undefined}
       onClick={() => { void sendTest() }}
     >
       {t('devices.push.test.send')}

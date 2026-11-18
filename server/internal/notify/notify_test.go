@@ -397,6 +397,68 @@ func TestNoDevicesDrops(t *testing.T) {
 	h.waitQuiet(t)
 }
 
+type readySender struct {
+	fakeSender
+	ready bool
+}
+
+func (s *readySender) PushReady(context.Context) bool { return s.ready }
+
+func TestUnboundSkipsUntilReady(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	sessions := &fakeSessions{metas: map[string]SessionMeta{"s1": {Title: "会话一"}}, total: 1}
+	devices := &fakeDevices{devices: []Device{{ID: "dev-1"}}}
+	buf := &bytes.Buffer{}
+	sender := &readySender{fakeSender: fakeSender{clock: clock}}
+	n := New(Deps{
+		Sessions: sessions,
+		Devices:  devices,
+		Logger:   slog.New(slog.NewTextHandler(buf, nil)),
+	}, Options{Now: clock.Now, QueueSize: 8})
+	n.SetSender(sender)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n.Start(ctx)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-n.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("notifier 未退出")
+		}
+	})
+
+	n.Observe("s1", "run-1", clock.Now(), questionEvent("q-1"))
+	time.Sleep(40 * time.Millisecond)
+	if got := sender.snapshot(); len(got) != 0 {
+		t.Fatalf("未绑定不应发送,实际 %#v", got)
+	}
+	if devices.calls != 0 {
+		t.Fatalf("未绑定不应查设备,实际 %d", devices.calls)
+	}
+	n.mu.Lock()
+	pending := len(n.pending)
+	_, remembered := n.dedupe[kindQuestion+"\x00"+"q-1"]
+	n.mu.Unlock()
+	if pending != 0 || remembered {
+		t.Fatalf("未绑定不应进重试或去重, pending=%d remembered=%v", pending, remembered)
+	}
+	if !strings.Contains(buf.String(), "未绑定 xLyra Cloud,通知已跳过") {
+		t.Fatalf("缺少跳过日志: %s", buf.String())
+	}
+
+	sender.ready = true
+	n.Observe("s1", "run-1", clock.Now(), questionEvent("q-1"))
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && len(sender.snapshot()) < 1 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := sender.snapshot()
+	if len(got) != 1 || got[0].req.RefID != "q-1" {
+		t.Fatalf("绑定后同一事件应发出, got %#v", got)
+	}
+}
+
 func TestSenderMissingDropsQuietly(t *testing.T) {
 	clock := newFakeClock(time.Unix(1_700_000_000, 0))
 	n := New(Deps{

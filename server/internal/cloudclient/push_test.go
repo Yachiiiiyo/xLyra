@@ -452,9 +452,27 @@ func TestSendPushMapsHubResponses(t *testing.T) {
 func TestSendPushUnboundIsNotReady(t *testing.T) {
 	st := openCloudStore(t)
 	client := newTestClient(t, st, "https://cloud.example", nil)
+	if client.PushReady(context.Background()) {
+		t.Fatal("未绑定时 PushReady 应为 false")
+	}
 	result, err := client.SendPush(context.Background(), PushRequest{DeviceID: uuid.NewString(), Kind: "done", Title: "t", Body: "b"})
 	if err != nil || result != PushNotReady {
 		t.Fatalf("result=%d err=%v", result, err)
+	}
+}
+
+func TestPushReadyWhenBound(t *testing.T) {
+	st := openCloudStore(t)
+	cloud := newFakeCloud("approve")
+	srv := httptest.NewServer(cloud)
+	t.Cleanup(srv.Close)
+	client := newTestClient(t, st, srv.URL, nil)
+	if client.PushReady(context.Background()) {
+		t.Fatal("绑定前 PushReady 应为 false")
+	}
+	bindClient(t, st, client, cloud.instanceID)
+	if !client.PushReady(context.Background()) {
+		t.Fatal("已绑定时 PushReady 应为 true")
 	}
 }
 

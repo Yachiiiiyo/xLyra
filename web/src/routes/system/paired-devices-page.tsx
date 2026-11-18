@@ -95,6 +95,7 @@ export function DevicesSettingsPage() {
   const showCloudPushNotice = cloudBindingQuery.isSuccess
     && cloudBindingQuery.data.status !== 'bound'
     && devices.some((device) => device.push?.registered === true || isIOSPlatform(device.platform))
+  const cloudBound = cloudBindingQuery.isSuccess ? cloudBindingQuery.data.status === 'bound' : undefined
 
   // 检测到新设备连上后自动关闭弹窗、刷新列表并提示。
   const connectedRef = useRef(false)
@@ -165,15 +166,15 @@ export function DevicesSettingsPage() {
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="truncate text-body font-medium text-label">{device.name}</span>
                     {device.current ? <Badge variant="success">{t('devices.list.current')}</Badge> : null}
-                    <DevicePushBadge device={device} />
+                    <DevicePushBadge device={device} cloudBound={cloudBound} />
                   </div>
                   <p className="truncate text-footnote text-label-2">
                     {device.platform} · {device.last_ip ?? '-'} · {formatRelativeTime(device.last_seen_at ?? undefined, i18n.language) || '-'}
                   </p>
-                  <DevicePushDetail device={device} />
+                  <DevicePushDetail device={device} cloudBound={cloudBound} />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <DevicePushTestButton device={device} />
+                  <DevicePushTestButton device={device} cloudBound={cloudBound} />
                   <Button variant="destructive-soft" size="sm" disabled={revokeMutation.isPending} onClick={() => setRevokeTarget(device)}>
                     {t('devices.list.revoke')}
                   </Button>

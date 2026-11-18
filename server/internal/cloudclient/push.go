@@ -56,6 +56,13 @@ func (e *RetryAfterError) Error() string {
 	return "push retry after " + strconv.Itoa(e.Seconds) + "s"
 }
 
+// PushReady reports whether this instance is bound and can send.
+// A repository error is not ready, so the caller skips instead of guessing.
+func (c *Client) PushReady(ctx context.Context) bool {
+	_, err := c.boundRow(ctx)
+	return err == nil
+}
+
 // SendPush delivers one notification through the Hub. Any replica may call it;
 // the send lease is only for heartbeats. An unbound instance returns PushNotReady
 // without an error so the caller can drop the notification quietly.

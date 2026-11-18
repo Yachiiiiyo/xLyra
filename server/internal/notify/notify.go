@@ -72,6 +72,12 @@ type Sender interface {
 	SendPush(ctx context.Context, req cloudclient.PushRequest) (cloudclient.PushResult, error)
 }
 
+// readier 是可选能力:*cloudclient.Client 在未绑定 xLyra Cloud 时返回 false。
+// 不放进 Sender,避免破坏只实现 SendPush 的测试双。
+type readier interface {
+	PushReady(ctx context.Context) bool
+}
+
 // Deps 是 Notifier 的依赖,都用小接口便于测试。
 type Deps struct {
 	Sessions Sessions
@@ -96,13 +102,14 @@ type Notifier struct {
 
 	queue chan observation
 
-	mu       sync.Mutex
-	sender   Sender
-	dedupe   map[string]time.Time
-	pending  []delivery
-	wake     chan struct{}
-	dropped  int
-	lastWarn time.Time
+	mu          sync.Mutex
+	sender      Sender
+	dedupe      map[string]time.Time
+	pending     []delivery
+	wake        chan struct{}
+	dropped     int
+	lastWarn    time.Time
+	lastUnbound time.Time
 
 	startOnce sync.Once
 	done      chan struct{}
@@ -265,6 +272,14 @@ func (n *Notifier) nextDelay() time.Duration {
 }
 
 func (n *Notifier) dispatch(ctx context.Context, obs observation) {
+	sender := n.currentSender()
+	if sender == nil {
+		return
+	}
+	if ready, ok := sender.(readier); ok && !ready.PushReady(ctx) {
+		n.noteUnbound()
+		return
+	}
 	item, ok := n.build(obs)
 	if !ok {
 		return
@@ -534,6 +549,19 @@ func (n *Notifier) noteDrop() {
 	n.mu.Unlock()
 	if warn {
 		n.logger.Warn("通知队列已满,丢弃事件", "dropped", dropped)
+	}
+}
+
+func (n *Notifier) noteUnbound() {
+	n.mu.Lock()
+	now := n.now()
+	warn := n.lastUnbound.IsZero() || now.Sub(n.lastUnbound) >= dropWarnInterval
+	if warn {
+		n.lastUnbound = now
+	}
+	n.mu.Unlock()
+	if warn {
+		n.logger.Info("未绑定 xLyra Cloud,通知已跳过")
 	}
 }
 

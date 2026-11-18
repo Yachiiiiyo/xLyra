@@ -1279,6 +1279,8 @@
       "registeredAt": "Registered {{time}}",
       "cloudRequired": "Push requires this instance to be bound to xLyra Cloud",
       "cloudLink": "Bind now",
+      "cloudUnbound": "Cloud not bound",
+      "cloudUnboundHint": "Notifications are paused until this instance is bound to xLyra Cloud.",
       "prefsOff": "Off: {{names}}",
       "listSeparator": ", ",
       "kinds": {

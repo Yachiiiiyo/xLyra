@@ -355,6 +355,12 @@ describe('devices settings page', () => {
     const unbound = await mountPage()
     try {
       expect(unbound.container.textContent).toContain('推送需要先把本实例绑定到 xLyra Cloud')
+      expect(unbound.container.textContent).toContain('未绑定 Cloud')
+      expect(unbound.container.textContent).toContain('通知暂时不会发送,绑定 xLyra Cloud 后自动恢复')
+      expect(unbound.container.textContent).not.toContain('推送正常')
+      const test = findButton(unbound.container, '发送测试通知')
+      expect(test?.hasAttribute('disabled')).toBe(true)
+      expect(test?.getAttribute('title')).toBe('请先绑定 xLyra Cloud')
       const link = unbound.container.collectByAttr('href', '/system/xlyra-cloud')[0]
       expect(link?.textContent).toContain('前往绑定')
     } finally {

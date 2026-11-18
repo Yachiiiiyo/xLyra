@@ -1279,6 +1279,8 @@
       "registeredAt": "登记于 {{time}}",
       "cloudRequired": "推送需要先把本实例绑定到 xLyra Cloud",
       "cloudLink": "前往绑定",
+      "cloudUnbound": "未绑定 Cloud",
+      "cloudUnboundHint": "通知暂时不会发送,绑定 xLyra Cloud 后自动恢复",
       "prefsOff": "已关闭：{{names}}",
       "listSeparator": "、",
       "kinds": {
