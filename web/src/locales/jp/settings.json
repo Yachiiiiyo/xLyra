@@ -1281,10 +1281,6 @@
       "cloudLink": "連携する",
       "prefsOff": "オフ：{{names}}",
       "listSeparator": "、",
-      "env": {
-        "sandbox": "サンドボックス",
-        "production": "本番"
-      },
       "kinds": {
         "approval": "承認",
         "question": "質問",

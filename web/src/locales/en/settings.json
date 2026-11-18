@@ -1281,10 +1281,6 @@
       "cloudLink": "Bind now",
       "prefsOff": "Off: {{names}}",
       "listSeparator": ", ",
-      "env": {
-        "sandbox": "Sandbox",
-        "production": "Production"
-      },
       "kinds": {
         "approval": "Approval",
         "question": "Question",

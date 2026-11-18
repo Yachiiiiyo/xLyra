@@ -274,7 +274,7 @@ describe('devices settings page', () => {
     }
   })
 
-  it('按推送状态显示徽标、环境、登记时间与失效提示', async () => {
+  it('按推送状态显示徽标、登记时间与失效提示（不显示推送环境）', async () => {
     listDevices.mockResolvedValue([
       device({ push: devicePush({ state: '', environment: 'sandbox' }) }),
       device({
@@ -292,9 +292,9 @@ describe('devices settings page', () => {
     try {
       const text = mounted.container.textContent
       expect(text).toContain('推送正常')
-      expect(text).toContain('沙盒')
+      expect(text).not.toContain('沙盒')
       expect(text).toContain('推送失效')
-      expect(text).toContain('生产')
+      expect(text).not.toContain('生产')
       expect(text).toContain('请在手机上重新打开 xLyra App 以重新登记通知')
       expect(text).toContain('最近推送失败')
       expect(text).not.toContain('已关闭')

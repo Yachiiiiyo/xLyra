@@ -141,7 +141,7 @@ export function DevicesSettingsPage() {
         <div className="flex items-center justify-between gap-3">
           <h4 className="font-semibold text-label">{t('devices.list.title')}</h4>
           <Button
-            variant="secondary"
+            variant="destructive-soft"
             disabled={devices.length === 0 || revokeAllMutation.isPending}
             onClick={() => setRevokeAllOpen(true)}
           >
@@ -174,7 +174,7 @@ export function DevicesSettingsPage() {
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <DevicePushTestButton device={device} />
-                  <Button variant="secondary" size="sm" disabled={revokeMutation.isPending} onClick={() => setRevokeTarget(device)}>
+                  <Button variant="destructive-soft" size="sm" disabled={revokeMutation.isPending} onClick={() => setRevokeTarget(device)}>
                     {t('devices.list.revoke')}
                   </Button>
                 </div>

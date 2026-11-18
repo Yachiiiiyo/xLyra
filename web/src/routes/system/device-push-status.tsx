@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { formatRelativeTime } from '@/features/agent/lib/relative-time'
+import { formatAbsoluteTime } from '@/features/agent/lib/relative-time'
 import { devicesQueryKeys, sendDevicePushTest, type DeviceItem, type DevicePush, type DevicePushPrefs } from '@/features/auth/api/paired-devices'
 import { APIError } from '@/lib/http'
 import { toast } from '@/lib/toast'
@@ -95,9 +95,7 @@ export function DevicePushTestButton({ device }: { device: DeviceItem }) {
 
 function registeredMeta(push: DevicePush, locale: string, t: (key: string, options?: Record<string, unknown>) => string) {
   const parts: string[] = []
-  if (push.environment === 'sandbox') parts.push(t('devices.push.env.sandbox'))
-  if (push.environment === 'production') parts.push(t('devices.push.env.production'))
-  const registeredAt = formatRelativeTime(push.registered_at ?? undefined, locale)
+  const registeredAt = formatAbsoluteTime(push.registered_at ?? undefined, locale)
   if (registeredAt) parts.push(t('devices.push.registeredAt', { time: registeredAt }))
   return parts.join(' · ')
 }

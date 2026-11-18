@@ -1281,10 +1281,6 @@
       "cloudLink": "前往绑定",
       "prefsOff": "已关闭：{{names}}",
       "listSeparator": "、",
-      "env": {
-        "sandbox": "沙盒",
-        "production": "生产"
-      },
       "kinds": {
         "approval": "审批",
         "question": "提问",
