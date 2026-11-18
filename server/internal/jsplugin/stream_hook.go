@@ -97,8 +97,8 @@ func decodeStreamTransformResult(raw any) (StreamTransformResult, error) {
 		if !ok {
 			return StreamTransformResult{}, shapeError("transformStream.data must be a string")
 		}
-		if len(str) > MaxSignBodyBytes {
-			return StreamTransformResult{}, fmt.Errorf("transformStream.data exceeds %d bytes", MaxSignBodyBytes)
+		if len(str) > MaxStreamEventBytes {
+			return StreamTransformResult{}, fmt.Errorf("transformStream.data exceeds %d bytes", MaxStreamEventBytes)
 		}
 		out.Data = &str
 	}

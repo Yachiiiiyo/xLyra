@@ -164,16 +164,23 @@ type pluginPendingLogin struct {
 	expiresAt time.Time
 }
 
+type pluginSessionLock struct {
+	ch   chan struct{}
+	refs int
+}
+
 type pluginLoginResults struct {
-	mu      sync.Mutex
-	items   map[string]pluginCompletedLogin
-	pending map[string]pluginPendingLogin
+	mu       sync.Mutex
+	items    map[string]pluginCompletedLogin
+	pending  map[string]pluginPendingLogin
+	inflight map[string]*pluginSessionLock
 }
 
 func newPluginLoginResults() *pluginLoginResults {
 	return &pluginLoginResults{
-		items:   map[string]pluginCompletedLogin{},
-		pending: map[string]pluginPendingLogin{},
+		items:    map[string]pluginCompletedLogin{},
+		pending:  map[string]pluginPendingLogin{},
+		inflight: map[string]*pluginSessionLock{},
 	}
 }
 
@@ -517,7 +524,7 @@ func (r *pluginLoginResults) region(session string) string {
 	return item.region
 }
 
-func (r *pluginLoginResults) take(session string) (PluginAccount, bool) {
+func (r *pluginLoginResults) get(session string) (PluginAccount, bool) {
 	session = strings.TrimSpace(session)
 	if r == nil || session == "" {
 		return PluginAccount{}, false
@@ -528,11 +535,53 @@ func (r *pluginLoginResults) take(session string) (PluginAccount, bool) {
 	if !ok {
 		return PluginAccount{}, false
 	}
-	delete(r.items, session)
 	if time.Now().After(item.expiresAt) {
+		delete(r.items, session)
 		return PluginAccount{}, false
 	}
 	return item.account, true
+}
+
+func (r *pluginLoginResults) lockSession(ctx context.Context, session string) (func(), error) {
+	session = strings.TrimSpace(session)
+	if r == nil || session == "" {
+		return func() {}, nil
+	}
+	r.mu.Lock()
+	if r.inflight == nil {
+		r.inflight = map[string]*pluginSessionLock{}
+	}
+	entry, ok := r.inflight[session]
+	if !ok {
+		entry = &pluginSessionLock{ch: make(chan struct{}, 1)}
+		entry.ch <- struct{}{}
+		r.inflight[session] = entry
+	}
+	entry.refs++
+	r.mu.Unlock()
+
+	releaseRef := func() {
+		r.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 && r.inflight[session] == entry {
+			delete(r.inflight, session)
+		}
+		r.mu.Unlock()
+	}
+
+	select {
+	case <-entry.ch:
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				entry.ch <- struct{}{}
+				releaseRef()
+			})
+		}, nil
+	case <-ctx.Done():
+		releaseRef()
+		return nil, ctx.Err()
+	}
 }
 
 func (r *pluginLoginResults) clear() {
@@ -707,7 +756,15 @@ func (p pluginAccountAPI) PollLogin(ctx context.Context, siteID uuid.UUID, sessi
 	if session == "" {
 		return AccountLoginPoll{}, fmt.Errorf("session is required")
 	}
-	if account, ok := p.s.pluginLogins.take(session); ok {
+	if account, ok := p.s.pluginLogins.get(session); ok {
+		return AccountLoginPoll{Status: "complete", Account: account}, nil
+	}
+	unlock, err := p.s.pluginLogins.lockSession(ctx, session)
+	if err != nil {
+		return AccountLoginPoll{}, err
+	}
+	defer unlock()
+	if account, ok := p.s.pluginLogins.get(session); ok {
 		return AccountLoginPoll{Status: "complete", Account: account}, nil
 	}
 	credentialID := uuid.Nil
@@ -736,6 +793,7 @@ func (p pluginAccountAPI) PollLogin(ctx context.Context, siteID uuid.UUID, sessi
 		if finishErr != nil {
 			return AccountLoginPoll{}, finishErr
 		}
+		p.s.pluginLogins.remember(session, account)
 		return AccountLoginPoll{Status: "complete", Account: account}, nil
 	default:
 		return AccountLoginPoll{}, fmt.Errorf("login status %q is not supported", poll.Status)

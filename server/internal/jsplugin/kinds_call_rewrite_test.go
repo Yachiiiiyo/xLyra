@@ -76,8 +76,8 @@ func TestCallRewritePayloadTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), KindTimeout) {
 		t.Fatalf("error = %v", err)
 	}
-	if elapsed < 40*time.Millisecond || elapsed > 180*time.Millisecond {
-		t.Fatalf("elapsed %s, want the 50ms protocol timeout", elapsed)
+	if elapsed < 100*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("elapsed %s, want the 150ms protocol timeout", elapsed)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestCallRewritePayloadLimitsAndMissingHook(t *testing.T) {
 		t.Fatalf("oversize input = %#v", err)
 	}
 
-	// race 检测器下 50 ms 预算可能先耗尽。
-	huge := providerPlugin(t, "acme.huge", `export function rewritePayload() { return { blob: "x".repeat(2 * 1024 * 1024) }; }`)
+	// race 检测器下 150 ms 预算可能先耗尽。
+	huge := providerPlugin(t, "acme.huge", fmt.Sprintf(`export function rewritePayload() { return { blob: "x".repeat(%d) }; }`, int(MaxResultBytes)+1024))
 	_, hugeErr := huge.CallRewritePayload(context.Background(), "rewritePayload", RewritePayloadContext{}, map[string]any{"model": "m"})
 	var hugeCall *CallError
 	if !errors.As(hugeErr, &hugeCall) || (hugeCall.Kind != KindResponseTooLarge && hugeCall.Kind != KindTimeout) {
@@ -121,6 +121,69 @@ func TestCallRewritePayloadLimitsAndMissingHook(t *testing.T) {
 	}
 	if time.Since(started) > time.Second {
 		t.Fatal("missing hook waited for a runtime")
+	}
+}
+
+func TestCallRewritePayloadAndSignRequest4MiB(t *testing.T) {
+	t.Parallel()
+	plugin := providerPlugin(t, "acme.large", `
+export function rewritePayload(ctx, payload) {
+  if (Array.isArray(payload.messages)) {
+    payload.messages = payload.messages.map((m) => ({
+      ...m,
+      content: typeof m.content === "string" ? m.content.replaceAll("BEFORE_TOKEN", "AFTER_TOKEN") : m.content,
+    }));
+  }
+  return payload;
+}
+export function signRequest(ctx, req) {
+  return {
+    headers: { "X-Payload-Bytes": String(req.body.length) },
+    body: req.body,
+  };
+}`)
+	chunk := strings.Repeat("0123456789abcdef", 16*1024) + "BEFORE_TOKEN"
+	messages := make([]any, 0, 16)
+	for i := 0; i < 16; i++ {
+		messages = append(messages, map[string]any{"role": "user", "content": chunk})
+	}
+	payload := map[string]any{
+		"model":    "m",
+		"messages": messages,
+	}
+	rewritten, err := plugin.CallRewritePayload(context.Background(), "rewritePayload", RewritePayloadContext{
+		SiteType: "acme.large/chat",
+		Model:    "m",
+		Protocol: "openai_chat",
+	}, payload)
+	if err != nil {
+		t.Fatalf("4 MiB CallRewritePayload failed: %v", err)
+	}
+	outMsgs, ok := rewritten["messages"].([]any)
+	if !ok || len(outMsgs) != 16 {
+		t.Fatalf("messages = %T len %d", rewritten["messages"], len(outMsgs))
+	}
+	firstMsg, _ := outMsgs[0].(map[string]any)
+	firstContent, _ := firstMsg["content"].(string)
+	if !strings.HasSuffix(firstContent, "AFTER_TOKEN") || strings.Contains(firstContent, "BEFORE_TOKEN") {
+		t.Fatal("phrase replacement did not apply")
+	}
+
+	rawBody := strings.Repeat("x", 4<<20)
+	signed, _, _, err := plugin.CallSignRequest(context.Background(), ProtocolBuildContext{
+		Candidate: ProtocolCandidateContext{SiteType: "acme.large/chat", BaseURL: "https://api.example.com"},
+		Model:     "m",
+	}, ProtocolSignInput{
+		Method:  "POST",
+		URL:     "https://api.example.com/v1/chat/completions",
+		Headers: map[string]string{"Content-Type": "application/json"},
+		Body:    rawBody,
+	})
+	if err != nil {
+		t.Fatalf("4 MiB CallSignRequest failed: %v", err)
+	}
+	if signed.Mode != "rewrite" || signed.Body == nil || len(*signed.Body) != 4<<20 {
+		t.Fatalf("signed mode=%q body len=%d", signed.Mode, len(*signed.Body))
 	}
 }
 

@@ -123,7 +123,7 @@ func applyOnePluginSign(ctx context.Context, plugin *jsplugin.Plugin, req *http.
 	if usesSecret {
 		callCtx = jsplugin.WithDiscardLogs(callCtx)
 	}
-	waitCtx, cancel := context.WithTimeout(callCtx, 100*time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(callCtx, 250*time.Millisecond)
 	defer cancel()
 	signed, logs, dropped, err := plugin.CallSignRequest(waitCtx, signBuildContext(plugin, candidate, request, protocol, upstreamKey, headerVars, meta, sessionSecret, usesSecret), jsplugin.ProtocolSignInput{
 		Method:  req.Method,

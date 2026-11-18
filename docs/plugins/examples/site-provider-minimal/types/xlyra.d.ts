@@ -178,7 +178,7 @@ export interface ProtocolSignInput {
   url: string;
   /** Headers about to be sent, without credentials. */
   headers: Record<string, string>;
-  /** The exact request body that will be sent (at most 1 MiB). */
+  /** The exact request body that will be sent (at most 16 MiB). */
   body: string;
 }
 
@@ -198,7 +198,7 @@ export interface ProtocolSignResult {
   headers?: Record<string, string>;
   /** Query parameters to set on the upstream URL. Rewrite mode only. */
   query?: Record<string, string>;
-  /** Replaces the whole upstream body. At most 1 MiB. Rewrite mode only. */
+  /** Replaces the whole upstream body. At most 16 MiB. Rewrite mode only. */
   body?: string;
 }
 

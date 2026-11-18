@@ -7,7 +7,7 @@ import (
 )
 
 // MaxSignBodyBytes is the largest upstream request body shown to signRequest.
-const MaxSignBodyBytes = 1 << 20
+const MaxSignBodyBytes = 16 << 20
 
 // MaxStringToSignBytes bounds the string a signRequest hook asks Go to sign.
 const MaxStringToSignBytes = 64 << 10
@@ -98,7 +98,7 @@ type ProtocolSignInput struct {
 	Method  string            `ts:"method"`
 	URL     string            `ts:"url,doc=Full upstream URL including the query string."`
 	Headers map[string]string `ts:"headers,doc=Headers about to be sent, without credentials."`
-	Body    string            `ts:"body,doc=The exact request body that will be sent (at most 1 MiB)."`
+	Body    string            `ts:"body,doc=The exact request body that will be sent (at most 16 MiB)."`
 }
 
 // ProtocolSignResult is either a sign-mode result or a rewrite-mode result.
@@ -113,7 +113,7 @@ type ProtocolSignResult struct {
 	Prefix       string            `ts:"prefix,optional,doc=Text put before the encoded signature, such as 'HMAC-SHA256 '."`
 	Headers      map[string]string `ts:"headers,optional,doc=Extra non-secret headers to send, such as a timestamp or nonce."`
 	Query        map[string]string `ts:"query,optional,doc=Query parameters to set on the upstream URL. Rewrite mode only."`
-	Body         *string           `ts:"body,optional,doc=Replaces the whole upstream body. At most 1 MiB. Rewrite mode only."`
+	Body         *string           `ts:"body,optional,doc=Replaces the whole upstream body. At most 16 MiB. Rewrite mode only."`
 }
 
 // ProtocolErrorInput is the non-2xx upstream response shown to parseError.

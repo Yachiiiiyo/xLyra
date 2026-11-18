@@ -12,9 +12,9 @@ const (
 	protocolPoolResident = 4
 	protocolPoolMax      = 16
 	// protocolHookTimeout is shorter than the probe timeout: protocol hooks run on the request path.
-	protocolHookTimeout = 50 * time.Millisecond
+	protocolHookTimeout = 150 * time.Millisecond
 	// signHookTimeout is the budget for signRequest (request shaping and cryptographic signing).
-	signHookTimeout = 100 * time.Millisecond
+	signHookTimeout = 200 * time.Millisecond
 	// streamHookTimeout is the per-event budget for transformStream.
 	streamHookTimeout = 5 * time.Millisecond
 	// scheduleHookTimeout is the budget for periodic onSchedule calls.
@@ -27,15 +27,17 @@ const (
 	MaxProbeRequestBody  = 64 << 10
 	maxProbeResponseBody = 1 << 20
 	// MaxAllocBytes is the per-call allocation budget passed to moejs.
-	MaxAllocBytes int64 = 32 << 20
+	MaxAllocBytes int64 = 64 << 20
 	// MaxResultBytes is the hook result bound passed to moejs.
-	MaxResultBytes        int64 = 1 << 20
-	maxRequestHeaders           = 32
-	maxRequestHeaderBytes       = 8 << 10
-	maxPluginLogs               = 50
-	maxPluginLogBytes           = 2048
-	hostAPIVersion              = 2
-	hookAPIVersion              = 1
+	MaxResultBytes int64 = 16 << 20
+	// MaxStreamEventBytes bounds a single SSE frame data payload returned by transformStream.
+	MaxStreamEventBytes   = 1 << 20
+	maxRequestHeaders     = 32
+	maxRequestHeaderBytes = 8 << 10
+	maxPluginLogs         = 50
+	maxPluginLogBytes     = 2048
+	hostAPIVersion        = 2
+	hookAPIVersion        = 1
 
 	MaxStorageKeysPerScope  = 64
 	MaxStorageBytesPerScope = 64 << 10

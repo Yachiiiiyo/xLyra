@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,7 +25,7 @@ func applyProviderRewrite(ctx context.Context, candidate routeengine.Candidate, 
 	if len(plugins) == 0 {
 		return payload, nil
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, errorClassifierWait)
+	waitCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	for _, plugin := range plugins {
 		modelValue, hasModel := payloadField(payload, "model")

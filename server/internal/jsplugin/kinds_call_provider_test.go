@@ -194,8 +194,8 @@ func TestCallErrorClassifyHookUsesClassifierTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), KindTimeout) {
 		t.Fatalf("error = %v", err)
 	}
-	if elapsed < 40*time.Millisecond || elapsed > 180*time.Millisecond {
-		t.Fatalf("elapsed %s, want the 50ms classifier timeout", elapsed)
+	if elapsed < 100*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("elapsed %s, want the 150ms classifier timeout", elapsed)
 	}
 }
 
