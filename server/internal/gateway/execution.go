@@ -342,6 +342,7 @@ credentialLoop:
 				result = recordCredentialAttempt(result, nil, false)
 				return result
 			}
+			sanitizeDSMLInRequestPayload(payload)
 			result = applyRequestBillingMetadata(result, payload, request.Payload, candidate)
 			if validationErr := validatePayloadParams(payload, protocol.ProtocolName(), candidate); validationErr != nil {
 				result.statusCode = http.StatusBadRequest
@@ -767,6 +768,9 @@ func (h Handler) handleBufferedResponse(
 	result.contentType = transformed.ContentType
 	result.statusCode = transformed.StatusCode
 	result.success = transformed.StatusCode >= 200 && transformed.StatusCode < 300
+	if result.success {
+		result.body = sanitizeDSMLInBufferedResponse(result.body, result.contentType)
+	}
 	if result.success {
 		result.promptTokens = transformed.Usage.PromptTokens
 		result.completionTokens = transformed.Usage.CompletionTokens
