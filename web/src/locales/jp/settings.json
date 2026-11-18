@@ -1084,6 +1084,16 @@
       "collapse": "閉じる",
       "clearOverride": "上書きをクリア",
       "siteSaved": "{{name}} のサイト設定を保存しました"
+    },
+    "schedule": {
+      "title": "定期スケジュール",
+      "hint": "onSchedule フックを定期的に実行します(チェックインやキープアライブなど)。デフォルトはオフで、手動で有効にします。",
+      "switchLabel": "定期スケジュールを有効にする({{minutes}} 分ごと)",
+      "intervalDescription": "有効にすると {{minutes}} 分ごとに onSchedule を自動実行します",
+      "nextTick": "次回実行: {{time}}",
+      "enabledToast": "定期スケジュールを有効にしました",
+      "disabledToast": "定期スケジュールを無効にしました",
+      "saveFailed": "定期スケジュールの更新に失敗しました"
     }
   },
   "xlyraCloud": {
