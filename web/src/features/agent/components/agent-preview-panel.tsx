@@ -169,24 +169,27 @@ export function AgentPreviewPanel({ changes, path, onSelectPath, onClose, mobile
   }
 
   return (
-    <LiquidGlass
+    <aside
       ref={asideRef}
-      as="aside"
       role="complementary"
       aria-label={t('preview.panelLabel')}
       className="relative my-4 mr-4 hidden h-[calc(100%-2rem)] shrink-0 flex-col overflow-hidden rounded-shell lg:flex"
       style={{ width: width ?? '40%', minWidth: 360, maxWidth: '60%' }}
     >
-      <div role="separator" aria-orientation="vertical" className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize" onPointerDown={startResize} onPointerMove={resize} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
-      <div className="flex shrink-0 items-center gap-2 border-b border-separator px-4 py-3 pl-5">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-label">{filesList?.title ?? fileName}</h2>
-          {filesList ? null : <p className="truncate text-xs text-faint" title={path}>{path}</p>}
+      {/* 玻璃折射独立成无子元素的背景层：Chromium 对同时包含定位子元素（拖拽分隔条）与 iframe 的容器应用 backdrop-filter: url(#...) 时，会把滤镜叠盖到内部静态内容与 iframe 上 */}
+      <LiquidGlass aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-shell" />
+      <div className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden rounded-shell border border-transparent">
+        <div className="flex shrink-0 items-center gap-2 border-b border-separator px-4 py-3 pl-5">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold text-label">{filesList?.title ?? fileName}</h2>
+            {filesList ? null : <p className="truncate text-xs text-faint" title={path}>{path}</p>}
+          </div>
+          {actions}
         </div>
-        {actions}
+        {body}
       </div>
-      {body}
-    </LiquidGlass>
+      <div role="separator" aria-orientation="vertical" className="absolute inset-y-0 left-0 z-10 w-1 cursor-col-resize" onPointerDown={startResize} onPointerMove={resize} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }} />
+    </aside>
   )
 }
 
