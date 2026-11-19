@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.19.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.18.0...v1.19.0) (2026-11-19)
+
+
+### Features
+
+* ✨ Web 设置新增「设备」页，生成配对二维码、查看并吊销已配对设备 ([0f8c693](https://github.com/Yachiiiiyo/xLyra/commit/0f8c6933939660212821fefbce112937fd1902cc))
+* ✨ xLyra Cloud 配对窗口增加二维码与操作步骤，隐私说明补充手机设备信息 ([56c53d7](https://github.com/Yachiiiiyo/xLyra/commit/56c53d79dd873de4658a6fd9a9c6b398c038aee0))
+* ✨ 优化 Agent 可用模型弹窗为一级扁平列表，支持模型筛选与两行展示 ([bdb2a74](https://github.com/Yachiiiiyo/xLyra/commit/bdb2a74861b633712211fc13c1c4ab4e6435092f))
+* ✨ 优化已配对设备列表排版，操作按钮移至右侧并整理左侧信息层级 ([4dd1341](https://github.com/Yachiiiiyo/xLyra/commit/4dd13414053a0e46e15a05af6a3ee0bfd627c3c3))
+* ✨ 合入 PR [#5](https://github.com/Yachiiiiyo/xLyra/issues/5) 后开启插件 transport.profile "bun" 与站点配置合并 ([ff0fedb](https://github.com/Yachiiiiyo/xLyra/commit/ff0fedb67063027021747b9d35e8162f27571fba))
+* ✨ 审批标注高危命令并随转录保留，支持重命名会话 ([cb5c9fc](https://github.com/Yachiiiiyo/xLyra/commit/cb5c9fc8aa163e6d462c61ac7b587e24531f3f1b))
+* ✨ 手机推送：设备登记 APNs 令牌，经 xLyra Cloud 转发待审批、待回答、完成与出错通知，心跳同步设备状态 ([66ec652](https://github.com/Yachiiiiyo/xLyra/commit/66ec652642b90ead77c6596749a7bdf479706f44))
+* ✨ 插件基座阶段 1：hostApi 2 宿主原语、storage 私有 KV、settings 配置与全钩子自检 ([07deeb9](https://github.com/Yachiiiiyo/xLyra/commit/07deeb977d2993e4e5fbfb7d0d2e454aadb28e43))
+* ✨ 插件基座阶段 2 前端：单步启用确认、插件设置与站点级覆盖 ([c553c0c](https://github.com/Yachiiiiyo/xLyra/commit/c553c0cfd6ff2c4b5ddb9b1ec8110907de38631e))
+* ✨ 插件基座阶段 2 后端：清单去 kind、权限授予与站点插件有序挂载 ([d87bd75](https://github.com/Yachiiiiyo/xLyra/commit/d87bd75119ac5ddc62802bfead543812f3a15945))
+* ✨ 插件基座阶段 3：全站点 signRequest 双模、顶层 request 模板与模型 meta ([4a7367a](https://github.com/Yachiiiiyo/xLyra/commit/4a7367a09480436a87716ae86f36a4632c5ea67a))
+* ✨ 插件基座阶段 4 之一：声明式 transport.profile 与通配主机白名单 ([4054c40](https://github.com/Yachiiiiyo/xLyra/commit/4054c40e23a8ba389d87ee8f81e888775a00bb03))
+* ✨ 插件基座阶段 4 之三：多插件组合编排与站点插件顺序接口 ([5c57cf5](https://github.com/Yachiiiiyo/xLyra/commit/5c57cf52f71a5223ee30c882b2b69eb4882483fa))
+* ✨ 插件基座阶段 4 之二：声明式 SSE 流解包与单层子域通配 ([5cecfae](https://github.com/Yachiiiiyo/xLyra/commit/5cecfae1af5c6eeb57b2643e93613e288303de45))
+* ✨ 插件基座阶段 4 收尾：区域多端点、classifyError 首命中回退与 SDK 示例同步 ([6160a36](https://github.com/Yachiiiiyo/xLyra/commit/6160a36e24586ab5732fceaa58c7c3460ad9227b))
+* ✨ 插件基座阶段 5：schedule 周期计划、onSchedule 账号动作与 http 代发 ([8d4f977](https://github.com/Yachiiiiyo/xLyra/commit/8d4f9772b72568f5600085d6178e77f9c633faa3))
+* ✨ 新增 Agent 可用模型接口，一次返回已按范围策略过滤的聊天模型和推理档位 ([d4bc684](https://github.com/Yachiiiiyo/xLyra/commit/d4bc68499bd02fe7e7d3a74a4d8d0b568f7b3e3c))
+* ✨ 新增设备令牌与扫码配对，手机可长期登录并按设备吊销 ([1ff3aa9](https://github.com/Yachiiiiyo/xLyra/commit/1ff3aa9b1841756a76330061feddd2e27dc07f57))
+* ✨ 未绑定 xLyra Cloud 时跳过推送且不占用去重窗口,设备页展示未绑定状态并禁用测试通知 ([98cbb61](https://github.com/Yachiiiiyo/xLyra/commit/98cbb6126a687f2fc00e27f99cb600671e86b0fd))
+* ✨ 站点编辑页新增插件优先级排序，拖拽或上下按钮调整挂载顺序 ([556dc54](https://github.com/Yachiiiiyo/xLyra/commit/556dc5447584ba0edc3aef5e9195dfb59ae9577d))
+* ✨ 系统版本接口返回 Agent 契约版本，会话列表带上等待审批和提问的数量 ([fd3c714](https://github.com/Yachiiiiyo/xLyra/commit/fd3c7142547075a57ae07b349555782714b7c058))
+* ✨ 网关新增 impersonate_opencode_client：OpenCode Zen 免费车道的 Bun 线上形状传输 ([2f42c81](https://github.com/Yachiiiiyo/xLyra/commit/2f42c81d589ef824f25d9edb68238ad3852359be))
+* ✨ 补齐 PR [#5](https://github.com/Yachiiiiyo/xLyra/issues/5) 插件联动缺口、transformStream 流钩子与无 kind 清单兼容 ([ade1588](https://github.com/Yachiiiiyo/xLyra/commit/ade158880adfdb5175cbcbc0b17e90d566318d3e))
+* ✨ 补齐插件基座阶段 1–5 联调缺口（非 JSON 签名正文、跨端点签名拉取、流解包结束与错误分类、底座头注入及凭据级模型元数据） ([79eaa93](https://github.com/Yachiiiiyo/xLyra/commit/79eaa93a9915f2b5caa61bb3bf996bf22ef0b9c0))
+* ✨ 设备列表去掉推送环境文案、登记时间改绝对时间、吊销按钮改红色警告样式 ([20f4bf7](https://github.com/Yachiiiiyo/xLyra/commit/20f4bf7a8d0fa2f44cc95e6518b942056952fb9a))
+* ✨ 设备页新增「发送测试通知」，给已登记推送的手机发一条测试推送，三语同步 ([38d7f6c](https://github.com/Yachiiiiyo/xLyra/commit/38d7f6ce163ef3ec6101d0d912758a82d0528d22))
+* ✨ 设备页显示每台手机的推送状态、环境与已关闭的通知类型，三语同步 ([1da8731](https://github.com/Yachiiiiyo/xLyra/commit/1da8731041501c533d3caea414e0259bef2c527c))
+* ✨ 设备页配对改为先确认地址再弹窗展示二维码、地址与配对码,并默认只信任内网代理转发的客户端 IP ([4888abf](https://github.com/Yachiiiiyo/xLyra/commit/4888abf345fbd3719acc0b45794aedfe6a89ae15))
+
+
+### Bug Fixes
+
+* ✨ review 修正——官方头/session 编码全部门控到 impersonate 开关，旧编码 session 不再透传 ([ca60215](https://github.com/Yachiiiiyo/xLyra/commit/ca60215caa3b31a6c929d136a52195b567bbb115))
+* 🐛 Cloud 推送发送失败时按返回的 result 归类，修复「最近推送失败」不记录与限流丢失 Retry-After ([c7afc77](https://github.com/Yachiiiiyo/xLyra/commit/c7afc7727abe67f138740e9de41179954227e630))
+* 🐛 Grok 站点放行 Responses 的缓存提示与推理历史字段 ([3d0dd2a](https://github.com/Yachiiiiyo/xLyra/commit/3d0dd2a096ffd95de57effb6bc15bc3a7d0e3816))
+* 🐛 OAuth 刷新遇到限流等临时错误时不再把连接标记为需重连并关闭站点 ([ea3232c](https://github.com/Yachiiiiyo/xLyra/commit/ea3232c1015ccab29b102c3f9b1a37731beaa523))
+* 🐛 修复 Agent HTML 预览面板被液态玻璃折射滤镜叠盖模糊的问题 ([302122b](https://github.com/Yachiiiiyo/xLyra/commit/302122bfccfef9ce2a75d8d05a20fef49354d2e5))
+* 🐛 修复插件账号池登录完成轮询竞态并上调转发链路钩子请求体上限至 16 MiB ([544f1e7](https://github.com/Yachiiiiyo/xLyra/commit/544f1e7fad2255179aea3a32b3ed94bf32459739))
+* 🐛 在网关层清洗泄漏的 DSML 标签残壳，防止多轮对话触发 400 中断 ([4fa839f](https://github.com/Yachiiiiyo/xLyra/commit/4fa839f3caa5b5e5bbc46cb06a64ce25229b39ce))
+* 🐛 推送通知测试不再依赖两个 worker 的发送顺序，修复 CI 偶发失败 ([2af4ae5](https://github.com/Yachiiiiyo/xLyra/commit/2af4ae58d9dba49dd4cab06da36e04f1814f06b8))
+* 🐛 移除 dev* 忽略规则,补提交被误忽略的设备令牌源文件 ([8ad3253](https://github.com/Yachiiiiyo/xLyra/commit/8ad3253723f83418b4473b9da08fed5c88223e01))
+* 🐛 统计与仪表盘接口不再将客户端取消误报为 500 ([5cbc97c](https://github.com/Yachiiiiyo/xLyra/commit/5cbc97cb8e644a28e1ed9324d5609b0ee688a60b))
+* 🐛 补齐 PR [#7](https://github.com/Yachiiiiyo/xLyra/issues/7) 批量导入刷新、Token 刷新临时错误保活与站点状态同步 ([786be71](https://github.com/Yachiiiiyo/xLyra/commit/786be71bc979bebf256d3961505891b6d8464309))
+* 🐛 补齐日语语言包 jsPlugins.schedule 键，修复前端 CI 三语言键对齐测试失败 ([4a7d0f6](https://github.com/Yachiiiiyo/xLyra/commit/4a7d0f6168efea837688cb8c00836080a1c9c23d))
+* 💄 设备页配对地址确认弹窗文案改得更简洁，三语同步 ([719a62d](https://github.com/Yachiiiiyo/xLyra/commit/719a62d31d70bce1d8dad8f18310e19287b31b95))
+* 🔒 升级 Go 至 1.26.11 修复 net/http 漏洞 GO-2026-6859，Dockerfile 与文档同步 ([a691943](https://github.com/Yachiiiiyo/xLyra/commit/a691943a4b9aed6c17230e470d57b3ae021416bd))
+
 ## [1.18.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.17.0...v1.18.0) (2026-11-09)
 
 本版本把内置 Agent（基于 Pi）作为正式功能上线：支持会话、分叉与引用、权限审批、提问、文件预览与文生图，命令沙箱改为可选；同时新增自定义实例背景、按类别备份与恢复，并移除「模型体验」页。
