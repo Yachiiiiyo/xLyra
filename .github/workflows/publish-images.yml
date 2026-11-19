@@ -6,12 +6,23 @@ on:
       - test
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补打的版本标签（如 v1.19.0）'
+        required: true
+        type: string
+      push_latest:
+        description: '同时更新 latest 标签'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-images-${{ github.ref }}
+  group: publish-images-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -19,16 +30,16 @@ env:
 
 jobs:
   # test 分支推送先跑完整 CI,通过后才打包镜像;版本标签(发布流程已在 main 的 PR 上
-  # 验证过)跳过 CI,直接打包。
+  # 验证过)与手动按标签补打跳过 CI,直接打包。
   ci:
     name: CI
-    if: github.ref_type == 'branch'
+    if: github.event_name == 'push' && github.ref_type == 'branch'
     uses: ./.github/workflows/ci.yml
 
   prepare:
     name: Prepare metadata
     needs: ci
-    # ci 被跳过(标签)时照常继续;失败或取消则不打包。
+    # ci 被跳过(标签或手动补打)时照常继续;失败或取消则不打包。
     if: ${{ !cancelled() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
@@ -37,25 +48,42 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       commit: ${{ steps.meta.outputs.commit }}
       build_time: ${{ steps.meta.outputs.build_time }}
+      build_timestamp: ${{ steps.meta.outputs.build_timestamp }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || '' }}
           fetch-depth: 0
           fetch-tags: true
 
       - name: Compute metadata
         id: meta
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUSH_LATEST: ${{ inputs.push_latest }}
         run: |
           owner="${{ vars.DOCKERHUB_USERNAME }}"
           repo="${GITHUB_REPOSITORY#*/}"
           repo="${repo,,}"
           image="${owner}/${repo}"
-          short_sha="${GITHUB_SHA::7}"
+          commit="$(git rev-parse HEAD)"
+          short_sha="${commit::7}"
           build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          build_timestamp="$(git show -s --format=%cI HEAD)"
 
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ ! "${INPUT_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "invalid tag: ${INPUT_TAG} (expected vX.Y.Z)" >&2
+              exit 1
+            fi
+            version="${INPUT_TAG#v}"
+            tags="${image}:${version}"
+            if [[ "${INPUT_PUSH_LATEST}" == "true" ]]; then
+              tags="${tags} ${image}:latest"
+            fi
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
             version="${tag#v}"
             tags="${image}:${version} ${image}:latest"
@@ -72,12 +100,14 @@ jobs:
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
           echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "commit=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
           echo "build_time=${build_time}" >> "${GITHUB_OUTPUT}"
+          echo "build_timestamp=${build_timestamp}" >> "${GITHUB_OUTPUT}"
 
   build:
     name: Build image (${{ matrix.platform }})
     needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -92,6 +122,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -116,10 +148,10 @@ jobs:
             VERSION=${{ needs.prepare.outputs.version }}
             COMMIT=${{ needs.prepare.outputs.commit }}
             BUILD_TIME=${{ needs.prepare.outputs.build_time }}
-            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp }}
+            BUILD_TIMESTAMP=${{ needs.prepare.outputs.build_timestamp }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.commit }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
 
       - name: Export digest
@@ -142,6 +174,7 @@ jobs:
     needs:
       - prepare
       - build
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download digests
