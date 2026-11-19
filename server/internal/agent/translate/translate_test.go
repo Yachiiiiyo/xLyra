@@ -136,6 +136,23 @@ func TestFeedRules(t *testing.T) {
 			},
 		},
 		{
+			name: "bash 审批命中高危时带出 risk 与 risk_rules",
+			lines: []string{
+				`{"type":"extension_ui_request","id":"esc1","method":"confirm","title":"允许执行命令?",` +
+					`"message":"{\"toolCallId\":\"c1\",\"toolName\":\"bash\",\"command\":[\"rm -rf /\"],\"note\":\"工作目录: .\",\"risk\":\"high\",\"riskRules\":[\"rm 递归删除高危目标\"]}"}`,
+			},
+			want: []Event{
+				{Type: "escalation_request", Data: map[string]any{"escalation": map[string]any{
+					"escalation_id":     "esc1",
+					"tool_name":         "bash",
+					"requested_command": []string{"rm -rf /"},
+					"note":              "工作目录: .",
+					"risk":              "high",
+					"risk_rules":        []string{"rm 递归删除高危目标"},
+				}}},
+			},
+		},
+		{
 			name: "message 非 JSON 时兜底取最近一个未审批工具",
 			lines: []string{
 				`{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"ls"}}`,
@@ -407,6 +424,13 @@ func TestParseApprovalMessage(t *testing.T) {
 	want := Approval{ToolCallID: "c1", ToolName: "write", Path: "out/a.txt", Command: []string{"touch", "x"}, Note: "n"}
 	if !reflect.DeepEqual(approval, want) {
 		t.Errorf("approval = %+v, want %+v", approval, want)
+	}
+	risky, ok := ParseApprovalMessage(`{"toolCallId":"c1","toolName":"bash","command":["sudo ls"],"note":"工作目录: .","risk":"high","riskRules":["sudo 提权"]}`)
+	if !ok {
+		t.Fatal("带风险字段的 JSON message 应解析成功")
+	}
+	if risky.Risk != "high" || !reflect.DeepEqual(risky.RiskRules, []string{"sudo 提权"}) {
+		t.Errorf("risk = %+v", risky)
 	}
 
 	for _, message := range []string{"", "first", "toolCallId=c1 note=opaque", "{not json"} {

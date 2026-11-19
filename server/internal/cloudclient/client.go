@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"xlyra/server/internal/crypto"
 	"xlyra/server/internal/httpclient"
 	"xlyra/server/internal/store"
@@ -74,6 +76,23 @@ type Options struct {
 	Logger                 *slog.Logger
 	Audit                  func(context.Context, string, map[string]any)
 	Now                    func() time.Time
+	// Devices 提供心跳里的设备清单和推送同步。nil 时不输出 devices、也不做推送同步。
+	Devices DeviceStore
+}
+
+// DeviceStore 是推送同步需要的设备读写。实现见 store.AdminDeviceRepository。
+// 列出的行可能带加密 token, 调用方解密, 且不得把 token 写进日志。
+type DeviceStore interface {
+	// ListActiveRecent 按最近活跃倒序返回未吊销设备, 最多 limit 台。
+	ListActiveRecent(ctx context.Context, limit int) ([]store.AdminDevice, error)
+	// ListUnsyncedPush 返回未吊销且 push_synced_at 为空的设备（含已清除 token 的）。
+	ListUnsyncedPush(ctx context.Context) ([]store.AdminDevice, error)
+	MarkPushSynced(ctx context.Context, id uuid.UUID, at time.Time) error
+	SetPushState(ctx context.Context, id uuid.UUID, state string, at time.Time) error
+	// MarkPushUnsynced 把一台设备标成未同步。
+	MarkPushUnsynced(ctx context.Context, id uuid.UUID) error
+	// MarkAllPushUnsynced 把全部设备标成未同步。
+	MarkAllPushUnsynced(ctx context.Context) error
 }
 
 type PairingInfo struct {
@@ -122,12 +141,19 @@ type Client struct {
 	leaseTTL       time.Duration
 	leaseRefresh   time.Duration
 
+	devices DeviceStore
+	// wakeHeartbeatGap 是被唤醒时两次心跳的最短间隔，要大于 Hub 的心跳限速（每分钟 1 次）。
+	wakeHeartbeatGap time.Duration
+
 	mu              sync.Mutex
 	pending         *pendingPair
 	developer       developerCache
 	submissions     map[string]Submission
 	developerWarnAt time.Time
+	wakePush        chan struct{}
 }
+
+const maxReportedDevices = 8
 
 func New(repo store.CloudBindingRepository, plugins store.JSPluginRepository, masterKey string, cloudURL func(context.Context) (string, error), opts Options) *Client {
 	if opts.HeartbeatInterval <= 0 {
@@ -161,25 +187,40 @@ func New(repo store.CloudBindingRepository, plugins store.JSPluginRepository, ma
 		now = time.Now
 	}
 	return &Client{
-		repo:           repo,
-		plugins:        plugins,
-		masterKey:      masterKey,
-		cloudURL:       cloudURL,
-		http:           newHTTPClient(opts.HTTPTimeout, opts.AllowInsecureLocal),
-		allowLocal:     opts.AllowInsecureLocal,
-		owner:          newOwner(),
-		logger:         opts.Logger,
-		audit:          opts.Audit,
-		now:            now,
-		heartbeatEvery: opts.HeartbeatInterval,
-		firstDelay:     opts.FirstHeartbeatDelay,
-		hasFirstDelay:  opts.HasFirstHeartbeatDelay,
-		backoffMin:     opts.BackoffMin,
-		backoffMax:     opts.BackoffMax,
-		pollEvery:      opts.PollInterval,
-		leaseRetry:     opts.LeaseRetry,
-		leaseTTL:       opts.LeaseTTL,
-		leaseRefresh:   opts.LeaseRefresh,
+		repo:             repo,
+		plugins:          plugins,
+		masterKey:        masterKey,
+		cloudURL:         cloudURL,
+		http:             newHTTPClient(opts.HTTPTimeout, opts.AllowInsecureLocal),
+		allowLocal:       opts.AllowInsecureLocal,
+		owner:            newOwner(),
+		logger:           opts.Logger,
+		audit:            opts.Audit,
+		now:              now,
+		heartbeatEvery:   opts.HeartbeatInterval,
+		firstDelay:       opts.FirstHeartbeatDelay,
+		hasFirstDelay:    opts.HasFirstHeartbeatDelay,
+		backoffMin:       opts.BackoffMin,
+		backoffMax:       opts.BackoffMax,
+		pollEvery:        opts.PollInterval,
+		leaseRetry:       opts.LeaseRetry,
+		leaseTTL:         opts.LeaseTTL,
+		leaseRefresh:     opts.LeaseRefresh,
+		devices:          opts.Devices,
+		wakeHeartbeatGap: 65 * time.Second,
+		wakePush:         make(chan struct{}, 1),
+	}
+}
+
+// WakePushSync 让持有租约的循环立刻再发一次心跳并同步推送。
+// 非阻塞: 已经有一次未处理的唤醒时, 再唤醒会被合并掉。
+func (c *Client) WakePushSync() {
+	if c == nil || c.wakePush == nil {
+		return
+	}
+	select {
+	case c.wakePush <- struct{}{}:
+	default:
 	}
 }
 
@@ -255,7 +296,45 @@ func (c *Client) Report(ctx context.Context) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	return BuildReport(version.Current().Version, currentPlatform(), SelectPlugins(plugins, versions), c.now()), nil
+	report := BuildReport(version.Current().Version, currentPlatform(), SelectPlugins(plugins, versions), c.now())
+	devices, err := c.reportDevices(ctx)
+	if err != nil {
+		return Report{}, err
+	}
+	report.Devices = devices
+	report.withDevices = devices != nil
+	return report, nil
+}
+
+// reportDevices returns nil when there is no device source (the JSON key stays absent)
+// and a non-nil slice, possibly empty, when a source is configured.
+func (c *Client) reportDevices(ctx context.Context) ([]DeviceItem, error) {
+	if c.devices == nil {
+		return nil, nil
+	}
+	rows, err := c.devices.ListActiveRecent(ctx, maxReportedDevices)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]DeviceItem, 0, len(rows))
+	for _, row := range rows {
+		if !strings.EqualFold(strings.TrimSpace(row.Platform), "ios") {
+			continue
+		}
+		lastActive := ""
+		if row.LastSeenAt.Valid && !row.LastSeenAt.Time.IsZero() {
+			lastActive = row.LastSeenAt.Time.UTC().Format(time.RFC3339)
+		}
+		items = append(items, DeviceItem{
+			Ref:            row.ID.String(),
+			Name:           row.Name,
+			Platform:       "ios",
+			LastActiveAt:   lastActive,
+			PushRegistered: strings.TrimSpace(row.APNSTokenEnc) != "",
+			PushEnv:        row.APNSEnv,
+		})
+	}
+	return items, nil
 }
 
 func currentPlatform() Platform {
@@ -414,16 +493,21 @@ func (c *Client) post(ctx context.Context, cloud, path string, body []byte, sign
 }
 
 func (c *Client) exchange(ctx context.Context, method, cloud, path, rawQuery string, body []byte, contentType string, signed *signedRequest) (int, []byte, error) {
+	status, raw, _, err := c.exchangeHeaders(ctx, method, cloud, path, rawQuery, body, contentType, signed)
+	return status, raw, err
+}
+
+func (c *Client) exchangeHeaders(ctx context.Context, method, cloud, path, rawQuery string, body []byte, contentType string, signed *signedRequest) (int, []byte, http.Header, error) {
 	endpoint, err := c.endpoint(cloud, path)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	if rawQuery != "" {
 		endpoint += "?" + rawQuery
 	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -438,20 +522,20 @@ func (c *Client) exchange(ctx context.Context, method, cloud, path, rawQuery str
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return 0, nil, errors.New("连接 xLyra Cloud 超时")
+			return 0, nil, nil, errors.New("连接 xLyra Cloud 超时")
 		}
-		return 0, nil, errors.New("连接 xLyra Cloud 失败")
+		return 0, nil, nil, errors.New("连接 xLyra Cloud 失败")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return 0, nil, errors.New("xLyra Cloud 重定向被拒绝")
+		return 0, nil, nil, errors.New("xLyra Cloud 重定向被拒绝")
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	if err != nil {
-		return resp.StatusCode, nil, errors.New("读取 xLyra Cloud 响应失败")
+		return resp.StatusCode, nil, resp.Header, errors.New("读取 xLyra Cloud 响应失败")
 	}
-	return resp.StatusCode, raw, nil
+	return resp.StatusCode, raw, resp.Header, nil
 }
 
 func (c *Client) endpoint(cloud, path string) (string, error) {

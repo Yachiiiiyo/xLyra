@@ -9,7 +9,7 @@ import (
 func TestRealClientIP(t *testing.T) {
 	t.Parallel()
 
-	const original = "192.0.2.10:54321"
+	const original = "10.1.2.3:54321"
 	tests := []struct {
 		name    string
 		headers map[string]string
@@ -111,7 +111,7 @@ func TestRealClientIP(t *testing.T) {
 			t.Parallel()
 
 			var got string
-			handler := RealClientIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			handler := RealClientIP(nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				got = r.RemoteAddr
 			}))
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -119,6 +119,93 @@ func TestRealClientIP(t *testing.T) {
 			for key, value := range tc.headers {
 				req.Header.Set(key, value)
 			}
+
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if got != tc.want {
+				t.Fatalf("RemoteAddr = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRealClientIPTrust(t *testing.T) {
+	t.Parallel()
+
+	const forwarded = "203.0.113.9"
+	tests := []struct {
+		name    string
+		remote  string
+		trusted []string
+		want    string
+	}{
+		{
+			name:   "private peer trusts forwarding headers",
+			remote: "10.1.2.3:54321",
+			want:   forwarded,
+		},
+		{
+			name:   "loopback peer trusts forwarding headers",
+			remote: "127.0.0.1:54321",
+			want:   forwarded,
+		},
+		{
+			name:   "link local peer trusts forwarding headers",
+			remote: "169.254.1.1:54321",
+			want:   forwarded,
+		},
+		{
+			name:   "public peer ignores forged forwarding headers",
+			remote: "192.0.2.10:54321",
+			want:   "192.0.2.10:54321",
+		},
+		{
+			name:    "configured public cidr trusts matching peer",
+			remote:  "203.0.113.8:443",
+			trusted: []string{"203.0.113.0/24"},
+			want:    forwarded,
+		},
+		{
+			name:    "configured single ip trusts that peer",
+			remote:  "198.51.100.10:443",
+			trusted: []string{"198.51.100.10"},
+			want:    forwarded,
+		},
+		{
+			name:    "star trusts any peer",
+			remote:  "192.0.2.10:54321",
+			trusted: []string{"*"},
+			want:    forwarded,
+		},
+		{
+			name:    "invalid trusted entries are ignored",
+			remote:  "192.0.2.10:54321",
+			trusted: []string{"not-a-prefix", "999.1.1.1", ""},
+			want:    "192.0.2.10:54321",
+		},
+		{
+			name:   "ipv4 mapped private peer trusts forwarding headers",
+			remote: "[::ffff:10.0.0.1]:54321",
+			want:   forwarded,
+		},
+		{
+			name:   "ipv4 mapped public peer ignores forwarding headers",
+			remote: "[::ffff:192.0.2.10]:54321",
+			want:   "[::ffff:192.0.2.10]:54321",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got string
+			handler := RealClientIP(tc.trusted)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got = r.RemoteAddr
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = tc.remote
+			req.Header.Set("X-Forwarded-For", forwarded+", 198.51.100.5")
 
 			handler.ServeHTTP(httptest.NewRecorder(), req)
 

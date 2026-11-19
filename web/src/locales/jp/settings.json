@@ -768,7 +768,8 @@
       "modelMetadata": "モデルメタデータ",
       "pricingParse": "価格解析",
       "automation": "自動化",
-      "siteProvider": "サイトプロバイダー"
+      "siteProvider": "サイトプロバイダー",
+      "hooks": "複数フック"
     },
     "metricsEmpty": "呼び出しなし",
     "metricsSummary": "成功 {{success}} · 失敗 {{failed}}",
@@ -825,7 +826,13 @@
     "permission": {
       "apikeyResetUsage": "紐づけた API キーの使用量（合計・日次・週次）をリセット",
       "notify": "プラグインの操作履歴に通知を書き込む",
-      "httpRequest": "バインドで入力したアドレスへ HTTP リクエストを送信（プッシュ通知など）"
+      "httpRequest": "バインドで入力したアドレスへ HTTP リクエストを送信（プッシュ通知など）",
+      "storage": "このプラグイン自身のストレージを読み書き",
+      "secretUse": "サイトの認証情報を平文で読み取ります。完全に信頼できるプラグインにだけ付与してください",
+      "http": "プラグイン自身が HTTP リクエストを送信",
+      "schedule": "スケジュールに従って実行",
+      "net": "ホスト {{host}} にアクセス",
+      "event": "イベント {{event}} を購読"
     },
     "automation": {
       "title": "自動化",
@@ -875,7 +882,8 @@
       "model_list": "このサイトのモデル同期で、このプラグインがモデル一覧を取得します。",
       "credential_check": "このサイトのキー検証とヘルスチェックにこのプラグインを使います。",
       "error_classifier": "このサイトのアップストリームエラーをこのプラグインが分類します（クールダウン時間は変更できません）。",
-      "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。"
+      "pricing_parse": "このサイトのモデル更新時に、このプラグインが価格を読み取って保存します。表示価格が変わるため、先にプレビューで確認してください。",
+      "quota_probe": "このサイトのクォータ取得にこのプラグインを使います。"
     },
     "globalKindHint": {
       "site_detect": "有効にすると、サイト種別の判別時にこのプラグインも実行されます。xLyra が対応済みの種別のみ指定できます。",
@@ -885,7 +893,6 @@
     "trialFailed": "試行に失敗",
     "siteBinding": {
       "optional": "紐付けは任意です。紐付けなしでもプラグインは読み込まれますが、どのサイトでも使われません。",
-      "other": "紐付け済み: {{id}}",
       "applied": "紐付けを更新しました",
       "failed": "紐付けを更新できませんでした",
       "enabled": "有効",
@@ -896,13 +903,6 @@
       "apply": "適用",
       "noSites": "サイトがありません"
     },
-    "bindQuotaTitle": "サイトクォータプローブ",
-    "bindQuotaHint": "サイト内部の quota_probe を plugin:<id> に設定（サイト編集 UI には表示しません）。",
-    "bindQuotaSite": "サイト",
-    "bindQuotaSitePlaceholder": "サイトを選択",
-    "bindQuota": "プローブを紐付け",
-    "bindQuotaSuccess": "サイトクォータを紐付けました",
-    "bindQuotaFailed": "紐付け失敗",
     "siteProvider": {
       "title": "サイトプロバイダー",
       "versionEnabled": "現在有効",
@@ -1068,6 +1068,32 @@
         "plugin_not_owned": "このプラグインは現在の開発者のものではありません",
         "package_unsigned": "このバージョンは署名されていないため提出できません"
       }
+    },
+    "exportsTitle": "このバージョンがエクスポートするフック",
+    "settings": {
+      "title": "プラグイン設定",
+      "hint": "空欄はマニフェストの既定値を使います。既定値と異なる値だけを保存します。",
+      "defaultPlaceholder": "既定 {{value}}",
+      "reset": "既定に戻す",
+      "saved": "プラグイン設定を保存しました",
+      "saveFailed": "プラグイン設定を保存できませんでした",
+      "siteTitle": "サイトごとの上書き",
+      "noSites": "このプラグインをマウントしているサイトはまだありません。上でサイトを紐づけてから、サイトごとに上書きできます。",
+      "globalPlaceholder": "全体の値 {{value}}",
+      "expand": "開く",
+      "collapse": "閉じる",
+      "clearOverride": "上書きをクリア",
+      "siteSaved": "{{name}} のサイト設定を保存しました"
+    },
+    "schedule": {
+      "title": "定期スケジュール",
+      "hint": "onSchedule フックを定期的に実行します(チェックインやキープアライブなど)。デフォルトはオフで、手動で有効にします。",
+      "switchLabel": "定期スケジュールを有効にする({{minutes}} 分ごと)",
+      "intervalDescription": "有効にすると {{minutes}} 分ごとに onSchedule を自動実行します",
+      "nextTick": "次回実行: {{time}}",
+      "enabledToast": "定期スケジュールを有効にしました",
+      "disabledToast": "定期スケジュールを無効にしました",
+      "saveFailed": "定期スケジュールの更新に失敗しました"
     }
   },
   "xlyraCloud": {
@@ -1081,7 +1107,7 @@
     "unbound": {
       "title": "未接続",
       "description": "接続すると、xLyra Cloud コンソールでこのインスタンスを表示・管理できます。",
-      "privacy": "接続後、インスタンスは xLyra のバージョンとインストール済みプラグインの状態を xLyra Cloud に定期報告します。サイトアドレス、秘密情報、設定は含みません。",
+      "privacy": "接続後、インスタンスは xLyra のバージョン、インストール済みプラグインの状態、およびペアリング済みの携帯の名前・プラットフォーム・最終活動時刻・通知の有効状態を xLyra Cloud に定期報告します。サイトアドレス、秘密情報、設定は含みません。",
       "connect": "アカウントを接続"
     },
     "pairing": {
@@ -1092,12 +1118,17 @@
       "heading": "ペアリング",
       "viewCode": "ペアリングコードを表示",
       "instruction": "ログイン済みの xLyra Cloud コンソールで「インスタンスを接続」を開き、このペアリングコードを入力してください。",
+      "stepCopyOrScan": "「コピーして Cloud を開く」を押すか、コードをスキャンします",
+      "stepApprove": "Cloud にログインし、ペアリングコードが上のものと一致することを確認して「承認」を押します",
+      "stepReturn": "ここに戻ると、数秒後に「接続済み」と表示されます",
+      "scanHint": "携帯でスキャンし、xLyra Cloud にログインしてペアリングコードを確認してから承認してください",
+      "dismissHint": "このウィンドウを閉じてもペアリングはキャンセルされません。Cloud で承認すれば自動で接続されます。やめる場合は『ペアリングをキャンセル』を押してください。",
       "open": "xLyra Cloud で開く",
       "cancel": "キャンセル",
       "cancelPairing": "ペアリングをキャンセル",
       "copyOpen": "コピーして Cloud を開く",
       "countdown": "残り {{time}}",
-      "expired": "ペアリングコードの有効期限が切れました",
+      "expired": "ペアリングコードの有効期限が切れました。ペアリングコードを再生成してください。",
       "regenerate": "再生成",
       "codeMissing": "ペアリングコードは表示できません。再生成してください。"
     },
@@ -1190,6 +1221,85 @@
     "toast": {
       "connected": "xLyra Cloud に接続しました",
       "disconnected": "接続を解除しました"
+    }
+  },
+  "devices": {
+    "title": "デバイス",
+    "description": "xLyra アプリでペアリングしたデバイスを管理します。",
+    "pairing": {
+      "title": "デバイスを追加",
+      "generate": "ペアリングコードを生成",
+      "regenerate": "再生成",
+      "hint": "xLyra アプリで QR コードをスキャンするか、アプリにインスタンスアドレスとペアリングコードを入力してください。コードは 5 分間有効で、一度しか使用できません。",
+      "copy": "コピー",
+      "copied": "ペアリングコードをコピーしました",
+      "expired": "ペアリングコードの有効期限が切れました",
+      "expiresIn": "あと {{time}} で期限切れ",
+      "createFailed": "ペアリングコードの生成に失敗しました",
+      "connected": "接続しました：{{name}}",
+      "confirmTitle": "接続先アドレスの確認",
+      "confirmDescription": "スマートフォンは下のアドレスで xLyra に接続します。スマートフォンからこのアドレスにアクセスできることを確認してください。別のアドレスを使う場合は、このウィンドウを閉じ、スマートフォンからアクセスできるアドレスで xLyra を開き直してください。",
+      "confirmContinue": "このアドレスを使う",
+      "serverAddress": "サーバーアドレス",
+      "codeLabel": "ペアリングコード",
+      "addressCopied": "サーバーアドレスをコピーしました",
+      "scanHint": "xLyra アプリで QR コードをスキャンするか、アプリにサーバーアドレスとペアリングコードを手動で入力してください。"
+    },
+    "list": {
+      "title": "接続済みデバイス",
+      "current": "現在のデバイス",
+      "revoke": "失効",
+      "revokeAll": "すべて失効",
+      "loading": "デバイス一覧を読み込み中…",
+      "loadFailed": "デバイス一覧の読み込みに失敗しました",
+      "empty": "接続済みデバイスはありません",
+      "emptyDescription": "ペアリングコードを生成して xLyra アプリでスキャンするとデバイスを追加できます。",
+      "revoked": "デバイスを失効しました",
+      "revokeFailed": "デバイスの失効に失敗しました",
+      "allRevoked": "すべてのデバイスを失効しました",
+      "revokeAllFailed": "すべてのデバイスの失効に失敗しました",
+      "revokeDialog": {
+        "title": "デバイスを失効",
+        "description": "失効するとこのデバイスはアクセスできなくなり、再度ペアリングが必要です。",
+        "confirm": "失効"
+      },
+      "revokeAllDialog": {
+        "title": "すべてのデバイスを失効",
+        "description": "ペアリング済みのすべてのデバイスが失効し、アクセスできなくなります。",
+        "confirm": "すべて失効"
+      }
+    },
+    "push": {
+      "unregistered": "通知オフ",
+      "ok": "プッシュ正常",
+      "invalid": "プッシュ無効",
+      "error": "直近のプッシュ失敗",
+      "unregisteredHint": "スマートフォンの xLyra アプリで通知をオンにすると、ここにプッシュ状態が表示されます",
+      "invalidHint": "スマートフォンで xLyra アプリを開き直し、通知を再登録してください",
+      "registeredAt": "登録：{{time}}",
+      "cloudRequired": "プッシュには、このインスタンスを xLyra Cloud に連携する必要があります",
+      "cloudLink": "連携する",
+      "cloudUnbound": "Cloud 未連携",
+      "cloudUnboundHint": "通知は一時送信されません。xLyra Cloud を連携すると自動で復旧します",
+      "prefsOff": "オフ：{{names}}",
+      "listSeparator": "、",
+      "kinds": {
+        "approval": "承認",
+        "question": "質問",
+        "done": "完了",
+        "error": "エラー"
+      },
+      "test": {
+        "send": "テスト通知を送信",
+        "cloudNotBound": "先に xLyra Cloud を連携してください",
+        "failed": "テスト通知の送信に失敗しました",
+        "result": {
+          "ok": "送信しました。スマートフォンを確認してください",
+          "unregistered": "このスマートフォンのプッシュは無効です。xLyra アプリを開き直してください",
+          "retry_later": "今は送れませんでした。しばらくしてからもう一度試してください",
+          "rejected": "送信が拒否されました"
+        }
+      }
     }
   }
 }

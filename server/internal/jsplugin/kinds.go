@@ -19,6 +19,9 @@ const (
 	KindPricingParse    = "pricing_parse"
 	KindAutomation      = "automation"
 	KindSiteProvider    = "site_provider"
+	// KindHooks is the display label of a kindless plugin that does not declare
+	// a site type. It is not a manifest kind and is not in kindSpecs.
+	KindHooks = "hooks"
 )
 
 // KindFamily groups kinds that share a driver.
@@ -106,6 +109,23 @@ var kindSpecs = []kindSpec{
 	{Name: KindSiteProvider, Family: FamilyProvider, OptionalHooks: siteProviderOptionalHooks, Timeout: probeHookTimeout, Credential: "api_key", Connected: true, Section: "siteProvider", Scope: ScopeSiteType},
 }
 
+// LookupKind returns the public description of a kind.
+func LookupKind(name string) (KindInfo, bool) {
+	spec, ok := lookupKind(name)
+	if !ok {
+		return KindInfo{}, false
+	}
+	return KindInfo{
+		Name:          spec.Name,
+		Family:        spec.Family,
+		Hooks:         append([]string(nil), spec.Hooks...),
+		OptionalHooks: append([]string(nil), spec.OptionalHooks...),
+		Credential:    spec.Credential,
+		Connected:     spec.Connected,
+		Scope:         spec.Scope,
+	}, true
+}
+
 func lookupKind(name string) (kindSpec, bool) {
 	for _, spec := range kindSpecs {
 		if spec.Name == name {
@@ -159,6 +179,36 @@ func unsupportedKindError(kind string) error {
 		names = append(names, spec.Name)
 	}
 	return fmt.Errorf("kind %q is not supported in this build (supported: %s)", kind, strings.Join(names, ", "))
+}
+
+// ScopeOfManifest returns where a plugin takes effect. A kind uses ScopeOf.
+// A kindless site type is site_type; otherwise the exported hooks decide.
+// exports are the known hooks the module exports (aliases included).
+func ScopeOfManifest(manifest Manifest, exports []string) Scope {
+	if manifest.Kind != "" {
+		return ScopeOf(manifest.Kind)
+	}
+	if manifest.DeclaresSiteType() {
+		return ScopeSiteType
+	}
+	if manifest.DeclaresProtocol() {
+		return ScopeEndpoint
+	}
+	if manifest.DeclaresAutomation() {
+		return ScopeSubject
+	}
+	siteHooks := []string{"probe", "listModels", "check", "classify", "classifyError", "parsePricing", "rewritePayload", HookSignRequest, HookTransformStream}
+	for _, name := range siteHooks {
+		if contains(exports, name) {
+			return ScopeSite
+		}
+	}
+	for _, name := range []string{"detect", "describeModels", HookOnSchedule} {
+		if contains(exports, name) {
+			return ScopeGlobal
+		}
+	}
+	return ""
 }
 
 // ScopeOf returns where plugins of a kind take effect; it is empty for an

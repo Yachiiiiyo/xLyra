@@ -84,7 +84,7 @@ func (pluginAccountCredentialResolver) Resolve(ctx context.Context, h Handler, c
 			TryNextCredential: true,
 		}
 	}
-	baseURL, err := pluginAccountBaseURL(item, fields)
+	baseURL, err := pluginAccountBaseURL(item, fields, gatewayAttemptFromContext(ctx))
 	if err != nil {
 		return resolvedUpstreamCredential{}, &credentialResolveFailure{
 			ErrorType:         "plugin_account_credential_invalid",
@@ -93,11 +93,39 @@ func (pluginAccountCredentialResolver) Resolve(ctx context.Context, h Handler, c
 		}
 	}
 	return resolvedUpstreamCredential{
-		Key:        access,
-		AccountID:  accountID,
-		BaseURL:    baseURL,
-		HeaderVars: pluginAccountHeaderVars(*item.Pool, fields, accessName, access),
+		Key:              access,
+		AccountID:        accountID,
+		BaseURL:          baseURL,
+		HeaderVars:       pluginAccountHeaderVars(*item.Pool, fields, accessName, access),
+		GatewayEndpoints: pluginAccountGatewayCount(item, fields),
 	}, nil
+}
+
+// pluginAccountGatewayCount is the number of declared gateway endpoints for
+// the account's region. A region without endpoints.gateway counts as one.
+func pluginAccountGatewayCount(item site.PluginSiteType, fields map[string]string) int {
+	if item.Pool == nil {
+		return 0
+	}
+	id := jsplugin.AccountRegionID(item.Pool.Regions, fields)
+	if id == "" {
+		id = item.Pool.DefaultRegion
+	}
+	for _, region := range item.Pool.Regions {
+		if region.ID != id {
+			continue
+		}
+		return len(jsplugin.RegionGatewayURLs(region))
+	}
+	return 0
+}
+
+func gatewayAttemptFromContext(ctx context.Context) int {
+	attempt, _ := ctx.Value(gatewayEndpointAttemptKey{}).(int)
+	if attempt < 0 {
+		return 0
+	}
+	return attempt
 }
 
 func pluginAccountPoolCredential(siteType, credentialType string) bool {
@@ -141,7 +169,11 @@ func accountCredentialNeedsRefresh(spec jsplugin.AccountPoolSpec, fields map[str
 	return site.PluginAccountNeedsRefresh(spec, fields, now)
 }
 
-func pluginAccountBaseURL(item site.PluginSiteType, fields map[string]string) (string, error) {
+// pluginAccountBaseURL resolves request.baseURLFrom "region" to that
+// region's gateway. attempt is the zero-based retry of this same request:
+// declared gateways rotate in order, wrapping with modulo. A region without
+// endpoints.gateway still returns its base URL on every attempt.
+func pluginAccountBaseURL(item site.PluginSiteType, fields map[string]string, attempt int) (string, error) {
 	from := strings.TrimSpace(item.Request.BaseURLFrom)
 	if from == "" && item.Pool != nil {
 		from = strings.TrimSpace(item.Pool.Request.BaseURLFrom)
@@ -163,11 +195,14 @@ func pluginAccountBaseURL(item site.PluginSiteType, fields map[string]string) (s
 		if region.ID != id {
 			continue
 		}
-		base := strings.TrimRight(strings.TrimSpace(region.BaseURL), "/")
-		if base == "" {
+		urls := jsplugin.RegionGatewayURLs(region)
+		if len(urls) == 0 {
 			return "", fmt.Errorf("region %q is not configured", id)
 		}
-		return base, nil
+		if attempt < 0 {
+			attempt = 0
+		}
+		return urls[attempt%len(urls)], nil
 	}
 	return "", fmt.Errorf("region %q is not configured", id)
 }

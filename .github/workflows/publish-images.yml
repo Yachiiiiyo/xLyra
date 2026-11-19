@@ -18,8 +18,18 @@ env:
   DOCKER_BUILD_RECORD_UPLOAD: false
 
 jobs:
+  # test 分支推送先跑完整 CI,通过后才打包镜像;版本标签(发布流程已在 main 的 PR 上
+  # 验证过)跳过 CI,直接打包。
+  ci:
+    name: CI
+    if: github.ref_type == 'branch'
+    uses: ./.github/workflows/ci.yml
+
   prepare:
     name: Prepare metadata
+    needs: ci
+    # ci 被跳过(标签)时照常继续;失败或取消则不打包。
+    if: ${{ !cancelled() && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.meta.outputs.image }}

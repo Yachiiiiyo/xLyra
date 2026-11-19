@@ -54,7 +54,7 @@ func TestAllocLimitDiscardsRuntime(t *testing.T) {
 }
 
 func TestResultTooLargeKeepsRuntime(t *testing.T) {
-	source := wrapProbe(`const o = { text: "x".repeat(400) }; return Array(1e5).fill(o);`)
+	source := wrapProbe(`const s = "x".repeat(4 * 1024 * 1024); return [s, s, s, s, s];`)
 	plugin := mustTestPlugin(t, "xlyra.test.bomb", source)
 	_, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
 	if err == nil || !strings.Contains(err.Error(), KindResponseTooLarge) {
@@ -122,7 +122,7 @@ func TestPluginLogIsBounded(t *testing.T) {
 	source := wrapProbe(`
   log.info("short", { blob: "x".repeat(4096) });
   log.warn("kept", { step: 1 });
-  for (let i = 0; i < 30; i++) log.debug("line " + i);
+  for (let i = 0; i < 60; i++) log.debug("line " + i);
   return { result: { kind: "balance", entries: [{ label: "balance", remaining: 1 }] } };`)
 	plugin := mustTestPlugin(t, "xlyra.test.bomb", source)
 	decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)

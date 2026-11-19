@@ -1,0 +1,18 @@
+{
+  "name": "classify overloaded error",
+  "hook": "classifyError",
+  "ctx": {
+    "siteType": "openai"
+  },
+  "input": {
+    "status": 529,
+    "code": "upstream_overloaded",
+    "message": "Server overloaded"
+  },
+  "expect": {
+    "result": {
+      "class": "transient",
+      "reason": "overloaded"
+    }
+  }
+}

@@ -43,7 +43,7 @@ func (r *Registry) add(plugin *Plugin, protocolSlug string) {
 		return
 	}
 	r.byID[plugin.Manifest.ID] = plugin
-	switch plugin.Manifest.Kind {
+	switch plugin.Manifest.KindLabel() {
 	case KindQuotaProbe:
 		if replaces := plugin.ProbeType(); replaces != "" {
 			r.probes[replaces] = plugin
@@ -91,6 +91,40 @@ func (r *Registry) Plugins() []*Plugin {
 	return out
 }
 
+// SiteTypePlugins returns the enabled plugins that declare a site type,
+// ordered by id.
+func (r *Registry) SiteTypePlugins() []*Plugin {
+	if r == nil {
+		return nil
+	}
+	var out []*Plugin
+	for _, plugin := range r.byID {
+		if plugin.Manifest.DeclaresSiteType() {
+			out = append(out, plugin)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Manifest.ID < out[j].Manifest.ID })
+	return out
+}
+
+// WithHook returns the enabled plugins that export hook and do not declare a
+// site type, ordered by id. A site-type package is the base for its own type
+// and is not part of the global hook set.
+func (r *Registry) WithHook(hook string) []*Plugin {
+	if r == nil || hook == "" {
+		return nil
+	}
+	var out []*Plugin
+	for _, plugin := range r.byID {
+		if plugin == nil || plugin.Manifest.DeclaresSiteType() || !plugin.HasHook(hook) {
+			continue
+		}
+		out = append(out, plugin)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Manifest.ID < out[j].Manifest.ID })
+	return out
+}
+
 // ByKind returns the enabled plugins of one kind, ordered by id so that the
 // outcome does not depend on map order.
 func (r *Registry) ByKind(kind string) []*Plugin {
@@ -99,7 +133,7 @@ func (r *Registry) ByKind(kind string) []*Plugin {
 	}
 	var out []*Plugin
 	for _, plugin := range r.byID {
-		if plugin.Manifest.Kind == kind {
+		if plugin.Manifest.Kind == kind || plugin.Manifest.KindLabel() == kind {
 			out = append(out, plugin)
 		}
 	}

@@ -55,7 +55,16 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 vi.mock('@/components/ui/select', () => ({
   Select: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
-  SelectTrigger: ({ children, ...props }: React.ComponentProps<'button'>) => React.createElement('button', { type: 'button', role: 'combobox', ...props }, children),
+  SelectTrigger: ({
+    children,
+    variant: _variant,
+    filterLabel,
+    active = false,
+    ...props
+  }: React.ComponentProps<'button'> & { variant?: 'default' | 'filter'; filterLabel?: React.ReactNode; active?: boolean }) => {
+    void _variant
+    return React.createElement('button', { type: 'button', role: 'combobox', ...props }, active ? children : filterLabel ?? children)
+  },
   SelectValue: ({ placeholder }: { placeholder?: string }) => React.createElement('span', null, placeholder),
   SelectContent: () => null,
   SelectItem: () => null,
@@ -124,10 +133,43 @@ describe('AgentScopePane 概览', () => {
     expect(html).toContain(zhAgent.settings.scope.imageNotConfigured)
   })
 
-  it('点击统计文字后打开只读查看弹窗', () => {
+  it('点击统计文字后打开只读查看弹窗，扁平展示并按站点名和模型名二级排序', () => {
     entry.current = 'preview'
+    overview.sites = [
+      {
+        site_id: 'site-helion',
+        site_name: 'Helion-国模',
+        site_type: 'openai',
+        enabled: true,
+        models: [
+          { id: 'h-1', upstream_model_name: 'deepseek-v4.1-flash', display_name: 'DeepSeek', canonical_model_id: '' },
+        ],
+      },
+      {
+        site_id: 'site-ewo',
+        site_name: 'ewo-xlyra',
+        site_type: 'openai',
+        enabled: true,
+        models: [
+          { id: 'e-2', upstream_model_name: 'kimi-k3.1-pro', display_name: 'Kimi', canonical_model_id: '' },
+          { id: 'e-1', upstream_model_name: 'deepseek-v4.1-flash', display_name: 'DeepSeek', canonical_model_id: '' },
+        ],
+      },
+    ]
     const html = render()
     expect(html).toContain(zhAgent.settings.scope.previewSearch)
+    expect(html).toContain(`aria-label="${zhAgent.settings.scope.allModels}"`)
+    expect(html).not.toContain('2 个模型')
+    const firstEwoDisplay = html.indexOf('DeepSeek')
+    const firstEwoDeepSeek = html.indexOf('deepseek-v4.1-flash')
+    const ewoKimiDisplay = html.indexOf('Kimi')
+    const ewoKimi = html.indexOf('kimi-k3.1-pro')
+    const helionRow = html.indexOf('Helion-国模')
+    expect(firstEwoDisplay).toBeGreaterThan(-1)
+    expect(firstEwoDisplay).toBeLessThan(firstEwoDeepSeek)
+    expect(firstEwoDeepSeek).toBeLessThan(ewoKimiDisplay)
+    expect(ewoKimiDisplay).toBeLessThan(ewoKimi)
+    expect(ewoKimi).toBeLessThan(helionRow)
     expect(config.open).toBe(false)
     expect(imageConfig.open).toBe(false)
   })

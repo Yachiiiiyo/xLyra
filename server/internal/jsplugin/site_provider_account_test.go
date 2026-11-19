@@ -770,7 +770,9 @@ func TestCustomPollNonJSONStaysPending(t *testing.T) {
 	defer srv.Close()
 	source := meta("acme.example", KindSiteProvider) + `
 export function startLogin(ctx, steps) {
-  if (steps.length === 0) return { request: { method: "GET", path: "/html", onNonJSON: "pending" } };
+  if (steps.length === 0) return { request: { method: "GET", path: "/html" } };
+  const body = steps[0] && steps[0].response ? String(steps[0].response.body || "") : "";
+  if (body.indexOf("ACCESS_LEAK_pending_body") >= 0) return { error: "start saw a body" };
   return { result: { kind: "account_login", status: "pending", interval: 1 } };
 }
 export function pollLogin(ctx, steps) {
@@ -786,9 +788,9 @@ export function summarizeAccount() { return { result: { kind: "account_summary",
 `
 	rt := customRuntime(t, srv, source)
 	if _, err := rt.StartLogin(context.Background(), map[string]string{"region": "cn"}); err == nil || !errors.Is(err, ErrSecretRedactNotJSON) || strings.Contains(err.Error(), leak) {
-		t.Fatalf("start ignored onNonJSON: %v", err)
+		t.Fatalf("start without onNonJSON: %v", err)
 	}
-	source = strings.Replace(source, `path: "/html", onNonJSON: "pending"`, `path: "/start"`, 1)
+	source = strings.Replace(source, `path: "/html" }`, `path: "/start" }`, 1)
 	rt = customRuntime(t, srv, source)
 	started, err := rt.StartLogin(context.Background(), map[string]string{"region": "cn"})
 	if err != nil {
@@ -800,6 +802,102 @@ export function summarizeAccount() { return { result: { kind: "account_summary",
 	}
 	if strings.Contains(logs.String(), leak) || strings.Contains(pending.String(), leak) {
 		t.Fatal("non-JSON poll body reached the host result or logs")
+	}
+}
+
+func TestBaseForUsesControlEndpoint(t *testing.T) {
+	rt := customRuntime(t, httptest.NewServer(http.NotFoundHandler()), "")
+	rt.hosts = append(rt.hosts, "*.example.cn")
+	rt.spec.Regions = []SiteProviderRegion{
+		{ID: "cn", BaseURL: "https://api.example.cn", Endpoints: &SiteProviderRegionEndpoints{Control: "http://127.0.0.1:9/control/"}},
+		{ID: "wild", BaseURL: "https://api.example.cn", Endpoints: &SiteProviderRegionEndpoints{Control: "https://auth.example.cn/control/"}},
+		{ID: "plain", BaseURL: "http://127.0.0.1:9/plain/"},
+	}
+	got, err := rt.baseFor(map[string]string{"region": "cn"})
+	if err != nil || got != "http://127.0.0.1:9/control" {
+		t.Fatalf("control base = %q err=%v", got, err)
+	}
+	got, err = rt.baseFor(map[string]string{"region": "wild"})
+	if err != nil || got != "https://auth.example.cn/control" {
+		t.Fatalf("wildcard control base = %q err=%v", got, err)
+	}
+	if err := rt.checkURL("https://example.cn/control"); err == nil {
+		t.Fatal("apex domain matched *.example.cn wildcard")
+	}
+	if err := rt.checkURL("https://auth.sub.example.cn/control"); err == nil {
+		t.Fatal("multi-level subdomain matched *.example.cn wildcard")
+	}
+	got, err = rt.baseFor(map[string]string{"region": "plain"})
+	if err != nil || got != "http://127.0.0.1:9/plain" {
+		t.Fatalf("fallback base = %q err=%v", got, err)
+	}
+}
+
+func TestAccountHooksIgnoreNonJSON(t *testing.T) {
+	const leak = "HTML_LEAK_account_body"
+	logs := captureLogs(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("X-Trace", "kept")
+		fmt.Fprint(w, "<html>"+leak+"</html>")
+	}))
+	defer srv.Close()
+	source := meta("acme.example", KindSiteProvider) + `
+export function startLogin(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "pending" } };
+  const step = steps[0];
+  const body = step && step.response ? String(step.response.body || "") : "missing";
+  if (body !== "") return { error: "body leaked:" + body };
+  if (!step.response || step.response.json !== null || step.response.status !== 200) return { error: "shape" };
+  return { result: { kind: "account_login", status: "pending", interval: 1 } };
+}
+export function pollLogin(ctx, steps) {
+  let token = null;
+  for (const step of steps) {
+    if (step.request && step.request.path === "/step") token = step;
+  }
+  if (!token) return { request: { method: "GET", path: "/step", onNonJSON: "ignore" } };
+  if (token.response.body !== "" || token.response.json !== null) return { error: "poll saw a body" };
+  return { result: { kind: "account_login", status: "pending", interval: 1 } };
+}
+export function refreshTokens(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "ignore" } };
+  if (steps[0].response.body !== "") return { error: "refresh saw a body" };
+  return { result: { kind: "account_refresh", status: "ok", credential: { access_token: "{{secret.access_token}}", domain: "x.cn", realm: "cn" } } };
+}
+export function summarizeAccount(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "pending" } };
+  if (steps[0].response.body !== "" || steps[0].response.headers["X-Trace"] !== "kept") return { error: "summary shape" };
+  return { result: { kind: "account_summary", status: "ok", entries: [] } };
+}
+export function listModels(ctx, steps) {
+  if (steps.length === 0) return { request: { method: "GET", path: "/step", onNonJSON: "ignore" } };
+  if (steps[0].response.body !== "") return { error: "models saw a body" };
+  return { result: { models: [{ name: "m1" }] } };
+}
+`
+	section := customSection()
+	section.Models.PerAccount = true
+	rt := testRuntime(t, mustPlugin(t, source, section), srv)
+	fields := map[string]string{"access_token": "tok", "domain": "x.cn", "realm": "cn"}
+	started, err := rt.StartLogin(context.Background(), map[string]string{"region": "cn"})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := rt.PollLogin(context.Background(), started); err != nil {
+		t.Fatalf("poll ignore: %v", err)
+	}
+	if _, err := rt.Refresh(context.Background(), fields); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := rt.Summarize(context.Background(), AccountSnapshot{BaseURL: srv.URL, Fields: fields}); err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if _, err := rt.ListModels(context.Background(), fields); err != nil {
+		t.Fatalf("models: %v", err)
+	}
+	if strings.Contains(logs.String(), leak) {
+		t.Fatal("non-JSON body reached the logs")
 	}
 }
 
@@ -912,4 +1010,136 @@ export function listModels(ctx, steps) {
 		t.Fatal("401 body was shown to JS or the error")
 	}
 	assertNoLeak(t, []string{logs.String(), seen.joined(), err.Error()}, leakAccess, leakRefresh)
+}
+
+func TestAccountHooksGatewayEndpointAndSignRequest(t *testing.T) {
+	logs := captureLogs(t)
+	controlHits := 0
+	controlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		controlHits++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"unexpected":true}`)
+	}))
+	defer controlSrv.Close()
+
+	var gatewayPaths []string
+	var gatewaySignedHeaders []string
+	var gatewayRegions []string
+	gatewaySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayPaths = append(gatewayPaths, r.URL.Path)
+		gatewaySignedHeaders = append(gatewaySignedHeaders, r.Header.Get("X-Signed-Token"))
+		gatewayRegions = append(gatewayRegions, r.Header.Get("X-Signed-Region"))
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/algo/api/v2/model/list" {
+			fmt.Fprint(w, `{"models":[{"id":"q-1"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer gatewaySrv.Close()
+
+	section := poolSection()
+	section.Models.PerAccount = true
+
+	source := poolSource("acme.example", "summarizeAccount", "startLogin", "pollLogin", "refreshTokens") + `
+export function signRequest(ctx, req) {
+  const token = (ctx.credential && ctx.credential.access_token) || "";
+  log.info("sign-secret=" + token);
+  return {
+    headers: {
+      "X-Signed-Token": "sig:" + crypto.sha256(token + "|" + req.method + "|" + req.url),
+      "X-Signed-Region": (ctx.credential && ctx.credential.region) || "",
+    },
+  };
+}
+export function listModels(ctx, steps) {
+  if (steps.length === 0) {
+    return { request: { method: "GET", path: "/algo/api/v2/model/list", endpoint: "gateway", sign: true } };
+  }
+  const req = steps[0].request || {};
+  if (req.endpoint !== "gateway" || req.sign !== true) {
+    return { error: "step metadata missing" };
+  }
+  if (req.headers && req.headers["X-Signed-Token"]) {
+    return { error: "signed header leaked into steps" };
+  }
+  return {
+    result: {
+      models: [{
+        name: "q-1",
+        displayName: "Q1",
+        meta: {
+          model_config: { context_window: 128000, modalities: ["text", "image"] },
+        },
+      }],
+    },
+  };
+}
+export function onSchedule(ctx, steps) {
+  if (steps.length === 0) {
+    return { request: { method: "POST", path: "/algo/api/v2/daily", endpoint: "gateway", sign: true, body: { ping: true } } };
+  }
+  return { result: { status: "ok" } };
+}
+`
+	manifest := Manifest{
+		ID: "acme.example", Name: "Acme", Version: "1.0.0", APIVersion: 1, HostAPI: 2, Kind: KindSiteProvider,
+		Permissions:  []string{"secret.use", "schedule"},
+		Schedule:     ScheduleSection{EveryMinutes: 60},
+		SiteProvider: section,
+		SHA256:       map[string]string{"plugin.js": hashSource(source)},
+	}
+	plugin, err := NewPlugin(manifest, source, nil, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin: %v", err)
+	}
+	rt := testRuntime(t, plugin, gatewaySrv)
+	rt.spec.Regions = []SiteProviderRegion{{
+		ID:      "cn",
+		BaseURL: controlSrv.URL,
+		Endpoints: &SiteProviderRegionEndpoints{
+			Control: controlSrv.URL,
+			Gateway: []string{gatewaySrv.URL},
+		},
+	}}
+	rt.spec.DefaultRegion = "cn"
+	seen := &hookSeen{}
+	rt.observe = seen.add
+	fields := map[string]string{
+		"access_token": leakAccess, "refresh_token": leakRefresh,
+		"domain": "tenant.example", "realm": "cn",
+	}
+	models, err := rt.ListModels(context.Background(), fields)
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "q-1" {
+		t.Fatalf("models = %+v", models)
+	}
+	cfg, ok := models[0].Meta["model_config"].(map[string]any)
+	if !ok || cfg["context_window"] == nil {
+		t.Fatalf("nested meta = %#v", models[0].Meta)
+	}
+	schedOut, err := rt.RunSchedule(context.Background(), AccountSnapshot{BaseURL: controlSrv.URL, Fields: fields})
+	if err != nil {
+		t.Fatalf("RunSchedule: %v", err)
+	}
+	if schedOut["status"] != "ok" {
+		t.Fatalf("schedule result = %#v", schedOut)
+	}
+	if controlHits != 0 {
+		t.Fatalf("control endpoint was hit %d times, want 0", controlHits)
+	}
+	if len(gatewayPaths) != 2 || gatewayPaths[0] != "/algo/api/v2/model/list" || gatewayPaths[1] != "/algo/api/v2/daily" {
+		t.Fatalf("gatewayPaths = %v", gatewayPaths)
+	}
+	for i, sig := range gatewaySignedHeaders {
+		if !strings.HasPrefix(sig, "sig:") || gatewayRegions[i] != "cn" {
+			t.Fatalf("step %d sig=%q region=%q", i, sig, gatewayRegions[i])
+		}
+		if strings.Contains(seen.joined(), sig) || strings.Contains(logs.String(), sig) {
+			t.Fatalf("signature header leaked into steps or logs")
+		}
+	}
+	assertNoLeak(t, []string{logs.String(), seen.joined()}, leakAccess, leakRefresh)
 }

@@ -17,12 +17,12 @@ import (
 	"xlyra/server/internal/analytics"
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/catalog"
+	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/config"
 	"xlyra/server/internal/dashboard"
 	"xlyra/server/internal/downloads"
 	"xlyra/server/internal/gateway"
 	"xlyra/server/internal/httpx"
-	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/jsplugin"
 	"xlyra/server/internal/jsplugin/market"
 	"xlyra/server/internal/newapi"
@@ -56,6 +56,24 @@ type Handler struct {
 	jsPlugins    *jsplugin.Manager
 	pluginMarket *market.Service
 	cloudClient  *cloudclient.Client
+	// PushSyncWaker 在设备的推送登记变化（登记、清除、吊销）后被唤醒,
+	// 由后续的 Hub 同步任务实现; nil 时什么都不做。
+	PushSyncWaker PushSyncWaker
+	// PushSender 给已登记推送的设备发一条测试通知; nil 时测试接口按未绑定处理。
+	PushSender PushSender
+	// HubStatus 报告实例是否已绑定 xLyra Cloud, 给设备查询自己的推送状态用;
+	// nil 时按未绑定处理。
+	HubStatus func(ctx context.Context) (bound bool, lastError string)
+}
+
+// PushSyncWaker 让推送同步任务在设备变化后尽快跑一轮。
+type PushSyncWaker interface {
+	WakePushSync()
+}
+
+// PushSender 通过 Cloud 给一台已登记的设备发通知。
+type PushSender interface {
+	SendPush(ctx context.Context, req cloudclient.PushRequest) (cloudclient.PushResult, error)
 }
 
 func (h Handler) WithTrafficFlowStore(db *store.Store) Handler {
@@ -262,6 +280,7 @@ type siteGatewayRequest struct {
 	ResponsesImageGenerationPolicy string   `json:"responses_image_generation_policy"`
 	ImpersonateCodexClient         *bool    `json:"impersonate_codex_client"`
 	ImpersonateClaudeCodeClient    *bool    `json:"impersonate_claude_code_client"`
+	ImpersonateOpencodeClient      *bool    `json:"impersonate_opencode_client"`
 	QuotaProbe                     *string  `json:"quota_probe"`
 }
 
@@ -285,6 +304,7 @@ func (r *siteGatewayRequest) toSiteGatewayConfig() *site.GatewayConfig {
 		ResponsesImageGenerationPolicy: r.ResponsesImageGenerationPolicy,
 		ImpersonateCodexClient:         r.ImpersonateCodexClient,
 		ImpersonateClaudeCodeClient:    r.ImpersonateClaudeCodeClient,
+		ImpersonateOpencodeClient:      r.ImpersonateOpencodeClient,
 		QuotaProbe:                     r.QuotaProbe,
 	}
 }

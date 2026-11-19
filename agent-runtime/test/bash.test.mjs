@@ -54,6 +54,8 @@ test("ask: bash 审批字段齐全,批准后经执行器执行并回传输出", 
 		// 完整命令原文,类型对齐 Go 的 ParseApprovalMessage(command []string)
 		assert.deepEqual(message.command, [command]);
 		assert.equal(message.note, "工作目录: .");
+		assert.equal(message.risk, undefined);
+		assert.equal(message.riskRules, undefined);
 
 		c.client.extensionUiRespond(request.id, { confirmed: true });
 		const turn = await pending;
@@ -167,6 +169,33 @@ test("ask: 等待命令审批时 abort,3s 内收口且执行器无连接", TIMEO
 		assert.equal(exec.requests.length, 0);
 		const state = await c.client.send({ type: "get_state" }, 10000);
 		assert.equal(state.success, true);
+	} finally {
+		await exec.close();
+		await c.close();
+	}
+});
+
+// ask 命中高危时带结构化 risk,note 仍只有工作目录(「命中规则」只在 auto 里拼)。
+test("ask: 高危命令带 risk 字段,note 不含命中规则", TIMEOUT, async () => {
+	const c = await startCase({
+		name: "ask-bash-high-risk",
+		permissionMode: "ask",
+		bash: bashConfig(),
+		script: steps([{ toolCalls: [{ id: "call_hr", name: "bash", args: { command: "rm -rf /" } }] }]),
+	});
+	const exec = await startFakeExec({ socketPath: socketOf(c), behavior: () => ({ out: "ok\n" }) });
+	try {
+		const pending = c.client.promptAndWait("跑高危命令", { timeoutMs: 15000 });
+		const request = await waitFor(() => uiRequest(c.client, "confirm"), 8000, "confirm 请求");
+		const message = JSON.parse(request.message);
+		assert.equal(message.note, "工作目录: .");
+		assert.ok(!message.note.includes("命中规则"), message.note);
+		assert.equal(message.risk, "high");
+		assert.deepEqual(message.riskRules, ["rm 递归删除高危目标"]);
+		c.client.extensionUiRespond(request.id, { confirmed: true });
+		const turn = await pending;
+		assert.equal(toolEnd(turn.events, "call_hr")?.isError, false);
+		assert.equal(exec.requests.length, 1);
 	} finally {
 		await exec.close();
 		await c.close();

@@ -81,7 +81,7 @@ func ReadPackage(raw []byte, requireFixtures bool) (Package, error) {
 	if err := validatePluginIcon(manifest.Icon, files); err != nil {
 		return Package{}, err
 	}
-	if requireFixtures && len(fixtures) == 0 && manifest.Kind != KindSiteProvider {
+	if requireFixtures && len(fixtures) == 0 && !manifest.DeclaresSiteType() {
 		return Package{}, fmt.Errorf("at least one fixtures/*.json is required")
 	}
 	signer := ""

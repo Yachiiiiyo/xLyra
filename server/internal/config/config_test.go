@@ -198,6 +198,26 @@ func TestValidateRejectsInvalidCoreSettings(t *testing.T) {
 	}
 }
 
+func TestLoadParsesTrustedProxies(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+	t.Setenv("POSTGRES_DSN", "postgres://user:pass@localhost:5432/xlyra?sslmode=disable")
+	t.Setenv("TRUSTED_PROXIES", "203.0.113.0/24,198.51.100.10,*")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	want := []string{"203.0.113.0/24", "198.51.100.10", "*"}
+	if len(cfg.TrustedProxies) != len(want) {
+		t.Fatalf("trusted proxies = %#v", cfg.TrustedProxies)
+	}
+	for i, proxy := range want {
+		if cfg.TrustedProxies[i] != proxy {
+			t.Fatalf("trusted proxies = %#v, want %#v", cfg.TrustedProxies, want)
+		}
+	}
+}
+
 func TestLoadUsesEnvironmentAndSanitizesOrigins(t *testing.T) {
 	t.Setenv("APP_ENV", "test")
 	t.Setenv("HTTP_PORT", "5901")

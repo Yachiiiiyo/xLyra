@@ -41,10 +41,21 @@ type GatewayConfig struct {
 	ResponsesImageGenerationPolicy string   `json:"responses_image_generation_policy,omitempty"`
 	ImpersonateCodexClient         *bool    `json:"impersonate_codex_client,omitempty"`
 	ImpersonateClaudeCodeClient    *bool    `json:"impersonate_claude_code_client,omitempty"`
+	// ImpersonateOpencodeClient sends the site's requests with the Bun fetch
+	// wire shape of the official OpenCode CLI (TLS ClientHello, HTTP/1.1-only
+	// ALPN and header layout), which the OpenCode Zen free lane requires.
+	ImpersonateOpencodeClient *bool `json:"impersonate_opencode_client,omitempty"`
 	QuotaProbe                     *string  `json:"quota_probe,omitempty"`
 	// Plugins maps a per-site plugin kind (model_list, credential_check,
 	// error_classifier, pricing_parse) to the plugin id an admin bound to this site.
+	// Kept so sites saved before plugin_ids still load; new writes clear it.
 	Plugins map[string]string `json:"plugins,omitempty"`
+	// PluginIDs is the ordered list of plugins mounted on the site. The first
+	// plugin that exports a hook wins. A non-nil empty slice clears the list.
+	PluginIDs []string `json:"plugin_ids,omitempty"`
+	// PluginSettings maps a plugin id to per-site setting overrides merged over
+	// the plugin's global settings and manifest defaults.
+	PluginSettings map[string]map[string]any `json:"plugin_settings,omitempty"`
 }
 
 // SitePluginKinds are the plugin kinds that take effect per site.
@@ -70,6 +81,70 @@ func normalizeSitePlugins(in map[string]string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// normalizePluginIDs keeps usable plugin ids, in order, without duplicates or
+// blanks. The id rules match normalizeSitePlugins.
+func normalizePluginIDs(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		id := strings.TrimSpace(raw)
+		if id == "" || strings.ContainsAny(id, " \t\r\n") {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeSitePluginSettings(in map[string]map[string]any) map[string]map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := map[string]map[string]any{}
+	for pluginID, rawSettings := range in {
+		id := strings.TrimSpace(pluginID)
+		if id == "" || strings.ContainsAny(id, " \t\r\n") || len(rawSettings) == 0 {
+			continue
+		}
+		entries := map[string]any{}
+		for key, val := range rawSettings {
+			k := strings.TrimSpace(key)
+			if k == "" || val == nil {
+				continue
+			}
+			switch val.(type) {
+			case string, bool, float64, float32, int, int64, int32, json.Number:
+				entries[k] = val
+			}
+		}
+		if len(entries) > 0 {
+			out[id] = entries
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// SitePluginSettings returns the per-site setting overrides for pluginID, if any.
+func SitePluginSettings(cfg *GatewayConfig, pluginID string) map[string]any {
+	if cfg == nil || len(cfg.PluginSettings) == 0 {
+		return nil
+	}
+	return cfg.PluginSettings[strings.TrimSpace(pluginID)]
 }
 
 func NormalizeQuotaProbeType(value string) (string, error) {
@@ -136,6 +211,8 @@ func NormalizeGatewayConfig(input *GatewayConfig) (*GatewayConfig, error) {
 		normalized.QuotaProbe = &probeType
 	}
 	normalized.Plugins = normalizeSitePlugins(normalized.Plugins)
+	normalized.PluginIDs = normalizePluginIDs(normalized.PluginIDs)
+	normalized.PluginSettings = normalizeSitePluginSettings(normalized.PluginSettings)
 	for _, field := range []struct {
 		name  string
 		value *int
@@ -266,6 +343,12 @@ func MergeSiteGatewayConfig(existingRaw []byte, gateway *GatewayConfig) ([]byte,
 	// Normalizing drops empty plugin ids, but in a patch an empty id means
 	// "remove this binding", so the merge must see it.
 	normalized.Plugins = gateway.Plugins
+	// Normalizing turns an empty list into nil, which would look like "leave the
+	// list alone". A patch distinguishes nil (untouched) from empty (clear).
+	if gateway.PluginIDs != nil {
+		normalized.PluginIDs = gateway.PluginIDs
+	}
+	normalized.PluginSettings = gateway.PluginSettings
 
 	root := map[string]any{}
 	if len(existingRaw) > 0 {
@@ -325,6 +408,11 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 	}
 	if existing == nil {
 		patch.Plugins = normalizeSitePlugins(patch.Plugins)
+		patch.PluginIDs = normalizePluginIDs(patch.PluginIDs)
+		if patch.PluginIDs != nil {
+			clearLegacyPluginBindings(patch)
+		}
+		patch.PluginSettings = normalizeSitePluginSettings(patch.PluginSettings)
 		return patch
 	}
 	merged := *existing
@@ -370,6 +458,9 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 	if patch.ImpersonateClaudeCodeClient != nil {
 		merged.ImpersonateClaudeCodeClient = patch.ImpersonateClaudeCodeClient
 	}
+	if patch.ImpersonateOpencodeClient != nil {
+		merged.ImpersonateOpencodeClient = patch.ImpersonateOpencodeClient
+	}
 	if patch.Plugins != nil {
 		merged.Plugins = map[string]string{}
 		for kind, id := range existing.Plugins {
@@ -388,6 +479,10 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 		}
 		merged.Plugins = normalizeSitePlugins(merged.Plugins)
 	}
+	if patch.PluginIDs != nil {
+		merged.PluginIDs = normalizePluginIDs(patch.PluginIDs)
+		clearLegacyPluginBindings(&merged)
+	}
 	if patch.QuotaProbe != nil {
 		if value, err := NormalizeQuotaProbeType(*patch.QuotaProbe); err == nil {
 			if value == "" {
@@ -397,5 +492,76 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 			}
 		}
 	}
+	if patch.PluginSettings != nil {
+		merged.PluginSettings = map[string]map[string]any{}
+		for id, vals := range existing.PluginSettings {
+			copied := make(map[string]any, len(vals))
+			for k, v := range vals {
+				copied[k] = v
+			}
+			merged.PluginSettings[id] = copied
+		}
+		for id, patchVals := range patch.PluginSettings {
+			pluginID := strings.TrimSpace(id)
+			if pluginID == "" {
+				continue
+			}
+			if len(patchVals) == 0 {
+				delete(merged.PluginSettings, pluginID)
+				continue
+			}
+			target := merged.PluginSettings[pluginID]
+			if target == nil {
+				target = map[string]any{}
+			}
+			for k, v := range patchVals {
+				if v == nil {
+					delete(target, k)
+				} else {
+					target[k] = v
+				}
+			}
+			merged.PluginSettings[pluginID] = target
+		}
+		merged.PluginSettings = normalizeSitePluginSettings(merged.PluginSettings)
+	}
 	return &merged
+}
+
+// clearLegacyPluginBindings drops the old per-kind map once plugin_ids is the
+// source of truth, and drops a plugin: quota probe so it is not read twice.
+// A built-in probe type stays.
+func clearLegacyPluginBindings(cfg *GatewayConfig) {
+	if cfg == nil {
+		return
+	}
+	cfg.Plugins = nil
+	if cfg.QuotaProbe == nil {
+		return
+	}
+	value := strings.TrimSpace(*cfg.QuotaProbe)
+	if strings.HasPrefix(value, QuotaProbePluginPrefix) {
+		cfg.QuotaProbe = nil
+	}
+}
+
+// SitePluginIDs returns the plugins mounted on a site, in the order a hook
+// search uses: plugin_ids, then a legacy plugin: quota probe, then the legacy
+// plugins map in SitePluginKinds order. Duplicates are dropped. A nil config
+// returns nil.
+func SitePluginIDs(cfg *GatewayConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	var ids []string
+	ids = append(ids, cfg.PluginIDs...)
+	if probe := QuotaProbeTypeFromConfig(cfg); strings.HasPrefix(probe, QuotaProbePluginPrefix) {
+		ids = append(ids, strings.TrimPrefix(probe, QuotaProbePluginPrefix))
+	}
+	for _, kind := range SitePluginKinds {
+		if id := strings.TrimSpace(cfg.Plugins[kind]); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return normalizePluginIDs(ids)
 }

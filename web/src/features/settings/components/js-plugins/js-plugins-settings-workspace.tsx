@@ -24,7 +24,10 @@ import {
 } from '@/features/settings/components/js-plugins/enable-flow'
 import { JSPluginSiteProviderSection } from '@/features/settings/components/js-plugins/js-plugin-site-provider'
 import { jsPluginErrorNotice, readJSPluginErrorFields } from '@/features/settings/components/js-plugins/js-plugin-errors'
-import { permissionLabelKey } from '@/features/settings/components/js-plugins/permissions'
+import { isSecretUsePermission, permissionLabelKey, permissionLabelParams } from '@/features/settings/components/js-plugins/permissions'
+import { JSPluginSettingsSection } from '@/features/settings/components/js-plugins/js-plugin-settings'
+import { JSPluginScheduleSection } from '@/features/settings/components/js-plugins/js-plugin-schedule'
+import { pluginDeclaresSchedule } from '@/features/settings/api/js-plugins'
 import { JSPluginSiteBindingSection } from '@/features/settings/components/js-plugins/js-plugin-site-binding'
 import { jsPluginKindLabel } from '@/features/settings/components/js-plugins/kind-label'
 import { useSiteBinding } from '@/features/settings/components/js-plugins/use-site-binding'
@@ -129,6 +132,69 @@ function manifestString(manifest: Record<string, unknown> | undefined, key: stri
   return typeof value === 'string' && value.trim() ? value.trim() : ''
 }
 
+function manifestStringList(manifest: Record<string, unknown> | undefined, key: string) {
+  const value = manifest?.[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+}
+
+/** A declared site type: kind site_provider, or a kindless manifest with siteProvider.siteType. */
+/** The hook a legacy site-scoped kind exports, for packages built without an exports list. */
+const KIND_HOOKS: Record<string, string[]> = {
+  quota_probe: ['probe'],
+  model_list: ['listModels'],
+  credential_check: ['check'],
+  error_classifier: ['classify'],
+  pricing_parse: ['parsePricing'],
+  site_detect: ['detect'],
+  model_metadata: ['describeModels'],
+}
+
+function declaresSiteType(manifest: Record<string, unknown> | undefined) {
+  if (!manifest) return false
+  if (manifestString(manifest, 'kind') === 'site_provider') return true
+  const section = manifest.siteProvider
+  if (!section || typeof section !== 'object' || Array.isArray(section)) return false
+  const siteType = (section as Record<string, unknown>).siteType
+  return typeof siteType === 'string' && siteType.trim() !== ''
+}
+
+/** Permissions from the manifest top level and the automation block, de-duplicated. */
+function manifestPermissions(manifest: Record<string, unknown> | undefined) {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const permission of [...manifestStringList(manifest, 'permissions'), ...(automationManifest(manifest)?.permissions ?? [])]) {
+    if (seen.has(permission)) continue
+    seen.add(permission)
+    out.push(permission)
+  }
+  return out
+}
+
+/** Hosts the server checks against confirm_hosts: siteProvider.hosts only. net: hosts are granted as permissions. */
+function manifestHosts(manifest: Record<string, unknown> | undefined) {
+  return [...new Set(siteProviderOf(manifest)?.hosts ?? [])]
+}
+
+function requiresTrustedSignature(manifest: Record<string, unknown> | undefined) {
+  return declaresSiteType(manifest) || manifestPermissions(manifest).includes('secret.use')
+}
+
+function pluginDeclaresSettings(versions: JSPluginVersion[] | undefined) {
+  return (versions ?? []).some((row) => {
+    const settings = row.manifest?.settings
+    return Array.isArray(settings) && settings.length > 0
+  })
+}
+
+/** globalKindHint key for a kindless plugin, from the hooks it exports. */
+function globalHintKey(plugin: JSPluginListItem) {
+  if (plugin.kind) return plugin.kind
+  if (plugin.exports?.includes('detect')) return 'site_detect'
+  if (plugin.exports?.includes('describeModels')) return 'model_metadata'
+  return ''
+}
+
 function shortSha256(sha?: string) {
   if (!sha) return '—'
   if (sha.length <= 14) return sha
@@ -198,7 +264,7 @@ export function JSPluginsSettingsWorkspace() {
       const result = await listSites({ oauth: 'all' })
       return result.items ?? []
     },
-    enabled: managePlugin?.scope === 'site',
+    enabled: managePlugin != null && (managePlugin.scope === 'site' || pluginDeclaresSettings(detailQuery.data?.versions)),
   })
 
   const invalidateAll = () => {
@@ -259,13 +325,16 @@ export function JSPluginsSettingsWorkspace() {
             version: variables.version,
             trust: enableTrustFor(version, 'trusted', variables.confirmUntrusted),
             signer: version?.signer,
-            permissions: automationManifest(version?.manifest)?.permissions ?? variables.grantPermissions ?? [],
-            siteProvider: manifestString(version?.manifest, 'kind') === 'site_provider',
+            permissions: manifestPermissions(version?.manifest).length > 0
+              ? manifestPermissions(version?.manifest)
+              : (variables.grantPermissions ?? []),
+            requiresTrusted: requiresTrustedSignature(version?.manifest),
+            hosts: manifestHosts(version?.manifest),
+            exports: manifestStringList(version?.manifest, 'exports'),
             confirmUntrusted: variables.confirmUntrusted,
             grantPermissions: variables.grantPermissions,
             confirmHosts: variables.confirmHosts,
           })
-      const manifestKind = manifestString(version?.manifest, 'kind')
       const code = error instanceof APIError ? error.code : undefined
       const step = failEnable(
         {
@@ -274,8 +343,8 @@ export function JSPluginsSettingsWorkspace() {
           trust: code === 'js_plugin_confirm_required'
             ? (version?.signer ? 'untrusted_signer' : 'unsigned')
             : enableTrustFor(version, base.trust, variables.confirmUntrusted),
-          permissions: version ? (automationManifest(version.manifest)?.permissions ?? []) : base.permissions,
-          siteProvider: manifestKind ? manifestKind === 'site_provider' : base.siteProvider,
+          permissions: version ? manifestPermissions(version.manifest) : base.permissions,
+          requiresTrusted: version ? requiresTrustedSignature(version.manifest) : base.requiresTrusted,
         },
         { code, fields: error instanceof APIError ? readJSPluginErrorFields(error.details) : {} },
       )
@@ -534,12 +603,20 @@ export function JSPluginsSettingsWorkspace() {
 
   const enabledVersionRow = (detailQuery.data?.versions ?? []).find((row) => row.status === 'enabled')
   const bindsToSites = managePlugin?.scope === 'site'
+  const enabledExports = manifestStringList(enabledVersionRow?.manifest, 'exports')
+  const kindHooks = KIND_HOOKS[manifestString(enabledVersionRow?.manifest, 'kind')] ?? []
+  const pluginExports = enabledExports.length > 0 ? enabledExports : (managePlugin?.exports ?? kindHooks)
   const siteBinding = useSiteBinding(
     managePlugin && enabledVersionRow && bindsToSites
-      ? { pluginId: managePlugin.id, version: enabledVersionRow.version, kind: managePlugin.kind ?? '' }
+      ? { pluginId: managePlugin.id, version: enabledVersionRow.version, exports: pluginExports }
       : null,
     sitesQuery.data ?? [],
   )
+  const mountedSites = (sitesQuery.data ?? []).filter((site) =>
+    managePlugin ? (site.gateway_config?.plugin_ids?.includes(managePlugin.id) ?? false) : false,
+  )
+  const showSettings = pluginDeclaresSettings(enabledVersionRow ? [enabledVersionRow] : [])
+  const showSchedule = pluginDeclaresSchedule(enabledVersionRow ? [enabledVersionRow] : [])
   const closeManage = () => {
     setManagePlugin(null)
     setProtocolSlug('')
@@ -594,8 +671,10 @@ export function JSPluginsSettingsWorkspace() {
       version: row.version,
       trust: row.trust ?? 'trusted',
       signer: row.signer,
-      permissions: automationManifest(row.manifest)?.permissions ?? [],
-      siteProvider: manifestString(row.manifest, 'kind') === 'site_provider',
+      permissions: manifestPermissions(row.manifest),
+      requiresTrusted: requiresTrustedSignature(row.manifest),
+      hosts: manifestHosts(row.manifest),
+      exports: manifestStringList(row.manifest, 'exports'),
     }))
   }
   useEffect(() => {
@@ -641,8 +720,7 @@ export function JSPluginsSettingsWorkspace() {
   }
 
   const submitEnableDialog = () => {
-    if (!enableFlow?.dialog) return
-    if (enableFlow.dialog === 'trust' && !enableConfirmed) return
+    if (!enableFlow?.dialog || !enableConfirmed) return
     applyEnableStep(acceptEnableDialog(enableFlow))
   }
 
@@ -749,8 +827,11 @@ export function JSPluginsSettingsWorkspace() {
                 <DialogTitle>{managePlugin?.name || t('settings:jsPlugins.versionsDialogTitle')}</DialogTitle>
                 <DialogDescription className="space-y-1">
                   <span className="block font-mono text-footnote">{managePlugin?.id}</span>
-                  {managePlugin?.kind ? (
-                    <span className="block text-footnote">{kindLabel(t, managePlugin.kind)}</span>
+                  {managePlugin ? (
+                    <span className="block text-footnote">{kindLabel(t, managePlugin.kind || 'hooks')}</span>
+                  ) : null}
+                  {managePlugin && !managePlugin.kind && (managePlugin.exports?.length ?? 0) > 0 ? (
+                    <span className="block font-mono text-footnote text-label-2">{managePlugin.exports?.join(', ')}</span>
                   ) : null}
                   {managePlugin?.enabled_version && managePlugin.metrics_24h ? (
                     <span className="flex flex-wrap items-center gap-1.5 text-footnote text-label-2">
@@ -886,9 +967,17 @@ export function JSPluginsSettingsWorkspace() {
                   />
                 ) : null}
 
-                {enabledVersionRow && managePlugin?.scope === 'global' ? (
+                {showSettings && managePlugin ? (
+                  <JSPluginSettingsSection pluginId={managePlugin.id} sites={mountedSites} />
+                ) : null}
+
+                {showSchedule && managePlugin ? (
+                  <JSPluginScheduleSection pluginId={managePlugin.id} />
+                ) : null}
+
+                {enabledVersionRow && managePlugin?.scope === 'global' && globalHintKey(managePlugin) ? (
                   <p className="border-t border-separator pt-4 text-body text-label-2">
-                    {t(`settings:jsPlugins.globalKindHint.${managePlugin.kind}`)}
+                    {t(`settings:jsPlugins.globalKindHint.${globalHintKey(managePlugin)}`)}
                   </p>
                 ) : null}
               </>
@@ -1223,90 +1312,89 @@ export function JSPluginsSettingsWorkspace() {
         }}
       >
         <DialogContent presentation="center">
-          {enableFlow?.dialog === 'hosts' ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>{t('settings:jsPlugins.hostsTitle')}</DialogTitle>
-                <DialogDescription>{t('settings:jsPlugins.hostsBody')}</DialogDescription>
-              </DialogHeader>
-              <DialogBody>
+          <DialogHeader>
+            <DialogTitle>
+              {offerUntrusted
+                ? enableFlow?.trust === 'untrusted_signer'
+                  ? t('settings:jsPlugins.untrustedTitle')
+                  : t('settings:jsPlugins.unsignedTitle')
+                : enableFlow && enableFlow.hosts.length > 0 && enableFlow.permissions.length === 0
+                  ? t('settings:jsPlugins.hostsTitle')
+                  : t('settings:jsPlugins.permissionsTitle')}
+            </DialogTitle>
+            <DialogDescription>
+              {offerUntrusted
+                ? enableFlow?.trust === 'untrusted_signer'
+                  ? t('settings:jsPlugins.untrustedBody')
+                  : t('settings:jsPlugins.unsignedBody')
+                : enableFlow && enableFlow.permissions.length > 0
+                  ? t('settings:jsPlugins.permissionsBody')
+                  : t('settings:jsPlugins.hostsBody')}
+              {enableFlow?.signer ? (
+                <span className="mt-2 block font-mono text-footnote">{enableFlow.signer}</span>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            {enableFlow && enableFlow.permissions.length > 0 ? (
+              <div className="mb-4 space-y-2">
+                <p className="text-body font-medium text-label">{t('settings:jsPlugins.permissionsList')}</p>
+                <ul className="space-y-1.5 text-body">
+                  {enableFlow.permissions.map((permission) => {
+                    const key = permissionLabelKey(permission)
+                    return (
+                      <li key={permission} className="flex flex-col">
+                        <span className="font-mono text-footnote text-label">{permission}</span>
+                        {key ? (
+                          <span className={isSecretUsePermission(permission) ? 'text-footnote text-danger' : 'text-footnote text-label-2'}>
+                            {t(key, permissionLabelParams(permission))}
+                          </span>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+                <p className="text-footnote text-label-2">{t('settings:jsPlugins.permissionsScopeHint')}</p>
+              </div>
+            ) : null}
+            {enableFlow && enableFlow.hosts.length > 0 ? (
+              <div className="mb-4 space-y-2">
+                <p className="text-body font-medium text-label">{t('settings:jsPlugins.hostsTitle')}</p>
+                <p className="text-footnote text-label-2">{t('settings:jsPlugins.hostsBody')}</p>
                 <ul className="space-y-1 font-mono text-footnote text-label">
                   {enableFlow.hosts.map((host) => (
                     <li key={host} className="break-all">{host}</li>
                   ))}
                 </ul>
-              </DialogBody>
-              <DialogFooter>
-                <Button type="button" variant="secondary" onClick={dismissEnableDialog}>
-                  {t('common:actions.cancel')}
-                </Button>
-                <Button type="button" disabled={enableMutation.isPending} onClick={submitEnableDialog}>
-                  {t('common:actions.confirm')}
-                </Button>
-              </DialogFooter>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle>
-                  {offerUntrusted
-                    ? enableFlow?.trust === 'untrusted_signer'
-                      ? t('settings:jsPlugins.untrustedTitle')
-                      : t('settings:jsPlugins.unsignedTitle')
-                    : t('settings:jsPlugins.permissionsTitle')}
-                </DialogTitle>
-                <DialogDescription>
-                  {offerUntrusted
-                    ? enableFlow?.trust === 'untrusted_signer'
-                      ? t('settings:jsPlugins.untrustedBody')
-                      : t('settings:jsPlugins.unsignedBody')
-                    : t('settings:jsPlugins.permissionsBody')}
-                  {enableFlow?.signer ? (
-                    <span className="mt-2 block font-mono text-footnote">{enableFlow.signer}</span>
-                  ) : null}
-                </DialogDescription>
-              </DialogHeader>
-              <DialogBody>
-                {enableFlow && enableFlow.permissions.length > 0 ? (
-                  <div className="mb-4 space-y-2">
-                    <p className="text-body font-medium text-label">{t('settings:jsPlugins.permissionsList')}</p>
-                    <ul className="space-y-1.5 text-body">
-                      {enableFlow.permissions.map((permission) => {
-                        const key = permissionLabelKey(permission)
-                        return (
-                          <li key={permission} className="flex flex-col">
-                            <span className="font-mono text-footnote text-label">{permission}</span>
-                            {key ? <span className="text-footnote text-label-2">{t(key)}</span> : null}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                    <p className="text-footnote text-label-2">{t('settings:jsPlugins.permissionsScopeHint')}</p>
-                  </div>
-                ) : null}
-                <label className="flex items-start gap-3 text-body">
-                  <Checkbox checked={enableConfirmed} onCheckedChange={(v) => setEnableConfirmed(v === true)} />
-                  <span>
-                    {offerUntrusted
-                      ? t('settings:jsPlugins.enableConfirm')
-                      : t('settings:jsPlugins.permissionsConfirm')}
-                  </span>
-                </label>
-              </DialogBody>
-              <DialogFooter>
-                <Button type="button" variant="secondary" onClick={dismissEnableDialog}>
-                  {t('common:actions.cancel')}
-                </Button>
-                <Button
-                  type="button"
-                  disabled={!enableConfirmed || !enableFlow || enableMutation.isPending}
-                  onClick={submitEnableDialog}
-                >
-                  {t('settings:jsPlugins.enable')}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
+              </div>
+            ) : null}
+            {enableFlow && enableFlow.exports.length > 0 ? (
+              <div className="mb-4 space-y-1">
+                <p className="text-body font-medium text-label">{t('settings:jsPlugins.exportsTitle')}</p>
+                <p className="font-mono text-footnote text-label-2">{enableFlow.exports.join(', ')}</p>
+              </div>
+            ) : null}
+            <label className="flex items-start gap-3 text-body">
+              <Checkbox checked={enableConfirmed} onCheckedChange={(v) => setEnableConfirmed(v === true)} />
+              <span>
+                {offerUntrusted
+                  ? t('settings:jsPlugins.enableConfirm')
+                  : t('settings:jsPlugins.permissionsConfirm')}
+              </span>
+            </label>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={dismissEnableDialog}>
+              {t('common:actions.cancel')}
+            </Button>
+            <Button
+              type="button"
+              disabled={!enableConfirmed || !enableFlow || enableMutation.isPending}
+              onClick={submitEnableDialog}
+            >
+              {t('settings:jsPlugins.enable')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1463,7 +1551,7 @@ function InstalledPluginCard({
       </div>
       {reason ? <p className="line-clamp-2 text-footnote text-label-2">{reason}</p> : null}
       <CardMetrics columns={3}>
-        <CardMetric label={t('settings:jsPlugins.columns.kind')} value={kindLabel(t, plugin.kind ?? '')} />
+        <CardMetric label={t('settings:jsPlugins.columns.kind')} value={kindLabel(t, plugin.kind || 'hooks')} />
         <CardMetric
           label={t('settings:jsPlugins.columns.enabledVersion')}
           value={plugin.enabled_version ? <StatusBadge status="success">{plugin.enabled_version}</StatusBadge> : <span className="text-label-2">—</span>}
@@ -1563,7 +1651,10 @@ function VersionRow(props: VersionRowProps) {
           </StatusBadge>
         ) : null}
         {manifestName ? <div className="text-footnote text-label-2">{manifestName}</div> : null}
-        {manifestKind ? <div className="text-footnote text-label-2">{kindLabel(t, manifestKind)}</div> : null}
+        <div className="text-footnote text-label-2">{kindLabel(t, manifestKind || 'hooks')}</div>
+        {!manifestKind && manifestStringList(row.manifest, 'exports').length > 0 ? (
+          <div className="font-mono text-footnote text-label-2">{manifestStringList(row.manifest, 'exports').join(', ')}</div>
+        ) : null}
       </td>
       <td className="px-3 py-2">{versionStatusBadge(row.status)}</td>
       <td className="px-3 py-2 text-footnote">
@@ -1596,7 +1687,7 @@ function VersionCard(props: VersionRowProps) {
     <MobileVersionCard
       version={row.version}
       name={manifestName || undefined}
-      kind={manifestKind ? kindLabel(t, manifestKind) : undefined}
+      kind={kindLabel(t, manifestKind || 'hooks')}
       status={(
         <div className="flex flex-wrap items-center gap-1">
           {versionStatusBadge(row.status)}

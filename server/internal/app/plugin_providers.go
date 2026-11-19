@@ -106,7 +106,7 @@ func restoreSiteProviders(siteSvc *site.Service, logger *slog.Logger) {
 func collectSiteProviders(registry *jsplugin.Registry, logger *slog.Logger) (map[string]json.RawMessage, []adapter.Module, []site.PluginSiteType, map[string]site.PluginAccountRuntime) {
 	var plugins []*jsplugin.Plugin
 	if registry != nil {
-		plugins = registry.ByKind(jsplugin.KindSiteProvider)
+		plugins = registry.SiteTypePlugins()
 	}
 	specs := map[string]json.RawMessage{}
 	var modules []adapter.Module
@@ -217,7 +217,7 @@ func convertSiteProvider(plugin *jsplugin.Plugin) (preparedSiteProvider, error) 
 			PluginID:       plugin.Manifest.ID,
 			Enabled:        true,
 			Hosts:          append([]string(nil), section.Hosts...),
-			Request:        pluginSiteRequestFromManifest(section.Request),
+			Request:        pluginSiteRequestFromManifest(siteProviderRequestOrTop(plugin.Manifest)),
 			QuotaAggregate: apiKeyQuotaAggregate(pool, section.Quota),
 			Pool:           pool,
 		},
@@ -231,6 +231,16 @@ func apiKeyQuotaAggregate(pool *jsplugin.AccountPoolSpec, quota *jsplugin.SitePr
 		return ""
 	}
 	return strings.TrimSpace(quota.Aggregate)
+}
+
+// siteProviderRequestOrTop prefers siteProvider.request and falls back to the
+// top-level request template when that section is empty.
+func siteProviderRequestOrTop(manifest jsplugin.Manifest) jsplugin.SiteProviderRequest {
+	section := manifest.SiteProvider.Request
+	if len(section.Headers) > 0 || section.StripDownstreamHeaders || section.UpstreamStreamOnly || section.BaseURLFrom != "" {
+		return section
+	}
+	return manifest.Request
 }
 
 func pluginSiteRequestFromManifest(section jsplugin.SiteProviderRequest) site.PluginSiteRequest {

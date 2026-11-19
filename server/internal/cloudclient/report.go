@@ -1,18 +1,35 @@
 package cloudclient
 
 import (
+	"encoding/json"
 	"time"
 
 	"xlyra/server/internal/store"
 )
 
 // Report is the heartbeat body. The JSON keys are the only fields ever sent.
+// Devices is omitted entirely when the instance has no device source; an empty
+// slice is sent as [] so the Hub drops devices that are no longer active.
 type Report struct {
 	XLyraVersion string       `json:"xlyraVersion"`
 	Platform     Platform     `json:"platform"`
 	Plugins      []PluginItem `json:"plugins"`
 	Counts       Counts       `json:"counts"`
 	SentAt       string       `json:"sentAt"`
+	Devices      []DeviceItem `json:"devices,omitempty"`
+	// withDevices 为真时即使清单为空也输出 "devices":[]。
+	// 没有数据源时保持缺省, Hub 不会动已有设备。
+	withDevices bool `json:"-"`
+}
+
+// DeviceItem is one row of the heartbeat device list. Ref is the device id.
+type DeviceItem struct {
+	Ref            string `json:"ref"`
+	Name           string `json:"name"`
+	Platform       string `json:"platform"`
+	LastActiveAt   string `json:"lastActiveAt"`
+	PushRegistered bool   `json:"pushRegistered"`
+	PushEnv        string `json:"pushEnv"`
 }
 
 type Platform struct {
@@ -133,6 +150,26 @@ func BuildReport(version string, platform Platform, plugins []PluginItem, sentAt
 		Counts:       Counts{Plugins: len(plugins), EnabledPlugins: enabled},
 		SentAt:       sentAt.UTC().Format(time.RFC3339),
 	}
+}
+
+// MarshalJSON 在有设备数据源时保留空的 devices 数组。
+// encoding/json 会把空切片当成 omitempty 丢掉, Hub 就分不清「没有数据源」和「一台都没有」。
+func (r Report) MarshalJSON() ([]byte, error) {
+	payload := map[string]any{
+		"xlyraVersion": r.XLyraVersion,
+		"platform":     r.Platform,
+		"plugins":      r.Plugins,
+		"counts":       r.Counts,
+		"sentAt":       r.SentAt,
+	}
+	if r.withDevices {
+		devices := r.Devices
+		if devices == nil {
+			devices = []DeviceItem{}
+		}
+		payload["devices"] = devices
+	}
+	return json.Marshal(payload)
 }
 
 func applyPollStatus(status string) (next, lastError string, done bool) {

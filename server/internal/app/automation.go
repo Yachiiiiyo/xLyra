@@ -16,13 +16,15 @@ import (
 	"xlyra/server/internal/auth"
 	"xlyra/server/internal/jsplugin"
 	oauthsvc "xlyra/server/internal/oauth"
+	"xlyra/server/internal/site"
 	"xlyra/server/internal/store"
 )
 
 // automationHost lets automation plugins' actions reach xLyra's own services.
 type automationHost struct {
-	auth *auth.Service
-	http *http.Client
+	auth  *auth.Service
+	sites *site.Service
+	http  *http.Client
 }
 
 const automationHTTPTimeout = 10 * time.Second
@@ -92,9 +94,20 @@ func (h automationHost) ResetAPIKeyQuota(ctx context.Context, id uuid.UUID, scop
 	return err
 }
 
+func (h automationHost) RunPluginSchedule(ctx context.Context, plugin *jsplugin.Plugin) (string, error) {
+	if h.sites != nil {
+		return h.sites.RunPluginSchedule(ctx, plugin)
+	}
+	_, err := plugin.DriveSchedule(ctx, h.http, jsplugin.ScheduleContext{Now: time.Now().UnixMilli()})
+	if err != nil {
+		return "", err
+	}
+	return "global", nil
+}
+
 // wireJSPluginAutomation connects the events xLyra emits to the plugin manager
 // and starts the loop that runs the plugins and carries out their actions.
-func wireJSPluginAutomation(oauth *oauthsvc.Service, manager *jsplugin.Manager, authService *auth.Service, httpClient *http.Client) {
+func wireJSPluginAutomation(oauth *oauthsvc.Service, sites *site.Service, manager *jsplugin.Manager, authService *auth.Service, httpClient *http.Client) {
 	if manager == nil {
 		return
 	}
@@ -110,6 +123,6 @@ func wireJSPluginAutomation(oauth *oauthsvc.Service, manager *jsplugin.Manager, 
 		})
 	}
 	if authService != nil {
-		manager.StartAutomation(context.Background(), automationHost{auth: authService, http: httpClient})
+		manager.StartAutomation(context.Background(), automationHost{auth: authService, sites: sites, http: httpClient})
 	}
 }

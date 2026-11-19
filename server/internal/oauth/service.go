@@ -838,7 +838,9 @@ func (s *Service) refreshConnectionLocked(ctx context.Context, repo store.OAuthC
 	refreshed, err := s.refreshCodexTokens(ctx, refreshToken, httpClient)
 	if err != nil {
 		errMsg := err.Error()
-		connection.Status = "reconnect_required"
+		if isPermanentAuthError(errMsg) {
+			connection.Status = "reconnect_required"
+		}
 		connection.Metadata = store.JSON(updateMetadataError(connection.Metadata, errMsg))
 		return CodexConnection{}, &refreshFail{connection: connection, err: err}
 	}
@@ -904,7 +906,9 @@ func (s *Service) refreshClaudeCodeConnection(ctx context.Context, repo store.OA
 	refreshed, err := s.refreshClaudeCodeTokens(ctx, refreshToken, connection.Scopes, httpClient)
 	if err != nil {
 		errMsg := err.Error()
-		connection.Status = "reconnect_required"
+		if isPermanentAuthError(errMsg) {
+			connection.Status = "reconnect_required"
+		}
 		connection.Metadata = store.JSON(updateMetadataError(connection.Metadata, errMsg))
 		return CodexConnection{}, &refreshFail{connection: connection, err: err}
 	}

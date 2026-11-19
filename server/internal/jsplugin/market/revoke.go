@@ -143,10 +143,10 @@ func (s *Service) rollbackRevoked(ctx context.Context, snap Snapshot, revoked st
 	if strings.TrimSpace(nextPkg.Signer) == "" || nextPkg.Signer != oldPkg.Signer {
 		return false, errors.New("rollback developer does not match")
 	}
-	if oldPkg.Manifest.Kind == "" || nextPkg.Manifest.Kind == "" || oldPkg.Manifest.Kind != nextPkg.Manifest.Kind {
+	if oldPkg.Manifest.KindLabel() == "" || nextPkg.Manifest.KindLabel() == "" || oldPkg.Manifest.KindLabel() != nextPkg.Manifest.KindLabel() {
 		return false, errors.New("rollback changes kind")
 	}
-	if oldPkg.Manifest.Kind == jsplugin.KindSiteProvider || nextPkg.Manifest.Kind == jsplugin.KindSiteProvider {
+	if oldPkg.Manifest.DeclaresSiteType() || nextPkg.Manifest.DeclaresSiteType() {
 		oldType := strings.ToLower(strings.TrimSpace(oldPkg.Manifest.SiteProvider.SiteType))
 		nextType := strings.ToLower(strings.TrimSpace(nextPkg.Manifest.SiteProvider.SiteType))
 		if oldType != nextType {
@@ -156,7 +156,7 @@ func (s *Service) rollbackRevoked(ctx context.Context, snap Snapshot, revoked st
 	if added := addedStrings(nextPkg.Manifest.SiteProvider.Hosts, oldPkg.Manifest.SiteProvider.Hosts); len(added) > 0 {
 		return false, errors.New("rollback adds hosts")
 	}
-	if added := addedStrings(nextPkg.Manifest.Automation.Permissions, oldPkg.Manifest.Automation.Permissions); len(added) > 0 {
+	if added := addedStrings(manifestGrantPermissions(nextPkg.Manifest), manifestGrantPermissions(oldPkg.Manifest)); len(added) > 0 {
 		return false, errors.New("rollback adds permissions")
 	}
 	if err := s.enableVersion(ctx, revoked.PluginID, row.Version, nextPkg); err != nil {

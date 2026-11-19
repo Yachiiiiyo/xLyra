@@ -15,14 +15,14 @@ func TestBreakerTripsProbeFailures(t *testing.T) {
 	})
 	plugin := &Plugin{Manifest: Manifest{ID: "com.example.probe", Version: "1.0.0", Kind: KindQuotaProbe}}
 	for i := 0; i < probeFailureTripCount; i++ {
-		breaker.RecordProbeResult(plugin, false)
+		breaker.RecordProbeResult(plugin, "probe", false)
 	}
 	if trips != 1 {
 		t.Fatalf("trips = %d, want 1", trips)
 	}
-	breaker.RecordProbeResult(plugin, true)
+	breaker.RecordProbeResult(plugin, "probe", true)
 	for i := 0; i < probeFailureTripCount-1; i++ {
-		breaker.RecordProbeResult(plugin, false)
+		breaker.RecordProbeResult(plugin, "probe", false)
 	}
 	if trips != 1 {
 		t.Fatalf("success should reset counter, trips = %d", trips)
@@ -37,7 +37,7 @@ func TestBreakerSiteProviderRecordsWithoutTrip(t *testing.T) {
 	})
 	provider := &Plugin{Manifest: Manifest{ID: "com.example.provider", Version: "1.0.0", Kind: KindSiteProvider}}
 	for i := 0; i < probeFailureTripCount+5; i++ {
-		breaker.RecordProbeResult(provider, false)
+		breaker.RecordProbeResult(provider, "probe", false)
 	}
 	if len(trips) != 0 {
 		t.Fatalf("site_provider trips = %v", trips)
@@ -46,7 +46,7 @@ func TestBreakerSiteProviderRecordsWithoutTrip(t *testing.T) {
 	if metrics.Calls != probeFailureTripCount+5 || metrics.Errors != probeFailureTripCount+5 {
 		t.Fatalf("metrics = %+v", metrics)
 	}
-	breaker.RecordProbeResult(provider, true)
+	breaker.RecordProbeResult(provider, "probe", true)
 	metrics = breaker.Metrics(provider.Manifest.ID, provider.Manifest.Version)
 	if metrics.Calls != probeFailureTripCount+6 || metrics.Errors != probeFailureTripCount+5 {
 		t.Fatalf("metrics after success = %+v", metrics)
@@ -54,7 +54,7 @@ func TestBreakerSiteProviderRecordsWithoutTrip(t *testing.T) {
 
 	quota := &Plugin{Manifest: Manifest{ID: "com.example.probe", Version: "1.0.0", Kind: KindQuotaProbe}}
 	for i := 0; i < probeFailureTripCount; i++ {
-		breaker.RecordProbeResult(quota, false)
+		breaker.RecordProbeResult(quota, "probe", false)
 	}
 	if len(trips) != 1 || trips[0] != "com.example.probe probe_failures" {
 		t.Fatalf("quota trips = %v", trips)
@@ -68,6 +68,66 @@ func TestBreakerIgnoresBuiltinPlugins(t *testing.T) {
 	})
 	plugin := &Plugin{Manifest: Manifest{ID: "xlyra.quota.kimi", Version: "1.0.0", Kind: KindQuotaProbe}}
 	for i := 0; i < probeFailureTripCount+5; i++ {
-		breaker.RecordProbeResult(plugin, false)
+		breaker.RecordProbeResult(plugin, "probe", false)
+	}
+}
+
+func TestBreakerSeparatesHooks(t *testing.T) {
+	t.Parallel()
+	var trips []string
+	breaker := NewBreaker(func(pluginID, version, reason string) {
+		trips = append(trips, pluginID+" "+reason)
+	})
+	cold := &Plugin{Manifest: Manifest{ID: "com.example.cold", Version: "1.0.0", Kind: KindQuotaProbe}}
+	for i := 0; i < probeFailureTripCount-1; i++ {
+		breaker.RecordProbeResult(cold, "probe", false)
+		breaker.RecordProbeResult(cold, "listModels", false)
+	}
+	if len(trips) != 0 {
+		t.Fatalf("early trips %v", trips)
+	}
+	breaker.RecordProbeResult(cold, "probe", false)
+	breaker.RecordProbeResult(cold, "listModels", false)
+	if len(trips) != 2 {
+		t.Fatalf("cold trips %v", trips)
+	}
+
+	hot := &Plugin{Manifest: Manifest{ID: "com.example.hot", Version: "1.0.0", Kind: KindErrorClassifier}}
+	for i := 0; i < protocolMinCalls; i++ {
+		breaker.RecordProtocolCall(hot, "classify", i < 26, false)
+	}
+	if len(trips) != 3 || trips[2] != "com.example.hot protocol_error_rate" {
+		t.Fatalf("hot trips %v", trips)
+	}
+	for i := 0; i < probeFailureTripCount-1; i++ {
+		breaker.RecordProbeResult(hot, "probe", false)
+	}
+	if len(trips) != 3 {
+		t.Fatalf("probe on hot plugin %v", trips)
+	}
+
+	provider := &Plugin{Manifest: Manifest{ID: "com.example.provider2", Version: "1.0.0", Kind: KindSiteProvider}}
+	for i := 0; i < probeFailureTripCount+5; i++ {
+		breaker.RecordProbeResult(provider, "probe", false)
+	}
+	for i := 0; i < protocolMinCalls; i++ {
+		breaker.RecordProtocolCall(provider, "classify", true, false)
+	}
+	if len(trips) != 3 {
+		t.Fatalf("site type tripped %v", trips)
+	}
+	metrics := breaker.Metrics(provider.Manifest.ID, provider.Manifest.Version)
+	if metrics.Calls != probeFailureTripCount+5+protocolMinCalls || metrics.Errors != metrics.Calls {
+		t.Fatalf("provider metrics %+v", metrics)
+	}
+
+	mixed := &Plugin{Manifest: Manifest{ID: "com.example.mixed", Version: "1.0.0", Kind: KindQuotaProbe}}
+	breaker.RecordProbeResult(mixed, "probe", false)
+	breaker.RecordProbeResult(mixed, "listModels", true)
+	breaker.RecordProtocolCall(mixed, "classify", true, false)
+	breaker.RecordProtocolCall(mixed, "rewritePayload", false, false)
+	metrics = breaker.Metrics(mixed.Manifest.ID, mixed.Manifest.Version)
+	if metrics.Calls != 4 || metrics.Errors != 2 {
+		t.Fatalf("mixed metrics %+v", metrics)
 	}
 }

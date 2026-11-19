@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -41,6 +42,8 @@ type Runner interface {
 	Stop(ctx context.Context, sessionID string) error
 	Grant(ctx context.Context, sessionID string, in runner.GrantInput) error
 	AnswerQuestion(ctx context.Context, in runner.AnswerQuestionInput) error
+	// PendingCounts 返回会话当前等用户的未决审批与未回答提问数。
+	PendingCounts(sessionID string) (approvals, questions int)
 	Health() runner.Health
 }
 
@@ -63,6 +66,7 @@ type Deps struct {
 	Runs                *runlog.Registry
 	Capabilities        *capabilities.Store
 	ModelMemory         http.HandlerFunc
+	Models              ModelCatalog
 	Suggest             func(ctx context.Context, sessionID, model, system, user string, maxTokens int) (string, error)
 	SuggestionEnabled   func() bool
 	FastModel           func() string
@@ -97,6 +101,7 @@ type Handler struct {
 	runs                *runlog.Registry
 	capabilities        *capabilities.Store
 	modelMemory         http.HandlerFunc
+	models              ModelCatalog
 	suggest             func(context.Context, string, string, string, string, int) (string, error)
 	suggestionEnabled   func() bool
 	fastModel           func() string
@@ -113,6 +118,7 @@ func NewHandler(d Deps) *Handler {
 		runs:                d.Runs,
 		capabilities:        d.Capabilities,
 		modelMemory:         d.ModelMemory,
+		models:              d.Models,
 		suggest:             d.Suggest,
 		suggestionEnabled:   d.SuggestionEnabled,
 		fastModel:           d.FastModel,
@@ -135,6 +141,9 @@ type sessionItem struct {
 	UpdatedAt    int64    `json:"updated_at"`
 	Running      bool     `json:"running"`
 	SessionAllow []string `json:"session_allow"` // 恒为数组,空为 []
+	// PendingApprovals/PendingQuestions 是「等你处理」计数,无则为 0。
+	PendingApprovals int `json:"pending_approvals"`
+	PendingQuestions int `json:"pending_questions"`
 }
 
 // sessionCommandBody 同时覆盖 POST /sessions 与 /sessions/{id}/retry 的请求体;
@@ -164,6 +173,10 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if h.runs != nil {
 		running = h.runs.Running
 	}
+	pendingCounts := func(string) (int, int) { return 0, 0 }
+	if h.runner != nil {
+		pendingCounts = h.runner.PendingCounts
+	}
 	items, err := h.store.ListItems(running)
 	if err != nil {
 		h.fail(w, r, err)
@@ -171,13 +184,16 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	data := make([]sessionItem, 0, len(items))
 	for _, item := range items {
+		approvals, questions := pendingCounts(item.SessionID)
 		data = append(data, sessionItem{
-			SessionID:    item.SessionID,
-			Title:        item.Title,
-			Preview:      item.Preview,
-			UpdatedAt:    item.UpdatedAt,
-			Running:      item.Running,
-			SessionAllow: item.SessionAllow,
+			SessionID:        item.SessionID,
+			Title:            item.Title,
+			Preview:          item.Preview,
+			UpdatedAt:        item.UpdatedAt,
+			Running:          item.Running,
+			SessionAllow:     item.SessionAllow,
+			PendingApprovals: approvals,
+			PendingQuestions: questions,
 		})
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"data": data})
@@ -222,6 +238,47 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeSendResult(w, http.StatusOK, result)
+}
+
+// sessionTitleMaxRunes 是会话标题的字数上限(按 rune 计,不是字节)。
+const sessionTitleMaxRunes = 100
+
+// RenameSession PATCH /sessions/{id}:改会话标题。运行中的会话也允许改名;
+// 标题去首尾空白后不能为空,按 rune 计最长 100。
+func (h *Handler) RenameSession(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.sessionID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !h.decodeBody(w, r, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	switch {
+	case title == "":
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "标题不能为空")
+		return
+	case utf8.RuneCountInString(title) > sessionTitleMaxRunes:
+		httpx.Error(w, r, http.StatusBadRequest, "invalid_request", "标题不能超过 100 个字")
+		return
+	}
+	meta, err := h.store.Update(id, func(m *session.Meta) error {
+		m.Title = title
+		// 用户手改后锁住:即使新标题恰好等于首条消息的占位截断,也不再被 session_title 覆盖。
+		m.TitleLocked = true
+		return nil
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"success": true, "data": map[string]any{
+		"session_id": meta.ID,
+		"title":      meta.Title,
+	}})
 }
 
 // RetrySession POST /sessions/{id}/retry:从 message_id 起重发。

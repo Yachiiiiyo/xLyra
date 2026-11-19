@@ -223,6 +223,16 @@
       "addHeader": "Add Header",
       "removeHeader": "Remove Header"
     },
+    "pluginOrder": {
+      "title": "Plugin priority",
+      "description": "Earlier plugins have higher priority. Model lists and prices merge in this order, and the earlier plugin wins when names collide. Error classification and transport fingerprints come from the first plugin that provides them.",
+      "save": "Save order",
+      "saved": "Plugin order saved",
+      "failed": "Could not save plugin order",
+      "drag": "Drag {{name}} to reorder, or use the up and down arrow keys",
+      "up": "Move {{name}} up",
+      "down": "Move {{name}} down"
+    },
     "grokDeviceHint": "Grok accounts are added after the site is created — open the site's account panel and sign in with the xAI device flow.",
     "accountLoginHint": "Accounts are added after the site is created — open the site's account panel and finish signing in."
   },

@@ -23,6 +23,8 @@ type AdminActor struct {
 	AdminID       uuid.UUID
 	SessionID     uuid.UUID
 	AccessTokenID uuid.UUID
+	// DeviceID 仅当 Type 为 "device" 时有效: 长期设备令牌对应的设备。
+	DeviceID uuid.UUID
 }
 
 func WithAdminID(ctx context.Context, adminID uuid.UUID) context.Context {

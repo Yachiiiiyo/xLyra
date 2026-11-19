@@ -246,26 +246,31 @@ export function check() { return { result: { status: "ok", message: "from-bindin
 		t.Fatal("bound lister missing")
 	}
 	models, err = lister.ListModels(context.Background(), cfg, "k")
-	if err != nil || len(models) != 1 || models[0].UpstreamName != "from-binding" || calls != 0 {
+	// 挂载插件优先级更高，同名模型由它覆盖；底座和内置 adapter 的独有模型依然保留。
+	if err != nil || len(models) != 3 || models[0].UpstreamName != "from-binding" || models[1].UpstreamName != "from-hook" || models[2].UpstreamName != "generic-model" || calls != 1 {
 		t.Fatalf("bound models=%+v err=%v calls=%d", models, err, calls)
 	}
 
-	validator, ok := service.credentialValidatorFor(store.Site{SiteType: "acme.example/chat"}, module)
+	checkCalls := 0
+	checkModule := countingModule{siteType: "acme.example/chat", calls: &checkCalls}
+	validator, ok := service.credentialValidatorFor(store.Site{SiteType: "acme.example/chat"}, checkModule)
 	if !ok {
 		t.Fatal("hook validator missing")
 	}
 	err = validator.ValidateCredentials(context.Background(), cfg, "k")
-	if err == nil || !strings.Contains(err.Error(), "from-hook") || calls != 0 {
-		t.Fatalf("hook check err=%v calls=%d", err, calls)
+	if err == nil || !strings.Contains(err.Error(), "from-hook") || checkCalls != 0 {
+		t.Fatalf("hook check err=%v calls=%d", err, checkCalls)
 	}
 	checkSite := siteWithPlugins(map[string]string{"credential_check": "bound.check"})
 	checkSite.SiteType = "acme.example/chat"
-	validator, ok = service.credentialValidatorFor(checkSite, module)
+	validator, ok = service.credentialValidatorFor(checkSite, checkModule)
 	if !ok {
 		t.Fatal("bound validator missing")
 	}
-	if err := validator.ValidateCredentials(context.Background(), cfg, "k"); err != nil || calls != 0 {
-		t.Fatalf("bound check err=%v calls=%d", err, calls)
+	// 挂载插件返回 ok，但底座返回 invalid，全部通过才算通过，所以整体仍是 invalid。
+	err = validator.ValidateCredentials(context.Background(), cfg, "k")
+	if err == nil || !strings.Contains(err.Error(), "from-hook") || checkCalls != 0 {
+		t.Fatalf("bound check err=%v calls=%d", err, checkCalls)
 	}
 
 	bare := providerHookPlugin(t, "bare.example", "")
@@ -277,7 +282,8 @@ export function check() { return { result: { status: "ok", message: "from-bindin
 	if _, ok := service.siteTypeHookPlugin("bare.example/chat", "check"); ok {
 		t.Fatal("missing check was bound")
 	}
-	fallback := countingModule{siteType: "bare.example/chat", calls: &calls}
+	fallbackCalls := 0
+	fallback := countingModule{siteType: "bare.example/chat", calls: &fallbackCalls}
 	lister, ok = service.modelListerFor(store.Site{SiteType: "bare.example/chat"}, fallback)
 	if !ok {
 		t.Fatal("fallback lister missing")
@@ -286,8 +292,8 @@ export function check() { return { result: { status: "ok", message: "from-bindin
 		t.Fatal("missing hook stayed on the plugin")
 	}
 	models, err = lister.ListModels(context.Background(), cfg, "k")
-	if err != nil || models[0].UpstreamName != "generic-model" || calls != 1 {
-		t.Fatalf("fallback models=%+v err=%v calls=%d", models, err, calls)
+	if err != nil || models[0].UpstreamName != "generic-model" || fallbackCalls != 1 {
+		t.Fatalf("fallback models=%+v err=%v calls=%d", models, err, fallbackCalls)
 	}
 	validator, ok = service.credentialValidatorFor(store.Site{SiteType: "bare.example/chat"}, fallback)
 	if !ok {
@@ -296,8 +302,8 @@ export function check() { return { result: { status: "ok", message: "from-bindin
 	if _, isPlugin := validator.(pluginCredentialValidator); isPlugin {
 		t.Fatal("missing check stayed on the plugin")
 	}
-	if err := validator.ValidateCredentials(context.Background(), cfg, "k"); err != nil || calls != 2 {
-		t.Fatalf("fallback check err=%v calls=%d", err, calls)
+	if err := validator.ValidateCredentials(context.Background(), cfg, "k"); err != nil || fallbackCalls != 2 {
+		t.Fatalf("fallback check err=%v calls=%d", err, fallbackCalls)
 	}
 
 	installProviderSite(t, provider, false, []string{"api.example.com"})
@@ -478,7 +484,8 @@ export function check() { return { result: { status: "ok", message: "from-bindin
 		site.SiteType = item.SiteType
 		site.BaseURL = item.BaseURL
 		check, calls := run(t, []*jsplugin.Plugin{badPlugin, bound}, site, true, []string{"api.example.com"})
-		if !check.success || calls != 0 || check.endpoint != "credential_check bound.check" {
+		// 挂载插件通过了，但底座的 check 报错，全部通过才算通过，所以整体不可用。
+		if check.success || calls != 0 || check.errorType != "upstream_unreachable" || !strings.Contains(check.message, "broken check") {
 			t.Fatalf("check=%#v calls=%d", check, calls)
 		}
 	})

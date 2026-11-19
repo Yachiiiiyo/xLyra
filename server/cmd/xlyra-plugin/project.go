@@ -48,6 +48,13 @@ func buildProject(dir string) (*builtProject, error) {
 	if err != nil {
 		return nil, err
 	}
+	exports, err := jsplugin.ExportedHooks(string(source))
+	if err != nil {
+		return nil, err
+	}
+	if len(exports) > 0 {
+		manifest["exports"] = exports
+	}
 	manifest["sha256"] = map[string]string{"plugin.js": jsplugin.HashSource(string(source))}
 	manifestOut, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -91,6 +98,11 @@ func attachDeclaredIcon(dir string, manifest map[string]any, files map[string][]
 		}
 	}
 	section, _ := manifest["siteProvider"].(map[string]any)
+	if section == nil {
+		if siteMap, _ := manifest["site"].(map[string]any); siteMap != nil && siteMap["siteType"] != nil {
+			section = siteMap
+		}
+	}
 	if section == nil {
 		return nil
 	}

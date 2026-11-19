@@ -66,7 +66,7 @@ func buildEndpointRegistry(pluginRegistry *jsplugin.Registry) *downstreamEndpoin
 	}
 	if pluginRegistry != nil {
 		for _, plugin := range pluginRegistry.Plugins() {
-			if plugin.Manifest.Kind != jsplugin.KindProtocol {
+			if !plugin.Manifest.DeclaresProtocol() {
 				continue
 			}
 			section := plugin.Manifest.Protocol

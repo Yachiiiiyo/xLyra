@@ -69,6 +69,22 @@ type secretSeg struct {
 	isIndex bool
 }
 
+// SecretSegment is one object key or array index in a secret path.
+type SecretSegment struct {
+	Key   string
+	At    int
+	Index bool
+}
+
+// Segments returns the path in order.
+func (p SecretPath) Segments() []SecretSegment {
+	out := make([]SecretSegment, len(p.segs))
+	for i, seg := range p.segs {
+		out[i] = SecretSegment{Key: seg.key, At: seg.index, Index: seg.isIndex}
+	}
+	return out
+}
+
 // String returns the canonical path. A leading-zero index is normalized.
 func (p SecretPath) String() string {
 	var b strings.Builder
@@ -302,6 +318,20 @@ func (b *SecretBag) Scrub(s string) string {
 		s = replaceNeedle(s, needle, secretScrubMark)
 	}
 	return s
+}
+
+// ContainsSecret reports whether s contains any scrubbable secret value (raw or
+// JSON-escaped) held by the bag.
+func (b *SecretBag) ContainsSecret(s string) bool {
+	if b == nil || s == "" {
+		return false
+	}
+	for _, needle := range b.needles() {
+		if needle != "" && strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func replaceNeedle(s, needle, mark string) string {
@@ -714,11 +744,14 @@ func SubstituteSecrets(req ProbeRequest, bag *SecretBag, allowed map[string]bool
 		return ProbeRequest{}, err
 	}
 	return ProbeRequest{
-		Method:  req.Method,
-		Path:    req.Path,
-		Headers: headers,
-		Query:   query,
-		Body:    body,
+		Method:    req.Method,
+		Path:      req.Path,
+		Headers:   headers,
+		Query:     query,
+		Body:      body,
+		OnNonJSON: req.OnNonJSON,
+		Endpoint:  req.Endpoint,
+		Sign:      req.Sign,
 	}, nil
 }
 

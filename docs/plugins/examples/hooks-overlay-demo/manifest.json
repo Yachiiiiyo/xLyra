@@ -1,0 +1,11 @@
+{
+  "apiVersion": 1,
+  "hostApi": 2,
+  "id": "example.hooks",
+  "name": "无 kind 叠加示例",
+  "description": "阶段 2 示例：省略 kind，同时导出 probe、classifyError 与 listModels",
+  "version": "1.0.0",
+  "license": "MIT",
+  "permissions": ["storage"],
+  "quotaProbe": { "baseURLMode": "as_is" }
+}

@@ -51,13 +51,22 @@ type QuotaProbeResult struct {
 }
 
 func (s *Service) runQuotaProbes(ctx context.Context, item store.Site) store.Site {
-	probeType := QuotaProbeTypeFromConfig(GatewayConfigFromSiteMeta(item.Meta))
-	if probeType == "" {
-		probeType = s.defaultQuotaProbeTypeForSite(item)
-	}
+	probeType := quotaProbeTypeForSite(s, item)
 	if probeType == "" {
 		return item
 	}
+	if sources := probeSourcesForSite(s, item); len(sources) > 1 {
+		return s.runQuotaProbesWith(ctx, item, probeType, func(ctx context.Context, client *http.Client, credentialType, baseURL, secret string) QuotaProbeResult {
+			return s.probeQuotaSourcesForSite(ctx, item, client, sources, credentialType, baseURL, secret)
+		})
+	}
+	return s.runQuotaProbesWith(ctx, item, probeType, nil)
+}
+
+// runQuotaProbesWith probes every API key. probe overrides the single probe a
+// probe type selects; nil keeps that probe. The summary and cooldown logic is
+// shared, so a site with one probe source is unchanged.
+func (s *Service) runQuotaProbesWith(ctx context.Context, item store.Site, probeType string, probe func(context.Context, *http.Client, string, string, string) QuotaProbeResult) store.Site {
 
 	credentialRepo := store.NewSiteCredentialRepository(s.db.DB())
 	credentials, err := credentialRepo.ListBySite(ctx, item.ID)
@@ -66,6 +75,11 @@ func (s *Service) runQuotaProbes(ctx context.Context, item store.Site) store.Sit
 	}
 
 	client := &http.Client{Timeout: quotaProbeRequestTimeout}
+	if plugin, ok := s.quotaProbePlugin(probeType, item.SiteType); ok {
+		if profiled, clientErr := s.pluginProfileClient(ctx, item, plugin); clientErr == nil && profiled != nil {
+			client = profiled
+		}
+	}
 	summary := map[string]any{
 		"probe_type": probeType,
 		"fetched_at": time.Now().UTC().Format(time.RFC3339),
@@ -90,8 +104,14 @@ func (s *Service) runQuotaProbes(ctx context.Context, item store.Site) store.Sit
 		secret, decryptErr := s.credentials.Decrypt(credential.EncryptedSecret)
 		if decryptErr != nil {
 			result.Error = "credential decrypt failed"
+		} else if probe != nil {
+			result = probe(ctx, client, credential.CredentialType, item.BaseURL, secret)
 		} else {
-			result = s.probeQuota(ctx, client, probeType, item.SiteType, credential.CredentialType, item.BaseURL, secret)
+			callCtx := ctx
+			if plugin, ok := s.quotaProbePlugin(probeType, item.SiteType); ok {
+				callCtx = s.withSitePluginContext(ctx, item, plugin)
+			}
+			result = s.probeQuota(callCtx, client, probeType, item.SiteType, credential.CredentialType, item.BaseURL, secret)
 		}
 		if probeType == QuotaProbeTypeSub2API && result.Status == "ok" {
 			s.recoverSub2APISubscriptionCooldown(ctx, item.ID, credential.ID, result)
@@ -386,6 +406,62 @@ func codingPlanQuotaCooldownDeadline(result QuotaProbeResult, now time.Time) (ti
 		}
 	}
 	return deadline, windows
+}
+
+// probeSourcesForSite lists every probe a site runs, highest priority first.
+// A single source returns nil, so the caller keeps the existing one-probe path.
+// Several sources are the mounted probe plugins, then the site type's own hook.
+// A built-in quota probe configured on the site stays the only source.
+func probeSourcesForSite(s *Service, item store.Site) []string {
+	primary := quotaProbeTypeForSite(s, item)
+	if primary == "" || !strings.HasPrefix(primary, QuotaProbePluginPrefix) {
+		return nil
+	}
+	if s == nil {
+		return nil
+	}
+	var sources []string
+	seen := map[string]bool{}
+	for _, plugin := range s.siteHookPlugins(item, "probe") {
+		id := QuotaProbePluginPrefix + plugin.Manifest.ID
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		sources = append(sources, id)
+	}
+	if plugin, ok := s.siteTypeHookPlugin(item.SiteType, "probe"); ok {
+		id := QuotaProbePluginPrefix + plugin.Manifest.ID
+		if !seen[id] {
+			sources = append(sources, id)
+		}
+	}
+	if len(sources) < 2 {
+		return nil
+	}
+	return sources
+}
+
+// quotaProbeTypeForSite picks the probe a site runs. A built-in type in the
+// config wins. Otherwise the first mounted plugin that exports probe is used,
+// including a legacy plugin: binding. With neither, the site type's default applies.
+func quotaProbeTypeForSite(s *Service, item store.Site) string {
+	probeType := QuotaProbeTypeFromConfig(GatewayConfigFromSiteMeta(item.Meta))
+	if probeType != "" && !strings.HasPrefix(probeType, QuotaProbePluginPrefix) {
+		return probeType
+	}
+	if s != nil {
+		if plugin, ok := s.siteHookPlugin(item, "probe"); ok {
+			return QuotaProbePluginPrefix + plugin.Manifest.ID
+		}
+	}
+	if probeType != "" {
+		return probeType
+	}
+	if s == nil {
+		return ""
+	}
+	return s.defaultQuotaProbeTypeForSite(item)
 }
 
 // defaultQuotaProbeTypeForSite 给未显式配置 quota_probe 的站点类型提供默认探测。

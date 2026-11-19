@@ -18,7 +18,7 @@ func TestCheckPluginHost(t *testing.T) {
 			Descriptor: SiteTypeDescriptor{SiteType: "acme.example/chat", DisplayName: "Acme"},
 			PluginID:   "acme.example",
 			Enabled:    true,
-			Hosts:      []string{"api.example.com", "files.example.com"},
+			Hosts:      []string{"api.example.com", "files.example.com", "*.wild.example"},
 		},
 		{
 			Descriptor: SiteTypeDescriptor{SiteType: "paused.example/chat", DisplayName: "Paused"},
@@ -31,7 +31,7 @@ func TestCheckPluginHost(t *testing.T) {
 	}
 
 	hosts, ok := PluginSiteTypeHosts(" ACME.EXAMPLE/Chat ")
-	if !ok || len(hosts) != 2 || hosts[0] != "api.example.com" || hosts[1] != "files.example.com" {
+	if !ok || len(hosts) != 3 || hosts[0] != "api.example.com" || hosts[1] != "files.example.com" {
 		t.Fatalf("hosts = %#v ok=%v", hosts, ok)
 	}
 	hosts[0] = "mutated.example"
@@ -64,6 +64,10 @@ func TestCheckPluginHost(t *testing.T) {
 		{name: "case and port", siteType: " ACME.EXAMPLE/Chat ", rawURL: "https://API.Example.COM:8443/v1/models"},
 		{name: "userinfo ignored when host matches", siteType: "acme.example/chat", rawURL: "https://user:secret@api.example.com/v1"},
 		{name: "second host", siteType: "acme.example/chat", rawURL: "http://files.example.com"},
+		{name: "wildcard subdomain", siteType: "acme.example/chat", rawURL: "https://a.wild.example/v1"},
+		{name: "wildcard nested", siteType: "acme.example/chat", rawURL: "https://a.b.wild.example/v1", wantErr: true, host: "a.b.wild.example"},
+		{name: "wildcard bare domain", siteType: "acme.example/chat", rawURL: "https://wild.example/v1", wantErr: true, host: "wild.example"},
+		{name: "wildcard suffix trick", siteType: "acme.example/chat", rawURL: "https://wild.example.evil.com/v1", wantErr: true, host: "wild.example.evil.com"},
 		{name: "other subdomain", siteType: "acme.example/chat", rawURL: "https://evil.api.example.com/v1", wantErr: true, host: "evil.api.example.com"},
 		{name: "sibling", siteType: "acme.example/chat", rawURL: "https://www.api.example.com/v1", wantErr: true, host: "www.api.example.com"},
 		{name: "ip literal", siteType: "acme.example/chat", rawURL: "http://127.0.0.1/v1", wantErr: true, host: "127.0.0.1"},

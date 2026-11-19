@@ -320,7 +320,9 @@ async function approveBashCall(
 		return { block: true, reason: "命令过长,已拒绝(超过 8 KiB)" };
 	}
 	if (permissionMode === "full") return; // 完全访问:输入校验通过即放行,不审批
-	const hits = permissionMode === "auto" ? matchHighRiskRules(command) : null;
+	// ask 与 auto 都标注高危;full 已在上面直接放行。note 仍只在 auto 命中时拼「命中规则」,
+	// Go 侧 startClassification / autoGrantable 依赖这段文字;ask 只用结构化字段告诉客户端。
+	const hits = matchHighRiskRules(command);
 
 	const cwd = ctx.cwd || process.cwd();
 	const workdir = path.relative(process.cwd(), cwd) || ".";
@@ -329,10 +331,14 @@ async function approveBashCall(
 		toolName: "bash",
 		command: [command],
 		note:
-			hits === null
+			hits === null || permissionMode !== "auto"
 				? `工作目录: ${workdir}`
 				: `工作目录: ${workdir};命中规则: ${hits.join("、")}`,
 	};
+	if (hits !== null) {
+		payload.risk = "high";
+		payload.riskRules = hits;
+	}
 	let confirmed = false;
 	try {
 		// 必须传 signal,否则等待审批时 abort 会被卡住

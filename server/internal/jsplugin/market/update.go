@@ -350,7 +350,7 @@ func candidateFrom(plugin marketproto.Plugin, ver marketproto.PluginVersion, rev
 		if installed.Kind != "" {
 			kind = installed.Kind
 		}
-		if len(installed.Hosts) > 0 || installed.Kind == jsplugin.KindSiteProvider {
+		if len(installed.Hosts) > 0 || installed.Kind == jsplugin.KindSiteProvider || installed.Kind == jsplugin.KindHooks {
 			hosts = installed.Hosts
 		}
 		if len(installed.Permissions) > 0 || installed.Kind == jsplugin.KindAutomation {
@@ -403,7 +403,7 @@ func upgradeBlockReason(cur versionFacts, next candidateFacts, revocationsExpire
 		return UpdateReasonMajor, ""
 	}
 	siteUnknown := false
-	if cur.Kind == jsplugin.KindSiteProvider || next.Kind == jsplugin.KindSiteProvider {
+	if cur.Kind == jsplugin.KindSiteProvider || next.Kind == jsplugin.KindSiteProvider || cur.SiteType != "" || next.SiteType != "" {
 		if cur.SiteType == "" || next.SiteType == "" {
 			siteUnknown = true
 		} else if cur.SiteType != next.SiteType {
@@ -498,9 +498,9 @@ func (s *Service) upgradeOne(ctx context.Context, plugin marketproto.Plugin, vie
 	next := candidateFacts{
 		Version:     pkg.Manifest.Version,
 		Fingerprint: pkg.Signer,
-		Kind:        pkg.Manifest.Kind,
+		Kind:        pkg.Manifest.KindLabel(),
 		Hosts:       pkg.Manifest.SiteProvider.Hosts,
-		Permissions: pkg.Manifest.Automation.Permissions,
+		Permissions: manifestGrantPermissions(pkg.Manifest),
 		Events:      pkg.Manifest.Automation.Subscribes,
 		SiteType:    strings.ToLower(strings.TrimSpace(pkg.Manifest.SiteProvider.SiteType)),
 	}
@@ -577,11 +577,11 @@ func (s *Service) enableVersion(ctx context.Context, pluginID, version string, p
 		return errAutoNeedsConfirmation
 	}
 	opts := jsplugin.EnableOptions{}
-	if pkg.Manifest.Kind == jsplugin.KindSiteProvider {
+	if pkg.Manifest.DeclaresSiteType() {
 		opts.ConfirmedHosts = append([]string(nil), pkg.Manifest.SiteProvider.Hosts...)
 	}
-	if pkg.Manifest.Kind == jsplugin.KindAutomation {
-		opts.GrantPermissions = append([]string(nil), pkg.Manifest.Automation.Permissions...)
+	if grants := manifestGrantPermissions(pkg.Manifest); len(grants) > 0 {
+		opts.GrantPermissions = grants
 	}
 	err = s.runtime.Enable(ctx, pluginID, version, opts)
 	var confirm *jsplugin.ConfirmRequiredError
@@ -868,9 +868,9 @@ func factsFromRow(row store.JSPluginVersion) versionFacts {
 	if err := json.Unmarshal(row.Manifest, &manifest); err != nil {
 		return fact
 	}
-	fact.Kind = manifest.Kind
+	fact.Kind = manifest.KindLabel()
 	fact.Hosts = append([]string(nil), manifest.SiteProvider.Hosts...)
-	fact.Permissions = append([]string(nil), manifest.Automation.Permissions...)
+	fact.Permissions = manifestGrantPermissions(manifest)
 	fact.Events = append([]string(nil), manifest.Automation.Subscribes...)
 	fact.SiteType = strings.ToLower(strings.TrimSpace(manifest.SiteProvider.SiteType))
 	return fact

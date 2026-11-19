@@ -109,6 +109,8 @@ func (Admin) TableName() string                { return "admins" }
 func (AdminSession) TableName() string         { return "admin_sessions" }
 func (AdminAccessToken) TableName() string     { return "admin_access_tokens" }
 func (AdminAuditLog) TableName() string        { return "admin_audit_logs" }
+func (AdminDevice) TableName() string          { return "admin_devices" }
+func (AdminDevicePairing) TableName() string   { return "admin_device_pairings" }
 func (APIKey) TableName() string               { return "api_keys" }
 func (APIKeySitePermission) TableName() string { return "api_key_site_permissions" }
 func (APIKeySiteGroupPermission) TableName() string {

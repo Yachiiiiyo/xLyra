@@ -72,9 +72,9 @@ func (h Handler) ListJSPlugins(w http.ResponseWriter, r *http.Request) {
 			for key, value := range meta {
 				item[key] = value
 			}
-			if kind, ok := meta["kind"].(string); ok {
-				// Where the kind takes effect, so the admin UI need not hard-code kinds.
-				item["scope"] = string(jsplugin.ScopeOf(kind))
+			if manifest, ok := jsPluginParsedManifest(selected.Manifest); ok {
+				// Where the plugin takes effect, so the admin UI need not hard-code kinds.
+				item["scope"] = string(jsplugin.ScopeOfManifest(manifest, jsPluginSummaryExports(manifest)))
 			}
 		}
 		if enabled != "" && h.jsPlugins != nil {
@@ -201,7 +201,7 @@ func (h Handler) EnableJSPluginVersion(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &permissionsErr) {
 			code = "js_plugin_permissions_required"
 			h.recordJSPluginAudit(r, "js_plugin.enable", pluginID, false, code, map[string]any{"version": version, "required": permissionsErr.Required})
-			h.writeError(w, r, status, code, err.Error())
+			h.writeErrorFields(w, r, status, code, err.Error(), map[string]any{"required": permissionsErr.Required})
 			return
 		}
 		var confirmErr *jsplugin.ConfirmRequiredError
@@ -407,10 +407,48 @@ func jsPluginManifestSummary(raw store.JSON) map[string]any {
 	if kind, ok := manifest["kind"].(string); ok && strings.TrimSpace(kind) != "" {
 		out["kind"] = strings.TrimSpace(kind)
 	}
+	if exports := jsPluginRawExports(manifest["exports"]); len(exports) > 0 {
+		out["exports"] = exports
+	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+func jsPluginRawExports(value any) []string {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range items {
+		name, ok := item.(string)
+		if ok && strings.TrimSpace(name) != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func jsPluginParsedManifest(raw store.JSON) (jsplugin.Manifest, bool) {
+	if len(raw) == 0 {
+		return jsplugin.Manifest{}, false
+	}
+	manifest, err := jsplugin.ParseManifest(raw)
+	if err != nil {
+		return jsplugin.Manifest{}, false
+	}
+	return manifest, true
+}
+
+// jsPluginSummaryExports prefers the manifest exports list. A kindless package
+// that omitted it still lists the hooks the stored summary can see.
+func jsPluginSummaryExports(manifest jsplugin.Manifest) []string {
+	if len(manifest.Exports) > 0 {
+		return manifest.Exports
+	}
+	return nil
 }
 
 func jsPluginVersionPayload(row store.JSPluginVersion) map[string]any {
@@ -474,11 +512,10 @@ func adminIDFromContext(ctx context.Context) string {
 	return id.String()
 }
 
-// BindJSPluginSite binds an enabled plugin to one site, for every kind with
-// site scope: quota_probe, model_list, credential_check, error_classifier and
-// pricing_parse.
-// Binding a pricing_parse plugin needs confirm_pricing_reviewed, because it
-// changes the prices xLyra shows for that site.
+// BindJSPluginSite mounts an enabled site-scoped plugin on one site. A plugin
+// that parses prices needs confirm_pricing_reviewed, because it changes the
+// prices xLyra shows for that site. A built-in quota probe already set on the
+// site is left in place; the plugin is only appended to the mount list.
 func (h Handler) BindJSPluginSite(w http.ResponseWriter, r *http.Request) {
 	if h.jsPlugins == nil || h.sites == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
@@ -500,37 +537,38 @@ func (h Handler) BindJSPluginSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := map[string]any{"version": version, "site_id": siteUUID.String()}
-	kind, err := h.jsPlugins.CheckSiteBinding(r.Context(), pluginID, version)
+	label, err := h.jsPlugins.CheckSiteBinding(r.Context(), pluginID, version)
 	if err != nil {
 		h.recordJSPluginAudit(r, "js_plugin.bind_site", pluginID, false, "js_plugin_bind_site_failed", meta)
 		h.writeError(w, r, http.StatusBadRequest, "js_plugin_bind_site_failed", err.Error())
 		return
 	}
-	meta["kind"] = kind
-	if kind == jsplugin.KindPricingParse && !body.ConfirmPricingReviewed {
+	meta["kind"] = label
+	if h.jsPluginExports(pluginID, "parsePricing") && !body.ConfirmPricingReviewed {
 		h.recordJSPluginAudit(r, "js_plugin.bind_site", pluginID, false, "js_plugin_pricing_review_required", meta)
 		h.writeError(w, r, http.StatusBadRequest, "js_plugin_pricing_review_required", "preview the parsed prices and confirm them before binding a pricing plugin")
 		return
 	}
-	// quota_probe keeps its binding in the site's quota probe setting, which can
-	// also name a built-in probe; every other kind lives under gateway plugins.
-	var patchErr error
-	if kind == jsplugin.KindQuotaProbe {
-		_, patchErr = h.sites.PatchGatewayQuotaProbe(r.Context(), siteUUID, sitepkg.QuotaProbePluginPrefix+pluginID)
-	} else {
-		_, patchErr = h.sites.PatchGatewayPlugin(r.Context(), siteUUID, kind, pluginID)
-	}
-	if err := patchErr; err != nil {
+	if _, err := h.sites.AttachGatewayPlugin(r.Context(), siteUUID, pluginID); err != nil {
 		h.recordJSPluginAudit(r, "js_plugin.bind_site", pluginID, false, "site_plugin_patch_failed", meta)
 		h.writeError(w, r, http.StatusBadRequest, "site_plugin_patch_failed", err.Error())
 		return
 	}
 	h.recordJSPluginAudit(r, "js_plugin.bind_site", pluginID, true, "", meta)
-	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "kind": kind})
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "kind": label})
 }
 
-// UnbindJSPluginSite removes a site's plugin of one kind, returning the site to
-// the default behavior.
+// jsPluginExports reports whether the enabled plugin exports hook.
+func (h Handler) jsPluginExports(pluginID, hook string) bool {
+	if h.jsPlugins == nil || h.jsPlugins.Catalog() == nil {
+		return false
+	}
+	plugin, ok := h.jsPlugins.Catalog().Registry().ByPluginID(pluginID)
+	return ok && plugin != nil && plugin.HasHook(hook)
+}
+
+// UnbindJSPluginSite removes one mounted plugin from a site. kind in the body
+// is accepted and ignored; membership is the mounted plugin list.
 func (h Handler) UnbindJSPluginSite(w http.ResponseWriter, r *http.Request) {
 	if h.jsPlugins == nil || h.sites == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
@@ -550,35 +588,24 @@ func (h Handler) UnbindJSPluginSite(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_site_id", "site_id must be a uuid")
 		return
 	}
-	kind := strings.TrimSpace(body.Kind)
-	meta := map[string]any{"kind": kind, "site_id": siteUUID.String()}
+	meta := map[string]any{"kind": strings.TrimSpace(body.Kind), "site_id": siteUUID.String()}
 	site, err := h.sites.Get(r.Context(), siteUUID)
 	if err != nil {
 		h.writeError(w, r, http.StatusNotFound, "not_found", "site was not found")
 		return
 	}
-	// A plugin may only remove its own binding; otherwise unbinding plugin A
-	// from a site would silently remove plugin B's.
-	cfg := sitepkg.GatewayConfigFromSiteMeta(site.Meta)
-	if kind == jsplugin.KindQuotaProbe {
-		if sitepkg.QuotaProbeTypeFromConfig(cfg) != sitepkg.QuotaProbePluginPrefix+pluginID {
-			h.writeError(w, r, http.StatusConflict, "js_plugin_not_bound", "this site is not bound to this plugin")
-			return
+	bound := false
+	for _, id := range sitepkg.SitePluginIDs(sitepkg.GatewayConfigFromSiteMeta(site.Meta)) {
+		if id == pluginID {
+			bound = true
+			break
 		}
-		if _, err := h.sites.PatchGatewayQuotaProbe(r.Context(), siteUUID, ""); err != nil {
-			h.recordJSPluginAudit(r, "js_plugin.unbind_site", pluginID, false, "site_plugin_patch_failed", meta)
-			h.writeError(w, r, http.StatusBadRequest, "site_plugin_patch_failed", err.Error())
-			return
-		}
-		h.recordJSPluginAudit(r, "js_plugin.unbind_site", pluginID, true, "", meta)
-		httpx.JSON(w, http.StatusOK, map[string]any{"ok": true})
-		return
 	}
-	if sitepkg.SitePluginID(cfg, kind) != pluginID {
+	if !bound {
 		h.writeError(w, r, http.StatusConflict, "js_plugin_not_bound", "this site is not bound to this plugin")
 		return
 	}
-	if _, err := h.sites.PatchGatewayPlugin(r.Context(), siteUUID, kind, ""); err != nil {
+	if _, err := h.sites.DetachGatewayPlugin(r.Context(), siteUUID, pluginID); err != nil {
 		h.recordJSPluginAudit(r, "js_plugin.unbind_site", pluginID, false, "site_plugin_patch_failed", meta)
 		h.writeError(w, r, http.StatusBadRequest, "site_plugin_patch_failed", err.Error())
 		return
@@ -849,6 +876,137 @@ func (h Handler) ListJSPluginAutomationOptions(w http.ResponseWriter, r *http.Re
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (h Handler) GetJSPluginSettings(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	specs, stored, resolved, err := h.jsPlugins.GetPluginSettings(r.Context(), pluginID)
+	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to read plugin settings")
+		return
+	}
+	if specs == nil {
+		specs = []jsplugin.SettingSpec{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{
+		"schema":   specs,
+		"values":   stored,
+		"resolved": resolved,
+	})
+}
+
+func (h Handler) UpdateJSPluginSettings(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var body struct {
+		Values map[string]any `json:"values"`
+	}
+	if err := httpx.DecodeJSONBody(r, &body); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	resolved, err := h.jsPlugins.UpdatePluginSettings(r.Context(), pluginID, body.Values)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		var invalid *jsplugin.InvalidSettingsError
+		if errors.As(err, &invalid) {
+			h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, false, "js_plugin_settings_invalid", nil)
+			h.writeError(w, r, http.StatusBadRequest, "js_plugin_settings_invalid", invalid.Error())
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, false, "js_plugin_settings_failed", nil)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to update plugin settings")
+		return
+	}
+	h.recordJSPluginAudit(r, "js_plugin.settings", pluginID, true, "", nil)
+	httpx.JSON(w, http.StatusOK, map[string]any{"ok": true, "resolved": resolved})
+}
+
+// UpdateJSPluginSiteSettings stores per-site setting overrides for one mounted
+// plugin. An empty values map clears that plugin's overrides. The plugin must
+// already be in the site's mounted plugin list.
+func (h Handler) UpdateJSPluginSiteSettings(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil || h.sites == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	siteID := strings.TrimSpace(chi.URLParam(r, "site_id"))
+	siteUUID, err := uuid.Parse(siteID)
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_site_id", "site_id must be a uuid")
+		return
+	}
+	var body struct {
+		Values map[string]any `json:"values"`
+	}
+	if err := httpx.DecodeJSONBody(r, &body); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	meta := map[string]any{"site_id": siteUUID.String()}
+	specs, _, _, err := h.jsPlugins.GetPluginSettings(r.Context(), pluginID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_failed", meta)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to read plugin settings")
+		return
+	}
+	normalized, err := jsplugin.ValidateSettingValues(specs, body.Values)
+	if err != nil {
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_invalid", meta)
+		h.writeError(w, r, http.StatusBadRequest, "js_plugin_settings_invalid", err.Error())
+		return
+	}
+	site, err := h.sites.Get(r.Context(), siteUUID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "site was not found")
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_failed", meta)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to read the site")
+		return
+	}
+	bound := false
+	for _, id := range sitepkg.SitePluginIDs(sitepkg.GatewayConfigFromSiteMeta(site.Meta)) {
+		if id == pluginID {
+			bound = true
+			break
+		}
+	}
+	if !bound {
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_not_bound", meta)
+		h.writeError(w, r, http.StatusConflict, "js_plugin_not_bound", "this site is not bound to this plugin")
+		return
+	}
+	if _, err := h.sites.PatchGatewayPluginSettings(r.Context(), siteUUID, pluginID, normalized); err != nil {
+		h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, false, "js_plugin_settings_failed", meta)
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_settings_failed", "failed to update site plugin settings")
+		return
+	}
+	h.recordJSPluginAudit(r, "js_plugin.site_settings", pluginID, true, "", meta)
+	httpx.JSON(w, http.StatusOK, map[string]any{"values": normalized})
+}
+
 // statusClientClosedRequest is the conventional status for a request the client
 // gave up on before the answer was ready.
 const statusClientClosedRequest = 499
@@ -863,4 +1021,58 @@ func abandonIfClientGone(w http.ResponseWriter, r *http.Request) bool {
 	}
 	w.WriteHeader(statusClientClosedRequest)
 	return true
+}
+
+func (h Handler) GetJSPluginSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	view, err := h.jsPlugins.GetPluginSchedule(r.Context(), pluginID)
+	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_schedule_failed", "failed to read plugin schedule")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, view)
+}
+
+func (h Handler) UpdateJSPluginSchedule(w http.ResponseWriter, r *http.Request) {
+	if h.jsPlugins == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "js_plugin_unavailable", "js plugin manager is not available")
+		return
+	}
+	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := httpx.DecodeJSONBody(r, &body); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+	view, err := h.jsPlugins.UpdatePluginSchedule(r.Context(), pluginID, body.Enabled)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			h.writeError(w, r, http.StatusNotFound, "not_found", "plugin not found")
+			return
+		}
+		var inputErr *jsplugin.AutomationInputError
+		if errors.As(err, &inputErr) {
+			h.recordJSPluginAudit(r, "js_plugin.schedule", pluginID, false, "js_plugin_schedule_invalid", map[string]any{"enabled": body.Enabled})
+			h.writeError(w, r, http.StatusBadRequest, "js_plugin_schedule_invalid", inputErr.Message)
+			return
+		}
+		h.recordJSPluginAudit(r, "js_plugin.schedule", pluginID, false, "js_plugin_schedule_failed", map[string]any{"enabled": body.Enabled})
+		h.writeError(w, r, http.StatusInternalServerError, "js_plugin_schedule_failed", "failed to update plugin schedule")
+		return
+	}
+	h.recordJSPluginAudit(r, "js_plugin.schedule", pluginID, true, "", map[string]any{"enabled": view.Enabled})
+	httpx.JSON(w, http.StatusOK, view)
 }

@@ -1,0 +1,28 @@
+{
+  "name": "probe quota and increment storage counter",
+  "hook": "probe",
+  "ctx": {
+    "siteType": "example.primitives/chat",
+    "baseURL": "https://api.example.com",
+    "credentialType": "api_key",
+    "now": 1791331200000,
+    "settings": { "clientVersion": "3.0.0" }
+  },
+  "storage": { "probeCount": 2 },
+  "responses": [
+    {
+      "match": { "method": "GET", "path": "/v1/quota" },
+      "status": 200,
+      "json": { "remaining": 15, "limit": 20 }
+    }
+  ],
+  "expect": {
+    "requests": [{ "method": "GET", "path": "/v1/quota" }],
+    "result": {
+      "kind": "balance",
+      "plan": "v3.0.0",
+      "entries": [{ "label": "balance", "unit": "usd", "remaining": 15, "limit": 20, "used": 5 }]
+    },
+    "storage": { "probeCount": 3 }
+  }
+}

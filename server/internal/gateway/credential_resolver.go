@@ -40,6 +40,10 @@ type resolvedUpstreamCredential struct {
 	// no credential resolver: an API-key plugin site fills cred.api_key from
 	// the decrypted upstream key.
 	HeaderVars map[string]string
+	// GatewayEndpoints is how many forwarding endpoints this credential declared.
+	// More than one lets the same request try the next endpoint after a
+	// connection failure, a timeout, or an upstream 5xx. Zero means one.
+	GatewayEndpoints int
 }
 
 type credentialResolveFailure struct {

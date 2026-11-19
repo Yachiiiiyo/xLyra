@@ -11,6 +11,7 @@ const KIND_LABEL_KEYS: Record<string, string> = {
   pricing_parse: 'pricingParse',
   automation: 'automation',
   site_provider: 'siteProvider',
+  hooks: 'hooks',
 }
 
 export function jsPluginKindLabel(t: TFunction, kind: string) {

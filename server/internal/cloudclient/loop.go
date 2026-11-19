@@ -67,6 +67,8 @@ func (c *Client) holdLease(ctx context.Context) bool {
 
 func (c *Client) drive(ctx context.Context) error {
 	var nextHeartbeat time.Time
+	var lastHeartbeatOK time.Time
+	syncNow := false
 	armed := false
 	backoff := time.Duration(0)
 	for {
@@ -108,6 +110,15 @@ func (c *Client) drive(ctx context.Context) error {
 				}
 				nextHeartbeat = c.now().Add(delay)
 			}
+			// 被唤醒后先同步推送登记：登记接口不依赖心跳，不必等 Hub 的心跳限速放行。
+			if syncNow {
+				syncNow = false
+				if syncErr := c.syncPush(ctx, row); errors.Is(syncErr, errRevoked) {
+					armed = false
+					wait = c.leaseRefresh
+					break
+				}
+			}
 			if !c.now().Before(nextHeartbeat) {
 				err := c.heartbeat(ctx, row)
 				if errors.Is(err, errRevoked) {
@@ -120,7 +131,13 @@ func (c *Client) drive(ctx context.Context) error {
 					nextHeartbeat = c.now().Add(backoff)
 				} else {
 					backoff = 0
+					lastHeartbeatOK = c.now()
 					nextHeartbeat = c.now().Add(c.heartbeatEvery)
+					if syncErr := c.syncPush(ctx, row); errors.Is(syncErr, errRevoked) {
+						armed = false
+						wait = c.leaseRefresh
+						break
+					}
 				}
 			}
 			if remain := nextHeartbeat.Sub(c.now()); remain < wait {
@@ -132,9 +149,45 @@ func (c *Client) drive(ctx context.Context) error {
 		if wait > c.leaseRefresh {
 			wait = c.leaseRefresh
 		}
-		if err := c.sleep(ctx, wait); err != nil {
+		if woken := c.sleepOrWake(ctx, wait); woken {
+			// Hub 对每个实例限制每分钟 1 次心跳；离上次成功心跳太近就等到限速放行，
+			// 否则会被 429 拒绝并进入退避，反而更晚。
+			earliest := c.now()
+			if !lastHeartbeatOK.IsZero() {
+				if gate := lastHeartbeatOK.Add(c.wakeHeartbeatGap); gate.After(earliest) {
+					earliest = gate
+				}
+			}
+			nextHeartbeat = earliest
+			syncNow = true
+			continue
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+	}
+}
+
+// sleepOrWake waits for the lease tick, a push-sync wake, or ctx cancellation.
+// A wake returns true so the loop sends a heartbeat immediately. Cancellation
+// returns false and leaves the error on ctx.
+func (c *Client) sleepOrWake(ctx context.Context, wait time.Duration) bool {
+	if c.wakePush == nil {
+		_ = c.sleep(ctx, wait)
+		return false
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	case <-c.wakePush:
+		return true
 	}
 }
 
@@ -239,6 +292,7 @@ func (c *Client) finishPairing(ctx context.Context, pollStatus, instanceID, inst
 		c.mu.Lock()
 		c.pending = nil
 		c.mu.Unlock()
+		c.markDevicesUnsynced(ctx)
 		c.recordAudit(ctx, "cloud_binding.bound", map[string]any{"instanceId": instanceID})
 		return
 	}
@@ -288,9 +342,7 @@ func (c *Client) heartbeat(ctx context.Context, row store.CloudBinding) error {
 	if status < 200 || status >= 300 {
 		cloudErr, _ := cloudError(status, raw).(*CloudError)
 		if cloudErr != nil && cloudErr.Code == "instance_revoked" {
-			_ = c.repo.ClearBinding(ctx, store.CloudStatusRevoked, revokedMessage)
-			c.clearDeveloperCache()
-			c.warn("xLyra Cloud binding revoked")
+			c.handleRevoked(ctx)
 			return errRevoked
 		}
 		if cloudErr != nil && cloudErr.Code == "clock_skew" {

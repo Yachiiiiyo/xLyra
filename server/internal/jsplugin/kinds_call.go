@@ -218,8 +218,24 @@ func (p *Plugin) CallRewritePayload(ctx context.Context, hook string, c RewriteP
 // CallModelMetadata runs a model_metadata plugin. Every id in the result must
 // be one of the input names.
 func (p *Plugin) CallModelMetadata(ctx context.Context, c ModelMetadataContext, in ModelMetadataInput) (ModelMetadataResult, error) {
+	return p.callModelMetadata(ctx, false, c, in)
+}
+
+// CallModelMetadataHook runs describeModels on any plugin that exports it,
+// including a kindless one. The result contract matches CallModelMetadata.
+func (p *Plugin) CallModelMetadataHook(ctx context.Context, c ModelMetadataContext, in ModelMetadataInput) (ModelMetadataResult, error) {
+	return p.callModelMetadata(ctx, true, c, in)
+}
+
+func (p *Plugin) callModelMetadata(ctx context.Context, byHook bool, c ModelMetadataContext, in ModelMetadataInput) (ModelMetadataResult, error) {
 	var out ModelMetadataResult
-	if err := p.callOneShot(ctx, KindModelMetadata, &out, encodeValue(c), encodeValue(in)); err != nil {
+	var err error
+	if byHook {
+		err = p.callOneShotHook(ctx, "describeModels", KindModelMetadata, &out, encodeValue(c), encodeValue(in))
+	} else {
+		err = p.callOneShot(ctx, KindModelMetadata, &out, encodeValue(c), encodeValue(in))
+	}
+	if err != nil {
 		return ModelMetadataResult{}, err
 	}
 	asked := make(map[string]bool, len(in.Models))
@@ -238,6 +254,15 @@ func (p *Plugin) CallModelMetadata(ctx context.Context, c ModelMetadataContext, 
 func (p *Plugin) CallPricingParse(ctx context.Context, c PricingParseContext, payload any) (PricingParseResult, error) {
 	var out PricingParseResult
 	if err := p.callOneShot(ctx, KindPricingParse, &out, encodeValue(c), payload); err != nil {
+		return PricingParseResult{}, err
+	}
+	return out, nil
+}
+
+// CallPricingParseHook runs parsePricing on any plugin that exports it.
+func (p *Plugin) CallPricingParseHook(ctx context.Context, c PricingParseContext, payload any) (PricingParseResult, error) {
+	var out PricingParseResult
+	if err := p.callOneShotHook(ctx, "parsePricing", KindPricingParse, &out, encodeValue(c), payload); err != nil {
 		return PricingParseResult{}, err
 	}
 	return out, nil
@@ -375,6 +400,7 @@ func (p *Plugin) runSteppedFixtureHook(ctx context.Context, fixture Fixture, hoo
 		BaseURL:        fixture.Ctx.BaseURL,
 		CredentialType: fixture.Ctx.CredentialType,
 		Now:            fixture.Ctx.Now,
+		Account:        fixture.Ctx.Account,
 	}
 	var steps []ProbeStep
 	var requests []ProbeRequest

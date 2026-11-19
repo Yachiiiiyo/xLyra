@@ -170,6 +170,36 @@ func TestPluginAccountResolveRefreshAndReauth(t *testing.T) {
 	}
 }
 
+func TestPluginAccountBaseURLUsesGateway(t *testing.T) {
+	registerPluginAccountSite(t, pluginAccountSiteOptions{regions: []jsplugin.SiteProviderRegion{
+		{ID: "intl", BaseURL: "http://127.0.0.1/base", Endpoints: &jsplugin.SiteProviderRegionEndpoints{
+			Control: "http://127.0.0.1/control",
+			Gateway: []string{"http://127.0.0.1/gw1/", "http://127.0.0.1/gw2"},
+		}},
+		{ID: "plain", BaseURL: "http://127.0.0.1/plain/"},
+	}})
+	item, ok := site.LookupPluginSiteType(pluginAccountSiteType)
+	if !ok {
+		t.Fatal("plugin site missing")
+	}
+	got, err := pluginAccountBaseURL(item, map[string]string{"region": "intl"}, 0)
+	if err != nil || got != "http://127.0.0.1/gw1" {
+		t.Fatalf("first gateway = %q err=%v", got, err)
+	}
+	got, err = pluginAccountBaseURL(item, map[string]string{"region": "intl"}, 1)
+	if err != nil || got != "http://127.0.0.1/gw2" {
+		t.Fatalf("second gateway = %q err=%v", got, err)
+	}
+	got, err = pluginAccountBaseURL(item, map[string]string{"region": "intl"}, 2)
+	if err != nil || got != "http://127.0.0.1/gw1" {
+		t.Fatalf("wrapped gateway = %q err=%v", got, err)
+	}
+	got, err = pluginAccountBaseURL(item, map[string]string{"region": "plain"}, 3)
+	if err != nil || got != "http://127.0.0.1/plain" {
+		t.Fatalf("fallback gateway = %q err=%v", got, err)
+	}
+}
+
 func TestCredentialResolverForKeepsBuiltinAccounts(t *testing.T) {
 	registerPluginAccountSite(t, pluginAccountSiteOptions{})
 	stub := &stubGatewayOAuth{
@@ -478,6 +508,138 @@ func TestPluginAccountPoolAggregatesForcedChatSSE(t *testing.T) {
 	}
 }
 
+func TestPluginAccountStreamEnvelopeErrorClassifiedAndPerAccountMetaPreferred(t *testing.T) {
+	site.ClearPluginSiteTypes()
+	t.Cleanup(site.ClearPluginSiteTypes)
+
+	var mu sync.Mutex
+	var seenTiers []string
+	var seenVendors []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seenTiers = append(seenTiers, r.Header.Get("X-Meta-Tier"))
+		seenVendors = append(seenVendors, r.Header.Get("X-Header-Vendor"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: {\"statusCodeValue\":401,\"body\":\"{\\\"code\\\":\\\"105\\\",\\\"message\\\":\\\"Login expired\\\"}\"}\n\n")
+	}))
+	t.Cleanup(server.Close)
+
+	source := `export const meta = { apiVersion: 1, id: "acme.example", kind: "site_provider" };
+export function startLogin() { return { result: { kind: "account_login", status: "pending" } }; }
+export function pollLogin() { return { result: { kind: "account_login", status: "pending" } }; }
+export function refreshTokens() { return { result: { kind: "account_refresh", status: "ok", credential: { access_token: "{{secret.access_token}}" } } }; }
+export function summarizeAccount() { return { result: { kind: "account_summary", status: "ok", entries: [] } }; }
+export function signRequest(ctx) {
+  const cfg = (ctx.modelMeta && ctx.modelMeta.config) || {};
+  return { headers: { "X-Meta-Tier": String(cfg.tier || "") } };
+}
+export function classify(ctx, input) {
+  if (input.code === "105" && input.status === 401) {
+    return { class: "credential_invalid", reason: "expired-105" };
+  }
+  return { class: "unknown" };
+}`
+	streamSection := &jsplugin.StreamSection{
+		Unwrap: &jsplugin.StreamUnwrap{
+			Path:       "body",
+			Format:     "json_string",
+			StatusPath: "statusCodeValue",
+			OKStatuses: []int{200},
+		},
+		Done: &jsplugin.StreamDone{
+			UnwrappedEquals: []string{"[DONE]"},
+			CloseOnDone:     true,
+		},
+	}
+	headers := jsplugin.HeaderMap(map[string]string{
+		"X-Header-Vendor": "{{model.meta.vendor}}",
+	})
+	manifest := jsplugin.Manifest{
+		ID: "acme.example", Name: "Acme", Version: "1.0.0", APIVersion: 1, HostAPI: 2, Kind: jsplugin.KindSiteProvider,
+		SiteProvider: jsplugin.SiteProviderSection{
+			SiteType: pluginAccountSiteType,
+			Display:  jsplugin.SiteProviderDisplay{Name: jsplugin.LocalizedText{"en": "Acme"}},
+			Hosts:    []string{"api.example.cn", "api.example.com"},
+			Credential: jsplugin.SiteProviderCredential{
+				Model:            "account_pool",
+				AccessTokenField: "access_token",
+				Fields: []jsplugin.SiteProviderField{
+					{Name: "access_token", Secret: true},
+					{Name: "refresh_token", Secret: true},
+					{Name: "expires_at", Type: "unix"},
+					{Name: "region"},
+					{Name: "domain"},
+				},
+				Identity: jsplugin.CredentialSources{Items: []string{"field.domain"}},
+			},
+			Regions: []jsplugin.SiteProviderRegion{
+				{ID: "cn", BaseURL: "https://api.example.cn"},
+				{ID: "intl", BaseURL: "https://api.example.com"},
+			},
+			DefaultRegion: "intl",
+			Login:         &jsplugin.SiteProviderLogin{Kind: "custom_poll", SecretPaths: map[string]string{"data.token": "access_token"}},
+			Refresh:       &jsplugin.SiteProviderRefresh{Kind: "none"},
+			Protocol: jsplugin.SiteProviderProtocol{
+				Kind: "openai_chat", Path: "/v1/chat/completions", OfficialBaseURL: "https://api.example.com",
+				DefaultEndpointTypes: []string{"openai"},
+				Stream:               streamSection,
+			},
+			Request: jsplugin.SiteProviderRequest{Headers: headers},
+		},
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(source)},
+	}
+	plugin, err := jsplugin.NewPlugin(manifest, source, nil, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin: %v", err)
+	}
+	restore := installChainPlugins(t, plugin)
+	t.Cleanup(restore)
+
+	registerPluginAccountSite(t, pluginAccountSiteOptions{
+		selection:   "quota_weighted",
+		refreshKind: "none",
+		regions: []jsplugin.SiteProviderRegion{
+			{ID: "cn", BaseURL: server.URL},
+			{ID: "intl", BaseURL: server.URL},
+		},
+	})
+	// Attach headers to the registered site type so applyPluginRequestHeaders renders {{model.meta.vendor}}.
+	if item, ok := site.LookupPluginSiteType(pluginAccountSiteType); ok {
+		item.Request.Headers = headers
+		_ = site.SetPluginSiteTypes([]site.PluginSiteType{item})
+	}
+
+	acctA := newPluginForwardAccount("tok-a", "cn", 10, pluginUsage(entryRemaining(10, nil)))
+	acctA.rawModel = store.JSON(`{"plugin_meta":{"vendor":"vendor-a","config":{"tier":"std"}}}`)
+	acctB := newPluginForwardAccount("tok-b", "intl", 90, pluginUsage(entryRemaining(90, nil)))
+	acctB.rawModel = store.JSON(`{"plugin_meta":{"vendor":"vendor-b","config":{"tier":"pro"}}}`)
+
+	handler, candidate, _ := pluginAccountForwardHandler(t, server.Client(), &fakePluginRefresher{}, acctA, acctB)
+	candidate.Model.PluginMeta = map[string]any{"vendor": "site-fallback", "config": map[string]any{"tier": "site"}}
+	candidate.Model.SupportedEndpointTypes = []string{"openai"}
+
+	request := gatewayRequest{
+		DownstreamPath: gatewayEndpointChatCompletions,
+		RequestedModel: "plugin-model",
+		Stream:         true,
+		Payload:        map[string]any{"model": "plugin-model", "stream": true, "messages": []any{map[string]any{"role": "user", "content": "hi"}}},
+	}
+	protocol := newOpenAIChatProtocolAdapter(request, candidate)
+	result := handler.forwardGatewayRequest(context.Background(), httptest.NewRecorder(), "req-meta-classify", 1, uuid.New(), uuid.New(), candidate, request, nil, protocol)
+	mu.Lock()
+	gotTiers := append([]string(nil), seenTiers...)
+	gotVendors := append([]string(nil), seenVendors...)
+	mu.Unlock()
+	if !sameStrings(gotTiers, []string{"pro", "std"}) || !sameStrings(gotVendors, []string{"vendor-b", "vendor-a"}) {
+		t.Fatalf("expected [pro, std] / [vendor-b, vendor-a], got tiers=%v vendors=%v", gotTiers, gotVendors)
+	}
+	if result.errorType != "upstream_credential_invalid" || result.upstreamStatusCode != 401 || result.upstreamErrorCode != "105" {
+		t.Fatalf("errorType=%q upstreamStatus=%d upstreamCode=%q msg=%q", result.errorType, result.upstreamStatusCode, result.upstreamErrorCode, result.errorMessage)
+	}
+}
+
 type pluginAccountSiteOptions struct {
 	selection   string
 	refreshKind string
@@ -658,6 +820,7 @@ type pluginForwardAccount struct {
 	expires        int64
 	remain         int64
 	usage          store.JSON
+	rawModel       store.JSON
 	secret         string
 	credentialType string
 }
@@ -729,6 +892,7 @@ func pluginAccountForwardHandler(t *testing.T, client *http.Client, refresher Pl
 			UpstreamModelName: "plugin-model",
 			Available:         true,
 			Enabled:           true,
+			Raw:               account.rawModel,
 			UpdatedAt:         time.Unix(20, 0),
 		})
 	}

@@ -150,7 +150,7 @@ func TestUsageListsSupportedKinds(t *testing.T) {
 	for _, info := range jsplugin.SupportedKinds() {
 		names = append(names, info.Name)
 	}
-	want := "[--kind " + strings.Join(names, "|") + "]"
+	want := "[--template " + strings.Join(names, "|") + "]"
 	if !strings.Contains(out, want) || !strings.Contains(want, "site_provider") {
 		t.Fatalf("usage kind list missing %q:\n%s", want, out)
 	}

@@ -108,6 +108,13 @@ func TestPluginAccountLoginRefreshImportDelete(t *testing.T) {
 		t.Fatalf("complete poll = %#v", completed)
 	}
 	account := pluginAccountFromAny(t, completed.Account)
+	repeated, err := provider.PollLogin(ctx, siteID, started.Session, nil)
+	if err != nil {
+		t.Fatalf("repeated poll after complete failed: %v", err)
+	}
+	if repeated.Status != "complete" || pluginAccountFromAny(t, repeated.Account).CredentialID != account.CredentialID {
+		t.Fatalf("repeated poll = %#v, want complete with %s", repeated, account.CredentialID)
+	}
 	if account.Identity != "user-1" || account.Region != "intl" || account.MaskedToken != "user-1" || account.Remark != "pro" || account.Status != "ok" || account.SyncStatus != "synced" || !account.Enabled {
 		t.Fatalf("logged-in account = %#v", account)
 	}
@@ -229,14 +236,15 @@ func TestPluginAccountLoginRefreshImportDelete(t *testing.T) {
 }
 
 type fakePluginAccountRuntime struct {
-	mu           sync.Mutex
-	db           *gorm.DB
-	polls        int
-	rotations    int
-	failNext     bool
-	label        string
-	bases        []string
-	leaseSamples []int64
+	mu             sync.Mutex
+	db             *gorm.DB
+	polls          int
+	rotations      int
+	failNext       bool
+	label          string
+	bases          []string
+	leaseSamples   []int64
+	summarizeDelay time.Duration
 }
 
 func (f *fakePluginAccountRuntime) StartLogin(context.Context, map[string]string) (PluginLoginStart, error) {
@@ -256,6 +264,9 @@ func (f *fakePluginAccountRuntime) PollLogin(context.Context, string) (PluginLog
 	f.polls++
 	if f.polls == 1 {
 		return PluginLoginPoll{Status: "pending", Interval: 2}, nil
+	}
+	if f.polls > 2 {
+		return PluginLoginPoll{}, jsplugin.ErrLoginSessionNotFound
 	}
 	return PluginLoginPoll{
 		Status:   "complete",
@@ -295,7 +306,11 @@ func (f *fakePluginAccountRuntime) Summarize(_ context.Context, baseURL string, 
 	f.mu.Lock()
 	f.bases = append(f.bases, baseURL)
 	label := f.label
+	delay := f.summarizeDelay
 	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	remaining := 12.4
 	limit := 20.0
 	return PluginAccountSummary{
@@ -309,6 +324,157 @@ func (f *fakePluginAccountRuntime) Summarize(_ context.Context, baseURL string, 
 			Unit:      "credits",
 		}},
 	}, nil
+}
+
+func TestPluginAccountPollLoginConcurrentAndIdempotent(t *testing.T) {
+	st := openPluginAccountStore(t)
+	ctx := context.Background()
+	spec := pluginAccountTestSpec()
+	ClearPluginSiteTypes()
+	t.Cleanup(ClearPluginSiteTypes)
+	if err := SetPluginSiteTypes([]PluginSiteType{{
+		Descriptor: SiteTypeDescriptor{
+			SiteType:           pluginAccountTestType,
+			DisplayName:        "P38",
+			CredentialKey:      pluginAccountTestType,
+			ShowInCreateDialog: true,
+		},
+		PluginID: "acme.example",
+		Enabled:  true,
+		Hosts:    []string{"api.example.cn", "api.example.com"},
+		Pool:     spec,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := &fakePluginAccountRuntime{
+		db:             st.DB(),
+		polls:          1, // next PollLogin immediately returns complete and drops session
+		summarizeDelay: 200 * time.Millisecond,
+	}
+	svc := NewService(st, siteTestMasterKey)
+	if err := svc.SetPluginAccountRuntimes(map[string]PluginAccountRuntime{
+		pluginAccountTestType: runtime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := svc.AccountProviderFor(pluginAccountTestType)
+	if !ok || provider == nil {
+		t.Fatal("account provider was not installed")
+	}
+
+	created, err := store.NewSiteRepository(st.DB()).Create(ctx, store.CreateSiteParams{
+		Name:            "P38-Conc",
+		Slug:            "p38-conc-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12],
+		SiteType:        pluginAccountTestType,
+		BaseURL:         "https://api.example.cn",
+		Status:          "active",
+		Enabled:         true,
+		RoutingPriority: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started, err := provider.StartLogin(ctx, created.ID, AccountLoginParams{Region: "intl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type pollResult struct {
+		poll AccountLoginPoll
+		err  error
+	}
+	results := make([]pollResult, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		p, err := provider.PollLogin(ctx, created.ID, started.Session, nil)
+		results[0] = pollResult{poll: p, err: err}
+	}()
+	time.Sleep(30 * time.Millisecond)
+	go func() {
+		defer wg.Done()
+		p, err := provider.PollLogin(ctx, created.ID, started.Session, nil)
+		results[1] = pollResult{poll: p, err: err}
+	}()
+	wg.Wait()
+
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("concurrent poll %d error = %v", i, r.err)
+		}
+		if r.poll.Status != "complete" {
+			t.Fatalf("concurrent poll %d status = %q", i, r.poll.Status)
+		}
+	}
+	acc0 := pluginAccountFromAny(t, results[0].poll.Account)
+	acc1 := pluginAccountFromAny(t, results[1].poll.Account)
+	if acc0.CredentialID == uuid.Nil || acc0.CredentialID != acc1.CredentialID {
+		t.Fatalf("accounts mismatch: %s vs %s", acc0.CredentialID, acc1.CredentialID)
+	}
+
+	// Third poll after both finished should also hit the remembered result.
+	third, err := provider.PollLogin(ctx, created.ID, started.Session, nil)
+	if err != nil || third.Status != "complete" || pluginAccountFromAny(t, third.Account).CredentialID != acc0.CredentialID {
+		t.Fatalf("third poll = %#v, err = %v", third, err)
+	}
+}
+
+func TestPluginLoginResultsGetAndLockSession(t *testing.T) {
+	t.Parallel()
+	results := newPluginLoginResults()
+	if err := results.rememberRegion("sess-1", "intl"); err != nil {
+		t.Fatal(err)
+	}
+	want := PluginAccount{CredentialID: uuid.New(), Identity: "u-1", Region: "intl"}
+	results.remember("sess-1", want)
+
+	if got := results.region("sess-1"); got != "" {
+		t.Fatalf("pending region after remember = %q, want empty", got)
+	}
+	for i := 0; i < 3; i++ {
+		got, ok := results.get("sess-1")
+		if !ok || got.CredentialID != want.CredentialID || got.Identity != want.Identity {
+			t.Fatalf("get #%d = %#v %v, want %#v", i, got, ok, want)
+		}
+	}
+
+	// Simulate two concurrent callers on the same session where the first caller populates remember.
+	results2 := newPluginLoginResults()
+	started := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var secondGot PluginAccount
+	var secondOK bool
+	go func() {
+		defer wg.Done()
+		unlock, err := results2.lockSession(context.Background(), "sess-race")
+		if err != nil {
+			t.Errorf("first lockSession: %v", err)
+			return
+		}
+		close(started)
+		time.Sleep(80 * time.Millisecond)
+		results2.remember("sess-race", want)
+		unlock()
+	}()
+	<-started
+	go func() {
+		defer wg.Done()
+		unlock, err := results2.lockSession(context.Background(), "sess-race")
+		if err != nil {
+			t.Errorf("second lockSession: %v", err)
+			return
+		}
+		defer unlock()
+		secondGot, secondOK = results2.get("sess-race")
+	}()
+	wg.Wait()
+	if !secondOK || secondGot.CredentialID != want.CredentialID {
+		t.Fatalf("second caller after lockSession got = %#v %v, want %#v", secondGot, secondOK, want)
+	}
 }
 
 func (f *fakePluginAccountRuntime) ListModels(context.Context, map[string]string) ([]adapter.Model, error) {

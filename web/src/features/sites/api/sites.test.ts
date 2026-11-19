@@ -12,6 +12,7 @@ import {
   updateAccount,
   updateAccountModel,
   updateSite,
+  updateSitePluginOrder,
 } from './sites'
 
 afterEach(() => {
@@ -62,6 +63,18 @@ function sentRequest(fetchMock: ReturnType<typeof vi.fn>) {
     body: typeof request.body === 'string' ? JSON.parse(request.body) as unknown : undefined,
   }
 }
+
+describe('updateSitePluginOrder', () => {
+  it('puts plugin ids in order', async () => {
+    const fetchMock = stubFetch({ gateway_config: { plugin_ids: ['b', 'a'] } })
+    await updateSitePluginOrder('site-1', ['b', 'a'])
+    expect(sentRequest(fetchMock)).toEqual({
+      url: '/api/v1/sites/site-1/plugin-order',
+      method: 'PUT',
+      body: { plugin_ids: ['b', 'a'] },
+    })
+  })
+})
 
 describe('account api', () => {
   it('lists accounts', async () => {

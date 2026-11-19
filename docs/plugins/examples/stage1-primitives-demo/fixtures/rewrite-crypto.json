@@ -1,0 +1,22 @@
+{
+  "name": "rewrite payload with crypto and settings",
+  "hook": "rewritePayload",
+  "ctx": {
+    "siteType": "example.primitives/chat",
+    "model": "gpt-4o",
+    "stream": true,
+    "protocol": "openai_chat"
+  },
+  "input": {
+    "model": "gpt-4o",
+    "stream": true,
+    "messages": [{ "role": "user", "content": "hi" }]
+  },
+  "expect": {
+    "result": {
+      "model": "gpt-4o",
+      "stream": true,
+      "client_tag": "2.4.0:518c4248f327"
+    }
+  }
+}

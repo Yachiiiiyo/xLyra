@@ -43,6 +43,17 @@ func (s *Service) RequireAdminSession(next http.Handler) http.Handler {
 			}
 		}
 
+		// 设备令牌与管理员同权放行, 但不写 admin_api.access 逐请求审计;
+		// 不能自我扩权的接口由路由上的 DenyDeviceActor 拦下。
+		if deviceToken := DeviceTokenFromRequest(r); deviceToken != "" {
+			device, err := s.ValidateDeviceToken(r.Context(), deviceToken, r.UserAgent(), r.RemoteAddr)
+			if err == nil {
+				actor := AdminActor{Type: DeviceActorType, AdminID: device.AdminID, DeviceID: device.ID}
+				next.ServeHTTP(w, r.WithContext(WithAdminActor(r.Context(), actor)))
+				return
+			}
+		}
+
 		httpx.Error(w, r, http.StatusUnauthorized, "unauthorized", "admin session is required")
 	})
 }

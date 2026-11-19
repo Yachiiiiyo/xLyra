@@ -25,6 +25,9 @@ func (h Handler) AnalyticsUsage(w http.ResponseWriter, r *http.Request) {
 
 	payload, err := h.analytics.Usage(r.Context(), params)
 	if err != nil {
+		if abandonIfClientGone(w, r) {
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, "analytics_usage_failed", "failed to load usage analytics")
 		return
 	}

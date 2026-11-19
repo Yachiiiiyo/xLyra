@@ -9,6 +9,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"xlyra/server/internal/httpclient"
 )
 
 const (
@@ -111,6 +113,7 @@ type SiteProviderProtocol struct {
 	OfficialBaseURL      string          `json:"officialBaseURL"`
 	DefaultEndpointTypes []string        `json:"defaultEndpointTypes"`
 	RequestParams        json.RawMessage `json:"requestParams,omitempty"`
+	Stream               *StreamSection  `json:"stream,omitempty"`
 }
 
 // SiteProviderModels is the model-list request.
@@ -176,7 +179,7 @@ func validateSiteProvider(manifest Manifest, files map[string][]byte) error {
 			return err
 		}
 	}
-	if err := ValidateSiteProviderRequest(section.Request, siteProviderHeaderFields(section), regionTemplateKeys(section.Regions)); err != nil {
+	if err := ValidateSiteProviderRequest(section.Request, siteProviderHeaderFields(section), regionTemplateKeys(section.Regions), manifestSettingKeys(manifest.Settings)); err != nil {
 		return err
 	}
 	if err := validateRequestBaseURLFrom(section); err != nil {
@@ -231,10 +234,16 @@ func validateSiteProviderHosts(hosts []string) error {
 }
 
 func validSiteProviderHost(host string) error {
+	if rest, ok := strings.CutPrefix(host, "*."); ok {
+		if !strings.Contains(rest, ".") {
+			return fmt.Errorf("host %q wildcard must cover more than one label", host)
+		}
+		host = rest
+	}
 	if net.ParseIP(host) != nil {
 		return fmt.Errorf("host %q must not be an IP address", host)
 	}
-	if host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, ":/?#@\\ ") {
+	if host == "" || strings.Contains(host, "*") || strings.Contains(host, "://") || strings.ContainsAny(host, ":/?#@\\ ") {
 		return fmt.Errorf("host %q must be a DNS hostname without a scheme, port, or path", host)
 	}
 	if len(host) > 253 || !strings.Contains(host, ".") {
@@ -273,6 +282,9 @@ func validateSiteProviderProtocol(section SiteProviderProtocol, hosts []string) 
 			return fmt.Errorf("siteProvider.protocol.defaultEndpointTypes: %q is not supported", value)
 		}
 	}
+	if err := validateStreamSection(section.Stream, "siteProvider.protocol.stream"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -296,7 +308,7 @@ func validateHTTPSURL(raw string, hosts []string, what string) error {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	for _, item := range hosts {
-		if item == host {
+		if httpclient.MatchHostPattern(item, host) {
 			return nil
 		}
 	}

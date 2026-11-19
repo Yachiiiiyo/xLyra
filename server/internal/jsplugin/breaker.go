@@ -17,6 +17,7 @@ const (
 type breakerKey struct {
 	pluginID string
 	version  string
+	hook     string
 }
 
 // Breaker tracks failures per plugin version for automatic disable.
@@ -64,25 +65,31 @@ func (b *Breaker) Metrics(pluginID, version string) PluginMetricsWindow {
 	if b == nil {
 		return PluginMetricsWindow{}
 	}
-	key := breakerKey{pluginID: pluginID, version: version}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	state := b.metrics[key]
-	if state == nil {
-		return PluginMetricsWindow{WindowEnds: time.Now().UTC().Add(pluginMetricsWindowDuration)}
+	var calls, errors int
+	var start time.Time
+	for key, state := range b.metrics {
+		if key.pluginID != pluginID || key.version != version || state == nil {
+			continue
+		}
+		if time.Since(state.windowStart) > pluginMetricsWindowDuration {
+			continue
+		}
+		calls += state.calls
+		errors += state.errors
+		if start.IsZero() || state.windowStart.Before(start) {
+			start = state.windowStart
+		}
 	}
-	if time.Since(state.windowStart) > pluginMetricsWindowDuration {
+	if calls == 0 {
 		return PluginMetricsWindow{WindowEnds: time.Now().UTC().Add(pluginMetricsWindowDuration)}
-	}
-	rate := 0.0
-	if state.calls > 0 {
-		rate = float64(state.errors) / float64(state.calls)
 	}
 	return PluginMetricsWindow{
-		Calls:      state.calls,
-		Errors:     state.errors,
-		ErrorRate:  rate,
-		WindowEnds: state.windowStart.Add(pluginMetricsWindowDuration).UTC(),
+		Calls:      calls,
+		Errors:     errors,
+		ErrorRate:  float64(errors) / float64(calls),
+		WindowEnds: start.Add(pluginMetricsWindowDuration).UTC(),
 	}
 }
 
@@ -101,14 +108,14 @@ func (b *Breaker) recordMetricsLocked(key breakerKey, failed bool, now time.Time
 	}
 }
 
-func (b *Breaker) RecordProbeResult(plugin *Plugin, success bool) {
-	if b == nil || plugin == nil || !coldPathKind(plugin.Manifest.Kind) {
+func (b *Breaker) RecordProbeResult(plugin *Plugin, hook string, success bool) {
+	if b == nil || plugin == nil || isHotHookName(hook) {
 		return
 	}
 	if stringsHasPrefixBuiltin(plugin.Manifest.ID) {
 		return
 	}
-	key := breakerKey{pluginID: plugin.Manifest.ID, version: plugin.Manifest.Version}
+	key := breakerKey{pluginID: plugin.Manifest.ID, version: plugin.Manifest.Version, hook: hook}
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -118,9 +125,10 @@ func (b *Breaker) RecordProbeResult(plugin *Plugin, success bool) {
 		return
 	}
 	b.probe[key]++
-	// site_provider keeps the failure count and metrics. A bad hook must not
-	// disable the version, because that would take the site type with it.
-	if plugin.Manifest.Kind == KindSiteProvider {
+	// A plugin that declares a site type keeps the failure count and metrics.
+	// A bad hook must not disable the version, because that would take the
+	// site type with it.
+	if plugin.Manifest.DeclaresSiteType() {
 		return
 	}
 	if b.probe[key] >= probeFailureTripCount {
@@ -129,14 +137,14 @@ func (b *Breaker) RecordProbeResult(plugin *Plugin, success bool) {
 	}
 }
 
-func (b *Breaker) RecordProtocolCall(plugin *Plugin, failed bool, interrupted bool) {
-	if b == nil || plugin == nil || !hotPathKind(plugin.Manifest.Kind) {
+func (b *Breaker) RecordProtocolCall(plugin *Plugin, hook string, failed bool, interrupted bool) {
+	if b == nil || plugin == nil || !isHotHookName(hook) {
 		return
 	}
 	if stringsHasPrefixBuiltin(plugin.Manifest.ID) {
 		return
 	}
-	key := breakerKey{pluginID: plugin.Manifest.ID, version: plugin.Manifest.Version}
+	key := breakerKey{pluginID: plugin.Manifest.ID, version: plugin.Manifest.Version, hook: hook}
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -161,6 +169,9 @@ func (b *Breaker) RecordProtocolCall(plugin *Plugin, failed bool, interrupted bo
 		}
 	}
 	state.interrupts = kept
+	if plugin.Manifest.DeclaresSiteType() {
+		return
+	}
 	if len(state.interrupts) >= protocolInterruptTrip {
 		b.protocol[key] = nil
 		b.trip(key, "protocol_interrupts")
@@ -183,18 +194,4 @@ func (b *Breaker) trip(key breakerKey, reason string) {
 
 func stringsHasPrefixBuiltin(id string) bool {
 	return len(id) >= 6 && id[:6] == "xlyra."
-}
-
-// coldPathKind reports whether a kind runs in the background, where a plugin
-// is stopped only after many failures in a row.
-func coldPathKind(kind string) bool {
-	spec, ok := lookupKind(kind)
-	return ok && !spec.HotPath
-}
-
-// hotPathKind reports whether a kind runs while a client request waits, where
-// the error rate in a short window decides.
-func hotPathKind(kind string) bool {
-	spec, ok := lookupKind(kind)
-	return ok && spec.HotPath
 }

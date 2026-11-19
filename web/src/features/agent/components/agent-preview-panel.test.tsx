@@ -78,6 +78,22 @@ describe('AgentPreviewPanel 桌面版', () => {
       await mounted.unmount()
     }
   })
+
+  it('将玻璃折射背景独立成无子元素层，避免滤镜盖住预览内容与 iframe', async () => {
+    const mounted = await mountPanel({ sessionId: 'session-1', path: 'report.html', changes: [] })
+    try {
+      const aside = findAll(mounted.container, (node) => node.getAttribute('role') === 'complementary')[0]!
+      expect(aside.tagName).toBe('ASIDE')
+      expect(aside.childNodes).toHaveLength(3)
+      const [glassLayer, contentLayer, separator] = aside.childNodes
+      expect(glassLayer?.getAttribute('aria-hidden')).toBe('true')
+      expect(glassLayer?.childNodes).toHaveLength(0)
+      expect(findAll(contentLayer!, (node) => node.getAttribute('data-file-preview') === 'report.html')).toHaveLength(1)
+      expect(separator?.getAttribute('role')).toBe('separator')
+    } finally {
+      await mounted.unmount()
+    }
+  })
 })
 
 describe('AgentPreviewPanel 后端变更项', () => {

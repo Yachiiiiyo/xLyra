@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -148,6 +149,15 @@ func TestAccountPoolManifestRejects(t *testing.T) {
 		{name: "region host", base: "pool", mutate: func(m *Manifest) {
 			m.SiteProvider.Regions[0].BaseURL = "https://other.example.com"
 		}, want: "not in hosts"},
+		{name: "control host", base: "pool", mutate: func(m *Manifest) {
+			m.SiteProvider.Regions[0].Endpoints = &SiteProviderRegionEndpoints{Control: "https://other.example.com"}
+		}, want: "endpoints.control"},
+		{name: "gateway host", base: "pool", mutate: func(m *Manifest) {
+			m.SiteProvider.Regions[0].Endpoints = &SiteProviderRegionEndpoints{Gateway: []string{"https://gw.example.net"}}
+		}, want: "endpoints.gateway"},
+		{name: "endpoint http", base: "pool", mutate: func(m *Manifest) {
+			m.SiteProvider.Regions[0].Endpoints = &SiteProviderRegionEndpoints{Control: "http://api.example.cn"}
+		}, want: "https"},
 		{name: "realm case", base: "pool", mutate: func(m *Manifest) {
 			m.SiteProvider.Regions[0].Realms = []string{"CN"}
 		}, want: "must be lowercase"},
@@ -508,6 +518,46 @@ func grokSection() SiteProviderSection {
 			BaseURLFrom:        "region",
 		},
 		UI: &SiteProviderUI{Operations: []string{"add", "reauth", "refresh", "delete", "toggle", "models"}},
+	}
+}
+
+func TestRegionEndpointsAcceptStringAndArray(t *testing.T) {
+	section := poolSection()
+	section.Hosts = []string{"api.example.cn", "*.example.cn"}
+	section.Regions[0].Endpoints = &SiteProviderRegionEndpoints{
+		Control: "https://openapi.example.cn/",
+		Gateway: []string{"https://gw1.example.cn", ""},
+	}
+	raw, err := json.Marshal(section)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.Replace(raw, []byte(`"gateway":["https://gw1.example.cn",""]`), []byte(`"gateway":"https://gw1.example.cn"`), 1)
+	var decoded SiteProviderSection
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Regions[0].Endpoints == nil || decoded.Regions[0].Endpoints.Control != "https://openapi.example.cn/" || len(decoded.Regions[0].Endpoints.Gateway) != 1 {
+		t.Fatalf("string gateway = %+v", decoded.Regions[0].Endpoints)
+	}
+	decoded.Regions[0].Endpoints.Gateway = []string{"https://gw1.example.cn", "https://gw2.example.cn"}
+	if _, err := validateAccountRegions(decoded.Regions, section.Hosts); err != nil {
+		t.Fatal(err)
+	}
+	if got := RegionControlURL(decoded.Regions[0]); got != "https://openapi.example.cn" {
+		t.Fatalf("control = %q", got)
+	}
+	urls := RegionGatewayURLs(decoded.Regions[0])
+	if len(urls) != 2 || urls[0] != "https://gw1.example.cn" || urls[1] != "https://gw2.example.cn" {
+		t.Fatalf("gateways = %#v", urls)
+	}
+	decoded.Regions[0].Endpoints = nil
+	if got := RegionControlURL(decoded.Regions[0]); got != "https://api.example.cn" {
+		t.Fatalf("fallback control = %q", got)
+	}
+	urls = RegionGatewayURLs(decoded.Regions[0])
+	if len(urls) != 1 || urls[0] != "https://api.example.cn" {
+		t.Fatalf("fallback gateway = %#v", urls)
 	}
 }
 

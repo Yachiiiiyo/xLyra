@@ -20,7 +20,11 @@
       "path": "/v1/chat/completions",
       "officialBaseURL": "https://api.example.com",
       "defaultEndpointTypes": ["openai"],
-      "requestParams": { "unsupported": ["logit_bias"] }
+      "requestParams": { "unsupported": ["logit_bias"] },
+      "stream": {
+        "unwrap": { "path": "body", "format": "json" },
+        "done": { "dataEquals": ["[DONE]"], "closeOnDone": true }
+      }
     },
     "models": { "path": "/api/models", "auth": "bearer" }
   }

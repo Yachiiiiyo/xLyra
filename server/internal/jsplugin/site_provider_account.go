@@ -1,12 +1,19 @@
 package jsplugin
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"maps"
 	"net/http"
@@ -24,6 +31,7 @@ import (
 	"weak"
 
 	"xlyra/server/internal/accountauth"
+	"xlyra/server/internal/httpclient"
 )
 
 const (
@@ -177,10 +185,12 @@ type loginSession struct {
 // accountCall is one stepped exchange. The bag is not safe for concurrent use;
 // the caller holds the session lock, or the call is local to one goroutine.
 type accountCall struct {
-	bag   *SecretBag
-	jar   http.CookieJar
-	steps []ProbeStep
-	base  string
+	bag      *SecretBag
+	jar      http.CookieJar
+	steps    []ProbeStep
+	base     string
+	regionID string
+	fields   map[string]string
 }
 
 // NewAccountProviderRuntime builds a runtime from an account-pool plugin.
@@ -191,7 +201,7 @@ func NewAccountProviderRuntime(plugin *Plugin, client *http.Client) (*AccountPro
 	if plugin == nil {
 		return nil, errors.New("plugin is required")
 	}
-	if plugin.Manifest.Kind != KindSiteProvider {
+	if !plugin.Manifest.DeclaresSiteType() {
 		return nil, fmt.Errorf("plugin %s is not a site_provider", plugin.Manifest.ID)
 	}
 	spec, err := NewAccountPoolSpec(plugin.Manifest.SiteProvider)
@@ -217,7 +227,6 @@ func NewAccountProviderRuntime(plugin *Plugin, client *http.Client) (*AccountPro
 // StartLogin begins a device-code or custom_poll login.
 // params carries login UI values such as region. Tokens are not accepted here.
 func (r *AccountProviderRuntime) StartLogin(ctx context.Context, params map[string]string) (session LoginSession, err error) {
-	defer func() { r.record(err) }()
 	if err = ctx.Err(); err != nil {
 		return LoginSession{}, err
 	}
@@ -238,7 +247,6 @@ func (r *AccountProviderRuntime) StartLogin(ctx context.Context, params map[stri
 // PollLogin continues the session started by StartLogin.
 // A session id from another process returns ErrLoginSessionNotFound.
 func (r *AccountProviderRuntime) PollLogin(ctx context.Context, session LoginSession) (poll LoginPoll, err error) {
-	defer func() { r.record(err) }()
 	if err = ctx.Err(); err != nil {
 		return LoginPoll{}, err
 	}
@@ -273,7 +281,6 @@ func (r *AccountProviderRuntime) PollLogin(ctx context.Context, session LoginSes
 // region field, then realm, then domain) and otherwise the default region.
 // leadSeconds is not applied here.
 func (r *AccountProviderRuntime) Refresh(ctx context.Context, credentialFields map[string]string) (fields map[string]string, err error) {
-	defer func() { r.record(err) }()
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -292,19 +299,20 @@ func (r *AccountProviderRuntime) Refresh(ctx context.Context, credentialFields m
 // Summarize calls summarizeAccount. snapshot.Fields may contain secrets;
 // the hook receives only non-secret fields and redacted responses.
 func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot AccountSnapshot) (summary AccountSummary, err error) {
-	defer func() { r.record(err) }()
+	defer func() { r.record("summarizeAccount", err) }()
 	if err = ctx.Err(); err != nil {
 		return AccountSummary{}, err
 	}
 	if !r.plugin.HasHook(hookSummarizeAccount) {
 		return AccountSummary{}, fmt.Errorf("%s hook is missing", hookSummarizeAccount)
 	}
-	base, err := r.resolveBase(snapshot.BaseURL, nil)
+	regionID := r.regionIDFor(snapshot.Fields, nil)
+	base, err := r.resolveBase(snapshot.BaseURL, map[string]string{"region": regionID})
 	if err != nil {
 		return AccountSummary{}, err
 	}
 	bag := r.seedBag(snapshot.Fields)
-	call := &accountCall{bag: bag, base: base}
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: snapshot.Fields}
 	ctxValue := r.credentialContext(base, r.publicFields(snapshot.Fields, bag))
 	result, err := r.drive(ctx, call, hookSummarizeAccount, KindAccountSummary, ctxValue, nil)
 	if err != nil {
@@ -317,6 +325,85 @@ func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot Account
 	return scrubSummary(bag, *parsed), nil
 }
 
+// RunSchedule runs onSchedule for one account using the account's SecretBag and
+// {{secret.<field>}} placeholder substitution. Secret values never enter JS.
+func (r *AccountProviderRuntime) RunSchedule(ctx context.Context, snapshot AccountSnapshot) (result map[string]any, err error) {
+	defer func() { r.record(HookOnSchedule, err) }()
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !r.plugin.HasHook(HookOnSchedule) {
+		return nil, fmt.Errorf("%s hook is missing", HookOnSchedule)
+	}
+	if !r.plugin.Manifest.AllowsSchedule() {
+		return nil, permissionDeniedError("schedule permission is required")
+	}
+	regionID := r.regionIDFor(snapshot.Fields, nil)
+	base, err := r.resolveBase(snapshot.BaseURL, map[string]string{"region": regionID})
+	if err != nil {
+		return nil, err
+	}
+	bag := r.seedBag(snapshot.Fields)
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: snapshot.Fields}
+	accountFields := r.accountContextFields(snapshot.Fields, bag)
+	ctxValue := r.credentialContext(base, accountFields)
+	ctxValue["account"] = accountFields
+	allowed := r.allowedSecrets()
+	client := r.hookedClient(nil, base)
+	for step := 0; step < MaxProbeSteps; step++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if r.observe != nil {
+			r.observe(HookOnSchedule, []any{ctxValue, stepsAsValue(call.steps)})
+		}
+		decision, callErr := r.plugin.CallSchedule(WithCallSecretBag(ctx, bag), ctxValue, call.steps)
+		logs, dropped := decision.Logs, decision.DroppedLogs
+		if ce, ok := callErr.(*CallError); ok && len(logs) == 0 {
+			logs, dropped = ce.Logs, ce.DroppedLogs
+		}
+		r.emit(ctx, HookOnSchedule, step, bag, logs, dropped, callErr)
+		if callErr != nil {
+			return nil, bag.ScrubError(callErr)
+		}
+		if decision.Error != "" {
+			return nil, fmt.Errorf("plugin %s: %s", r.plugin.Manifest.ID, bag.Scrub(decision.Error))
+		}
+		if decision.Request == nil {
+			return scrubScheduleResult(bag, decision.Result), nil
+		}
+		if step == MaxProbeSteps-1 {
+			return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
+		}
+		template := *decision.Request
+		response, reqErr := r.doAccountHTTP(ctx, client, call, allowed, nil, template, HookOnSchedule)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		call.steps = append(call.steps, ProbeStep{
+			Request:  scrubProbeRequest(bag, template),
+			Response: response,
+		})
+	}
+	return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
+}
+
+func scrubScheduleResult(bag *SecretBag, in map[string]any) map[string]any {
+	if len(in) == 0 || bag == nil {
+		return in
+	}
+	encoded, err := json.Marshal(in)
+	if err != nil {
+		return map[string]any{}
+	}
+	scrubbed := bag.Scrub(string(encoded))
+	var out map[string]any
+	if json.Unmarshal([]byte(scrubbed), &out) != nil {
+		return map[string]any{}
+	}
+	return out
+}
+
 // ListModels calls listModels for one account.
 // fields may contain secrets. The hook receives only non-secret fields, plus
 // the resolved region id when the bag does not already store region. The base
@@ -324,19 +411,20 @@ func (r *AccountProviderRuntime) Summarize(ctx context.Context, snapshot Account
 // substitute {{secret.<field>}} from the bag. A secret never enters JS. An
 // HTTP 401 is reauthorization and is not shown to the hook.
 func (r *AccountProviderRuntime) ListModels(ctx context.Context, fields map[string]string) (entries []ModelListEntry, err error) {
-	defer func() { r.record(err) }()
+	defer func() { r.record("listModels", err) }()
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
 	if !r.plugin.HasHook("listModels") {
 		return nil, fmt.Errorf("%s hook is missing", "listModels")
 	}
+	regionID := r.regionIDFor(fields, nil)
 	base, err := r.accountBase(fields)
 	if err != nil {
 		return nil, err
 	}
 	bag := r.seedBag(fields)
-	call := &accountCall{bag: bag, base: base}
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: fields}
 	probe := ProbeContext{
 		SiteType:       r.plugin.Manifest.SiteProvider.SiteType,
 		BaseURL:        base,
@@ -472,6 +560,12 @@ func (r *AccountProviderRuntime) refreshOAuth(ctx context.Context, credentialFie
 }
 
 func (r *AccountProviderRuntime) startCustom(ctx context.Context, params map[string]string) (LoginSession, error) {
+	session, err := r.startCustomInner(ctx, params)
+	r.record(hookStartLogin, err)
+	return session, err
+}
+
+func (r *AccountProviderRuntime) startCustomInner(ctx context.Context, params map[string]string) (LoginSession, error) {
 	base, err := r.baseFor(params)
 	if err != nil {
 		return LoginSession{}, err
@@ -485,6 +579,7 @@ func (r *AccountProviderRuntime) startCustom(ctx context.Context, params map[str
 	if err != nil {
 		return LoginSession{}, err
 	}
+	state.call.regionID = r.regionIDFor(nil, params)
 	state.expiresAt = time.Now().Add(accountLoginSessionTTL)
 	state.params = params
 	state.mu.Lock()
@@ -523,6 +618,12 @@ func (r *AccountProviderRuntime) startCustom(ctx context.Context, params map[str
 }
 
 func (r *AccountProviderRuntime) pollCustom(ctx context.Context, state *loginSession) (LoginPoll, error) {
+	poll, err := r.pollCustomInner(ctx, state)
+	r.record(hookPollLogin, err)
+	return poll, err
+}
+
+func (r *AccountProviderRuntime) pollCustomInner(ctx context.Context, state *loginSession) (LoginPoll, error) {
 	if len(state.baseline) > 0 {
 		state.call.steps = cloneSteps(state.baseline)
 	}
@@ -563,16 +664,23 @@ func (r *AccountProviderRuntime) finishCustom(state *loginSession, parsed *Accou
 }
 
 func (r *AccountProviderRuntime) refreshCustom(ctx context.Context, credentialFields map[string]string) (map[string]string, error) {
+	fields, err := r.refreshCustomInner(ctx, credentialFields)
+	r.record(hookRefreshTokens, err)
+	return fields, err
+}
+
+func (r *AccountProviderRuntime) refreshCustomInner(ctx context.Context, credentialFields map[string]string) (map[string]string, error) {
+	regionID := r.regionIDFor(credentialFields, nil)
 	params := map[string]string{}
-	if id := AccountRegionID(r.spec.Regions, credentialFields); id != "" {
-		params["region"] = id
+	if regionID != "" {
+		params["region"] = regionID
 	}
 	base, err := r.baseFor(params)
 	if err != nil {
 		return nil, err
 	}
 	bag := r.seedBag(credentialFields)
-	call := &accountCall{bag: bag, base: base}
+	call := &accountCall{bag: bag, base: base, regionID: regionID, fields: credentialFields}
 	result, err := r.drive(ctx, call, hookRefreshTokens, KindAccountRefresh, r.credentialContext(base, r.publicFields(credentialFields, bag)), r.spec.Refresh.SecretPaths)
 	if err != nil {
 		return nil, bag.ScrubError(err)
@@ -630,7 +738,7 @@ func (r *AccountProviderRuntime) drive(ctx context.Context, call *accountCall, h
 		if r.observe != nil {
 			r.observe(hook, []any{ctxValue, stepsAsValue(call.steps)})
 		}
-		decision, err := r.plugin.CallAccountHook(ctx, hook, resultKind, ctxValue, call.steps)
+		decision, err := r.plugin.CallAccountHook(WithCallSecretBag(ctx, call.bag), hook, resultKind, ctxValue, call.steps)
 		logs, dropped := decision.Logs, decision.DroppedLogs
 		if callErr, ok := err.(*CallError); ok && len(logs) == 0 {
 			logs, dropped = callErr.Logs, callErr.DroppedLogs
@@ -649,7 +757,7 @@ func (r *AccountProviderRuntime) drive(ctx context.Context, call *accountCall, h
 			return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
 		}
 		template := *decision.Request
-		response, err := r.doAccountHTTP(ctx, client, call, allowed, rules, template, hook == hookPollLogin)
+		response, err := r.doAccountHTTP(ctx, client, call, allowed, rules, template, hook)
 		if err != nil {
 			return nil, err
 		}
@@ -678,7 +786,7 @@ func (r *AccountProviderRuntime) driveModelList(ctx context.Context, call *accou
 		if r.observe != nil {
 			r.observe("listModels", []any{ctxValue, stepsAsValue(call.steps)})
 		}
-		decision, err := r.plugin.CallSteppedHook(ctx, "listModels", KindModelList, probe, call.steps)
+		decision, err := r.plugin.CallSteppedHook(WithCallSecretBag(ctx, call.bag), "listModels", KindModelList, probe, call.steps)
 		logs, dropped := decision.Logs, decision.DroppedLogs
 		if callErr, ok := err.(*CallError); ok && len(logs) == 0 {
 			logs, dropped = callErr.Logs, callErr.DroppedLogs
@@ -697,7 +805,7 @@ func (r *AccountProviderRuntime) driveModelList(ctx context.Context, call *accou
 			return nil, fmt.Errorf("plugin %s exceeded %d steps", r.plugin.Manifest.ID, MaxProbeSteps)
 		}
 		template := *decision.Request
-		response, err := r.doAccountHTTP(ctx, client, call, allowed, nil, template, false)
+		response, err := r.doAccountHTTP(ctx, client, call, allowed, nil, template, "listModels")
 		if err != nil {
 			return nil, err
 		}
@@ -722,8 +830,33 @@ func (r *AccountProviderRuntime) driveModelList(ctx context.Context, call *accou
 // showing that body to JS or writing it into an error.
 var errPollNonJSON = errors.New("poll response is not JSON")
 
-func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http.Client, call *accountCall, allowed map[string]bool, rules map[string]string, template ProbeRequest, honorNonJSON bool) (ProbeResponse, error) {
-	before, err := ResolveProbeURL(call.base, template.Path, template.Query)
+// accountNonJSONMode says how an account hook treats a body that is not one
+// JSON object. pollPending keeps the historical poll behavior. empty returns
+// the status and filtered headers with no body. none leaves the body to the
+// ordinary redaction path.
+func accountNonJSONMode(hook, onNonJSON string) string {
+	switch onNonJSON {
+	case "pending":
+		if hook == hookPollLogin {
+			return "pollPending"
+		}
+		return "empty"
+	case "ignore":
+		return "empty"
+	default:
+		return "none"
+	}
+}
+
+func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http.Client, call *accountCall, allowed map[string]bool, rules map[string]string, template ProbeRequest, hook string) (ProbeResponse, error) {
+	stepBase, err := r.stepBaseFor(call, template.Endpoint)
+	if err != nil {
+		return ProbeResponse{}, err
+	}
+	if stepBase != call.base {
+		client = r.hookedClient(call.jar, stepBase)
+	}
+	before, err := ResolveProbeURL(stepBase, template.Path, template.Query)
 	if err != nil {
 		return ProbeResponse{}, &CallError{Kind: KindURLRejected, Detail: err.Error()}
 	}
@@ -737,7 +870,7 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 			return ProbeResponse{}, call.bag.ScrubError(err)
 		}
 	}
-	after, err := ResolveProbeURL(call.base, request.Path, request.Query)
+	after, err := ResolveProbeURL(stepBase, request.Path, request.Query)
 	if err != nil {
 		return ProbeResponse{}, call.bag.ScrubError(&CallError{Kind: KindURLRejected, Detail: err.Error()})
 	}
@@ -754,13 +887,15 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 	if err != nil {
 		return ProbeResponse{}, err
 	}
+	var encodedBody []byte
 	var body io.Reader
 	if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Body != nil {
 		encoded, err := encodeAccountBody(request.Body)
 		if err != nil {
 			return ProbeResponse{}, err
 		}
-		body = strings.NewReader(string(encoded))
+		encodedBody = encoded
+		body = bytes.NewReader(encoded)
 		if _, isString := request.Body.(string); !isString {
 			if _, exists := headers["Content-Type"]; !exists {
 				headers["Content-Type"] = "application/json"
@@ -776,6 +911,11 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 	}
 	if httpReq.Header.Get("Accept") == "" {
 		httpReq.Header.Set("Accept", "application/json")
+	}
+	if template.Sign {
+		if err := r.applyAccountSignRequest(ctx, httpReq, call, stepBase, encodedBody); err != nil {
+			return ProbeResponse{}, call.bag.ScrubError(err)
+		}
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -801,8 +941,17 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 		return ProbeResponse{}, &CallError{Kind: KindResponseTooLarge, Detail: "response is too large"}
 	}
 	contentType := resp.Header.Get("Content-Type")
-	if honorNonJSON && template.OnNonJSON == "pending" && !accountJSONObject(buf) {
-		return ProbeResponse{}, errPollNonJSON
+	if !accountJSONObject(buf) {
+		switch accountNonJSONMode(hook, template.OnNonJSON) {
+		case "pollPending":
+			return ProbeResponse{}, errPollNonJSON
+		case "empty":
+			headersOut := FilterResponseHeaders(resp.Header)
+			for key, value := range headersOut {
+				headersOut[key] = call.bag.Scrub(value)
+			}
+			return ProbeResponse{Status: resp.StatusCode, Headers: headersOut}, nil
+		}
 	}
 	redactedBody, payload, err := redactProbeBody(call.bag, contentType, buf, rules)
 	if err != nil {
@@ -813,6 +962,135 @@ func (r *AccountProviderRuntime) doAccountHTTP(ctx context.Context, client *http
 		headersOut[key] = call.bag.Scrub(value)
 	}
 	return ProbeResponse{Status: resp.StatusCode, Headers: headersOut, Body: redactedBody, JSON: payload}, nil
+}
+
+func (r *AccountProviderRuntime) applyAccountSignRequest(ctx context.Context, httpReq *http.Request, call *accountCall, stepBase string, encodedBody []byte) error {
+	if !r.plugin.HasHook(HookSignRequest) {
+		return shapeError("request.sign: %s hook is missing", HookSignRequest)
+	}
+	if len(encodedBody) > MaxSignBodyBytes {
+		return fmt.Errorf("signRequest: request body exceeds %d bytes", MaxSignBodyBytes)
+	}
+	flat := make(map[string]string, len(httpReq.Header))
+	for name, values := range httpReq.Header {
+		flat[name] = strings.Join(values, ", ")
+	}
+	visible, err := FilterRequestHeaders(flat)
+	if err != nil {
+		return fmt.Errorf("signRequest: %w", err)
+	}
+	usesSecret := contains(r.plugin.Manifest.Permissions, "secret.use")
+	buildCtx := ProtocolBuildContext{
+		Candidate: ProtocolCandidateContext{
+			SiteType: r.plugin.Manifest.SiteProvider.SiteType,
+			BaseURL:  stepBase,
+		},
+		Now: time.Now().UnixMilli(),
+	}
+	if usesSecret {
+		buildCtx.Credential = r.signCredentialFields(call)
+	}
+	signCtx := WithDiscardLogs(ctx)
+	signed, _, _, err := r.plugin.CallSignRequest(signCtx, buildCtx, ProtocolSignInput{
+		Method:  httpReq.Method,
+		URL:     httpReq.URL.String(),
+		Headers: visible,
+		Body:    string(encodedBody),
+	})
+	if err != nil {
+		return fmt.Errorf("signRequest: %w", err)
+	}
+	switch signed.Mode {
+	case "rewrite":
+		for name, value := range signed.Headers {
+			httpReq.Header.Set(name, value)
+		}
+		if len(signed.Query) > 0 {
+			query := httpReq.URL.Query()
+			for key, value := range signed.Query {
+				query.Set(key, value)
+			}
+			httpReq.URL.RawQuery = query.Encode()
+		}
+		if signed.Body != nil {
+			next := []byte(*signed.Body)
+			httpReq.Body = io.NopCloser(bytes.NewReader(next))
+			httpReq.ContentLength = int64(len(next))
+			httpReq.GetBody = func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(next)), nil
+			}
+		}
+	case "sign":
+		if !usesSecret {
+			return errors.New("signRequest sign mode needs secret.use")
+		}
+		accessToken := ""
+		if call.bag != nil {
+			accessToken, _ = call.bag.Get(r.accessField())
+		}
+		signature, err := signAccountString(signed, accessToken)
+		if err != nil {
+			return fmt.Errorf("signRequest: %w", err)
+		}
+		for name, value := range signed.Headers {
+			httpReq.Header.Set(name, value)
+		}
+		httpReq.Header.Set(signed.Header, signed.Prefix+signature)
+	default:
+		return fmt.Errorf("signRequest: unknown mode %q", signed.Mode)
+	}
+	if err := SameOrigin(stepBase, httpReq.URL.String()); err != nil {
+		return &CallError{Kind: KindURLRejected, Detail: err.Error()}
+	}
+	if err := r.checkURL(httpReq.URL.String()); err != nil {
+		return err
+	}
+	if err := rejectSecretInURL(call.bag, httpReq.URL.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func signAccountString(signed ProtocolSignResult, key string) (string, error) {
+	var newHash func() hash.Hash
+	switch signed.Algorithm {
+	case "hmac-sha256":
+		newHash = sha256.New
+	case "hmac-sha1":
+		newHash = sha1.New
+	case "hmac-sha512":
+		newHash = sha512.New
+	default:
+		return "", fmt.Errorf("unsupported algorithm %q", signed.Algorithm)
+	}
+	mac := hmac.New(newHash, []byte(key))
+	mac.Write([]byte(signed.StringToSign))
+	sum := mac.Sum(nil)
+	if signed.Encoding == "base64" {
+		return base64.StdEncoding.EncodeToString(sum), nil
+	}
+	return hex.EncodeToString(sum), nil
+}
+
+func (r *AccountProviderRuntime) signCredentialFields(call *accountCall) map[string]string {
+	out := r.accountContextFields(call.fields, call.bag)
+	if call.bag != nil {
+		for _, field := range r.spec.Credential.Fields {
+			if !field.Secret {
+				continue
+			}
+			if value, ok := call.bag.Get(field.Name); ok && value != "" {
+				out[field.Name] = value
+			}
+		}
+		accessName := r.accessField()
+		if _, exists := out[accessName]; !exists {
+			if value, ok := call.bag.Get(accessName); ok && value != "" {
+				out[accessName] = value
+			}
+		}
+	}
+	return out
 }
 
 func (r *AccountProviderRuntime) oauthConfig(tokenURL string) (accountauth.OAuth2Config, error) {
@@ -856,7 +1134,7 @@ func (r *AccountProviderRuntime) checkURL(raw string) error {
 func (r *AccountProviderRuntime) hostAllowed(host string) bool {
 	host = strings.ToLower(host)
 	for _, allowed := range r.hosts {
-		if strings.ToLower(allowed) == host {
+		if httpclient.MatchHostPattern(allowed, host) {
 			return true
 		}
 	}
@@ -872,6 +1150,46 @@ func cloneSteps(in []ProbeStep) []ProbeStep {
 	return out
 }
 
+func (r *AccountProviderRuntime) regionIDFor(fields, params map[string]string) string {
+	if params != nil {
+		if id := strings.TrimSpace(params["region"]); id != "" {
+			return id
+		}
+	}
+	if id := AccountRegionID(r.spec.Regions, fields); id != "" {
+		return id
+	}
+	return r.spec.DefaultRegion
+}
+
+func (r *AccountProviderRuntime) stepBaseFor(call *accountCall, endpoint string) (string, error) {
+	if endpoint == "" || endpoint == "control" {
+		return call.base, nil
+	}
+	if endpoint != "gateway" {
+		return "", shapeError("request.endpoint: unsupported value %q", endpoint)
+	}
+	id := call.regionID
+	if id == "" {
+		id = r.spec.DefaultRegion
+	}
+	for _, region := range r.spec.Regions {
+		if region.ID != id {
+			continue
+		}
+		urls := RegionGatewayURLs(region)
+		if len(urls) == 0 {
+			break
+		}
+		base := urls[0]
+		if err := r.checkURL(base); err != nil {
+			return "", err
+		}
+		return base, nil
+	}
+	return "", fmt.Errorf("region %q is not configured", id)
+}
+
 func (r *AccountProviderRuntime) baseFor(params map[string]string) (string, error) {
 	id := ""
 	if params != nil {
@@ -884,7 +1202,7 @@ func (r *AccountProviderRuntime) baseFor(params map[string]string) (string, erro
 		if region.ID != id {
 			continue
 		}
-		base := strings.TrimRight(strings.TrimSpace(region.BaseURL), "/")
+		base := RegionControlURL(region)
 		if err := r.checkURL(base); err != nil {
 			return "", err
 		}
@@ -1320,6 +1638,8 @@ func (s *loginSession) wipe() {
 	s.call.bag = nil
 	s.call.jar = nil
 	s.call.steps = nil
+	s.call.fields = nil
+	s.call.regionID = ""
 }
 
 func (s *loginSession) public(status string) LoginSession {
@@ -1335,12 +1655,12 @@ func (s *loginSession) public(status string) LoginSession {
 	}
 }
 
-func (r *AccountProviderRuntime) record(err error) {
-	if r == nil || r.plugin == nil {
+func (r *AccountProviderRuntime) record(hook string, err error) {
+	if r == nil || r.plugin == nil || hook == "" {
 		return
 	}
 	if breaker := DefaultCatalog().Breaker(); breaker != nil {
-		breaker.RecordProbeResult(r.plugin, err == nil)
+		breaker.RecordProbeResult(r.plugin, hook, err == nil)
 	}
 }
 

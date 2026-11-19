@@ -7,9 +7,11 @@ type QRCodeProps = {
   size?: number
   className?: string
   imageClassName?: string
+  'data-testid'?: string
+  'aria-label'?: string
 }
 
-export function QRCode({ value, size = 192, className, imageClassName }: QRCodeProps) {
+export function QRCode({ value, size = 192, className, imageClassName, 'data-testid': testId, 'aria-label': ariaLabel }: QRCodeProps) {
   const [dataURL, setDataURL] = useState('')
 
   useEffect(() => {
@@ -48,6 +50,9 @@ export function QRCode({ value, size = 192, className, imageClassName }: QRCodeP
         className,
       )}
       style={{ width: size + 24, height: size + 24 }}
+      data-testid={testId}
+      data-qr-value={value}
+      aria-label={ariaLabel}
     >
       {dataURL ? (
         <img

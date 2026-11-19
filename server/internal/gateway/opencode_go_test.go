@@ -168,7 +168,7 @@ func TestApplyOpenCodeGoDefaultToolsDoesNotChangeOtherSites(t *testing.T) {
 	}
 }
 
-func TestApplyOpenCodeGoGatewayHeadersKeepsOnlyRequiredHeaders(t *testing.T) {
+func TestApplyOpenCodeGoGatewayHeadersOfficialShape(t *testing.T) {
 	t.Parallel()
 
 	request := gatewayRequest{
@@ -181,17 +181,18 @@ func TestApplyOpenCodeGoGatewayHeadersKeepsOnlyRequiredHeaders(t *testing.T) {
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("X-Other", "drop-me")
 	req.Header.Set("x-opencode-client", "old-client")
-	applyOpenCodeGoGatewayHeaders(req, request, "test-api-key")
+	applyOpenCodeGoGatewayHeaders(req, request, "test-api-key", true)
 
 	want := map[string]string{
 		"Authorization":          "Bearer test-api-key",
 		"Content-Type":           "application/json",
-		"User-Agent":             "opencode/latest/2.0.29/cli",
+		"User-Agent":             openCodeGoUserAgent,
+		"X-Opencode-Client":      "cli",
 		openCodeGoSessionHeader:  req.Header.Get(openCodeGoSessionHeader),
 		openCodeGoAffinityHeader: req.Header.Get(openCodeGoAffinityHeader),
 	}
-	if len(req.Header) != len(want) {
-		t.Fatalf("headers = %#v, want only %d headers", req.Header, len(want))
+	if len(req.Header) != len(want)+3 {
+		t.Fatalf("headers = %#v, want only %d headers", req.Header, len(want)+3)
 	}
 	for key, value := range want {
 		if got := req.Header.Get(key); got != value {
@@ -203,6 +204,73 @@ func TestApplyOpenCodeGoGatewayHeadersKeepsOnlyRequiredHeaders(t *testing.T) {
 	}
 	if !openCodeGoHeaderIDIsValid(req.Header.Get(openCodeGoAffinityHeader)) {
 		t.Errorf("%s = %q, want ses_ + 12 lowercase hex timestamp digits + 14 random characters", openCodeGoAffinityHeader, req.Header.Get(openCodeGoAffinityHeader))
+	}
+	// The official client repeats one session id across the session header
+	// family, so the echo headers must match the canonical session header.
+	for _, echo := range []string{"x-opencode-session", "x-session-id"} {
+		assertGatewayHeader(t, req, echo, req.Header.Get(openCodeGoSessionHeader))
+	}
+	project := req.Header.Get("x-opencode-project")
+	if len(project) != 40 {
+		t.Errorf("x-opencode-project = %q, want 40 hex characters", project)
+	}
+	for _, char := range project {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			t.Errorf("x-opencode-project = %q, want lowercase hex only", project)
+			break
+		}
+	}
+}
+
+// Without the impersonation switch the header set must stay exactly the
+// pre-impersonation shape, so existing keyed zen/go sites are unchanged.
+func TestApplyOpenCodeGoGatewayHeadersLegacyShape(t *testing.T) {
+	t.Parallel()
+
+	request := gatewayRequest{DownstreamHeaders: http.Header{}}
+	req := gatewayHeaderRequest(t, http.MethodPost, "https://opencode.ai/zen/go/v1/chat/completions")
+	req.Header.Set("X-Other", "drop-me")
+	applyOpenCodeGoGatewayHeaders(req, request, "test-api-key", false)
+
+	want := map[string]string{
+		"Authorization":          "Bearer test-api-key",
+		"Content-Type":           "application/json",
+		"User-Agent":             openCodeGoLegacyUserAgent,
+		openCodeGoSessionHeader:  req.Header.Get(openCodeGoSessionHeader),
+		openCodeGoAffinityHeader: req.Header.Get(openCodeGoAffinityHeader),
+	}
+	if len(req.Header) != len(want) {
+		t.Fatalf("headers = %#v, want only %d headers", req.Header, len(want))
+	}
+	for key, value := range want {
+		if got := req.Header.Get(key); got != value {
+			t.Errorf("%s = %q, want %q", key, got, value)
+		}
+	}
+	for _, absent := range []string{"X-Opencode-Client", "X-Opencode-Session", "X-Session-Id", "X-Opencode-Project"} {
+		if req.Header.Get(absent) != "" {
+			t.Errorf("%s must not be set without impersonation", absent)
+		}
+	}
+	if req.Header.Get(openCodeGoSessionHeader) != req.Header.Get(openCodeGoAffinityHeader) {
+		t.Errorf("affinity %q should default to the session %q", req.Header.Get(openCodeGoAffinityHeader), req.Header.Get(openCodeGoSessionHeader))
+	}
+}
+
+// A downstream session id in the legacy encoding must not be forwarded in
+// official mode: the upstream decodes it as an implausible timestamp and
+// answers 429, so a fresh official id is minted instead.
+func TestApplyOpenCodeGoGatewayHeadersDropsLegacyEncodedSession(t *testing.T) {
+	t.Parallel()
+
+	legacy := "ses_0123456789abABCDEFGHIJKLMN" // charset-valid, ascending timestamp
+	downstream := http.Header{}
+	downstream.Set(openCodeGoSessionHeader, legacy)
+	req := gatewayHeaderRequest(t, http.MethodPost, "https://opencode.ai/inference/v1/chat/completions")
+	applyOpenCodeGoGatewayHeaders(req, gatewayRequest{DownstreamHeaders: downstream}, "public", true)
+
+	if got := req.Header.Get(openCodeGoSessionHeader); got == legacy || !openCodeGoIsOfficialSessionID(got) {
+		t.Errorf("session = %q, want a freshly minted official id (legacy id must not be forwarded)", got)
 	}
 }
 
@@ -216,7 +284,7 @@ func TestApplyOpenCodeGoGatewayHeadersPreservesValidSessionAndAffinityIDs(t *tes
 	downstream.Set(openCodeGoAffinityHeader, affinityID)
 	request := gatewayRequest{DownstreamHeaders: downstream}
 	req := gatewayHeaderRequest(t, http.MethodPost, "https://opencode.ai/zen/go/v1/chat/completions")
-	applyOpenCodeGoGatewayHeaders(req, request, "test-api-key")
+	applyOpenCodeGoGatewayHeaders(req, request, "test-api-key", false)
 	assertGatewayHeader(t, req, openCodeGoSessionHeader, sessionID)
 	assertGatewayHeader(t, req, openCodeGoAffinityHeader, affinityID)
 }

@@ -325,9 +325,9 @@ var grokResponsesRequestFields = map[string]struct{}{
 
 var grokCompatibleParamsByProtocol = map[canonicalProtocol]map[string]struct{}{
 	canonicalProtocolOpenAIResponses: {
-		"background": {}, "conversation": {}, "include": {}, "max_output_tokens": {}, "max_tool_calls": {},
+		"background": {}, "client_metadata": {}, "conversation": {}, "include": {}, "max_output_tokens": {}, "max_tool_calls": {},
 		"metadata": {}, "parallel_tool_calls": {}, "previous_response_id": {}, "prompt": {},
-		"prompt_cache_retention": {}, "reasoning": {}, "reasoning_effort": {}, "response_format": {}, "safety_identifier": {},
+		"prompt_cache_key": {}, "prompt_cache_retention": {}, "reasoning": {}, "reasoning_effort": {}, "response_format": {}, "safety_identifier": {},
 		"service_tier": {}, "store": {}, "stream": {}, "stream_options": {}, "temperature": {}, "text": {},
 		"top_p": {}, "truncation": {}, "user": {},
 	},
@@ -402,7 +402,7 @@ func grokIncompatibleRequestParams(request gatewayRequest) []string {
 		}
 	}
 	for _, message := range canonical.Messages {
-		if len(message.Thinking) > 0 {
+		if len(message.Thinking) > 0 && canonical.SourceProtocol != canonicalProtocolOpenAIResponses {
 			add("thinking_history")
 		}
 		for _, part := range message.Content {
@@ -412,25 +412,10 @@ func grokIncompatibleRequestParams(request gatewayRequest) []string {
 		}
 	}
 	if canonical.SourceProtocol == canonicalProtocolOpenAIResponses {
-		if input, ok := request.Payload["input"].([]any); ok {
-			for _, raw := range input {
-				item, _ := raw.(map[string]any)
-				if strings.EqualFold(strings.TrimSpace(anyString(item["type"])), "reasoning") {
-					add("reasoning_history")
-				}
-			}
-		}
 		if metadata, ok := request.Payload["metadata"].(map[string]any); ok {
 			for key := range metadata {
 				if key != "user_id" {
 					add("metadata." + key)
-				}
-			}
-		}
-		if include, ok := request.Payload["include"].([]any); ok {
-			for _, item := range include {
-				if strings.Contains(strings.ToLower(anyString(item)), "reasoning.encrypted_content") {
-					add("include.reasoning.encrypted_content")
 				}
 			}
 		}

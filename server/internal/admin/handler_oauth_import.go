@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	oauthsvc "xlyra/server/internal/oauth"
+	"xlyra/server/internal/site"
 )
 
 const maxOAuthImportBodyBytes = 64 << 20
@@ -165,14 +166,21 @@ func (h Handler) refreshImportedOAuthSites(ctx context.Context, items []oauthsvc
 		refreshOK := err == nil
 		item.RefreshOK = &refreshOK
 		if err != nil {
+			provider := strings.TrimSpace(item.Provider)
+			if provider == "" {
+				provider = "codex"
+			}
 			if item.ConnectionID != "" {
-				if connectionID, parseErr := uuid.Parse(item.ConnectionID); parseErr == nil && h.oauth != nil {
-					_ = h.oauth.MarkConnectionUnavailable(ctx, connectionID, err.Error())
+				if connectionID, parseErr := uuid.Parse(item.ConnectionID); parseErr == nil {
+					h.markOAuthConnectionUnavailableOnRefreshAuthFailure(ctx, connectionID, provider, err)
 				}
 			}
-			continue
+			if site.OAuthPermanentAuthRefreshError(provider, err.Error()) {
+				continue
+			}
+		} else {
+			refreshedModels = true
 		}
-		refreshedModels = true
 		if !tokenRefreshFailed {
 			_, _ = h.sites.SetEnabled(ctx, siteID, true)
 		}

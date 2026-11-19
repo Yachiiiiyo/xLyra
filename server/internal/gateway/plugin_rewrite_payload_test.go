@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -113,8 +114,8 @@ func TestRewritePayloadFailureDoesNotSend(t *testing.T) {
 		{name: "change stream", source: `export function rewritePayload(ctx, payload) { payload.stream = false; return payload; }`, payload: map[string]any{"model": "m", "stream": true}, want: `"stream"`},
 		{name: "delete stream", source: `export function rewritePayload(ctx, payload) { delete payload.stream; return payload; }`, payload: map[string]any{"model": "m", "stream": true}, want: `"stream"`},
 		{name: "timeout", source: `export function rewritePayload() { for (;;) {} }`, want: "js_timeout"},
-		// race 检测器下 50 ms 预算可能先耗尽。
-		{name: "output too large", source: `export function rewritePayload() { return { blob: "x".repeat(2 * 1024 * 1024) }; }`, want: "js_plugin_response_too_large", alt: "js_timeout"},
+		// race 检测器下 150 ms 预算可能先耗尽。
+		{name: "output too large", source: fmt.Sprintf(`export function rewritePayload() { return { blob: "x".repeat(%d) }; }`, int(jsplugin.MaxResultBytes)+1024), want: "js_plugin_response_too_large", alt: "js_timeout"},
 		{name: "input too large", source: `export function rewritePayload(ctx, payload) { payload.added = "yes"; return payload; }`, payload: map[string]any{"model": "m", "blob": strings.Repeat("a", int(jsplugin.MaxResultBytes))}, want: "payload exceeds"},
 	}
 	for _, tc := range cases {
@@ -144,10 +145,59 @@ func TestRewritePayloadFailureDoesNotSend(t *testing.T) {
 			if tc.creds == 2 && (result.credentialAttempt != 1 || result.credentialTotal != 2 || result.credentialDecision.Action != "stop") {
 				t.Fatalf("credential decision = attempt %d total %d %#v", result.credentialAttempt, result.credentialTotal, result.credentialDecision)
 			}
-			if tc.name == "timeout" && (elapsed < 40*time.Millisecond || elapsed > 200*time.Millisecond) {
-				t.Fatalf("elapsed %s, want the 50ms hook timeout", elapsed)
+			if tc.name == "timeout" && (elapsed < 100*time.Millisecond || elapsed > 500*time.Millisecond) {
+				t.Fatalf("elapsed %s, want the 150ms hook timeout", elapsed)
 			}
 		})
+	}
+}
+
+func TestRewritePayloadAndSignRequestLargeBody(t *testing.T) {
+	site.ClearPluginSiteTypes()
+	t.Cleanup(site.ClearPluginSiteTypes)
+	plugin := providerClassifierPlugin(t, "acme.example", `
+export function rewritePayload(ctx, payload) {
+  if (Array.isArray(payload.messages)) {
+    payload.messages = payload.messages.map((m) => ({
+      ...m,
+      content: typeof m.content === "string" ? m.content.replaceAll("OLD_PHRASE", "NEW_PHRASE") : m.content,
+    }));
+  }
+  payload.rewritten = true;
+  return payload;
+}
+export function signRequest(ctx, req) {
+  return {
+    headers: { "X-Body-Len": String(req.body.length) },
+    body: req.body,
+  };
+}`)
+	useGatewayPlugins(t, plugin)
+	capture := newRewriteCapture()
+	server := httptest.NewServer(capture.handler())
+	t.Cleanup(server.Close)
+
+	chunk := strings.Repeat("context-padding-", 16*1024) + "OLD_PHRASE"
+	messages := make([]any, 0, 16)
+	for i := 0; i < 16; i++ {
+		messages = append(messages, map[string]any{"role": "user", "content": chunk})
+	}
+	largePayload := map[string]any{
+		"model":    "test-upstream",
+		"messages": messages,
+	}
+	handler, candidate := pluginUpstreamFixture(t, "acme.example/chat", server.URL, []string{"127.0.0.1"}, true, &http.Client{Timeout: 5 * time.Second}, 1)
+	protocol := rewriteBodyProtocol{testGatewayProtocol: &testGatewayProtocol{}, payload: largePayload}
+	result := handler.forwardGatewayRequest(context.Background(), httptest.NewRecorder(), "req-rewrite-large", 1, uuid.New(), uuid.New(), candidate, gatewayRequest{DownstreamPath: gatewayEndpointChatCompletions}, nil, protocol)
+	if !result.success || result.errorType != "" {
+		t.Fatalf("large body success=%v type=%q message=%q", result.success, result.errorType, result.errorMessage)
+	}
+	bodies := capture.snapshot()
+	if len(bodies) != 1 || len(bodies[0]) < 4*1024*1024 {
+		t.Fatalf("captured bodies = %d, len = %d", len(bodies), len(bodies[0]))
+	}
+	if strings.Contains(bodies[0], "OLD_PHRASE") || !strings.Contains(bodies[0], "NEW_PHRASE") {
+		t.Fatal("phrase replacement did not take effect on 4 MiB body")
 	}
 }
 
@@ -294,6 +344,67 @@ export function rewritePayload(ctx, payload) {
 	if !ok || found.Manifest.ID != plugin.Manifest.ID {
 		t.Fatalf("hook after failures = %v", ok)
 	}
+}
+
+func TestRewritePayloadChain(t *testing.T) {
+	site.ClearPluginSiteTypes()
+	t.Cleanup(site.ClearPluginSiteTypes)
+	base := providerClassifierPlugin(t, "acme.base", `export function rewritePayload(ctx, payload) { payload.steps = ["base"]; return payload; }`)
+	first := kindlessRewritePlugin(t, "acme.first", `export function rewritePayload(ctx, payload) { payload.steps = (payload.steps || []).concat(["first"]); return payload; }`)
+	second := kindlessRewritePlugin(t, "acme.second", `export function rewritePayload(ctx, payload) { payload.steps.push("second"); return payload; }`)
+	useGatewayPlugins(t, base, first, second)
+	if err := site.SetPluginSiteTypes([]site.PluginSiteType{{
+		Descriptor: site.SiteTypeDescriptor{SiteType: "acme.base/chat"},
+		PluginID:   base.Manifest.ID, Enabled: true, Hosts: []string{"api.example.com"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	candidate := routeengine.Candidate{Site: routeengine.CandidateSite{
+		SiteType: "acme.base/chat", PluginIDs: []string{"acme.second", "acme.first"},
+	}}
+	got, err := applyProviderRewrite(context.Background(), candidate, &testGatewayProtocol{}, map[string]any{"model": "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(stepNames(got["steps"]), ",") != "base,second,first" || got["model"] != "m" {
+		t.Fatalf("chain = %#v", got)
+	}
+
+	builtin := routeengine.Candidate{Site: routeengine.CandidateSite{SiteType: "openai", PluginIDs: []string{"acme.first"}}}
+	got, err = applyProviderRewrite(context.Background(), builtin, &testGatewayProtocol{}, map[string]any{"model": "m"})
+	if err != nil || got["model"] != "m" || strings.Join(stepNames(got["steps"]), ",") != "first" {
+		t.Fatalf("builtin = %#v err = %v", got, err)
+	}
+
+	bad := kindlessRewritePlugin(t, "acme.bad", `export function rewritePayload(ctx, payload) { payload.model = "other"; return payload; }`)
+	useGatewayPlugins(t, base, first, bad)
+	candidate.Site.PluginIDs = []string{"acme.first", "acme.bad"}
+	if _, err = applyProviderRewrite(context.Background(), candidate, &testGatewayProtocol{}, map[string]any{"model": "m"}); err == nil || !strings.Contains(err.Error(), "acme.bad") || !strings.Contains(err.Error(), `"model"`) {
+		t.Fatalf("second step err = %v", err)
+	}
+}
+
+func kindlessRewritePlugin(t *testing.T, id, body string) *jsplugin.Plugin {
+	t.Helper()
+	source := "export const meta = { apiVersion: 1, id: \"" + id + "\" };\n" + body
+	manifest := jsplugin.Manifest{
+		ID: id, Name: id, Version: "1.0.0", APIVersion: 1, HostAPI: 1,
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(source)},
+	}
+	plugin, err := jsplugin.NewPlugin(manifest, source, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plugin
+}
+
+func stepNames(value any) []string {
+	items, _ := value.([]any)
+	out := make([]string, len(items))
+	for i, item := range items {
+		out[i], _ = item.(string)
+	}
+	return out
 }
 
 func TestRewritePayloadCallOrder(t *testing.T) {

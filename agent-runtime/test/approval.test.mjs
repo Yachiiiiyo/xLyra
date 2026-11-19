@@ -290,6 +290,10 @@ test("auto: bash 每条都审批,高危 note 带规则名,普通命令不带", T
 		assert.equal(messages.get("call_auto_plain").note, "工作目录: .");
 		assert.equal(messages.get("call_auto_tail").note, "工作目录: .");
 		assert.equal(messages.get("call_auto_risky").note, "工作目录: .;命中规则: rm 递归删除高危目标");
+		assert.equal(messages.get("call_auto_risky").risk, "high");
+		assert.deepEqual(messages.get("call_auto_risky").riskRules, ["rm 递归删除高危目标"]);
+		assert.equal(messages.get("call_auto_plain").risk, undefined);
+		assert.equal(messages.get("call_auto_tail").risk, undefined);
 		assert.ok(!messages.get("call_auto_plain").note.includes("命中规则"));
 		assert.ok(!messages.get("call_auto_tail").note.includes("命中规则"));
 		for (const { id } of commands) assert.equal(toolEnd(turn.events, id)?.isError, false);

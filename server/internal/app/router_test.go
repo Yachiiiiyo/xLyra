@@ -100,13 +100,17 @@ func TestSystemVersionIsPublic(t *testing.T) {
 	}
 
 	var body struct {
-		Version string `json:"version"`
+		Version  string `json:"version"`
+		AgentAPI int    `json:"agent_api"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if body.Version == "" {
 		t.Fatal("expected version in response")
+	}
+	if body.AgentAPI < 1 {
+		t.Fatalf("agent_api = %d, want >= 1", body.AgentAPI)
 	}
 }
 
@@ -156,6 +160,7 @@ func TestProtectedAdminFeatureRoutesAreRegistered(t *testing.T) {
 		{name: "settings general", method: http.MethodGet, path: "/api/v1/settings/general"},
 		{name: "automatic backup files", method: http.MethodGet, path: "/api/v1/settings/backup/automatic/files"},
 		{name: "dashboard health", method: http.MethodGet, path: "/api/v1/dashboard/health"},
+		{name: "agent models", method: http.MethodGet, path: "/api/v1/agent/models"},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {

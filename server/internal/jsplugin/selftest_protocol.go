@@ -76,6 +76,13 @@ func protocolBuildContextFromFixture(fixture Fixture) ProtocolBuildContext {
 			UpstreamName:  fixture.Candidate.UpstreamName,
 			UpstreamModel: fixture.Candidate.UpstreamModel,
 		},
+		Model:      fixture.Ctx.Model,
+		Stream:     fixture.Ctx.Stream,
+		Protocol:   fixture.Ctx.Protocol,
+		Now:        fixture.Ctx.Now,
+		SessionKey: fixture.Ctx.SessionKey,
+		ModelMeta:  fixture.Ctx.ModelMeta,
+		Credential: fixture.Ctx.Credential,
 	}
 }
 
@@ -169,6 +176,19 @@ func matchProtocolSign(got ProtocolSignResult, want map[string]any) error {
 				return fmt.Errorf("sign headers = %v, want %v", got.Headers, expected)
 			}
 			continue
+		case "query":
+			if !equalJSON(got.Query, expected) {
+				return fmt.Errorf("sign query = %v, want %v", got.Query, expected)
+			}
+			continue
+		case "mode":
+			actual = got.Mode
+		case "body":
+			if got.Body == nil {
+				actual = nil
+			} else {
+				actual = *got.Body
+			}
 		default:
 			return fmt.Errorf("expect.sign: unknown field %q", key)
 		}

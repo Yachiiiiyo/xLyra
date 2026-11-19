@@ -20,23 +20,28 @@ const (
 	errorClassifierWait = 250 * time.Millisecond
 )
 
-// applyErrorClassifierPlugin lets the error_classifier bound to the candidate,
-// or the site type's classify hook, correct the default classification of an
-// upstream error.
+type candidateClassifier struct {
+	plugin *jsplugin.Plugin
+	id     string
+	hook   string
+}
+
+// applyErrorClassifierPlugin lets the error_classifier plugins bound to the
+// candidate, and then the site type's classify hook, correct the default
+// classification of an upstream error.
 //
 // The plugin sees only the status and the code, type and message the default
 // classifier already read from the body. It can pick a class and nothing else:
 // cooldown length, retry timing and routing are still computed here from the
-// class. A verdict of "unknown", an unrecognized class, a missing plugin or
-// any failure leaves the default classification untouched. A bound
-// error_classifier wins over the site type hook.
+// class. Plugins run in priority order (mounted plugin_ids first, then the
+// site type base hook); the first known class wins, while "unknown", an
+// unrecognized class, or a hook failure continues to the next plugin and
+// finally leaves the default classification untouched.
 func applyErrorClassifierPlugin(candidate routeengine.Candidate, statusCode int, failure upstream.Failure) upstream.Failure {
-	plugin, pluginID := classifyPlugin(candidate)
-	if plugin == nil {
+	classifiers := classifyPlugins(candidate)
+	if len(classifiers) == 0 {
 		return failure
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), errorClassifierWait)
-	defer cancel()
 	classifyCtx := jsplugin.ErrorClassifyContext{SiteType: candidate.Site.SiteType}
 	input := jsplugin.ErrorClassifyInput{
 		Status:  statusCode,
@@ -44,55 +49,58 @@ func applyErrorClassifierPlugin(candidate routeengine.Candidate, statusCode int,
 		Type:    failure.Type,
 		Message: clipMessage(failure.Message, errorClassifierMessageLimit),
 	}
-	var (
-		verdict jsplugin.ErrorClassifyResult
-		err     error
-	)
-	if plugin.Manifest.Kind == jsplugin.KindSiteProvider {
-		verdict, err = plugin.CallErrorClassifyHook(ctx, "classify", classifyCtx, input)
-	} else {
-		verdict, err = plugin.CallErrorClassify(ctx, classifyCtx, input)
-	}
-	if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
-		if plugin.Manifest.Kind == jsplugin.KindSiteProvider {
-			breaker.RecordProbeResult(plugin, err == nil)
-		} else {
-			breaker.RecordProtocolCall(plugin, err != nil, isInterruption(err))
+	for _, item := range classifiers {
+		ctx, cancel := context.WithTimeout(context.Background(), errorClassifierWait)
+		callCtx := withCandidatePluginContext(ctx, candidate, item.plugin)
+		verdict, err := item.plugin.CallErrorClassifyHook(callCtx, item.hook, classifyCtx, input)
+		cancel()
+		if breaker := jsplugin.DefaultCatalog().Breaker(); breaker != nil {
+			breaker.RecordProtocolCall(item.plugin, item.hook, err != nil, isInterruption(err))
+		}
+		if err != nil {
+			slog.Default().Warn("error_classifier plugin failed", "plugin_id", item.id, "site_id", candidate.Site.ID, "error", err)
+			continue
+		}
+		switch upstream.FailureClass(verdict.Class) {
+		case upstream.FailureLimited, upstream.FailureSubscriptionLimit, upstream.FailureTransient, upstream.FailureCredentialInvalid:
+			failure.Class = upstream.FailureClass(verdict.Class)
+			failure.Reason = strings.TrimSpace(verdict.Reason)
+			return failure
 		}
 	}
-	if err != nil {
-		slog.Default().Warn("error_classifier plugin failed", "plugin_id", pluginID, "site_id", candidate.Site.ID, "error", err)
-		return failure
-	}
-	switch upstream.FailureClass(verdict.Class) {
-	case upstream.FailureLimited, upstream.FailureSubscriptionLimit, upstream.FailureTransient, upstream.FailureCredentialInvalid:
-		failure.Class = upstream.FailureClass(verdict.Class)
-		failure.Reason = strings.TrimSpace(verdict.Reason)
-		return failure
-	default:
-		return failure
-	}
+	return failure
 }
 
-// classifyPlugin resolves the classifier for one candidate. A bound
-// error_classifier wins. Otherwise a plugin site type's classify hook is used.
-// Built-in site types (no "/") are not looked up.
-func classifyPlugin(candidate routeengine.Candidate) (*jsplugin.Plugin, string) {
-	if pluginID := candidate.Site.ErrorClassifierPlugin; pluginID != "" {
-		if registry := jsplugin.DefaultCatalog().Registry(); registry != nil {
-			if plugin, ok := registry.ByPluginID(pluginID); ok && plugin.Manifest.Kind == jsplugin.KindErrorClassifier {
-				return plugin, pluginID
-			}
+// classifyPlugins resolves the ordered classifiers for one candidate. Mounted
+// plugins that export classifyError/classify and do not declare a site type
+// run first in PluginIDs order, followed by a plugin site type's classify hook
+// as the fallback. Built-in site types (no "/") have no base hook.
+func classifyPlugins(candidate routeengine.Candidate) []candidateClassifier {
+	registry := jsplugin.DefaultCatalog().Registry()
+	if registry == nil {
+		return nil
+	}
+	var out []candidateClassifier
+	seen := map[string]bool{}
+	for _, pluginID := range candidate.Site.PluginIDs {
+		if seen[pluginID] {
+			continue
+		}
+		seen[pluginID] = true
+		plugin, ok := registry.ByPluginID(pluginID)
+		if !ok || plugin == nil || plugin.Manifest.DeclaresSiteType() {
+			continue
+		}
+		if plugin.HasHook("classifyError") || plugin.HasHook("classify") {
+			out = append(out, candidateClassifier{plugin: plugin, id: pluginID, hook: "classifyError"})
 		}
 	}
-	if !strings.Contains(candidate.Site.SiteType, "/") {
-		return nil, ""
+	if strings.Contains(candidate.Site.SiteType, "/") {
+		if plugin, ok := sitepkg.ProviderHookPlugin(registry, candidate.Site.SiteType, "classify"); ok && !seen[plugin.Manifest.ID] {
+			out = append(out, candidateClassifier{plugin: plugin, id: plugin.Manifest.ID, hook: "classify"})
+		}
 	}
-	plugin, ok := sitepkg.ProviderHookPlugin(jsplugin.DefaultCatalog().Registry(), candidate.Site.SiteType, "classify")
-	if !ok {
-		return nil, ""
-	}
-	return plugin, plugin.Manifest.ID
+	return out
 }
 
 func isInterruption(err error) bool {

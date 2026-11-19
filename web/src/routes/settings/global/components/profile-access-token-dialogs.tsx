@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FormField } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
 
@@ -83,13 +83,14 @@ export function DeleteAccessTokenDialog({
       }}
     >
       <DialogContent presentation="center" className="w-[min(92vw,520px)] overflow-hidden">
-        <DialogHeader>
+        <DialogHeader className="border-b-0 pb-2">
           <DialogTitle>{t('profile.accessToken.deleteDialog.title')}</DialogTitle>
         </DialogHeader>
-        <DialogBody className="text-body text-label-2">
-          {t('profile.accessToken.deleteDialog.description')}
+        <DialogBody className="pt-0 text-body text-label-2">
+          <DialogDescription className="mt-0">{t('profile.accessToken.deleteDialog.description')}</DialogDescription>
         </DialogBody>
         <DialogFooter
+          className="border-t-0 pt-2"
           cancel={(
             <Button variant="secondary" disabled={pending} onClick={() => onOpenChange(false)}>
               {t('profile.accessToken.deleteDialog.cancel')}
@@ -97,6 +98,7 @@ export function DeleteAccessTokenDialog({
           )}
           confirm={(
             <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+              {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
               {t('profile.accessToken.deleteDialog.confirm')}
             </Button>
           )}

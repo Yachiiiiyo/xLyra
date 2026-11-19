@@ -1,0 +1,17 @@
+{
+  "apiVersion": 1,
+  "hostApi": 2,
+  "id": "example.schedule",
+  "name": "定时计划与代发示例",
+  "description": "阶段 5 示例：声明 schedule、http、net:api.example.com 与 storage，周期执行 onSchedule",
+  "version": "1.0.0",
+  "license": "MIT",
+  "permissions": ["schedule", "http", "net:api.example.com", "storage"],
+  "schedule": {
+    "everyMinutes": 60,
+    "label": {
+      "zh": "每小时签到保活",
+      "en": "Hourly check-in"
+    }
+  }
+}

@@ -139,7 +139,7 @@ func pluginIconFromVersion(row store.JSPluginVersion) (PluginIcon, error) {
 }
 
 func declaredIcon(manifest Manifest) (iconPath string, topLevel bool, ok bool) {
-	if manifest.Kind == KindSiteProvider {
+	if manifest.DeclaresSiteType() {
 		if icon := strings.TrimSpace(manifest.SiteProvider.Display.Icon); icon != "" {
 			return icon, false, true
 		}

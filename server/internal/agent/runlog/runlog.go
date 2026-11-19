@@ -36,6 +36,10 @@ type Event struct {
 	translate.Event
 }
 
+// Observer 在事件成功追加后被调用。调用发生在持有 Run.mu 期间,
+// 实现必须不阻塞(不得等待 IO、锁或其它 goroutine),否则会卡住事件泵。
+type Observer func(sessionID, runID string, startedAt time.Time, ev translate.Event)
+
 // Registry 按会话管理 run。过期清理采用惰性策略:只在 Begin/Current 访问时
 // 顺带清扫超过保留期的已结束 run,不起后台 goroutine。
 type Registry struct {
@@ -44,6 +48,7 @@ type Registry struct {
 	retention time.Duration
 	maxEvents int
 	clock     func() time.Time
+	obs       Observer
 }
 
 // Option 配置 Registry。
@@ -57,6 +62,10 @@ func WithMaxEvents(n int) Option { return func(r *Registry) { r.maxEvents = n } 
 
 // WithClock 注入时钟,便于测试控制保留期。
 func WithClock(clock func() time.Time) Option { return func(r *Registry) { r.clock = clock } }
+
+// WithObserver 设置可选观察者。没有观察者时事件广播与现在完全一致。
+// 观察者在持有 Run.mu 时被调用,必须不阻塞。
+func WithObserver(obs Observer) Option { return func(r *Registry) { r.obs = obs } }
 
 // NewRegistry 建立空的 run 注册表。
 func NewRegistry(opts ...Option) *Registry {
@@ -90,10 +99,14 @@ func (r *Registry) Begin(sessionID, runID string) (*Run, error) {
 	if cur := r.runs[sessionID]; cur != nil && !cur.isFinished() {
 		return nil, ErrRunActive
 	}
+	now := r.clock()
 	run := &Run{
 		id:        runID,
+		sessionID: sessionID,
+		startedAt: now,
 		maxEvents: r.maxEvents,
 		clock:     r.clock,
+		obs:       r.obs,
 		buf:       make([]Event, 0, 64),
 		subs:      map[*subscriber]struct{}{},
 		next:      1, // Ordinal 从 1 起
@@ -141,8 +154,11 @@ type subscriber struct {
 // 订阅者按各自游标读取共享切片,慢订阅者不丢事件也不拖慢 Publish。
 type Run struct {
 	id        string
+	sessionID string
+	startedAt time.Time
 	maxEvents int
 	clock     func() time.Time
+	obs       Observer
 
 	mu         sync.Mutex
 	buf        []Event // 重放缓冲,达 maxEvents 后冻结
@@ -178,6 +194,7 @@ func (run *Run) Publish(ev translate.Event) bool {
 			default:
 			}
 		}
+		run.observe(ev)
 		return true
 	}
 	run.truncated = true
@@ -189,7 +206,17 @@ func (run *Run) Publish(ev translate.Event) bool {
 		default:
 		}
 	}
+	run.observe(ev)
 	return true
+}
+
+// observe 在持有 Run.mu 时调用观察者。panic 不得影响事件泵。
+func (run *Run) observe(ev translate.Event) {
+	if run.obs == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	run.obs(run.sessionID, run.id, run.startedAt, ev)
 }
 
 // Finish 结束 run(幂等)。订阅者读完已缓冲事件后其通道关闭。

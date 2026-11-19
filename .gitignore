@@ -7,11 +7,6 @@
 AGENTS.md
 CLAUDE.md
 
-# Local environment overrides
-dev*
-# The developer settings page is source code, not a local override.
-!web/src/routes/settings/developer-settings-page.tsx
-
 # Test
 k6-test/
 
@@ -44,3 +39,4 @@ npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 lerna-debug.log*
+server/server

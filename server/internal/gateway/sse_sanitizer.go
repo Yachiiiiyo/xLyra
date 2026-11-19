@@ -493,12 +493,14 @@ func withSSESanitizeMeta(ctx context.Context, candidate routeengine.Candidate) c
 }
 
 type responsesSSEExit struct {
-	dst     io.Writer
-	flusher http.Flusher
-	pending bytes.Buffer
-	state   *responsesSanitizerState
-	capture *streamCaptureState
-	ctx     context.Context
+	dst           io.Writer
+	flusher       http.Flusher
+	pending       bytes.Buffer
+	state         *responsesSanitizerState
+	capture       *streamCaptureState
+	ctx           context.Context
+	dsmlText      dsmlStreamTextFilter
+	dsmlReasoning dsmlStreamTextFilter
 }
 
 func newResponsesSSEExit(ctx context.Context, dst io.Writer, flusher http.Flusher, capture *streamCaptureState) *responsesSSEExit {
@@ -561,6 +563,13 @@ func (e *responsesSSEExit) emit(block []byte) error {
 	}
 	rememberRawFailureDetail(e.capture, block)
 	out, repairs := sanitizeResponsesEventBlock(e.state, block)
+	if len(out) > 0 {
+		var dsmlStripped bool
+		out, dsmlStripped = sanitizeSSEBlockDSML(out, &e.dsmlText, &e.dsmlReasoning)
+		if dsmlStripped {
+			repairs = appendRepair(repairs, sseRepairDSMLTagStripped)
+		}
+	}
 	e.record(repairs)
 	if len(out) == 0 {
 		return nil
@@ -628,12 +637,14 @@ func logSSERepairs(ctx context.Context, repairs []string) {
 }
 
 type protocolSSEExit struct {
-	dst      io.Writer
-	flusher  http.Flusher
-	pending  bytes.Buffer
-	capture  *streamCaptureState
-	ctx      context.Context
-	sanitize func([]byte) ([]byte, []string)
+	dst           io.Writer
+	flusher       http.Flusher
+	pending       bytes.Buffer
+	capture       *streamCaptureState
+	ctx           context.Context
+	sanitize      func([]byte) ([]byte, []string)
+	dsmlText      dsmlStreamTextFilter
+	dsmlReasoning dsmlStreamTextFilter
 }
 
 func newProtocolSSEExit(ctx context.Context, dst io.Writer, flusher http.Flusher, capture *streamCaptureState, sanitize func([]byte) ([]byte, []string)) *protocolSSEExit {
@@ -667,6 +678,13 @@ func (e *protocolSSEExit) Finish() error {
 
 func (e *protocolSSEExit) emit(block []byte) error {
 	out, repairs := e.sanitize(block)
+	if len(out) > 0 {
+		var dsmlStripped bool
+		out, dsmlStripped = sanitizeSSEBlockDSML(out, &e.dsmlText, &e.dsmlReasoning)
+		if dsmlStripped {
+			repairs = appendRepair(repairs, sseRepairDSMLTagStripped)
+		}
+	}
 	if e.capture != nil {
 		for _, kind := range repairs {
 			e.capture.sseRepairs = appendRepair(e.capture.sseRepairs, kind)

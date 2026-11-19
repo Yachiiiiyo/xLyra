@@ -45,9 +45,16 @@ func withClassifier(t *testing.T, plugin *jsplugin.Plugin) {
 	})
 }
 
+func pluginIDs(pluginID string) []string {
+	if pluginID == "" {
+		return nil
+	}
+	return []string{pluginID}
+}
+
 func classifierCandidate(pluginID string) routeengine.Candidate {
 	return routeengine.Candidate{
-		Site:  routeengine.CandidateSite{ID: uuid.New(), SiteType: "custom", ErrorClassifierPlugin: pluginID},
+		Site: routeengine.CandidateSite{ID: uuid.New(), SiteType: "custom", PluginIDs: pluginIDs(pluginID)},
 		Model: routeengine.CandidateModel{SiteModelID: uuid.New(), UpstreamName: "m"},
 	}
 }
@@ -113,6 +120,30 @@ func TestErrorClassifierPluginFailureKeepsDefault(t *testing.T) {
 	}
 }
 
+func TestMountedKindlessClassifierAppliesToBuiltinSite(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	source := `export const meta = { apiVersion: 1, id: "acme.kindless" };
+export function classifyError(ctx, input) {
+  return input.code === "acme_wallet_empty" ? { class: "credential_invalid", reason: "mounted" } : { class: "unknown" };
+}`
+	plugin, err := jsplugin.NewPlugin(jsplugin.Manifest{
+		ID: "acme.kindless", Name: "acme.kindless", Version: "1.0.0", APIVersion: 1, HostAPI: 1,
+		SHA256: map[string]string{"plugin.js": jsplugin.HashSource(source)},
+	}, source, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withClassifier(t, plugin)
+	got := classifyGatewayUpstreamError(classifierCandidate("acme.kindless"), classifierResult(), []byte(weirdBody), now)
+	if got.cooldownReason != store.CooldownReasonUpstreamCredentialUnauthorized || got.errorType != "upstream_credential_invalid" {
+		t.Fatalf("kindless mount was not applied to a builtin site: %#v", got)
+	}
+	baseline := classifyGatewayUpstreamError(classifierCandidate(""), classifierResult(), []byte(weirdBody), now)
+	if baseline.cooldownReason == store.CooldownReasonUpstreamCredentialUnauthorized {
+		t.Fatalf("no mount changed the builtin site: %#v", baseline)
+	}
+}
+
 func TestErrorClassifierPluginMissingIsIgnored(t *testing.T) {
 	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 	withClassifier(t, classifierPlugin(t, "some-other", `export function classify() { return { class: "credential_invalid" }; }`))
@@ -120,5 +151,50 @@ func TestErrorClassifierPluginMissingIsIgnored(t *testing.T) {
 	baseline := classifyGatewayUpstreamError(classifierCandidate(""), classifierResult(), []byte(weirdBody), now)
 	if got.errorType != baseline.errorType {
 		t.Fatalf("a binding to a plugin that is not enabled changed the outcome: %#v", got)
+	}
+}
+
+func TestErrorClassifierChainFirstMatchWinsAndUnknownContinues(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	first := classifierPlugin(t, "acme-first", `
+export function classify(ctx, input) {
+  if (input.code === "first_hit") return { class: "limited", reason: "first" };
+  return { class: "unknown" };
+}`)
+	second := classifierPlugin(t, "acme-second", `
+export function classify(ctx, input) {
+  if (input.code === "acme_wallet_empty" || input.code === "first_hit") {
+    return { class: "credential_invalid", reason: "second" };
+  }
+  return { class: "unknown" };
+}`)
+	useGatewayPlugins(t, first, second)
+	breaker := jsplugin.DefaultCatalog().Breaker()
+	secondBefore := breaker.Metrics(second.Manifest.ID, second.Manifest.Version)
+
+	candidate := routeengine.Candidate{
+		Site:  routeengine.CandidateSite{ID: uuid.New(), SiteType: "custom", PluginIDs: []string{"acme-first", "acme-second"}},
+		Model: routeengine.CandidateModel{SiteModelID: uuid.New(), UpstreamName: "m"},
+	}
+
+	// First plugin returns unknown on weirdBody -> continues to second plugin -> credential_invalid.
+	fallthroughGot := classifyGatewayUpstreamError(candidate, plainFailureResult(http.StatusBadRequest), []byte(weirdBody), now)
+	if fallthroughGot.errorType != "upstream_credential_invalid" || fallthroughGot.cooldownReason != store.CooldownReasonUpstreamCredentialUnauthorized {
+		t.Fatalf("unknown did not continue to second classifier: %#v", fallthroughGot)
+	}
+	secondMid := breaker.Metrics(second.Manifest.ID, second.Manifest.Version)
+	if secondMid.Calls != secondBefore.Calls+1 {
+		t.Fatalf("second plugin calls = %d, want %d", secondMid.Calls, secondBefore.Calls+1)
+	}
+
+	// First plugin matches first_hit -> stops immediately without calling second plugin.
+	firstHitBody := []byte(`{"error":{"code":"first_hit","message":"slow"}}`)
+	firstGot := classifyGatewayUpstreamError(candidate, plainFailureResult(http.StatusBadRequest), firstHitBody, now)
+	if firstGot.errorType != "upstream_credential_limited" || firstGot.cooldownReason != store.CooldownReasonUpstreamCredentialLimited {
+		t.Fatalf("first classifier did not win: %#v", firstGot)
+	}
+	secondAfter := breaker.Metrics(second.Manifest.ID, second.Manifest.Version)
+	if secondAfter.Calls != secondMid.Calls {
+		t.Fatalf("second plugin was called after first matched: calls %d -> %d", secondMid.Calls, secondAfter.Calls)
 	}
 }

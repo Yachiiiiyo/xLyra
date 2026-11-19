@@ -16,7 +16,15 @@ import { buildAgentAvailableModels, fetchAgentRuntimeSettings, updateAgentClassi
 import { agentSettingsKey } from '@/features/agent/lib/use-agent-availability'
 import { agentModelCandidates, resolveAgentModel, type AgentModelCandidate } from '@/features/agent/lib/agent-fast-model'
 import { agentImageModelsSummary } from '@/features/agent/lib/agent-image-model'
-import { filterAgentScopePreview, groupAgentScopePreview, summarizeAgentScopePreview, type AgentScopePreviewGroup } from '@/features/agent/lib/agent-scope-preview'
+import {
+  filterAgentScopePreviewRows,
+  flattenAgentScopePreview,
+  groupAgentScopePreview,
+  listAgentScopePreviewModelNames,
+  summarizeAgentScopePreview,
+  type AgentScopePreviewGroup,
+  type AgentScopePreviewRow,
+} from '@/features/agent/lib/agent-scope-preview'
 import { listAllSiteModels, listCanonicalModels, listSitesLite, sitesQueryKeys, type CanonicalModelItem } from '@/features/sites/api/sites'
 import { formatSiteTypeLabel } from '@/features/sites/lib/site-utils'
 import { canonicalModelIconInfo, modelNameIconInfo } from '@/features/sites/lib/model-icon'
@@ -252,7 +260,9 @@ function useClearUnavailableModel(configuredModel: string, model: AgentModelCand
   }, [configuredModel, model, queryClient, scopeQueriesReady, updateModel])
 }
 
-/** 「查看」弹出的第二个 Dialog：搜索框 + 按站点分组的模型平铺列表，内容区滚动，模型行点击复制 model_key。 */
+const ALL_SCOPE_PREVIEW_MODELS = '__all_scope_preview_models__'
+
+/** 「查看」弹出的第二个 Dialog：搜索框 + 模型筛选下拉 + 一级扁平列表（左模型名、右站点名），内容区滚动，点击行复制模型名。 */
 export function ScopePreviewDialog({
   open,
   onOpenChange,
@@ -269,19 +279,56 @@ export function ScopePreviewDialog({
   const { t } = useTranslation(['agent', 'components'])
   const mobileLayout = useMobileLayout()
   const [search, setSearch] = useState('')
-  const keyword = search.trim()
-  const filteredGroups = useMemo(() => filterAgentScopePreview(groups, keyword), [groups, keyword])
+  const [filterModel, setFilterModel] = useState('')
+  const allRows = useMemo(() => flattenAgentScopePreview(groups, canonicalById), [groups, canonicalById])
+  const modelNames = useMemo(() => listAgentScopePreviewModelNames(allRows), [allRows])
+  const activeFilterModel = filterModel && modelNames.includes(filterModel) ? filterModel : ''
+  const filteredRows = useMemo(
+    () => filterAgentScopePreviewRows(allRows, { keyword: search, modelName: activeFilterModel }),
+    [allRows, search, activeFilterModel],
+  )
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      setSearch('')
+      setFilterModel('')
+    }
+    onOpenChange(nextOpen)
+  }
 
   const content = (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="relative shrink-0">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/40" />
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={t('agent:settings.scope.previewSearch')}
-          className="h-9 pl-9"
-        />
+      <div className="flex shrink-0 items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-foreground/40" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t('agent:settings.scope.previewSearch')}
+            className="h-9 pl-9"
+          />
+        </div>
+        <Select
+          value={activeFilterModel || ALL_SCOPE_PREVIEW_MODELS}
+          onValueChange={(value) => setFilterModel(value === ALL_SCOPE_PREVIEW_MODELS ? '' : value)}
+          disabled={loading || modelNames.length === 0}
+        >
+          <SelectTrigger
+            variant="filter"
+            filterLabel={t('agent:settings.scope.allModels')}
+            active={Boolean(activeFilterModel)}
+            aria-label={t('agent:settings.scope.allModels')}
+            className="max-w-[45%] disabled:pointer-events-none disabled:opacity-40 sm:max-w-[14rem]"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent widthMode="content" align="end">
+            <SelectItem value={ALL_SCOPE_PREVIEW_MODELS}>{t('agent:settings.scope.allModels')}</SelectItem>
+            {modelNames.map((name) => (
+              <SelectItem key={name} value={name}>{name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-lg border border-[hsl(var(--glass-border))]">
         {loading ? (
@@ -290,13 +337,17 @@ export function ScopePreviewDialog({
             <Skeleton className="h-9 w-full" />
             <Skeleton className="h-9 w-2/3" />
           </div>
-        ) : groups.length === 0 ? (
+        ) : allRows.length === 0 ? (
           <p className="py-8 text-center text-xs leading-5 text-muted-soft">{t('agent:settings.scope.previewEmpty')}</p>
-        ) : filteredGroups.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <p className="py-8 text-center text-xs text-muted-soft">{t('agent:settings.scope.noModels')}</p>
         ) : (
-          filteredGroups.map((group) => (
-            <ScopePreviewGroup key={group.site.site_id} group={group} canonicalById={canonicalById} />
+          filteredRows.map((row) => (
+            <ScopePreviewModelRow
+              key={`${row.site.site_id}:${row.model.id}`}
+              row={row}
+              canonicalById={canonicalById}
+            />
           ))
         )}
       </div>
@@ -304,12 +355,12 @@ export function ScopePreviewDialog({
   )
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         size="md"
         aria-describedby={undefined}
         overlayClassName="z-[60]"
-        onBack={mobileLayout ? () => onOpenChange(false) : undefined}
+        onBack={mobileLayout ? () => handleOpenChange(false) : undefined}
         backLabel={t('agent:settings.tabScope')}
         className="z-[60] h-[min(80svh,600px)]"
       >
@@ -319,7 +370,7 @@ export function ScopePreviewDialog({
         <div className="flex min-h-0 flex-1 flex-col gap-3 px-6">{content}</div>
         {!mobileLayout ? (
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>{t('agent:settings.close')}</Button>
+            <Button variant="outline" size="sm" onClick={() => handleOpenChange(false)}>{t('agent:settings.close')}</Button>
           </DialogFooter>
         ) : null}
       </DialogContent>
@@ -327,57 +378,45 @@ export function ScopePreviewDialog({
   )
 }
 
-function ScopePreviewGroup({
-  group,
-  canonicalById,
-}: {
-  group: AgentScopePreviewGroup
-  canonicalById: Map<string, CanonicalModelItem>
-}) {
-  const { t } = useTranslation(['agent', 'components'])
-  const site = group.site
-  return (
-    <div className="border-t border-[hsl(var(--glass-divider))] first:border-t-0">
-      <div className="flex items-center gap-3 px-4 py-2.5">
-        <BrandMark iconPath={siteTypeIconPath(site.site_type)} label={formatSiteTypeLabel(site.site_type)} fallback={site.site_name} fallbackText={buildModelGlyph(site.site_name)} size="sm" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={site.site_name}>{site.site_name}</span>
-        <span className="shrink-0 text-xs tabular-nums text-faint">{t('agent:settings.scope.modelCount', { count: group.models.length })}</span>
-      </div>
-      <div className="pb-1.5">
-        {group.models.map((model) => (
-          <ScopePreviewModelRow key={model.id} siteName={site.site_name} model={model} canonicalById={canonicalById} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function ScopePreviewModelRow({
-  siteName,
-  model,
+  row,
   canonicalById,
 }: {
-  siteName: string
-  model: AgentScopePreviewGroup['models'][number]
+  row: AgentScopePreviewRow
   canonicalById: Map<string, CanonicalModelItem>
 }) {
   const { t } = useTranslation(['agent', 'components'])
+  const { site, model, modelName, displayName, realName } = row
   const canonical = model.canonical_model_id ? canonicalById.get(model.canonical_model_id) : undefined
   const icon = canonical
-    ? canonicalModelIconInfo(canonical, model.display_name || model.upstream_model_name)
-    : modelNameIconInfo([model.display_name, model.upstream_model_name, model.model_key], model.model_key || model.upstream_model_name)
+    ? canonicalModelIconInfo(canonical, displayName)
+    : modelNameIconInfo([model.display_name, model.upstream_model_name, model.model_key], modelName)
   return (
-    <div className="flex min-w-0 items-center gap-3 px-4 py-1.5 pl-11">
+    <button
+      type="button"
+      className="flex w-full min-w-0 items-center gap-3 border-t border-[hsl(var(--glass-divider))] px-4 py-2.5 text-left transition-colors first:border-t-0 hover:bg-fill-3"
+      onClick={() => copyToClipboard(modelName, t('components:modelsDraw.copied'), t('components:modelsDraw.copyFailed'))}
+    >
       <BrandMark iconPath={icon.iconPath} label={icon.label} fallback={icon.fallback} fallbackText={icon.fallbackText} size="sm" />
-      <button
-        type="button"
-        className="min-w-0 max-w-full truncate bg-transparent p-0 text-left text-sm text-foreground"
-        title={model.upstream_model_name}
-        onClick={() => copyToClipboard(model.model_key || model.upstream_model_name, t('components:modelsDraw.copied'), t('components:modelsDraw.copyFailed'))}
-      >
-        {model.model_key || model.upstream_model_name}
-      </button>
-      <span className="ml-auto shrink-0 truncate text-xs text-faint" title={siteName}>{siteName}</span>
-    </div>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium leading-5 text-foreground" title={displayName}>
+          {displayName}
+        </span>
+        <span className="block truncate text-xs leading-4 text-muted-soft" title={realName}>
+          {realName}
+        </span>
+      </span>
+      <span className="flex min-w-0 max-w-[40%] shrink-0 items-center gap-1.5" title={site.site_name}>
+        <BrandMark
+          iconPath={siteTypeIconPath(site.site_type)}
+          label={formatSiteTypeLabel(site.site_type)}
+          fallback={site.site_name}
+          fallbackText={buildModelGlyph(site.site_name)}
+          transparent
+          size="xs"
+        />
+        <span className="truncate text-xs text-faint">{site.site_name}</span>
+      </span>
+    </button>
   )
 }

@@ -382,7 +382,7 @@ func (h Handler) forwardSiteModelTestRequest(
 		ClaudeCode:         isClaudeCodeSite(candidate.Site.SiteType),
 		DisableCompression: isOpenCodeZenSite(candidate),
 	}
-	upstreamClient, siteConfig, requestHeaders, err := h.upstreamClientForSite(ctx, candidate.Site.ID, upstreamProfileRequest)
+	upstreamClient, siteConfig, requestHeaders, err := h.upstreamClientForSite(ctx, candidate.Site.ID, upstreamProfileRequest, candidate)
 	if err != nil {
 		result.statusCode = http.StatusBadGateway
 		result.errorType = "upstream_client_unavailable"
@@ -420,7 +420,9 @@ func (h Handler) forwardSiteModelTestRequest(
 	}
 	applyUpstreamAuth(req, protocol, upstreamKey)
 	req.Header.Set("Content-Type", "application/json")
-	setUpstreamAccept(req, upstreamStream)
+	if pluginTransportProfile(candidate, siteConfig) != "bun" {
+		setUpstreamAccept(req, upstreamStream)
+	}
 	if isCodexSite(candidate.Site.SiteType) {
 		applyCodexGatewayHeaders(req, accountID, upstreamStream)
 	}
@@ -445,11 +447,24 @@ func (h Handler) forwardSiteModelTestRequest(
 		applyClaudeCodeOAuthGatewayHeaders(req, upstreamKey)
 	}
 	if isOpenCodeZenSite(candidate) {
-		applyOpenCodeGoGatewayHeaders(req, request, upstreamKey)
+		applyOpenCodeGoGatewayHeaders(req, request, upstreamKey, siteConfig != nil && gatewayConfigBool(siteConfig.ImpersonateOpencodeClient))
 	}
-	if err := applyPluginRequestHeaders(req, candidate.Site.SiteType, headerVars, upstreamKey, upstreamBaseURL); err != nil {
+	modelMeta := candidate.Model.PluginMeta
+	if selectedCredential != nil && len(selectedCredential.ModelPluginMeta) > 0 {
+		modelMeta = selectedCredential.ModelPluginMeta
+	}
+	if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, modelMeta, h.cacheObservationKey); err != nil {
 		result.statusCode = http.StatusBadGateway
 		result.errorType = "plugin_header_template_failed"
+		result.errorMessage = err.Error()
+		result.latencyMS = time.Since(startedAt).Milliseconds()
+		result.requestLogID = h.recordAttempt(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, nil)
+		return result
+	}
+	body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, modelMeta, h.cacheObservationKey)
+	if err != nil {
+		result.statusCode = http.StatusBadGateway
+		result.errorType = "upstream_sign_failed"
 		result.errorMessage = err.Error()
 		result.latencyMS = time.Since(startedAt).Milliseconds()
 		result.requestLogID = h.recordAttempt(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, nil)
@@ -489,6 +504,7 @@ func (h Handler) forwardSiteModelTestRequest(
 		result.requestLogID = h.recordAttempt(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, nil)
 		return result
 	}
+	applyCandidateStream(resp, protocol, candidate)
 	if upstreamStream {
 		return h.handleSiteModelTestStreamResponse(ctx, requestID, canonicalModelID, candidate, protocol, resp, result, startedAt)
 	}
@@ -683,8 +699,25 @@ func (h Handler) handleSiteModelTestStreamResponse(
 	result = applyEstimatedCostBillingAdjustment(result)
 	result.cacheWriteCost = cacheWriteCostForAttempt(capture.usage, result)
 	result.latencyMS = time.Since(startedAt).Milliseconds()
+	if !responseStarted && capture.semanticFailure == nil && proxyErr != nil {
+		var semanticFailure *upstreamSemanticFailure
+		if errors.As(proxyErr, &semanticFailure) {
+			capture.semanticFailure = semanticFailure
+		}
+	}
+	if !responseStarted && capture.semanticFailure != nil {
+		return h.finishStreamSemanticFailure(ctx, requestID, uuid.Nil, canonicalModelID, candidate, result, capture)
+	}
 	if proxyErr != nil {
-		if streamSucceeded(capture) {
+		if errors.Is(proxyErr, errUpstreamStreamStatus) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_status"
+			result.errorMessage = proxyErr.Error()
+		} else if errors.Is(proxyErr, errUpstreamStreamMalformed) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_malformed"
+			result.errorMessage = proxyErr.Error()
+		} else if streamSucceeded(capture) {
 			result.success = true
 		} else {
 			result.errorType = "upstream_stream_failed"

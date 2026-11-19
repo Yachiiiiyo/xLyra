@@ -10,36 +10,23 @@ import { sitesQueryKeys, type Site } from '@/features/sites/api/sites'
 import { APIError } from '@/lib/http'
 import { toast } from '@/lib/toast'
 
-export const QUOTA_PROBE = 'quota_probe'
-const PRICING_PARSE = 'pricing_parse'
-const QUOTA_PLUGIN_PREFIX = 'plugin:'
-
-/** What a site is bound to for this kind: a plugin id, or for quota_probe also a built-in probe type. */
-function boundValue(site: Site, kind: string): string {
-  const config = site.gateway_config
-  if (kind === QUOTA_PROBE) return config?.quota_probe ?? ''
-  return config?.plugins?.[kind] ?? ''
-}
-
-function boundPluginId(site: Site, kind: string): string {
-  const value = boundValue(site, kind)
-  if (kind !== QUOTA_PROBE) return value
-  return value.startsWith(QUOTA_PLUGIN_PREFIX) ? value.slice(QUOTA_PLUGIN_PREFIX.length) : ''
-}
-
 export type SiteBindingTarget = {
   pluginId: string
   version: string
-  kind: string
+  exports: string[]
 }
 
-// State and actions for binding one plugin to sites. The hook lives in the
+function mounted(site: Site, pluginId: string) {
+  return site.gateway_config?.plugin_ids?.includes(pluginId) ?? false
+}
+
+// State and actions for mounting one plugin on sites. The hook lives in the
 // dialog (not in the section below) because the Apply button is in the dialog
 // footer, away from the site picker.
 //
-// Binding is optional: an enabled plugin is loaded either way, and these kinds
-// only take effect on the sites picked here. A site can be bound to one plugin
-// per kind, so picking a site that already has another plugin replaces it.
+// Binding is optional: an enabled plugin is loaded either way, and its hooks
+// only run on the sites picked here. A site can mount several plugins; each
+// hook uses the first mounted plugin that exports it.
 export function useSiteBinding(target: SiteBindingTarget | null, sites: Site[]) {
   const { t } = useTranslation(['settings'])
   const queryClient = useQueryClient()
@@ -49,24 +36,16 @@ export function useSiteBinding(target: SiteBindingTarget | null, sites: Site[]) 
   const [reviewed, setReviewed] = useState(false)
 
   const pluginId = target?.pluginId ?? ''
-  const kind = target?.kind ?? ''
-  const bound = target ? sites.filter((site) => boundPluginId(site, kind) === pluginId).map((site) => site.id) : []
+  const exports = target?.exports ?? []
+  const bound = target ? sites.filter((site) => mounted(site, pluginId)).map((site) => site.id) : []
   // An edit belongs to the plugin it was made for, so it never leaks into another plugin's dialog.
   const selected = draft && draft.pluginId === pluginId ? draft.ids : bound
   const toBind = selected.filter((id) => !bound.includes(id))
   const toUnbind = bound.filter((id) => !selected.includes(id))
   const changed = toBind.length > 0 || toUnbind.length > 0
-  const pricing = kind === PRICING_PARSE
+  const pricing = exports.includes('parsePricing')
   const pricingReady = !pricing || toBind.length === 0 || (reviewed && toBind.every((id) => previews[id]))
   const siteName = (id: string) => sites.find((site) => site.id === id)?.name ?? id
-
-  // Sites that already have a different plugin (or built-in probe) for this kind.
-  const otherBinding: Record<string, string> = {}
-  for (const site of sites) {
-    if (target && boundPluginId(site, kind) !== pluginId && boundValue(site, kind)) {
-      otherBinding[site.id] = boundValue(site, kind)
-    }
-  }
 
   const reset = () => {
     setDraft(null)
@@ -92,7 +71,7 @@ export function useSiteBinding(target: SiteBindingTarget | null, sites: Site[]) 
           failures.push(`${siteName(id)}: ${error instanceof APIError ? error.message : String(error)}`)
         }
       }
-      for (const id of toUnbind) await run(id, () => unbindJSPluginSite(target.pluginId, id, target.kind))
+      for (const id of toUnbind) await run(id, () => unbindJSPluginSite(target.pluginId, id))
       for (const id of toBind) {
         await run(id, () =>
           bindJSPluginSite(target.pluginId, target.version, id, { confirmPricingReviewed: reviewed }),
@@ -126,14 +105,13 @@ export function useSiteBinding(target: SiteBindingTarget | null, sites: Site[]) 
   }
 
   return {
-    /** False when this plugin has nothing to bind (wrong kind, or no enabled version). */
+    /** False when this plugin has nothing to bind (not site scoped, or no enabled version). */
     applicable: target != null,
     pluginId,
-    kind,
+    exports,
     selected,
     setSelected,
     toBind,
-    otherBinding,
     pricing,
     previews,
     previewing,

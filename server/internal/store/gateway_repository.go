@@ -27,6 +27,7 @@ type GatewayCredential struct {
 	GroupName              sql.NullString
 	ModelUpdatedAt         time.Time
 	SupportedEndpointTypes []string
+	ModelPluginMeta        map[string]any
 }
 
 type GatewayPricing struct {
@@ -120,10 +121,11 @@ func (r GatewayRepository) listCredentialsForSiteModel(ctx context.Context, site
 			continue
 		}
 		gatewayItem := GatewayCredential{
-			Credential:     credential,
-			State:          state,
-			GroupName:      state.GroupName,
-			ModelUpdatedAt: apiModel.UpdatedAt,
+			Credential:      credential,
+			State:           state,
+			GroupName:       state.GroupName,
+			ModelUpdatedAt:  apiModel.UpdatedAt,
+			ModelPluginMeta: pluginMetaFromJSON(apiModel.Raw),
 		}
 		if len(siteEndpointTypes) > 0 {
 			gatewayItem.SupportedEndpointTypes = apiModel.EffectiveEndpointTypes(siteEndpointTypes)
@@ -511,6 +513,21 @@ func jsonBoolDefault(data JSON, key string, fallback bool) bool {
 
 func isNewAPISite(value string) bool {
 	return value == "newapi"
+}
+
+func pluginMetaFromJSON(raw JSON) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var capabilities map[string]any
+	if err := json.Unmarshal(raw, &capabilities); err != nil {
+		return nil
+	}
+	meta, _ := capabilities["plugin_meta"].(map[string]any)
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
 }
 
 func routeCooling(cooldowns []RouteCooldown, siteID uuid.UUID, siteModelID uuid.UUID) bool {

@@ -78,9 +78,9 @@ func providerType(plugin *jsplugin.Plugin, enabled bool) site.PluginSiteType {
 func providerCandidate(siteType, classifierID string) routeengine.Candidate {
 	return routeengine.Candidate{
 		Site: routeengine.CandidateSite{
-			ID:                    uuid.New(),
-			SiteType:              siteType,
-			ErrorClassifierPlugin: classifierID,
+			ID:        uuid.New(),
+			SiteType:  siteType,
+			PluginIDs: pluginIDs(classifierID),
 		},
 		Model: routeengine.CandidateModel{SiteModelID: uuid.New(), UpstreamName: "m"},
 	}
@@ -165,8 +165,8 @@ func TestSiteProviderClassifyTimeoutKeepsDefault(t *testing.T) {
 	if got.errorType != baseline.errorType || got.cooldownReason != baseline.cooldownReason || got.cooldownDuration != baseline.cooldownDuration {
 		t.Fatalf("timeout changed the outcome: got %#v, want %#v", got, baseline)
 	}
-	if elapsed < 40*time.Millisecond || elapsed > 180*time.Millisecond {
-		t.Fatalf("elapsed %s, want the 50ms classifier timeout inside the request budget", elapsed)
+	if elapsed < 100*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("elapsed %s, want the 150ms classifier timeout inside the request budget", elapsed)
 	}
 }
 
@@ -184,6 +184,13 @@ func TestBoundErrorClassifierBeatsSiteProviderHook(t *testing.T) {
 	fallback := classifyGatewayUpstreamError(providerCandidate("acme.example/chat", "missing-classifier"), plainFailureResult(http.StatusBadRequest), []byte(slowBody), now)
 	if fallback.errorType != "upstream_credential_limited" || fallback.cooldownReason != store.CooldownReasonUpstreamCredentialLimited {
 		t.Fatalf("missing binding did not fall through to the site hook: %#v", fallback)
+	}
+
+	unknownBound := classifierPlugin(t, "acme-unknown", `export function classify() { return { class: "unknown" }; }`)
+	useGatewayPlugins(t, provider, unknownBound)
+	unknownFallback := classifyGatewayUpstreamError(providerCandidate("acme.example/chat", "acme-unknown"), plainFailureResult(http.StatusBadRequest), []byte(slowBody), now)
+	if unknownFallback.errorType != "upstream_credential_limited" || unknownFallback.cooldownReason != store.CooldownReasonUpstreamCredentialLimited {
+		t.Fatalf("unknown verdict from mounted classifier did not fall through to the site hook: %#v", unknownFallback)
 	}
 }
 

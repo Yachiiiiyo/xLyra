@@ -97,6 +97,11 @@ type gatewayAttemptResult struct {
 
 type credentialProtocolResolverContextKey struct{}
 
+// gatewayEndpointAttemptKey carries the zero-based gateway retry of one
+// credential. The plugin account resolver reads it to pick the next declared
+// gateway. It is not a credential failover index.
+type gatewayEndpointAttemptKey struct{}
+
 func withCredentialProtocolResolver(ctx context.Context, resolver upstreamProtocolResolver) context.Context {
 	return context.WithValue(ctx, credentialProtocolResolverContextKey{}, resolver)
 }
@@ -168,6 +173,7 @@ func (h Handler) forwardGatewayRequest(
 	}
 
 	var lastResult gatewayAttemptResult
+credentialLoop:
 	for credentialIndex, selectedCredential := range credentials {
 		var releaseCredentialSelection func()
 		if isGrokSite(candidate.Site.SiteType) {
@@ -201,313 +207,380 @@ func (h Handler) forwardGatewayRequest(
 		if len(selectedCredential.SupportedEndpointTypes) > 0 && !credentialSupportsAdapter(selectedCredential.SupportedEndpointTypes, protocol) {
 			continue
 		}
-		startedAt := time.Now()
-		result := gatewayAttemptResult{
-			attempt:                  attempt,
-			currency:                 "USD",
-			stream:                   request.Stream,
-			downstreamPath:           request.DownstreamPath,
-			upstreamProtocol:         protocol.ProtocolName(),
-			credentialID:             selectedCredential.Credential.ID,
-			cacheDomain:              store.SiteCredentialCacheDomain(selectedCredential.Credential),
-			credentialName:           store.SiteCredentialDisplayName(selectedCredential.Credential, selectedCredential.State),
-			credentialMasked:         selectedCredential.Credential.MaskedSecret,
-			credentialMeta:           selectedCredential.Credential.Meta,
-			credentialPriority:       store.SiteCredentialRoutingPriority(selectedCredential.Credential),
-			credentialCostMultiplier: store.SiteCredentialUpstreamCostMultiplier(selectedCredential.Credential),
-			apiKeyBillingMultiplier:  apiKeyBillingMultiplierFromContext(ctx),
-			credentialAttempt:        credentialIndex + 1,
-			credentialTotal:          len(credentials),
-			rateLimit:                rateLimit,
-			diagnostic:               request.Diagnostic,
-		}
-		nextCredentialAvailable := credentialIndex < len(credentials)-1
-		recordCredentialAttempt := func(result gatewayAttemptResult, upstreamResponse any, shouldTryNextCredential bool) gatewayAttemptResult {
-			decision := credentialFailoverDecisionForAction(nextCredentialAvailable, shouldTryNextCredential)
-			result.credentialDecision = decision
-			result.credentialDecisionSet = true
-			result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, upstreamResponse)
-			h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, decision)
-			return result
-		}
-		if h.logger != nil {
-			h.logger.DebugContext(ctx, "gateway credential attempt started",
-				"scope", "gateway",
-				"request_id", requestID,
-				"attempt", attempt,
-				"site_id", candidate.Site.ID,
-				"site_name", candidate.Site.Name,
-				"model", candidate.Model.UpstreamName,
-				"downstream_path", request.DownstreamPath,
-				"upstream_protocol", protocol.ProtocolName(),
-				"credential_attempt", result.credentialAttempt,
-				"credential_total", result.credentialTotal,
-			)
-		}
-
-		selectedPricing := h.gatewayPricing(ctx, candidate, selectedCredential.GroupName.String)
-		result.currency = selectedPricing.Currency
-		result.pricingGroup = selectedPricing.GroupName
-		result.pricing = selectedPricing
-
-		upstreamKey, err := h.credentials.Decrypt(selectedCredential.Credential.EncryptedSecret)
-		if err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "upstream_credential_decrypt_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, true)
-			lastResult = result
-			if result.credentialDecision.ShouldTryNextCredential {
-				if releaseCredentialSelection != nil {
-					releaseCredentialSelection()
-				}
-				continue
+		// gatewayAttempt walks a region's declared gateways for this one
+		// credential. The first pass always runs. A later pass runs only when the
+		// previous pass failed on the connection, timed out, or got a 5xx, and the
+		// resolver reported more than one gateway. Credential failover is unchanged.
+		credentialCtx := ctx
+		for gatewayAttempt := 0; ; gatewayAttempt++ {
+			ctx := credentialCtx
+			if gatewayAttempt > 0 {
+				ctx = context.WithValue(credentialCtx, gatewayEndpointAttemptKey{}, gatewayAttempt)
 			}
-			return result
-		}
-		accountID := gatewayCredentialMetaString(selectedCredential.Credential, "account_id")
-		// upstreamBaseURL is the site's base URL. A credential resolver may
-		// override it with the account's own upstream address.
-		upstreamBaseURL := candidate.Site.BaseURL
-		var headerVars map[string]string
-		if resolver := credentialResolverFor(candidate.Site.SiteType, selectedCredential.Credential.CredentialType); resolver != nil {
-			resolved, failure := resolver.Resolve(ctx, h, candidate, selectedCredential, upstreamKey, accountID)
-			if failure != nil {
-				if failure.MarkReauth {
-					h.markAccountCredentialReauthRequired(ctx, selectedCredential.Credential, failure.Err.Error())
-				}
+			startedAt := time.Now()
+			result := gatewayAttemptResult{
+				attempt:                  attempt,
+				currency:                 "USD",
+				stream:                   request.Stream,
+				downstreamPath:           request.DownstreamPath,
+				upstreamProtocol:         protocol.ProtocolName(),
+				credentialID:             selectedCredential.Credential.ID,
+				cacheDomain:              store.SiteCredentialCacheDomain(selectedCredential.Credential),
+				credentialName:           store.SiteCredentialDisplayName(selectedCredential.Credential, selectedCredential.State),
+				credentialMasked:         selectedCredential.Credential.MaskedSecret,
+				credentialMeta:           selectedCredential.Credential.Meta,
+				credentialPriority:       store.SiteCredentialRoutingPriority(selectedCredential.Credential),
+				credentialCostMultiplier: store.SiteCredentialUpstreamCostMultiplier(selectedCredential.Credential),
+				apiKeyBillingMultiplier:  apiKeyBillingMultiplierFromContext(ctx),
+				credentialAttempt:        credentialIndex + 1,
+				credentialTotal:          len(credentials),
+				rateLimit:                rateLimit,
+				diagnostic:               request.Diagnostic,
+			}
+			nextCredentialAvailable := credentialIndex < len(credentials)-1
+			recordCredentialAttempt := func(result gatewayAttemptResult, upstreamResponse any, shouldTryNextCredential bool) gatewayAttemptResult {
+				decision := credentialFailoverDecisionForAction(nextCredentialAvailable, shouldTryNextCredential)
+				result.credentialDecision = decision
+				result.credentialDecisionSet = true
+				result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, upstreamResponse)
+				h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, decision)
+				return result
+			}
+			if h.logger != nil {
+				h.logger.DebugContext(ctx, "gateway credential attempt started",
+					"scope", "gateway",
+					"request_id", requestID,
+					"attempt", attempt,
+					"site_id", candidate.Site.ID,
+					"site_name", candidate.Site.Name,
+					"model", candidate.Model.UpstreamName,
+					"downstream_path", request.DownstreamPath,
+					"upstream_protocol", protocol.ProtocolName(),
+					"credential_attempt", result.credentialAttempt,
+					"credential_total", result.credentialTotal,
+				)
+			}
+
+			selectedPricing := h.gatewayPricing(ctx, candidate, selectedCredential.GroupName.String)
+			result.currency = selectedPricing.Currency
+			result.pricingGroup = selectedPricing.GroupName
+			result.pricing = selectedPricing
+
+			upstreamKey, err := h.credentials.Decrypt(selectedCredential.Credential.EncryptedSecret)
+			if err != nil {
 				result.statusCode = http.StatusBadGateway
-				result.errorType = failure.ErrorType
-				result.errorMessage = failure.Err.Error()
+				result.errorType = "upstream_credential_decrypt_failed"
+				result.errorMessage = err.Error()
 				result.latencyMS = time.Since(startedAt).Milliseconds()
-				result = recordCredentialAttempt(result, nil, failure.TryNextCredential)
-				if !failure.TryNextCredential {
-					return result
-				}
+				result = recordCredentialAttempt(result, nil, true)
 				lastResult = result
 				if result.credentialDecision.ShouldTryNextCredential {
 					if releaseCredentialSelection != nil {
 						releaseCredentialSelection()
 					}
-					continue
+					continue credentialLoop
 				}
 				return result
 			}
-			upstreamKey = resolved.Key
-			accountID = resolved.AccountID
-			if resolved.BaseURL != "" {
-				upstreamBaseURL = resolved.BaseURL
+			accountID := gatewayCredentialMetaString(selectedCredential.Credential, "account_id")
+			// upstreamBaseURL is the site's base URL. A credential resolver may
+			// override it with the account's own upstream address.
+			upstreamBaseURL := candidate.Site.BaseURL
+			var headerVars map[string]string
+			gatewayEndpoints := 1
+			if resolver := credentialResolverFor(candidate.Site.SiteType, selectedCredential.Credential.CredentialType); resolver != nil {
+				resolved, failure := resolver.Resolve(ctx, h, candidate, selectedCredential, upstreamKey, accountID)
+				if failure != nil {
+					if failure.MarkReauth {
+						h.markAccountCredentialReauthRequired(ctx, selectedCredential.Credential, failure.Err.Error())
+					}
+					result.statusCode = http.StatusBadGateway
+					result.errorType = failure.ErrorType
+					result.errorMessage = failure.Err.Error()
+					result.latencyMS = time.Since(startedAt).Milliseconds()
+					result = recordCredentialAttempt(result, nil, failure.TryNextCredential)
+					if !failure.TryNextCredential {
+						return result
+					}
+					lastResult = result
+					if result.credentialDecision.ShouldTryNextCredential {
+						if releaseCredentialSelection != nil {
+							releaseCredentialSelection()
+						}
+						continue credentialLoop
+					}
+					return result
+				}
+				upstreamKey = resolved.Key
+				accountID = resolved.AccountID
+				if resolved.BaseURL != "" {
+					upstreamBaseURL = resolved.BaseURL
+				}
+				headerVars = resolved.HeaderVars
+				if resolved.GatewayEndpoints > 1 {
+					gatewayEndpoints = resolved.GatewayEndpoints
+				}
 			}
-			headerVars = resolved.HeaderVars
-		}
 
-		payload, err := buildGatewayUpstreamPayload(protocol, request, candidate)
-		if err != nil {
-			result.statusCode = http.StatusBadRequest
-			result.contentType = "application/json"
-			result.body = gatewayRequestFailureBody("request_encode_failed", err.Error(), requestID)
-			result.errorType = "request_encode_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
-		payload, err = applyProviderRewrite(ctx, candidate, protocol, payload)
-		if err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "plugin_rewrite_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
-		result = applyRequestBillingMetadata(result, payload, request.Payload, candidate)
-		if validationErr := validatePayloadParams(payload, protocol.ProtocolName(), candidate); validationErr != nil {
-			result.statusCode = http.StatusBadRequest
-			result.errorType = "request_param_validation_failed"
-			result.errorMessage = validationErr.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
-		upstreamStream := request.Stream
-		if value, ok := payload["stream"].(bool); ok && value {
-			upstreamStream = true
-		}
-		if format, ok := payload["stream_format"].(string); ok && strings.EqualFold(strings.TrimSpace(format), "sse") {
-			upstreamStream = true
-		}
-		upstreamProfileRequest := upstreamClientProfileRequest{
-			Stream:             upstreamStream,
-			ImageGeneration:    isCodexImageGenerationRequest(candidate, request, payload) || (isGrokSite(candidate.Site.SiteType) && request.DownstreamPath == gatewayEndpointImagesGenerations),
-			ClaudeCode:         isClaudeCodeSite(candidate.Site.SiteType),
-			DisableCompression: isOpenCodeZenSite(candidate),
-		}
+			payload, err := buildGatewayUpstreamPayload(protocol, request, candidate)
+			if err != nil {
+				result.statusCode = http.StatusBadRequest
+				result.contentType = "application/json"
+				result.body = gatewayRequestFailureBody("request_encode_failed", err.Error(), requestID)
+				result.errorType = "request_encode_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
+			payload, err = applyProviderRewrite(ctx, candidate, protocol, payload)
+			if err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "plugin_rewrite_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
+			sanitizeDSMLInRequestPayload(payload)
+			result = applyRequestBillingMetadata(result, payload, request.Payload, candidate)
+			if validationErr := validatePayloadParams(payload, protocol.ProtocolName(), candidate); validationErr != nil {
+				result.statusCode = http.StatusBadRequest
+				result.errorType = "request_param_validation_failed"
+				result.errorMessage = validationErr.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
+			upstreamStream := request.Stream
+			if value, ok := payload["stream"].(bool); ok && value {
+				upstreamStream = true
+			}
+			if format, ok := payload["stream_format"].(string); ok && strings.EqualFold(strings.TrimSpace(format), "sse") {
+				upstreamStream = true
+			}
+			upstreamProfileRequest := upstreamClientProfileRequest{
+				Stream:             upstreamStream,
+				ImageGeneration:    isCodexImageGenerationRequest(candidate, request, payload) || (isGrokSite(candidate.Site.SiteType) && request.DownstreamPath == gatewayEndpointImagesGenerations),
+				ClaudeCode:         isClaudeCodeSite(candidate.Site.SiteType),
+				DisableCompression: isOpenCodeZenSite(candidate),
+			}
 
-		upstreamClient, siteConfig, requestHeaders, err := h.upstreamClientForSite(ctx, candidate.Site.ID, upstreamProfileRequest)
-		if err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "upstream_client_unavailable"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
-		claudeCodeSessionID := applyGatewayClientImpersonationPayloadForAccount(payload, siteConfig, protocol, request, candidate, accountID)
-		body, contentType, err := buildUpstreamRequestBody(protocol, request, payload)
-		if err != nil {
-			result.statusCode = http.StatusBadRequest
-			result.errorType = "request_encode_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
+			upstreamClient, siteConfig, requestHeaders, err := h.upstreamClientForSite(ctx, candidate.Site.ID, upstreamProfileRequest, candidate)
+			if err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_client_unavailable"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
+			claudeCodeSessionID := applyGatewayClientImpersonationPayloadForAccount(payload, siteConfig, protocol, request, candidate, accountID)
+			body, contentType, err := buildUpstreamRequestBody(protocol, request, payload)
+			if err != nil {
+				result.statusCode = http.StatusBadRequest
+				result.errorType = "request_encode_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
 
-		endpoint := protocol.UpstreamPath(upstreamBaseURL)
-		result.upstreamPath = endpointPath(endpoint)
-		result.upstreamURL = endpoint
-		req, err := newUpstreamHTTPRequest(ctx, protocol, endpoint, body)
-		if err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "upstream_request_build_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
-		applyUpstreamAuth(req, protocol, upstreamKey)
-		req.Header.Set("Content-Type", contentType)
-		setUpstreamAccept(req, upstreamStream)
-		if isCodexSite(candidate.Site.SiteType) {
-			applyCodexGatewayHeaders(req, accountID, upstreamStream)
-		}
-		if isAntigravitySite(candidate.Site.SiteType) {
-			applyAntigravityGatewayHeaders(req)
-		}
-		if isGoogleSite(candidate.Site.SiteType) {
-			applyGoogleGatewayHeaders(req, upstreamKey)
-		}
-		if headerAdapter, ok := protocol.(gatewayProtocolHeaderAdapter); ok {
-			headerAdapter.ApplyUpstreamHeaders(req, upstreamKey, accountID, upstreamStream)
-		}
-		applyDownstreamPassthroughHeaders(req, request, candidate)
-		applyGatewayClientImpersonationHeaders(req, siteConfig, protocol, request, candidate, claudeCodeSessionID)
-		for k, v := range requestHeaders {
-			req.Header.Set(k, v)
-		}
-		if isGrokSite(candidate.Site.SiteType) {
-			applyGrokGatewayHeaders(req, upstreamKey, candidate.Model.UpstreamName)
-		}
-		if isClaudeCodeSite(candidate.Site.SiteType) {
-			applyClaudeCodeOAuthGatewayHeaders(req, upstreamKey)
-		}
-		if isOpenCodeZenSite(candidate) {
-			applyOpenCodeGoGatewayHeaders(req, request, upstreamKey)
-		}
-		if err := applyPluginRequestHeaders(req, candidate.Site.SiteType, headerVars, upstreamKey, upstreamBaseURL); err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "plugin_header_template_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
-		if err := signUpstreamRequest(req, protocol, body, upstreamKey); err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "upstream_sign_failed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
+			endpoint := protocol.UpstreamPath(upstreamBaseURL)
+			result.upstreamPath = endpointPath(endpoint)
+			result.upstreamURL = endpoint
+			req, err := newUpstreamHTTPRequest(ctx, protocol, endpoint, body)
+			if err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_request_build_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
+			applyUpstreamAuth(req, protocol, upstreamKey)
+			req.Header.Set("Content-Type", contentType)
+			if pluginTransportProfile(candidate, siteConfig) != "bun" {
+				setUpstreamAccept(req, upstreamStream)
+			}
+			if isCodexSite(candidate.Site.SiteType) {
+				applyCodexGatewayHeaders(req, accountID, upstreamStream)
+			}
+			if isAntigravitySite(candidate.Site.SiteType) {
+				applyAntigravityGatewayHeaders(req)
+			}
+			if isGoogleSite(candidate.Site.SiteType) {
+				applyGoogleGatewayHeaders(req, upstreamKey)
+			}
+			if headerAdapter, ok := protocol.(gatewayProtocolHeaderAdapter); ok {
+				headerAdapter.ApplyUpstreamHeaders(req, upstreamKey, accountID, upstreamStream)
+			}
+			applyDownstreamPassthroughHeaders(req, request, candidate)
+			applyGatewayClientImpersonationHeaders(req, siteConfig, protocol, request, candidate, claudeCodeSessionID)
+			for k, v := range requestHeaders {
+				req.Header.Set(k, v)
+			}
+			if isGrokSite(candidate.Site.SiteType) {
+				applyGrokGatewayHeaders(req, upstreamKey, candidate.Model.UpstreamName)
+			}
+			if isClaudeCodeSite(candidate.Site.SiteType) {
+				applyClaudeCodeOAuthGatewayHeaders(req, upstreamKey)
+			}
+			if isOpenCodeZenSite(candidate) {
+				applyOpenCodeGoGatewayHeaders(req, request, upstreamKey, siteConfig != nil && gatewayConfigBool(siteConfig.ImpersonateOpencodeClient))
+			}
+			modelMeta := candidate.Model.PluginMeta
+			if len(selectedCredential.ModelPluginMeta) > 0 {
+				modelMeta = selectedCredential.ModelPluginMeta
+			}
+			if err := applyPluginRequestHeaders(req, candidate, request, headerVars, upstreamKey, upstreamBaseURL, candidate.Model.UpstreamName, modelMeta, h.cacheObservationKey); err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "plugin_header_template_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
+			body, err = applyPluginSignChain(ctx, req, candidate, request, protocol, body, upstreamKey, headerVars, modelMeta, h.cacheObservationKey)
+			if err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_sign_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, true)
+				lastResult = result
+				if result.credentialDecision.ShouldTryNextCredential {
+					if releaseCredentialSelection != nil {
+						releaseCredentialSelection()
+					}
+					continue credentialLoop
+				}
+				return result
+			}
+			if err := signUpstreamRequest(req, protocol, body, upstreamKey); err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_sign_failed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
 
-		upstreamURL := ""
-		if req.URL != nil {
-			upstreamURL = req.URL.String()
-		}
-		upstreamClient, err = pluginUpstreamClient(candidate.Site.SiteType, upstreamURL, upstreamClient)
-		if err != nil {
-			result.statusCode = http.StatusBadGateway
-			result.errorType = "upstream_host_not_allowed"
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, false)
-			return result
-		}
+			upstreamURL := ""
+			if req.URL != nil {
+				upstreamURL = req.URL.String()
+			}
+			upstreamClient, err = pluginUpstreamClient(candidate.Site.SiteType, upstreamURL, upstreamClient)
+			if err != nil {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_host_not_allowed"
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, false)
+				return result
+			}
 
-		releaseConcurrency, err := h.acquireUpstreamConcurrency(ctx, candidate, selectedCredential.Credential.ID, siteConfig)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
+			releaseConcurrency, err := h.acquireUpstreamConcurrency(ctx, candidate, selectedCredential.Credential.ID, siteConfig)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					result.statusCode = transportFailureStatusCode(err)
+					result.errorType = transportErrorType(err)
+				} else if errors.Is(err, context.DeadlineExceeded) {
+					result.statusCode = http.StatusServiceUnavailable
+					result.errorType = "upstream_concurrency_wait_timeout"
+				} else {
+					result.statusCode = http.StatusServiceUnavailable
+					result.errorType = "upstream_concurrency_acquire_failed"
+					if errors.Is(err, errSiteConcurrencyLimited) {
+						result.errorType = "site_concurrency_limited"
+					}
+					if errors.Is(err, errModelConcurrencyLimited) {
+						result.errorType = "model_concurrency_limited"
+					}
+					if errors.Is(err, errCredentialConcurrencyLimited) {
+						result.errorType = "credential_concurrency_limited"
+					}
+				}
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, errors.Is(err, errCredentialConcurrencyLimited))
+				if result.credentialDecision.ShouldTryNextCredential {
+					if releaseCredentialSelection != nil {
+						releaseCredentialSelection()
+					}
+					lastResult = result
+					continue credentialLoop
+				}
+				return result
+			}
+
+			upstreamStartedAt := time.Now()
+			connectionReused := false
+			connectionObserved := false
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+				GotConn: func(info httptrace.GotConnInfo) {
+					connectionObserved = true
+					connectionReused = info.Reused
+				},
+			}))
+			var resp *http.Response
+			resp, err = upstreamClient.Do(req)
+			result.upstreamLatencyMS = time.Since(upstreamStartedAt).Milliseconds()
+			result.upstreamConnectionObserved = connectionObserved
+			result.upstreamConnectionReused = connectionReused
+			if err != nil {
+				releaseConcurrency()
 				result.statusCode = transportFailureStatusCode(err)
 				result.errorType = transportErrorType(err)
-			} else if errors.Is(err, context.DeadlineExceeded) {
-				result.statusCode = http.StatusServiceUnavailable
-				result.errorType = "upstream_concurrency_wait_timeout"
-			} else {
-				result.statusCode = http.StatusServiceUnavailable
-				result.errorType = "upstream_concurrency_acquire_failed"
-				if errors.Is(err, errSiteConcurrencyLimited) {
-					result.errorType = "site_concurrency_limited"
-				}
-				if errors.Is(err, errModelConcurrencyLimited) {
-					result.errorType = "model_concurrency_limited"
-				}
-				if errors.Is(err, errCredentialConcurrencyLimited) {
-					result.errorType = "credential_concurrency_limited"
-				}
-			}
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, errors.Is(err, errCredentialConcurrencyLimited))
-			if result.credentialDecision.ShouldTryNextCredential {
+				result.errorMessage = err.Error()
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, accountPoolCredentialFailover(selectedCredential.Credential.CredentialType))
 				if releaseCredentialSelection != nil {
 					releaseCredentialSelection()
 				}
-				lastResult = result
-				continue
+				if gatewayEndpointRetry(result, gatewayAttempt, gatewayEndpoints) {
+					lastResult = result
+					continue
+				}
+				if result.credentialDecision.ShouldTryNextCredential {
+					lastResult = result
+					continue credentialLoop
+				}
+				return result
 			}
-			return result
-		}
+			result.statusCode = resp.StatusCode
+			result.upstreamStatusCode = resp.StatusCode
+			result.contentType = resp.Header.Get("Content-Type")
+			inflight.MarkResponding(requestID)
+			applyCandidateStream(resp, protocol, candidate)
 
-		upstreamStartedAt := time.Now()
-		connectionReused := false
-		connectionObserved := false
-		req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-			GotConn: func(info httptrace.GotConnInfo) {
-				connectionObserved = true
-				connectionReused = info.Reused
-			},
-		}))
-		var resp *http.Response
-		resp, err = upstreamClient.Do(req)
-		result.upstreamLatencyMS = time.Since(upstreamStartedAt).Milliseconds()
-		result.upstreamConnectionObserved = connectionObserved
-		result.upstreamConnectionReused = connectionReused
-		if err != nil {
-			releaseConcurrency()
-			result.statusCode = transportFailureStatusCode(err)
-			result.errorType = transportErrorType(err)
-			result.errorMessage = err.Error()
-			result.latencyMS = time.Since(startedAt).Milliseconds()
-			result = recordCredentialAttempt(result, nil, accountPoolCredentialFailover(selectedCredential.Credential.CredentialType))
-			if releaseCredentialSelection != nil {
-				releaseCredentialSelection()
+			if request.Stream {
+				result = h.handleStreamResponse(ctx, w, requestID, apiKeyID, canonicalModelID, candidate, protocol, resp, result, startedAt)
+				h.markAccountPoolAuthFailure(ctx, candidate.Site.SiteType, selectedCredential.Credential, result)
+				if !request.Diagnostic {
+					h.markCredentialModelUnavailableAfterNotFound(ctx, candidate, selectedCredential.Credential, result)
+				}
+				releaseConcurrency()
+				if releaseCredentialSelection != nil {
+					releaseCredentialSelection()
+				}
+				decision := credentialFailoverDecisionForResult(result, credentialIndex < len(credentials)-1)
+				h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, decision)
+				if gatewayEndpointRetry(result, gatewayAttempt, gatewayEndpoints) {
+					lastResult = result
+					continue
+				}
+				if decision.ShouldTryNextCredential {
+					if !request.Diagnostic && result.statusCode != http.StatusNotFound {
+						h.cooldownAfterFailure(ctx, candidate, result)
+					}
+					lastResult = result
+					continue credentialLoop
+				}
+				return result
 			}
-			if result.credentialDecision.ShouldTryNextCredential {
-				lastResult = result
-				continue
-			}
-			return result
-		}
-		result.statusCode = resp.StatusCode
-		result.upstreamStatusCode = resp.StatusCode
-		result.contentType = resp.Header.Get("Content-Type")
-		inflight.MarkResponding(requestID)
 
-		if request.Stream {
-			result = h.handleStreamResponse(ctx, w, requestID, apiKeyID, canonicalModelID, candidate, protocol, resp, result, startedAt)
+			result = h.handleBufferedResponse(ctx, requestID, apiKeyID, canonicalModelID, candidate, protocol, resp, result, startedAt)
 			h.markAccountPoolAuthFailure(ctx, candidate.Site.SiteType, selectedCredential.Credential, result)
 			if !request.Diagnostic {
 				h.markCredentialModelUnavailableAfterNotFound(ctx, candidate, selectedCredential.Credential, result)
@@ -516,39 +589,23 @@ func (h Handler) forwardGatewayRequest(
 			if releaseCredentialSelection != nil {
 				releaseCredentialSelection()
 			}
+			if result.success {
+				h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, credentialFailoverDecisionForResult(result, credentialIndex < len(credentials)-1))
+				return result
+			}
+			lastResult = result
 			decision := credentialFailoverDecisionForResult(result, credentialIndex < len(credentials)-1)
 			h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, decision)
-			if decision.ShouldTryNextCredential {
-				if !request.Diagnostic && result.statusCode != http.StatusNotFound {
-					h.cooldownAfterFailure(ctx, candidate, result)
-				}
-				lastResult = result
+			if gatewayEndpointRetry(result, gatewayAttempt, gatewayEndpoints) {
 				continue
 			}
-			return result
-		}
-
-		result = h.handleBufferedResponse(ctx, requestID, apiKeyID, canonicalModelID, candidate, protocol, resp, result, startedAt)
-		h.markAccountPoolAuthFailure(ctx, candidate.Site.SiteType, selectedCredential.Credential, result)
-		if !request.Diagnostic {
-			h.markCredentialModelUnavailableAfterNotFound(ctx, candidate, selectedCredential.Credential, result)
-		}
-		releaseConcurrency()
-		if releaseCredentialSelection != nil {
-			releaseCredentialSelection()
-		}
-		if result.success {
-			h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, credentialFailoverDecisionForResult(result, credentialIndex < len(credentials)-1))
-			return result
-		}
-		lastResult = result
-		decision := credentialFailoverDecisionForResult(result, credentialIndex < len(credentials)-1)
-		h.logGatewayCredentialDecision(ctx, requestID, candidate, request, result, decision)
-		if !decision.ShouldTryNextCredential {
-			return result
-		}
-		if credentialIndex < len(credentials)-1 && !request.Diagnostic && result.statusCode != http.StatusNotFound {
-			h.cooldownAfterFailure(ctx, candidate, result)
+			if !decision.ShouldTryNextCredential {
+				return result
+			}
+			if credentialIndex < len(credentials)-1 && !request.Diagnostic && result.statusCode != http.StatusNotFound {
+				h.cooldownAfterFailure(ctx, candidate, result)
+			}
+			break
 		}
 	}
 
@@ -679,7 +736,15 @@ func (h Handler) handleBufferedResponse(
 			return h.finishBufferedSemanticFailure(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, semanticFailure)
 		}
 		result.success = false
-		result.errorType = "upstream_response_read_failed"
+		if errors.Is(readErr, errUpstreamStreamStatus) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_status"
+		} else if errors.Is(readErr, errUpstreamStreamMalformed) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_malformed"
+		} else {
+			result.errorType = "upstream_response_read_failed"
+		}
 		result.errorMessage = readErr.Error()
 		result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, nil)
 		return result
@@ -703,6 +768,9 @@ func (h Handler) handleBufferedResponse(
 	result.contentType = transformed.ContentType
 	result.statusCode = transformed.StatusCode
 	result.success = transformed.StatusCode >= 200 && transformed.StatusCode < 300
+	if result.success {
+		result.body = sanitizeDSMLInBufferedResponse(result.body, result.contentType)
+	}
 	if result.success {
 		result.promptTokens = transformed.Usage.PromptTokens
 		result.completionTokens = transformed.Usage.CompletionTokens
@@ -748,6 +816,9 @@ func (h Handler) finishBufferedSemanticFailure(
 	failure *upstreamSemanticFailure,
 ) gatewayAttemptResult {
 	result.statusCode = http.StatusBadGateway
+	if failure != nil && failure.Status >= 400 {
+		result.upstreamStatusCode = failure.Status
+	}
 	result.contentType = "application/json"
 	result.errorType = "upstream_response_failed"
 	result.errorMessage = failure.Error()
@@ -838,6 +909,12 @@ func (h Handler) handleStreamResponse(
 	}
 	result = applyStreamUsage(result, streamUsage)
 	result.latencyMS = time.Since(startedAt).Milliseconds()
+	if !responseStarted && capture.semanticFailure == nil && proxyErr != nil {
+		var semanticFailure *upstreamSemanticFailure
+		if errors.As(proxyErr, &semanticFailure) {
+			capture.semanticFailure = semanticFailure
+		}
+	}
 	if !responseStarted && capture.semanticFailure != nil {
 		return h.finishStreamSemanticFailure(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, capture)
 	}
@@ -863,6 +940,14 @@ func (h Handler) handleStreamResponse(
 			if clientWriteErr.usage != (gatewayUsage{}) {
 				result = applyStreamUsage(result, clientWriteErr.usage)
 			}
+		} else if errors.Is(proxyErr, errUpstreamStreamStatus) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_status"
+			result.errorMessage = proxyErr.Error()
+		} else if errors.Is(proxyErr, errUpstreamStreamMalformed) {
+			result.statusCode = http.StatusBadGateway
+			result.errorType = "upstream_stream_malformed"
+			result.errorMessage = proxyErr.Error()
 		} else if streamSucceeded(capture) {
 			result.success = true
 		} else {
@@ -915,9 +1000,15 @@ func (h Handler) finishStreamSemanticFailure(
 	failure := capture.semanticFailure
 	classificationBody := semanticFailureClassificationBody(failure)
 	result.statusCode = http.StatusBadGateway
+	if failure != nil && failure.Status >= 400 {
+		result.upstreamStatusCode = failure.Status
+	}
 	result.contentType = "application/json"
 	result.errorType = "upstream_response_failed"
 	result.errorMessage = failure.Error()
+	if failure != nil {
+		result.upstreamErrorCode = failure.Code
+	}
 	result.body = classificationBody
 	result.failureResponse = diagnosticFailureResponse(failure.Body)
 	result = classifyGatewayUpstreamErrorWithTimeZone(candidate, result, classificationBody, time.Now(), h.timeZone)
@@ -1242,6 +1333,24 @@ func applyRetryAfterHeader(result gatewayAttemptResult, headers http.Header) gat
 		}
 	}
 	return result
+}
+
+// gatewayEndpointRetry reports whether this same credential should try the
+// next declared gateway. A connection failure, a timeout, or an upstream 5xx
+// qualifies. The attempt must not be the last declared gateway. Cancellation
+// does not qualify: the caller already stopped the request.
+func gatewayEndpointRetry(result gatewayAttemptResult, attempt, endpoints int) bool {
+	if endpoints <= 1 || attempt+1 >= endpoints {
+		return false
+	}
+	if result.responseStarted {
+		return false
+	}
+	switch result.errorType {
+	case "upstream_timeout", "upstream_transport_error":
+		return true
+	}
+	return result.statusCode >= 500 && result.statusCode <= 599
 }
 
 func transportErrorType(err error) string {

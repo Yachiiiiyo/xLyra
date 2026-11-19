@@ -33,6 +33,8 @@ export type JSPluginListItem = {
   kind?: JSPluginKind
   /** Where the kind takes effect; the server decides, so new kinds need no UI change. */
   scope?: JSPluginScope
+  /** Hooks the selected version exports. A kindless plugin is described by these. */
+  exports?: string[]
   metrics_24h?: JSPluginMetrics24h
   update_available?: boolean
   update_version?: string
@@ -111,6 +113,8 @@ export const jsPluginQueryKeys = {
   all: ['settings', 'js-plugins'] as const,
   uploaded: () => [...jsPluginQueryKeys.all, 'uploaded'] as const,
   detail: (id: string) => [...jsPluginQueryKeys.all, 'detail', id] as const,
+  settings: (id: string) => [...jsPluginQueryKeys.detail(id), 'settings'] as const,
+  schedule: (id: string) => [...jsPluginQueryKeys.detail(id), 'schedule'] as const,
   trustedKeys: () => [...jsPluginQueryKeys.all, 'trusted-keys'] as const,
 }
 
@@ -237,10 +241,78 @@ export async function bindJSPluginSite(
   )
 }
 
-export async function unbindJSPluginSite(pluginId: string, siteId: string, kind: string) {
+export async function unbindJSPluginSite(pluginId: string, siteId: string) {
   return apiFetch<{ ok: boolean }>(`/api/v1/js-plugins/${encodeURIComponent(pluginId)}/unbind-site`, {
     method: 'POST',
-    body: { site_id: siteId, kind },
+    body: { site_id: siteId },
+  })
+}
+
+export type JSPluginSettingSpec = {
+  key: string
+  type: 'string' | 'number' | 'boolean' | string
+  default: unknown
+  pattern?: string
+  min?: number
+  max?: number
+  options?: string[]
+  label?: LocalizedText
+  description?: LocalizedText
+}
+
+export type JSPluginSettings = {
+  schema: JSPluginSettingSpec[]
+  values: Record<string, unknown>
+  resolved: Record<string, unknown>
+}
+
+export async function getJSPluginSettings(id: string, signal?: AbortSignal) {
+  return apiFetch<JSPluginSettings>(`/api/v1/js-plugins/${encodeURIComponent(id)}/settings`, { signal })
+}
+
+export async function updateJSPluginSettings(id: string, values: Record<string, unknown>) {
+  return apiFetch<{ ok: boolean; resolved: Record<string, unknown> }>(
+    `/api/v1/js-plugins/${encodeURIComponent(id)}/settings`,
+    { method: 'PUT', body: { values } },
+  )
+}
+
+export async function updateJSPluginSiteSettings(id: string, siteId: string, values: Record<string, unknown>) {
+  return apiFetch<{ values: Record<string, unknown> }>(
+    `/api/v1/js-plugins/${encodeURIComponent(id)}/sites/${encodeURIComponent(siteId)}/settings`,
+    { method: 'PUT', body: { values } },
+  )
+}
+
+export type JSPluginScheduleView = {
+  supported: boolean
+  enabled: boolean
+  every_minutes?: number
+  label?: LocalizedText
+  next_tick_at?: string
+}
+
+export function pluginDeclaresSchedule(versions: JSPluginVersion[] | undefined) {
+  for (const row of versions ?? []) {
+    const manifest = row.manifest
+    if (!manifest || typeof manifest !== 'object') continue
+    const exportsList = Array.isArray(manifest.exports) ? manifest.exports : []
+    if (exportsList.includes('onSchedule')) return true
+    const perms = Array.isArray(manifest.permissions) ? manifest.permissions : []
+    if (perms.includes('schedule')) return true
+    if (manifest.schedule && typeof manifest.schedule === 'object') return true
+  }
+  return false
+}
+
+export async function getJSPluginSchedule(id: string, signal?: AbortSignal) {
+  return apiFetch<JSPluginScheduleView>(`/api/v1/js-plugins/${encodeURIComponent(id)}/schedule`, { signal })
+}
+
+export async function updateJSPluginSchedule(id: string, enabled: boolean) {
+  return apiFetch<JSPluginScheduleView>(`/api/v1/js-plugins/${encodeURIComponent(id)}/schedule`, {
+    method: 'PUT',
+    body: { enabled },
   })
 }
 
@@ -299,10 +371,14 @@ export type JSPluginSiteProviderView = {
 }
 
 export function siteProviderOf(manifest?: Record<string, unknown>): JSPluginSiteProviderView | null {
-  if (!manifest || manifest.kind !== 'site_provider') return null
+  if (!manifest) return null
+  const kind = typeof manifest.kind === 'string' ? manifest.kind : ''
+  // A kindless package may still declare a site type through siteProvider.siteType.
+  if (kind !== '' && kind !== 'site_provider') return null
   const raw = manifest.siteProvider
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const section = raw as Record<string, unknown>
+  if (kind === '' && (typeof section.siteType !== 'string' || section.siteType.trim() === '')) return null
   const display = section.display
   let displayName: LocalizedText | undefined
   if (display && typeof display === 'object' && !Array.isArray(display)) {

@@ -103,6 +103,105 @@ func TestForkSessionHandler(t *testing.T) {
 	}
 }
 
+func TestRenameSession(t *testing.T) {
+	handler, store, runs := newTestHandler(t, &fakeRunner{})
+	meta, err := store.Create("m1", "ask")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/"+meta.ID, `{"title":"  新标题  "}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			SessionID string `json:"session_id"`
+			Title     string `json:"title"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &payload)
+	if !payload.Success || payload.Data.SessionID != meta.ID || payload.Data.Title != "新标题" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	got, err := store.Get(meta.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "新标题" || !got.TitleLocked {
+		t.Fatalf("落盘标题 = %q locked=%v", got.Title, got.TitleLocked)
+	}
+
+	// 运行中也允许改名。
+	if _, err := runs.Begin(meta.ID, "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	rec = doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/"+meta.ID, `{"title":"运行中"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("运行中 status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	list := doJSONAgent(t, handler, http.MethodGet, "/api/v1/agent/sessions", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("列表 status = %d", list.Code)
+	}
+	var listed struct {
+		Data []struct {
+			SessionID string `json:"session_id"`
+			Title     string `json:"title"`
+		} `json:"data"`
+	}
+	decodeBody(t, list, &listed)
+	var seen string
+	for _, item := range listed.Data {
+		if item.SessionID == meta.ID {
+			seen = item.Title
+		}
+	}
+	if seen != "运行中" {
+		t.Fatalf("列表标题 = %q, want 运行中", seen)
+	}
+
+	for _, body := range []string{`{"title":""}`, `{"title":"   "}`} {
+		rec = doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/"+meta.ID, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("空标题 status = %d, body %s", rec.Code, rec.Body.String())
+		}
+		if code, message := errorBody(t, rec); code != "invalid_request" || !strings.Contains(message, "不能为空") {
+			t.Fatalf("空标题错误 = %s %s", code, message)
+		}
+	}
+
+	long := strings.Repeat("字", 101)
+	rec = doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/"+meta.ID, `{"title":"`+long+`"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("超长 status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if code, message := errorBody(t, rec); code != "invalid_request" || !strings.Contains(message, "100") {
+		t.Fatalf("超长错误 = %s %s", code, message)
+	}
+	exact := strings.Repeat("字", 100)
+	rec = doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/"+meta.ID, `{"title":"`+exact+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("恰好 100 字 status = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	rec = doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/00000000-0000-4000-8000-00000000dead", `{"title":"x"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("缺失会话 status = %d", rec.Code)
+	}
+	if code, _ := errorBody(t, rec); code != "not_found" {
+		t.Fatalf("缺失会话 code = %s", code)
+	}
+	rec = doJSONAgent(t, handler, http.MethodPatch, "/api/v1/agent/sessions/not-a-uuid", `{"title":"x"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("非法 id status = %d", rec.Code)
+	}
+	if code, _ := errorBody(t, rec); code != "not_found" {
+		t.Fatalf("非法 id code = %s", code)
+	}
+}
+
 func updateSessionMeta(t *testing.T, store *session.Store, id string, fn func(*session.Meta)) {
 	t.Helper()
 	if _, err := store.Update(id, func(m *session.Meta) error {

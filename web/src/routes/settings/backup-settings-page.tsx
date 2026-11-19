@@ -19,6 +19,7 @@ import {
   Upload,
 } from 'lucide-react'
 import { Notice } from '@/components/common/notice'
+import { ConfirmDialog } from '@/components/common/confirm-dialog'
 import { PageHeader } from '@/components/common/page-header'
 import { StatusBadge } from '@/components/common/status-badge'
 import { Button } from '@/components/ui/button'
@@ -724,51 +725,6 @@ function ToggleField({ label, checked, onCheckedChange }: { label: string; check
         <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={label} />
       </div>
     </FormField>
-  )
-}
-
-function ConfirmDialog({
-  open,
-  title,
-  description,
-  confirmLabel,
-  pending,
-  destructive,
-  onCancel,
-  onConfirm,
-}: {
-  open: boolean
-  title: string
-  description: string
-  confirmLabel: string
-  pending: boolean
-  destructive?: boolean
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  const { t } = useTranslation('settings')
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel() }}>
-      <DialogContent presentation="center" className="w-[min(92vw,520px)]">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <DialogFooter
-          cancel={(
-            <Button variant="secondary" onClick={onCancel} disabled={pending}>
-              {t('common:actions.cancel', { ns: 'common' })}
-            </Button>
-          )}
-          confirm={(
-            <Button variant={destructive ? 'destructive' : 'default'} onClick={onConfirm} disabled={pending}>
-              {pending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-              {confirmLabel}
-            </Button>
-          )}
-        />
-      </DialogContent>
-    </Dialog>
   )
 }
 

@@ -1,0 +1,23 @@
+{
+  "name": "rewrite payload adds overlay metadata",
+  "hook": "rewritePayload",
+  "ctx": {
+    "siteType": "openai",
+    "model": "gpt-4o",
+    "stream": false,
+    "protocol": "openai_chat"
+  },
+  "input": {
+    "model": "gpt-4o",
+    "stream": false
+  },
+  "expect": {
+    "result": {
+      "model": "gpt-4o",
+      "stream": false,
+      "metadata": {
+        "overlay": "transport"
+      }
+    }
+  }
+}

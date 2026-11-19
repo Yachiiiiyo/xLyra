@@ -1130,3 +1130,22 @@ func (ar *activeRun) waiting() bool {
 	}
 	return len(ar.pendingQuestions) > 0
 }
+
+// PendingCounts 返回会话当前等用户的未决审批数与未回答提问数;auto 分类中
+// 的审批由模型自动决定,不等用户,不计入。会话无活跃 run 时返回 0,0。
+func (r *Runner) PendingCounts(sessionID string) (approvals, questions int) {
+	r.mu.Lock()
+	ar := r.active[sessionID]
+	r.mu.Unlock()
+	if ar == nil {
+		return 0, 0
+	}
+	ar.stateMu.Lock()
+	defer ar.stateMu.Unlock()
+	for id := range ar.pending {
+		if _, reviewing := ar.autoReviewing[id]; !reviewing {
+			approvals++
+		}
+	}
+	return approvals, len(ar.pendingQuestions)
+}

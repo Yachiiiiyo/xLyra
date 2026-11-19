@@ -25,13 +25,16 @@ type Event struct {
 
 // Approval 是 extension_ui_request.message 的 JSON 约定(07 §十.3):
 //
-//	{"toolCallId":"...","toolName":"write","path":"out/a.txt","command":["touch","x"],"note":"..."}
+//	{"toolCallId":"...","toolName":"write","path":"out/a.txt","command":["touch","x"],"note":"...","risk":"high","riskRules":["..."]}
+// risk / riskRules 仅在命中高危规则时出现(bash 审批);缺省时为空,事件里不输出。
 type Approval struct {
 	ToolCallID string   `json:"toolCallId"`
 	ToolName   string   `json:"toolName"`
 	Path       string   `json:"path"`
 	Command    []string `json:"command"`
 	Note       string   `json:"note"`
+	Risk       string   `json:"risk"`
+	RiskRules  []string `json:"riskRules"`
 }
 
 // OtherOptionMarker 是回答 JSON 里表示选中「其他」的约定标记:前端固定
@@ -385,6 +388,13 @@ func (t *Translator) extensionUIRequest(raw map[string]any) []Event {
 	// 决定是否可会话内允许,前端也可展示。
 	if isJSON && approval.Note != "" {
 		escalation["note"] = approval.Note
+	}
+	// 风险等级用独立字段,不靠 note 字符串识别;未标注时省略。
+	if isJSON && approval.Risk != "" {
+		escalation["risk"] = approval.Risk
+	}
+	if isJSON && len(approval.RiskRules) > 0 {
+		escalation["risk_rules"] = approval.RiskRules
 	}
 	return []Event{event("escalation_request", map[string]any{"escalation": escalation})}
 }

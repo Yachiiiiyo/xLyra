@@ -41,17 +41,24 @@ type Service struct {
 	admins          store.AdminRepository
 	sessions        store.AdminSessionRepository
 	accessTokens    store.AdminAccessTokenRepository
+	devices         store.AdminDeviceRepository
+	pairings        store.AdminDevicePairingRepository
 	auditLogs       store.AdminAuditLogRepository
 	apiKeys         store.APIKeyRepository
 	canonicalModels store.CanonicalModelRepository
 	credentials     credential.Service
 	timeZone        config.TimeZone
 	loginGuard      *loginGuard
+	pairingGuard    *loginGuard
 	totpReplay      *totpReplayGuard
-	bootstrapMu     sync.RWMutex
-	bootstrapGen    uint64
-	bootstrapReady  bool
-	bootstrap       BootstrapStatus
+	// deviceIdleDays 与 deviceIdleConfigured 由启动时的 DEVICE_IDLE_DAYS 接线;
+	// 未接线时按默认 180 天, 0 表示不限。
+	deviceIdleDays       int
+	deviceIdleConfigured bool
+	bootstrapMu          sync.RWMutex
+	bootstrapGen         uint64
+	bootstrapReady       bool
+	bootstrap            BootstrapStatus
 }
 
 // verifyTOTPForAdmin validates a code and rejects replays of a code already used
@@ -218,12 +225,15 @@ func NewService(db *gorm.DB, masterKey string, confFiles ...*config.ConfigFile) 
 		admins:          store.NewAdminRepository(db),
 		sessions:        store.NewAdminSessionRepository(db),
 		accessTokens:    store.NewAdminAccessTokenRepository(db),
+		devices:         store.NewAdminDeviceRepository(db),
+		pairings:        store.NewAdminDevicePairingRepository(db),
 		auditLogs:       store.NewAdminAuditLogRepository(db),
 		apiKeys:         store.NewAPIKeyRepository(db),
 		canonicalModels: store.NewCanonicalModelRepository(db),
 		credentials:     credential.NewService(masterKey),
 		timeZone:        config.ResolveTimeZone(),
 		loginGuard:      newLoginGuard(),
+		pairingGuard:    newLoginGuard(),
 		totpReplay:      newTOTPReplayGuard(),
 	}
 }
@@ -576,6 +586,10 @@ func (s *Service) ChangeAdminPassword(ctx context.Context, adminID uuid.UUID, cu
 		return store.Admin{}, err
 	}
 	if err := s.sessions.DeleteOthers(ctx, admin.ID, keepSessionID); err != nil {
+		return store.Admin{}, err
+	}
+	// 改密码意味着旧凭证全部作废: 该管理员的设备令牌也一并吊销（已确认）。
+	if _, err := s.devices.RevokeAll(ctx, admin.ID, time.Now()); err != nil {
 		return store.Admin{}, err
 	}
 	return updated, nil

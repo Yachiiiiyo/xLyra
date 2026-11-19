@@ -24,6 +24,12 @@ func TestCurrentDefaultsBlankBuildFields(t *testing.T) {
 	}
 }
 
+func TestCurrentReportsAgentAPI(t *testing.T) {
+	if got := Current().AgentAPI; got != AgentAPI {
+		t.Fatalf("AgentAPI = %d, want %d", got, AgentAPI)
+	}
+}
+
 func TestCurrentTrimsBuildFields(t *testing.T) {
 	oldVersion, oldCommit, oldBuildTime := Version, Commit, BuildTime
 	t.Cleanup(func() {

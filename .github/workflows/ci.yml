@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -153,8 +154,10 @@ jobs:
           context: .
           load: true
           tags: xlyra:ci
-          cache-from: type=gha,scope=smoke
-          cache-to: type=gha,scope=smoke,mode=max
+          # 与 publish-images 的 amd64 构建共用缓存范围:依赖安装、Node 与 Pi 运行时
+          # 等不随代码变化的层由冒烟构建写入,随后的正式构建直接命中。
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,scope=amd64,mode=max
 
       - name: Start with Postgres and check Agent isolation
         shell: bash

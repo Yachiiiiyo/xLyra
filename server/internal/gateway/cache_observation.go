@@ -373,6 +373,45 @@ func cacheObservationTextProtocol(protocol canonicalProtocol) bool {
 	}
 }
 
+// gatewaySessionKey is the plugin-visible session id. The source is the
+// conversation hint, or prompt_cache_key when that hint is empty. The result
+// is the first 32 hex characters of HMAC-SHA256 over the site, plugin, and
+// source. An empty source returns an empty string. secret is the cache
+// observation key derived from the master key.
+func gatewaySessionKey(request gatewayRequest, siteID uuid.UUID, pluginID string, secret []byte) string {
+	source := gatewayRequestConversationHint(request)
+	if source == "" {
+		if key := promptCacheKeyHint(request.Payload); key != "" {
+			source = "prompt_cache_key:" + key
+		}
+	}
+	if source == "" || len(secret) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(siteID.String()))
+	mac.Write([]byte{0})
+	mac.Write([]byte(pluginID))
+	mac.Write([]byte{0})
+	mac.Write([]byte(source))
+	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+func promptCacheKeyHint(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	raw, ok := payload["prompt_cache_key"].(string)
+	if !ok {
+		return ""
+	}
+	raw = strings.TrimSpace(raw)
+	if len(raw) > 256 {
+		raw = raw[:256]
+	}
+	return raw
+}
+
 func gatewayRequestConversationHint(request gatewayRequest) string {
 	for _, header := range []string{codexGatewayThreadHeader, codexGatewaySessionHeader, "X-Codex-Parent-Thread-Id", claudeCodeGatewaySessionHeader} {
 		if value := strings.TrimSpace(request.DownstreamHeaders.Get(header)); value != "" {

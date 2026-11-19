@@ -1,0 +1,24 @@
+{
+  "apiVersion": 1,
+  "hostApi": 2,
+  "id": "example.request",
+  "name": "请求叠加示例",
+  "description": "阶段 3 示例：无 kind，顶层 request 头模板与 signRequest 直接改写",
+  "version": "1.0.0",
+  "license": "MIT",
+  "request": {
+    "headers": {
+      "X-Trace": "{{random.hex:40}}",
+      "X-Session": "{{session.key}}",
+      "X-Client-Version": "{{setting.clientVersion}}"
+    }
+  },
+  "settings": [
+    {
+      "key": "clientVersion",
+      "type": "string",
+      "default": "1.0.0",
+      "label": { "zh": "客户端版本", "en": "Client version" }
+    }
+  ]
+}

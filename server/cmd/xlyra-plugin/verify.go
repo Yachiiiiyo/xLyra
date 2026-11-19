@@ -37,12 +37,12 @@ func verifyPackage(raw []byte) error {
 	if pkg.Signer != "" {
 		signer = "signed by " + pkg.Signer
 	}
-	fmt.Fprintf(os.Stdout, "ok  %s@%s (%s), %d fixtures, %s\n", pkg.Manifest.ID, pkg.Manifest.Version, pkg.Manifest.Kind, len(pkg.Fixtures), signer)
+	fmt.Fprintf(os.Stdout, "ok  %s@%s (%s), %d fixtures, %s\n", pkg.Manifest.ID, pkg.Manifest.Version, pkg.Manifest.KindLabel(), len(pkg.Fixtures), signer)
 	fmt.Fprintf(os.Stdout, "sha256 %s\n", pkg.SHA256)
 	if report.Path != "" {
 		fmt.Fprintf(os.Stdout, "icon %s %dx%d 不透明 %.0f%% 亮度 %.2f\n", report.Path, report.Width, report.Height, report.OpaqueRatio*100, report.Luminance)
 	}
-	if pkg.Manifest.Kind == jsplugin.KindSiteProvider {
+	if pkg.Manifest.DeclaresSiteType() || pkg.Manifest.Kind == "" {
 		writeSiteProviderFixtures(pkg.Fixtures)
 	}
 	return nil

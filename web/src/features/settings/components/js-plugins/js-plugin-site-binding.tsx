@@ -4,7 +4,7 @@ import { StatusBadge } from '@/components/common/status-badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select'
-import { QUOTA_PROBE, type SiteBinding } from '@/features/settings/components/js-plugins/use-site-binding'
+import type { SiteBinding } from '@/features/settings/components/js-plugins/use-site-binding'
 import type { Site } from '@/features/sites/api/sites'
 import { siteTypeIcon } from '@/features/sites/lib/site-utils'
 
@@ -23,6 +23,15 @@ function SiteName({ site }: { site: Site }) {
   )
 }
 
+/** Hint keys under settings:jsPlugins.bindSiteHint, one line per exported hook. */
+const BIND_HINTS: Array<{ hooks: string[]; key: string }> = [
+  { hooks: ['listModels'], key: 'model_list' },
+  { hooks: ['check'], key: 'credential_check' },
+  { hooks: ['classify', 'classifyError'], key: 'error_classifier' },
+  { hooks: ['parsePricing'], key: 'pricing_parse' },
+  { hooks: ['probe'], key: 'quota_probe' },
+]
+
 export function JSPluginSiteBindingSection({
   binding,
   sites,
@@ -33,18 +42,13 @@ export function JSPluginSiteBindingSection({
   loading: boolean
 }) {
   const { t } = useTranslation(['settings'])
-  const isQuota = binding.kind === QUOTA_PROBE
-  const title = isQuota ? t('settings:jsPlugins.bindQuotaTitle') : t('settings:jsPlugins.bindSiteTitle')
-  const hint = isQuota ? t('settings:jsPlugins.bindQuotaHint') : t(`settings:jsPlugins.bindSiteHint.${binding.kind}`)
+  const hints = BIND_HINTS.filter((item) => item.hooks.some((hook) => binding.exports.includes(hook)))
 
   // Only the name and the site type's icon identify a site here, plus whether it is enabled.
   const options: MultiSelectOption[] = sites.map((site) => ({
     value: site.id,
     label: site.name,
     icon: siteIcon(site),
-    description: binding.otherBinding[site.id]
-      ? t('settings:jsPlugins.siteBinding.other', { id: binding.otherBinding[site.id] })
-      : undefined,
     badge: (
       <StatusBadge status={site.enabled ? 'success' : 'disabled'}>
         {site.enabled ? t('settings:jsPlugins.siteBinding.enabled') : t('settings:jsPlugins.siteBinding.disabled')}
@@ -56,8 +60,10 @@ export function JSPluginSiteBindingSection({
   return (
     <section className="space-y-3 border-t border-separator pt-4">
       <div className="space-y-1">
-        <h4 className="text-headline text-label">{title}</h4>
-        <p className="text-footnote text-label-2">{hint}</p>
+        <h4 className="text-headline text-label">{t('settings:jsPlugins.bindSiteTitle')}</h4>
+        {hints.map((item) => (
+          <p key={item.key} className="text-footnote text-label-2">{t(`settings:jsPlugins.bindSiteHint.${item.key}`)}</p>
+        ))}
         <p className="text-footnote text-label-2">{t('settings:jsPlugins.siteBinding.optional')}</p>
       </div>
 

@@ -14,8 +14,9 @@ package jsplugin
 
 // DetectContext is the credential-free object passed to a site_detect hook.
 type DetectContext struct {
-	BaseURL string `ts:"baseURL"`
-	Now     int64  `ts:"now,doc=Unix time in milliseconds."`
+	BaseURL  string         `ts:"baseURL"`
+	Now      int64          `ts:"now,doc=Unix time in milliseconds."`
+	Settings map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ModelListEntry is one model returned by a model_list plugin.
@@ -23,6 +24,7 @@ type ModelListEntry struct {
 	Name         string         `ts:"name,doc=Upstream model name, as clients must send it."`
 	DisplayName  string         `ts:"displayName,optional"`
 	Capabilities map[string]any `ts:"capabilities,optional,type=JsonObject" max:"64"`
+	Meta         map[string]any `ts:"meta,optional,type=JsonObject" max:"32"`
 }
 
 // ModelListResult is the final result of a model_list plugin.
@@ -55,16 +57,18 @@ var FailureClasses = []string{"unknown", "limited", "subscription_limit", "trans
 
 // ErrorClassifyContext is passed to an error_classifier hook.
 type ErrorClassifyContext struct {
-	SiteType string `ts:"siteType"`
+	SiteType string         `ts:"siteType"`
+	Settings map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // RewritePayloadContext is the credential-free object passed to rewritePayload.
 // It carries no API key, request headers, or account fields.
 type RewritePayloadContext struct {
-	SiteType string `ts:"siteType"`
-	Model    string `ts:"model,doc=Upstream model name."`
-	Stream   bool   `ts:"stream"`
-	Protocol string `ts:"protocol,doc=Canonical protocol name, such as openai_chat."`
+	SiteType string         `ts:"siteType"`
+	Model    string         `ts:"model,doc=Upstream model name."`
+	Stream   bool           `ts:"stream"`
+	Protocol string         `ts:"protocol,doc=Canonical protocol name, such as openai_chat."`
+	Settings map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ErrorClassifyInput is the upstream failure shown to an error_classifier hook.
@@ -85,7 +89,8 @@ type ErrorClassifyResult struct {
 
 // ModelMetadataContext is passed to a model_metadata hook.
 type ModelMetadataContext struct {
-	SiteType string `ts:"siteType"`
+	SiteType string         `ts:"siteType"`
+	Settings map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ModelMetadataInput lists the upstream model names to describe.
@@ -98,6 +103,7 @@ type ModelMetadataEntry struct {
 	ID           string         `ts:"id,doc=Must be one of the input model names."`
 	Name         string         `ts:"name,optional,doc=Official display name."`
 	Capabilities map[string]any `ts:"capabilities,optional,type=JsonObject" max:"64"`
+	Meta         map[string]any `ts:"meta,optional,type=JsonObject" max:"32"`
 }
 
 // ModelMetadataResult is the result of a model_metadata plugin.
@@ -107,7 +113,8 @@ type ModelMetadataResult struct {
 
 // PricingParseContext is passed to a pricing_parse hook.
 type PricingParseContext struct {
-	SiteType string `ts:"siteType"`
+	SiteType string         `ts:"siteType"`
+	Settings map[string]any `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // PricingGroupEntry is one price group.

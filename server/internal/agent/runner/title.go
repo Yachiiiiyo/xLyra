@@ -33,7 +33,8 @@ func (r *Runner) maybeGenerateTitle(ar *activeRun, content string) {
 		return
 	}
 	placeholder := session.TitleFrom(content)
-	if meta, err := r.cfg.Store.Get(ar.sessionID); err != nil || meta.Title != placeholder {
+	// TitleLocked 表示用户已经手改过标题(即使改回与占位截断相同的文本);此时不再调模型。
+	if meta, err := r.cfg.Store.Get(ar.sessionID); err != nil || meta.TitleLocked || meta.Title != placeholder {
 		return
 	}
 	prompt := strings.TrimSpace(content)
@@ -79,7 +80,7 @@ func (r *Runner) maybeGenerateTitle(ar *activeRun, content string) {
 			return
 		}
 		if _, err := r.cfg.Store.Update(ar.sessionID, func(m *session.Meta) error {
-			if m.Title != placeholder {
+			if m.TitleLocked || m.Title != placeholder {
 				return errTitleChanged
 			}
 			m.Title = title

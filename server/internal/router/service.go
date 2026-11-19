@@ -75,8 +75,10 @@ type CandidateSite struct {
 	RoutingPriority        float64
 	ResponsesToolPolicy    string
 	DisabledResponsesTools []string
-	// ErrorClassifierPlugin is the error_classifier plugin an admin bound to the site, if any.
-	ErrorClassifierPlugin string
+	// PluginIDs are the plugins mounted on the site, in hook-search order.
+	PluginIDs []string
+	// PluginSettings maps a plugin id to the site's setting overrides.
+	PluginSettings map[string]map[string]any
 }
 
 type CandidateModel struct {
@@ -87,6 +89,8 @@ type CandidateModel struct {
 	MatchConfidence        int
 	SupportedEndpointTypes []string
 	PricingVariants        store.JSON
+	// PluginMeta is site_models.capabilities.plugin_meta.
+	PluginMeta map[string]any
 }
 
 type CandidateHealth struct {
@@ -244,6 +248,11 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 			cooling = true
 			coolingReason = item.Reason
 		}
+		gatewayCfg := siteGatewayConfig(row.SiteMeta)
+		var pluginSettings map[string]map[string]any
+		if gatewayCfg != nil {
+			pluginSettings = gatewayCfg.PluginSettings
+		}
 
 		costMultiplier := row.PreferredCredentialCostMultiplier
 		if costMultiplier <= 0 {
@@ -264,7 +273,8 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 				RoutingPriority:        row.SiteRoutingPriority,
 				ResponsesToolPolicy:    siteResponsesToolPolicy(row.SiteMeta),
 				DisabledResponsesTools: siteDisabledResponsesTools(row.SiteMeta),
-				ErrorClassifierPlugin:  sitepkg.SitePluginID(siteGatewayConfig(row.SiteMeta), "error_classifier"),
+				PluginIDs:              sitepkg.SitePluginIDs(gatewayCfg),
+				PluginSettings:         pluginSettings,
 			},
 			Model: CandidateModel{
 				SiteModelID:            row.SiteModelID,
@@ -274,6 +284,7 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 				MatchConfidence:        row.MatchConfidence,
 				SupportedEndpointTypes: append([]string(nil), row.SupportedEndpointTypes...),
 				PricingVariants:        row.PricingVariants,
+				PluginMeta:             pluginMetaFromCapabilities(row.SiteModelCapabilities),
 			},
 			Health: CandidateHealth{
 				Status:              row.SiteHealthStatus,
@@ -368,6 +379,18 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 		CanonicalModel: canonicalModel,
 		Items:          candidates,
 	}, nil
+}
+
+func pluginMetaFromCapabilities(raw store.JSON) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var capabilities map[string]any
+	if json.Unmarshal(raw, &capabilities) != nil {
+		return nil
+	}
+	meta, _ := capabilities["plugin_meta"].(map[string]any)
+	return meta
 }
 
 func routeCandidateSupportsEndpoint(row store.RouteCandidateRow, endpointType string) bool {

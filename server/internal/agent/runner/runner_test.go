@@ -1750,6 +1750,12 @@ func TestSessionAllowAutoGrantSameRun(t *testing.T) {
 // startSession 先建会话并写入 SessionAllow,再发送消息(避免与事件流竞争)。
 func startSession(t *testing.T, env *testEnv, content string, tools ...string) SendResult {
 	t.Helper()
+	return sendSessionMode(t, env, content, "", tools...)
+}
+
+// sendSessionMode 同 startSession,但可指定权限模式(空则走默认 ask)。
+func sendSessionMode(t *testing.T, env *testEnv, content, mode string, tools ...string) SendResult {
+	t.Helper()
 	meta, err := env.store.Create("mock-1", "ask")
 	if err != nil {
 		t.Fatal(err)
@@ -1763,7 +1769,7 @@ func startSession(t *testing.T, env *testEnv, content string, tools ...string) S
 		}
 	}
 	result, err := env.runner.Send(context.Background(), SendInput{
-		SessionID: meta.ID, Content: content, Model: "mock-1",
+		SessionID: meta.ID, Content: content, Model: "mock-1", PermissionMode: mode,
 	})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
@@ -1821,6 +1827,54 @@ func TestSessionAllowBashHighRiskNotAutoGranted(t *testing.T) {
 	for _, command := range commands {
 		if command["type"] == "extension_ui_response" && command["id"] == "esc-hr" {
 			t.Fatal("不应向 Pi 回写 esc-hr 的自动应答")
+		}
+	}
+}
+
+// ask 模式的高危 bash 只带结构化 Risk,note 不含「命中规则」;即使 bash 已会话内允许也不放行。
+func TestSessionAllowAskHighRiskFieldNotAutoGranted(t *testing.T) {
+	env := newTestEnv(t, "basic")
+	meta, err := env.store.Create("mock-1", "ask")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.store.Update(meta.ID, func(m *session.Meta) error {
+		m.SessionAllow = []string{"bash"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	note := "工作目录: ."
+	high := session.Escalation{ToolName: "bash", Note: note, Risk: "high", RiskRules: []string{"rm 递归删除高危目标"}}
+	if env.runner.autoGrantable(&activeRun{sessionID: meta.ID}, high, note) {
+		t.Fatal("Risk=high 的 bash 不应因会话内允许自动放行")
+	}
+	plain := session.Escalation{ToolName: "bash", Note: note}
+	if !env.runner.autoGrantable(&activeRun{sessionID: meta.ID}, plain, note) {
+		t.Fatal("未标高危的 bash 在会话内允许下应自动放行")
+	}
+}
+
+// ④b ask 模式的高危 bash 只带 risk 字段(note 不含「命中规则」):即使会话内允许了 bash,
+// 仍须逐条由用户确认,不能自动放行。
+func TestSessionAllowAskHighRiskNotAutoGranted(t *testing.T) {
+	env := newTestEnv(t, "approval-bash-risk", withLocalFixture("approval-bash-risk.jsonl"))
+	result := sendSessionMode(t, env, "你好", "ask", "bash")
+	events := collectRun(t, env.runs, result.SessionID).wait(t)
+	if decisions := decisionEvents(events, "esc-risk"); len(decisions) != 0 {
+		t.Fatalf("ask 高危 bash 不应被会话内允许放行: %+v", decisions)
+	}
+	esc := metaEscalation(t, env, result.SessionID, "esc-risk")
+	if esc.Granted != nil || esc.Auto || esc.Risk != "high" || esc.Note != "工作目录: ." {
+		t.Fatalf("esc-risk 记录不符: %+v", esc)
+	}
+	if len(esc.RiskRules) != 1 || esc.RiskRules[0] != "rm 递归删除高危目标" {
+		t.Fatalf("risk_rules = %v", esc.RiskRules)
+	}
+	commands := recordedCommands(t, env.record)
+	for _, command := range commands {
+		if command["type"] == "extension_ui_response" && command["id"] == "esc-risk" {
+			t.Fatal("不应向 Pi 回写 esc-risk 的自动应答")
 		}
 	}
 }

@@ -51,7 +51,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage:\n")
-	fmt.Fprintf(os.Stderr, "  xlyra-plugin init [--kind %s] [--id ID] [--name NAME] <dir>\n", supportedKindList())
+	fmt.Fprintf(os.Stderr, "  xlyra-plugin init [--template %s] [--id ID] [--name NAME] <dir>\n", supportedKindList())
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin build [--out dist] [dir]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin run --key-env VAR [--base-url URL] [--site-type T] [--hook probe|listModels|check] [dir]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin test [--watch] [dir]\n")
@@ -63,7 +63,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin sign <package.xlp> --key key.pem [--out signed.xlp]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin publish <package.xlp> --changelog TEXT [--changelog-file FILE] [--cloud URL] [--token T] [--no-wait]\n")
 	fmt.Fprintf(os.Stderr, "\n--token 会进入 shell 历史，请优先使用环境变量 XLYRA_CLOUD_TOKEN。\n")
-	fmt.Fprintf(os.Stderr, "\nrun --hook drives a site_provider probe, listModels, or check hook. classify and rewritePayload are covered by test, not run.\n")
+	fmt.Fprintf(os.Stderr, "\n--template picks a starter (same names as --kind, which remains as an alias).\n")
+	fmt.Fprintf(os.Stderr, "run --hook drives a site_provider or kindless probe, listModels, or check hook. classify and rewritePayload are covered by test, not run.\n")
 }
 
 // supportedKindList is the --kind choice list, in the same order as `xlyra-plugin kinds`.

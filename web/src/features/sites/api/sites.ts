@@ -167,7 +167,11 @@ export type SiteGatewayConfig = {
   impersonate_codex_client?: boolean
   impersonate_claude_code_client?: boolean
   quota_probe?: string
-  /** Plugin ids an admin bound to this site, by kind (model_list, credential_check, ...). */
+  /** Plugins mounted on this site, in hook-search order. */
+  plugin_ids?: string[]
+  /** Per-plugin setting overrides for this site, keyed by plugin id. */
+  plugin_settings?: Record<string, Record<string, unknown>>
+  /** @deprecated Legacy per-kind bindings. plugin_ids is the mount list. */
   plugins?: Record<string, string>
 }
 
@@ -757,6 +761,13 @@ export async function updateSiteEnabled(
   return apiFetch<{ site: Site }>(`/api/v1/sites/${siteId}/enabled`, {
     method: 'PUT',
     body: input,
+  })
+}
+
+export async function updateSitePluginOrder(siteId: string, pluginIds: string[]) {
+  return apiFetch<{ gateway_config: SiteGatewayConfig }>(`/api/v1/sites/${siteId}/plugin-order`, {
+    method: 'PUT',
+    body: { plugin_ids: pluginIds },
   })
 }
 

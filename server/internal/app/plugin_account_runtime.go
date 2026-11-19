@@ -26,6 +26,13 @@ func newAccountPoolRuntime(plugin *jsplugin.Plugin, pool *jsplugin.AccountPoolSp
 	// addresses. A proxied target is resolved by the proxy; account-pool URLs
 	// are also https plus a hostname allow-list, which cannot be an IP.
 	client := &http.Client{Transport: httpclient.NewGuardedTransport(30 * time.Second)}
+	if plugin != nil && plugin.Manifest.TransportProfile() != "" {
+		profile := httpclient.DefaultProfile()
+		profile.TLSFingerprint = plugin.Manifest.TransportProfile()
+		if fingerprinted, clientErr := httpclient.NewClient(profile); clientErr == nil {
+			client = fingerprinted
+		}
+	}
 	runtime, err := jsplugin.NewAccountProviderRuntime(plugin, client)
 	if err != nil {
 		return nil, err
@@ -86,6 +93,10 @@ func (a accountPoolRuntimeAdapter) Summarize(ctx context.Context, baseURL string
 	}, nil
 }
 
+func (a accountPoolRuntimeAdapter) RunSchedule(ctx context.Context, baseURL string, fields map[string]string) (map[string]any, error) {
+	return a.runtime.RunSchedule(ctx, jsplugin.AccountSnapshot{BaseURL: baseURL, Fields: fields})
+}
+
 func (a accountPoolRuntimeAdapter) ListModels(ctx context.Context, fields map[string]string) ([]adapter.Model, error) {
 	entries, err := a.runtime.ListModels(ctx, fields)
 	if err != nil {
@@ -104,6 +115,9 @@ func (a accountPoolRuntimeAdapter) ListModels(ctx context.Context, fields map[st
 		capabilities := map[string]any{}
 		for key, value := range entry.Capabilities {
 			capabilities[key] = value
+		}
+		if len(entry.Meta) > 0 {
+			capabilities["plugin_meta"] = entry.Meta
 		}
 		models = append(models, adapter.Model{UpstreamName: name, DisplayName: display, Capabilities: capabilities})
 	}

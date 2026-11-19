@@ -10,6 +10,64 @@ var probeMethods = map[string]struct{}{
 	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {}, "DELETE": {},
 }
 
+// TransportProfileSpec is the manifest transport block in the plugin SDK.
+// Profile is a built-in TLS fingerprint.
+type TransportProfileSpec struct {
+	Profile string `ts:"profile,optional,type=\"claude_code\" | \"bun\",doc=Built-in TLS fingerprint."`
+}
+
+// StreamUnwrapSpec pulls the real chunk out of each SSE data payload.
+type StreamUnwrapSpec struct {
+	Path       string `ts:"path,doc=Dot path with numeric indexes, same syntax as secretPaths."`
+	Format     string `ts:"format,optional,type=\"json\" | \"json_string\" | \"raw\",doc=json reads an object or array. json_string parses a JSON string. raw uses the string as the payload. Default is json."`
+	StatusPath string `ts:"statusPath,optional,doc=Envelope status path. Checked only when okStatuses is set."`
+	OKStatuses []int  `ts:"okStatuses,optional,doc=Allowed envelope statuses. Empty skips the check."`
+}
+
+// StreamDoneSpec names extra end-of-stream markers.
+type StreamDoneSpec struct {
+	DataEquals      []string `ts:"dataEquals,optional,doc=Original data payload equals one of these."`
+	UnwrappedEquals []string `ts:"unwrappedEquals,optional,doc=Unwrapped payload equals one of these."`
+	Events          []string `ts:"events,optional,doc=SSE event name equals one of these."`
+	CloseOnDone     bool     `ts:"closeOnDone,optional,doc=Stop reading the upstream body after a done marker."`
+}
+
+// StreamUsageSpec maps token counts onto the standard usage object.
+// cost and billable are not applied.
+type StreamUsageSpec struct {
+	InputTokens     string `ts:"inputTokens,optional,doc=Copied to usage.prompt_tokens when that field is absent."`
+	OutputTokens    string `ts:"outputTokens,optional,doc=Copied to usage.completion_tokens when that field is absent."`
+	CachedTokens    string `ts:"cachedTokens,optional,doc=Copied to usage.prompt_tokens_details.cached_tokens when that field is absent."`
+	ReasoningTokens string `ts:"reasoningTokens,optional,doc=Copied to usage.completion_tokens_details.reasoning_tokens when that field is absent."`
+}
+
+// StreamSectionSpec is the declarative SSE transform.
+type StreamSectionSpec struct {
+	Unwrap *StreamUnwrapSpec `ts:"unwrap,optional"`
+	Done   *StreamDoneSpec   `ts:"done,optional"`
+	Usage  *StreamUsageSpec  `ts:"usage,optional"`
+}
+
+// ScheduleSectionSpec is the manifest schedule block in the plugin SDK.
+type ScheduleSectionSpec struct {
+	EveryMinutes int            `ts:"everyMinutes,optional,doc=Interval in minutes (5..10080) between onSchedule ticks."`
+	Label        map[string]any `ts:"label,optional,type=Record<string, string>,doc=Localized label shown in the admin schedule toggle."`
+}
+
+// PluginManifestSpec is the hand-written part of the plugin manifest in the SDK.
+type PluginManifestSpec struct {
+	APIVersion int                   `ts:"apiVersion"`
+	HostAPI    int                   `ts:"hostApi"`
+	ID         string                `ts:"id"`
+	Name       string                `ts:"name"`
+	Version    string                `ts:"version"`
+	Kind       string                `ts:"kind,optional,type=PluginKind"`
+	Exports    []string              `ts:"exports,optional"`
+	Transport  *TransportProfileSpec `ts:"transport,optional"`
+	Stream     *StreamSectionSpec    `ts:"stream,optional,doc=Declarative SSE transform. On a protocol plugin this is protocol.stream. On a site type it is siteProvider.protocol.stream."`
+	Schedule   *ScheduleSectionSpec  `ts:"schedule,optional,doc=Periodic onSchedule configuration. Requires schedule in permissions."`
+}
+
 // ProbeContext is the credential-free object passed to a quota probe hook.
 // Account is set only for an account-pool per-account listModels call.
 type ProbeContext struct {
@@ -18,6 +76,7 @@ type ProbeContext struct {
 	CredentialType string            `ts:"credentialType"`
 	Now            int64             `ts:"now,doc=Unix time in milliseconds."`
 	Account        map[string]string `ts:"account,optional,doc=Non-secret account fields for per-account model sync. Includes the resolved region id when the credential does not store region. Omitted for API-key calls."`
+	Settings       map[string]any    `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // ProbeStep is one finished HTTP exchange, shown back to the plugin.
@@ -26,18 +85,24 @@ type ProbeStep struct {
 	Response ProbeResponse `ts:"response"`
 }
 
+// ProbeEndpoints are the values of ProbeRequest.Endpoint. Empty means control.
+var ProbeEndpoints = []string{"control", "gateway"}
+
 // ProbeRequest is a plugin-authored HTTP request before the host joins the URL.
-// OnNonJSON is read only while pollLogin is running. "pending" treats a body
-// that is not one JSON object as still waiting. The body is discarded and is
-// not shown to the plugin. Every other hook ignores the field and still
-// refuses a non-JSON body when secret paths are set.
+// OnNonJSON applies to every account-pool hook. "pending" on pollLogin treats a
+// body that is not one JSON object as still waiting. "pending" on any other
+// account hook, and "ignore" on every account hook, keeps the status and the
+// filtered headers and drops the body. The body is not shown to the plugin.
+// Quota probe and the other stepped hooks ignore the field.
 type ProbeRequest struct {
 	Method    string            `ts:"method,type=ProbeMethod"`
 	Path      string            `ts:"path,doc=Path under the site base URL. Absolute URLs are rejected."`
 	Headers   map[string]string `ts:"headers,optional"`
 	Query     map[string]string `ts:"query,optional"`
 	Body      any               `ts:"body,optional,type=Json"`
-	OnNonJSON string            `ts:"onNonJSON,optional,doc=pollLogin only. pending treats a non-JSON body as still waiting and discards it."`
+	OnNonJSON string            `ts:"onNonJSON,optional,doc=Account-pool hooks. pending on pollLogin treats a non-JSON body as still waiting. pending elsewhere, and ignore, return the status with an empty body."`
+	Endpoint  string            `ts:"endpoint,optional,type=ProbeEndpoint,doc=Account-pool hooks only. Selects regions[].endpoints.gateway[0] instead of control. Defaults to \"control\"."`
+	Sign      bool              `ts:"sign,optional,doc=Account-pool hooks only. Runs the plugin's signRequest on the outgoing request after {{secret.*}} substitution. Requires \"secret.use\" when credentials are needed."`
 }
 
 // ProbeResponse is the HTTP result shown to the plugin. JSON is nil when the body is not JSON.
@@ -98,6 +163,9 @@ func (pc ProbeContext) asMap() map[string]any {
 	if len(pc.Account) > 0 {
 		out["account"] = pc.Account
 	}
+	if len(pc.Settings) > 0 {
+		out["settings"] = pc.Settings
+	}
 	return out
 }
 
@@ -132,6 +200,12 @@ func stepsAsValue(steps []ProbeStep) []any {
 		}
 		if step.Request.OnNonJSON != "" {
 			request["onNonJSON"] = step.Request.OnNonJSON
+		}
+		if step.Request.Endpoint != "" {
+			request["endpoint"] = step.Request.Endpoint
+		}
+		if step.Request.Sign {
+			request["sign"] = true
 		}
 		out[i] = map[string]any{"request": request, "response": response}
 	}
@@ -194,7 +268,7 @@ func decodeRequest(value any) (ProbeRequest, error) {
 	}
 	for key := range object {
 		switch key {
-		case "method", "path", "headers", "query", "body", "onNonJSON":
+		case "method", "path", "headers", "query", "body", "onNonJSON", "endpoint", "sign":
 		default:
 			return ProbeRequest{}, shapeError("request: unknown field %q", key)
 		}
@@ -234,10 +308,25 @@ func decodeRequest(value any) (ProbeRequest, error) {
 	if err != nil {
 		return ProbeRequest{}, err
 	}
-	if onNonJSON != "" && onNonJSON != "pending" {
+	if onNonJSON != "" && onNonJSON != "pending" && onNonJSON != "ignore" {
 		return ProbeRequest{}, shapeError("request.onNonJSON: unsupported value %q", onNonJSON)
 	}
-	return ProbeRequest{Method: method, Path: path, Headers: headers, Query: query, Body: body, OnNonJSON: onNonJSON}, nil
+	endpoint, err := optionalString(object["endpoint"], "request.endpoint")
+	if err != nil {
+		return ProbeRequest{}, err
+	}
+	if endpoint != "" && endpoint != "control" && endpoint != "gateway" {
+		return ProbeRequest{}, shapeError("request.endpoint: unsupported value %q", endpoint)
+	}
+	sign := false
+	if raw, ok := object["sign"]; ok && raw != nil {
+		value, ok := raw.(bool)
+		if !ok {
+			return ProbeRequest{}, shapeError("request.sign: expected boolean")
+		}
+		sign = value
+	}
+	return ProbeRequest{Method: method, Path: path, Headers: headers, Query: query, Body: body, OnNonJSON: onNonJSON, Endpoint: endpoint, Sign: sign}, nil
 }
 
 func decodeResult(value any) (ProbeResult, error) {
@@ -402,6 +491,7 @@ type AccountLoginContext struct {
 	BaseURL  string            `ts:"baseURL"`
 	Params   map[string]string `ts:"params,doc=Login parameters from the admin UI. Not credentials."`
 	Now      int64             `ts:"now,doc=Unix time in milliseconds."`
+	Settings map[string]any    `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // AccountLoginResult is the account_login hook result.
@@ -423,6 +513,7 @@ type AccountCredentialContext struct {
 	BaseURL  string            `ts:"baseURL"`
 	Fields   map[string]string `ts:"fields,doc=Non-secret credential fields only. Access tokens and other secrets are omitted."`
 	Now      int64             `ts:"now,doc=Unix time in milliseconds."`
+	Settings map[string]any    `ts:"settings,optional,type=Record<string, SettingValue>,doc=Resolved admin settings when manifest declares settings."`
 }
 
 // AccountRefreshResult is the account_refresh hook result.
@@ -499,5 +590,65 @@ func stringMap(value any, path string) (map[string]string, error) {
 		return out, nil
 	default:
 		return nil, shapeError("%s: expected object", path)
+	}
+}
+
+const maxModelMetaKeyBytes = 64
+const maxModelMetaBytes = 8 << 10
+const maxModelMetaDepth = 8
+
+// modelMetaMap checks one meta object: keys stay short, values are valid JSON
+// nested at most 8 levels deep, and the JSON form stays within 8 KiB.
+func modelMetaMap(object map[string]any, path string) (map[string]any, error) {
+	checked, err := modelMetaObject(object, path, 1)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(checked)
+	if err != nil || len(encoded) > maxModelMetaBytes {
+		return nil, shapeError("%s: longer than %d bytes", path, maxModelMetaBytes)
+	}
+	return checked, nil
+}
+
+func modelMetaObject(object map[string]any, path string, depth int) (map[string]any, error) {
+	if depth > maxModelMetaDepth {
+		return nil, shapeError("%s: nested deeper than %d levels", path, maxModelMetaDepth)
+	}
+	out := make(map[string]any, len(object))
+	for key, item := range object {
+		if key == "" || len(key) > maxModelMetaKeyBytes {
+			return nil, shapeError("%s: key longer than %d bytes", path, maxModelMetaKeyBytes)
+		}
+		checked, err := modelMetaValue(item, path+"."+key, depth)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = checked
+	}
+	return out, nil
+}
+
+func modelMetaValue(value any, path string, depth int) (any, error) {
+	switch typed := value.(type) {
+	case nil, string, bool, float64, int, int64, json.Number:
+		return value, nil
+	case map[string]any:
+		return modelMetaObject(typed, path, depth+1)
+	case []any:
+		if depth+1 > maxModelMetaDepth {
+			return nil, shapeError("%s: nested deeper than %d levels", path, maxModelMetaDepth)
+		}
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			checked, err := modelMetaValue(child, fmt.Sprintf("%s[%d]", path, i), depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = checked
+		}
+		return out, nil
+	default:
+		return nil, shapeError("%s: expected JSON value", path)
 	}
 }

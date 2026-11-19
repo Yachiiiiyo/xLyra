@@ -60,6 +60,12 @@ type PluginAccountRuntime interface {
 	ParseImport(raw []byte) ([]PluginImportedAccount, error)
 }
 
+// PluginAccountScheduleRuntime is an optional extension of PluginAccountRuntime
+// for account-pool plugins that export onSchedule.
+type PluginAccountScheduleRuntime interface {
+	RunSchedule(ctx context.Context, baseURL string, fields map[string]string) (map[string]any, error)
+}
+
 // PluginLoginStart is one login attempt. Credential is set only when Status
 // is complete, and only for the host. It is not an API field.
 type PluginLoginStart struct {
@@ -158,16 +164,23 @@ type pluginPendingLogin struct {
 	expiresAt time.Time
 }
 
+type pluginSessionLock struct {
+	ch   chan struct{}
+	refs int
+}
+
 type pluginLoginResults struct {
-	mu      sync.Mutex
-	items   map[string]pluginCompletedLogin
-	pending map[string]pluginPendingLogin
+	mu       sync.Mutex
+	items    map[string]pluginCompletedLogin
+	pending  map[string]pluginPendingLogin
+	inflight map[string]*pluginSessionLock
 }
 
 func newPluginLoginResults() *pluginLoginResults {
 	return &pluginLoginResults{
-		items:   map[string]pluginCompletedLogin{},
-		pending: map[string]pluginPendingLogin{},
+		items:    map[string]pluginCompletedLogin{},
+		pending:  map[string]pluginPendingLogin{},
+		inflight: map[string]*pluginSessionLock{},
 	}
 }
 
@@ -227,6 +240,100 @@ func (s *Service) syncPluginAccountModelsLocked(ctx context.Context, site store.
 	return api.syncModels(ctx, site)
 }
 
+func (p pluginAccountAPI) withAccountPluginContext(ctx context.Context, site store.Site, credentialID uuid.UUID) context.Context {
+	pluginID := ""
+	if item, ok := LookupPluginSiteType(p.siteType); ok {
+		pluginID = strings.TrimSpace(item.PluginID)
+	}
+	if pluginID != "" {
+		ctx = jsplugin.WithSiteSettings(ctx, SitePluginSettings(GatewayConfigFromSiteMeta(site.Meta), pluginID))
+	}
+	if credentialID != uuid.Nil {
+		return jsplugin.WithStorageScope(ctx, jsplugin.StorageScopeCredential, credentialID.String())
+	}
+	if site.ID != uuid.Nil {
+		return jsplugin.WithStorageScope(ctx, jsplugin.StorageScopeSite, site.ID.String())
+	}
+	return ctx
+}
+
+func (p pluginAccountAPI) runSchedule(ctx context.Context, site store.Site) (ran int, failed int, err error) {
+	sched, ok := p.runtime.(PluginAccountScheduleRuntime)
+	if !ok || sched == nil {
+		return 0, 0, errors.New("plugin account runtime does not support onSchedule")
+	}
+	repo := store.NewSiteCredentialRepository(p.s.db.DB())
+	credentials, err := repo.ListBySite(ctx, site.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	states, err := store.NewSiteAPIKeyStateRepository(p.s.db.DB()).ListBySite(ctx, site.ID)
+	if err != nil {
+		return 0, 0, err
+	}
+	stateByID := make(map[uuid.UUID]store.SiteAPIKeyState, len(states))
+	for _, state := range states {
+		stateByID[state.SiteCredentialID] = state
+	}
+	var lastErr error
+	for _, credential := range credentials {
+		if !store.IsAccountCredentialTypeOf(credential.CredentialType, p.siteType) {
+			continue
+		}
+		meta := accountMetaMap(credential.Meta)
+		if !pluginAccountSyncEligible(meta) {
+			continue
+		}
+		if state, hasState := stateByID[credential.ID]; hasState && !state.Enabled {
+			continue
+		}
+		fields, readErr := p.readCredentialFields(credential)
+		if readErr != nil {
+			if contextCanceled(ctx, readErr) {
+				return ran, failed, readErr
+			}
+			failed++
+			lastErr = readErr
+			continue
+		}
+		if p.refreshesTokens() && p.pool != nil && PluginAccountNeedsRefresh(*p.pool, fields, time.Now()) {
+			_ = p.s.withPluginRefreshLease(ctx, credential.ID, func(ctx context.Context) error {
+				refreshed, refreshErr := p.runtime.Refresh(p.withAccountPluginContext(ctx, site, credential.ID), cloneStringMap(fields))
+				if refreshErr != nil {
+					return refreshErr
+				}
+				if strings.TrimSpace(refreshed[p.accessField()]) == "" {
+					return fmt.Errorf("refreshed account is missing %s", p.accessField())
+				}
+				if _, saveErr := p.saveCredentialFields(ctx, credential, refreshed, true); saveErr != nil {
+					return saveErr
+				}
+				fields = refreshed
+				return nil
+			})
+		}
+		region := anyString(meta["region"])
+		if region == "" && p.pool != nil {
+			region = jsplugin.AccountRegionID(p.pool.Regions, fields)
+		}
+		base := p.baseURL(region)
+		callCtx := p.withAccountPluginContext(ctx, site, credential.ID)
+		if _, runErr := sched.RunSchedule(callCtx, base, cloneStringMap(fields)); runErr != nil {
+			if contextCanceled(ctx, runErr) {
+				return ran, failed, runErr
+			}
+			failed++
+			lastErr = redactCredentialError(runErr, fields, p.secretNames())
+			continue
+		}
+		ran++
+	}
+	if ran == 0 && failed > 0 {
+		return 0, failed, lastErr
+	}
+	return ran, failed, nil
+}
+
 func (p pluginAccountAPI) syncModels(ctx context.Context, site store.Site) (SyncResult, error) {
 	credentials, err := store.NewSiteCredentialRepository(p.s.db.DB()).ListBySite(ctx, site.ID)
 	if err != nil {
@@ -259,7 +366,7 @@ func (p pluginAccountAPI) syncModels(ctx context.Context, site store.Site) (Sync
 			p.s.recordAccountRefreshFailure(ctx, credential, readErr, func(error) bool { return false })
 			continue
 		}
-		models, listErr := p.runtime.ListModels(ctx, cloneStringMap(fields))
+		models, listErr := p.runtime.ListModels(p.withAccountPluginContext(ctx, site, credential.ID), cloneStringMap(fields))
 		if listErr != nil {
 			if contextCanceled(ctx, listErr) {
 				return SyncResult{}, listErr
@@ -417,7 +524,7 @@ func (r *pluginLoginResults) region(session string) string {
 	return item.region
 }
 
-func (r *pluginLoginResults) take(session string) (PluginAccount, bool) {
+func (r *pluginLoginResults) get(session string) (PluginAccount, bool) {
 	session = strings.TrimSpace(session)
 	if r == nil || session == "" {
 		return PluginAccount{}, false
@@ -428,11 +535,53 @@ func (r *pluginLoginResults) take(session string) (PluginAccount, bool) {
 	if !ok {
 		return PluginAccount{}, false
 	}
-	delete(r.items, session)
 	if time.Now().After(item.expiresAt) {
+		delete(r.items, session)
 		return PluginAccount{}, false
 	}
 	return item.account, true
+}
+
+func (r *pluginLoginResults) lockSession(ctx context.Context, session string) (func(), error) {
+	session = strings.TrimSpace(session)
+	if r == nil || session == "" {
+		return func() {}, nil
+	}
+	r.mu.Lock()
+	if r.inflight == nil {
+		r.inflight = map[string]*pluginSessionLock{}
+	}
+	entry, ok := r.inflight[session]
+	if !ok {
+		entry = &pluginSessionLock{ch: make(chan struct{}, 1)}
+		entry.ch <- struct{}{}
+		r.inflight[session] = entry
+	}
+	entry.refs++
+	r.mu.Unlock()
+
+	releaseRef := func() {
+		r.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 && r.inflight[session] == entry {
+			delete(r.inflight, session)
+		}
+		r.mu.Unlock()
+	}
+
+	select {
+	case <-entry.ch:
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				entry.ch <- struct{}{}
+				releaseRef()
+			})
+		}, nil
+	case <-ctx.Done():
+		releaseRef()
+		return nil, ctx.Err()
+	}
 }
 
 func (r *pluginLoginResults) clear() {
@@ -566,7 +715,8 @@ func (p pluginAccountAPI) RefreshAll(ctx context.Context, siteID uuid.UUID) ([]A
 }
 
 func (p pluginAccountAPI) StartLogin(ctx context.Context, siteID uuid.UUID, params AccountLoginParams) (AccountLoginStart, error) {
-	if err := p.requireSite(ctx, siteID); err != nil {
+	site, err := p.requireSite(ctx, siteID)
+	if err != nil {
 		return AccountLoginStart{}, err
 	}
 	region, err := p.resolveRegion(params.Region)
@@ -580,7 +730,7 @@ func (p pluginAccountAPI) StartLogin(ctx context.Context, siteID uuid.UUID, para
 			return AccountLoginStart{}, fmt.Errorf("too many pending logins; retry after an existing login expires")
 		}
 	}
-	started, err := p.runtime.StartLogin(ctx, loginParams)
+	started, err := p.runtime.StartLogin(p.withAccountPluginContext(ctx, site, uuid.Nil), loginParams)
 	if err != nil {
 		return AccountLoginStart{}, err
 	}
@@ -598,17 +748,30 @@ func (p pluginAccountAPI) StartLogin(ctx context.Context, siteID uuid.UUID, para
 }
 
 func (p pluginAccountAPI) PollLogin(ctx context.Context, siteID uuid.UUID, session string, targetCredentialID *uuid.UUID) (AccountLoginPoll, error) {
-	if err := p.requireSite(ctx, siteID); err != nil {
+	site, err := p.requireSite(ctx, siteID)
+	if err != nil {
 		return AccountLoginPoll{}, err
 	}
 	session = strings.TrimSpace(session)
 	if session == "" {
 		return AccountLoginPoll{}, fmt.Errorf("session is required")
 	}
-	if account, ok := p.s.pluginLogins.take(session); ok {
+	if account, ok := p.s.pluginLogins.get(session); ok {
 		return AccountLoginPoll{Status: "complete", Account: account}, nil
 	}
-	poll, err := p.runtime.PollLogin(ctx, session)
+	unlock, err := p.s.pluginLogins.lockSession(ctx, session)
+	if err != nil {
+		return AccountLoginPoll{}, err
+	}
+	defer unlock()
+	if account, ok := p.s.pluginLogins.get(session); ok {
+		return AccountLoginPoll{Status: "complete", Account: account}, nil
+	}
+	credentialID := uuid.Nil
+	if targetCredentialID != nil {
+		credentialID = *targetCredentialID
+	}
+	poll, err := p.runtime.PollLogin(p.withAccountPluginContext(ctx, site, credentialID), session)
 	if err != nil {
 		return AccountLoginPoll{}, err
 	}
@@ -630,6 +793,7 @@ func (p pluginAccountAPI) PollLogin(ctx context.Context, siteID uuid.UUID, sessi
 		if finishErr != nil {
 			return AccountLoginPoll{}, finishErr
 		}
+		p.s.pluginLogins.remember(session, account)
 		return AccountLoginPoll{Status: "complete", Account: account}, nil
 	default:
 		return AccountLoginPoll{}, fmt.Errorf("login status %q is not supported", poll.Status)
@@ -637,7 +801,7 @@ func (p pluginAccountAPI) PollLogin(ctx context.Context, siteID uuid.UUID, sessi
 }
 
 func (p pluginAccountAPI) Regions(ctx context.Context, siteID uuid.UUID) (any, string, error) {
-	if err := p.requireSite(ctx, siteID); err != nil {
+	if _, err := p.requireSite(ctx, siteID); err != nil {
 		return nil, "", err
 	}
 	items := make([]AccountRegion, 0, len(p.pool.Regions))
@@ -655,7 +819,7 @@ func (p pluginAccountAPI) Import(ctx context.Context, siteID uuid.UUID, files []
 	if p.pool == nil || !p.pool.Import.Enabled {
 		return nil, ErrAccountImportUnsupported
 	}
-	if err := p.requireSite(ctx, siteID); err != nil {
+	if _, err := p.requireSite(ctx, siteID); err != nil {
 		return nil, err
 	}
 	if len(files) == 0 {
@@ -791,7 +955,8 @@ type pluginRefreshPrepared struct {
 
 func (p pluginAccountAPI) refreshOne(ctx context.Context, siteID, credentialID uuid.UUID, publishSite bool) (PluginAccount, error) {
 	var account PluginAccount
-	if err := p.requireSite(ctx, siteID); err != nil {
+	site, err := p.requireSite(ctx, siteID)
+	if err != nil {
 		return account, err
 	}
 	repo := store.NewSiteCredentialRepository(p.s.db.DB())
@@ -823,7 +988,7 @@ func (p pluginAccountAPI) refreshOne(ctx context.Context, siteID, credentialID u
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			refreshed, refreshErr := p.runtime.Refresh(ctx, cloneStringMap(fields))
+			refreshed, refreshErr := p.runtime.Refresh(p.withAccountPluginContext(ctx, site, credentialID), cloneStringMap(fields))
 			if refreshErr != nil {
 				return p.failRefresh(ctx, current, refreshErr, fields, false)
 			}
@@ -834,13 +999,13 @@ func (p pluginAccountAPI) refreshOne(ctx context.Context, siteID, credentialID u
 			rotated = true
 		}
 		base := p.baseURL(anyString(accountMetaMap(current.Meta)["region"]))
-		summary, sumErr := p.runtime.Summarize(ctx, base, cloneStringMap(fields))
+		summary, sumErr := p.runtime.Summarize(p.withAccountPluginContext(ctx, site, credentialID), base, cloneStringMap(fields))
 		if sumErr != nil {
 			return p.failRefresh(ctx, current, sumErr, fields, rotated)
 		}
 		summary = p.scrubSummary(summary, fields)
 		if p.pool != nil && p.pool.ModelsPerAccount {
-			models, listErr := p.runtime.ListModels(ctx, cloneStringMap(fields))
+			models, listErr := p.runtime.ListModels(p.withAccountPluginContext(ctx, site, credentialID), cloneStringMap(fields))
 			if listErr != nil {
 				return p.failRefresh(ctx, current, listErr, fields, rotated)
 			}
@@ -870,7 +1035,7 @@ func (p pluginAccountAPI) refreshOne(ctx context.Context, siteID, credentialID u
 	if err := ctx.Err(); err != nil {
 		return PluginAccount{}, err
 	}
-	if err := p.requireSite(ctx, siteID); err != nil {
+	if _, err := p.requireSite(ctx, siteID); err != nil {
 		return PluginAccount{}, err
 	}
 	current, err := repo.GetByID(ctx, credentialID)
@@ -914,9 +1079,13 @@ func (p pluginAccountAPI) probeAccountHealth(ctx context.Context, credential sto
 	if err := ctx.Err(); err != nil {
 		return "", "", err
 	}
+	site, err := p.s.Get(ctx, credential.SiteID)
+	if err != nil {
+		return "", "", err
+	}
 	repo := store.NewSiteCredentialRepository(p.s.db.DB())
 	var status, message string
-	err := p.s.withPluginRefreshLease(ctx, credential.ID, func(ctx context.Context) error {
+	err = p.s.withPluginRefreshLease(ctx, credential.ID, func(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -937,7 +1106,7 @@ func (p pluginAccountAPI) probeAccountHealth(ctx context.Context, credential sto
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			refreshed, refreshErr := p.runtime.Refresh(ctx, cloneStringMap(fields))
+			refreshed, refreshErr := p.runtime.Refresh(p.withAccountPluginContext(ctx, site, credential.ID), cloneStringMap(fields))
 			if refreshErr != nil {
 				if accountFailureUnproven(ctx, refreshErr) {
 					return refreshErr
@@ -964,7 +1133,7 @@ func (p pluginAccountAPI) probeAccountHealth(ctx context.Context, credential sto
 			return err
 		}
 		base := p.baseURL(anyString(accountMetaMap(current.Meta)["region"]))
-		summary, sumErr := p.runtime.Summarize(ctx, base, cloneStringMap(fields))
+		summary, sumErr := p.runtime.Summarize(p.withAccountPluginContext(ctx, site, credential.ID), base, cloneStringMap(fields))
 		if sumErr != nil {
 			if accountFailureUnproven(ctx, sumErr) {
 				return sumErr
@@ -1113,7 +1282,8 @@ func (s *Service) RefreshPluginAccountForGateway(ctx context.Context, siteID, cr
 }
 
 func (p pluginAccountAPI) refreshForGateway(ctx context.Context, siteID, credentialID uuid.UUID, _ map[string]string) (map[string]string, error) {
-	if err := p.requireSite(ctx, siteID); err != nil {
+	site, err := p.requireSite(ctx, siteID)
+	if err != nil {
 		return nil, err
 	}
 	unlock := p.s.siteLocks.lock(siteID)
@@ -1146,7 +1316,7 @@ func (p pluginAccountAPI) refreshForGateway(ctx context.Context, siteID, credent
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		refreshed, refreshErr := p.runtime.Refresh(ctx, cloneStringMap(stored))
+		refreshed, refreshErr := p.runtime.Refresh(p.withAccountPluginContext(ctx, site, credentialID), cloneStringMap(stored))
 		if refreshErr != nil {
 			return p.failGatewayRefresh(ctx, current, refreshErr, stored)
 		}
@@ -1344,18 +1514,18 @@ func (p pluginAccountAPI) login() accountLogin[pluginCredential, PluginAccount] 
 	return accountLogin[pluginCredential, PluginAccount]{s: p.s, p: pluginLoginProvider{api: p}}
 }
 
-func (p pluginAccountAPI) requireSite(ctx context.Context, siteID uuid.UUID) error {
+func (p pluginAccountAPI) requireSite(ctx context.Context, siteID uuid.UUID) (store.Site, error) {
 	if siteID == uuid.Nil {
-		return fmt.Errorf("site id is required")
+		return store.Site{}, fmt.Errorf("site id is required")
 	}
 	item, err := p.s.Get(ctx, siteID)
 	if err != nil {
-		return err
+		return store.Site{}, err
 	}
 	if !strings.EqualFold(strings.TrimSpace(item.SiteType), p.siteType) {
-		return fmt.Errorf("site type %q is not %s", item.SiteType, p.siteType)
+		return store.Site{}, fmt.Errorf("site type %q is not %s", item.SiteType, p.siteType)
 	}
-	return nil
+	return item, nil
 }
 
 func (p pluginAccountAPI) resolveRegion(raw string) (string, error) {
@@ -1400,9 +1570,17 @@ func (p pluginAccountAPI) baseURL(region string) string {
 	if p.pool == nil {
 		return ""
 	}
+	if region == "" {
+		region = p.pool.DefaultRegion
+	}
 	for _, item := range p.pool.Regions {
 		if item.ID == region {
-			return strings.TrimRight(strings.TrimSpace(item.BaseURL), "/")
+			return jsplugin.RegionControlURL(item)
+		}
+	}
+	for _, item := range p.pool.Regions {
+		if item.ID == p.pool.DefaultRegion {
+			return jsplugin.RegionControlURL(item)
 		}
 	}
 	return p.pool.DefaultBaseURL()
@@ -1550,7 +1728,8 @@ func (p pluginAccountProvider) isCredential(credentialType string) bool {
 }
 
 func (p pluginAccountProvider) requireSite(ctx context.Context, siteID uuid.UUID) error {
-	return p.api.requireSite(ctx, siteID)
+	_, err := p.api.requireSite(ctx, siteID)
+	return err
 }
 
 func (pluginAccountProvider) ensureAccess(context.Context, store.Site, store.SiteCredential) (string, adapter.SiteConfig, error) {
@@ -1600,7 +1779,8 @@ type pluginLoginProvider struct {
 func (p pluginLoginProvider) name() string { return p.api.siteType }
 
 func (p pluginLoginProvider) requireSite(ctx context.Context, siteID uuid.UUID) error {
-	return p.api.requireSite(ctx, siteID)
+	_, err := p.api.requireSite(ctx, siteID)
+	return err
 }
 
 func (p pluginLoginProvider) isCredential(credentialType string) bool {

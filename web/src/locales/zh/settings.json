@@ -768,7 +768,8 @@
       "modelMetadata": "模型元数据",
       "pricingParse": "价格解析",
       "automation": "自动化",
-      "siteProvider": "站点类型"
+      "siteProvider": "站点类型",
+      "hooks": "多钩子插件"
     },
     "metricsEmpty": "暂无调用",
     "metricsSummary": "成功 {{success}} · 失败 {{failed}}",
@@ -825,7 +826,13 @@
     "permission": {
       "apikeyResetUsage": "清零已绑定 API 密钥的用量（总额度、日额度或周额度）",
       "notify": "在插件的操作记录中写入通知",
-      "httpRequest": "向管理员在绑定里填写的地址发送 HTTP 请求（比如推送通知）"
+      "httpRequest": "向管理员在绑定里填写的地址发送 HTTP 请求（比如推送通知）",
+      "storage": "读写该插件自己的存储",
+      "secretUse": "读取站点密钥明文。只授予你完全信任的插件",
+      "http": "由插件自行发起 HTTP 请求",
+      "schedule": "按计划定时运行",
+      "net": "访问主机 {{host}}",
+      "event": "订阅事件 {{event}}"
     },
     "automation": {
       "title": "自动化",
@@ -875,7 +882,8 @@
       "model_list": "该站点同步模型时，改用这个插件拉取模型列表。",
       "credential_check": "该站点校验密钥和做健康检查时，改用这个插件。",
       "error_classifier": "该站点的上游错误改由这个插件归类（只能选类别，不影响冷却时长）。",
-      "pricing_parse": "刷新该站点模型时，用这个插件读取并保存价格。会改变该站点展示的价格，请先预览核对。"
+      "pricing_parse": "刷新该站点模型时，用这个插件读取并保存价格。会改变该站点展示的价格，请先预览核对。",
+      "quota_probe": "该站点探测额度时，改用这个插件。"
     },
     "globalKindHint": {
       "site_detect": "启用后，识别站点类型时会同时运行这个插件；它只能指向 xLyra 已支持的站点类型。",
@@ -885,7 +893,6 @@
     "trialFailed": "试跑失败",
     "siteBinding": {
       "optional": "绑定是可选的：不绑定时插件只是被加载，不会用于任何站点。",
-      "other": "已绑定：{{id}}",
       "applied": "已更新绑定",
       "failed": "更新绑定失败",
       "enabled": "启用",
@@ -896,13 +903,6 @@
       "apply": "应用",
       "noSites": "暂无站点"
     },
-    "bindQuotaTitle": "站点额度探测",
-    "bindQuotaHint": "将站点的内部 quota_probe 设为 plugin:<id>（不在站点编辑页展示）。",
-    "bindQuotaSite": "站点",
-    "bindQuotaSitePlaceholder": "选择站点",
-    "bindQuota": "绑定探测",
-    "bindQuotaSuccess": "已绑定站点额度探测",
-    "bindQuotaFailed": "绑定失败",
     "siteProvider": {
       "title": "站点提供方",
       "versionEnabled": "当前启用",
@@ -1068,6 +1068,32 @@
         "plugin_not_owned": "这个插件不属于当前开发者",
         "package_unsigned": "这个版本没有签名，不能提交"
       }
+    },
+    "exportsTitle": "此版本导出的钩子",
+    "settings": {
+      "title": "插件设置",
+      "hint": "留空的项使用清单里的默认值。只保存与默认值不同的项。",
+      "defaultPlaceholder": "默认 {{value}}",
+      "reset": "恢复默认",
+      "saved": "插件设置已保存",
+      "saveFailed": "保存插件设置失败",
+      "siteTitle": "站点级覆盖",
+      "noSites": "还没有站点挂载这个插件。先在上方绑定站点，再为单个站点覆盖这些设置。",
+      "globalPlaceholder": "全局值 {{value}}",
+      "expand": "展开",
+      "collapse": "收起",
+      "clearOverride": "清除覆盖",
+      "siteSaved": "已保存 {{name}} 的站点设置"
+    },
+    "schedule": {
+      "title": "定时计划",
+      "hint": "周期性触发 onSchedule 钩子（如签到或保活）。默认关闭，需手动开启。",
+      "switchLabel": "启用周期计划（每 {{minutes}} 分钟）",
+      "intervalDescription": "开启后每隔 {{minutes}} 分钟自动执行一次 onSchedule",
+      "nextTick": "下次执行时间：{{time}}",
+      "enabledToast": "已开启定时计划",
+      "disabledToast": "已关闭定时计划",
+      "saveFailed": "更新定时计划失败"
     }
   },
   "xlyraCloud": {
@@ -1081,7 +1107,7 @@
     "unbound": {
       "title": "未连接",
       "description": "连接后可以在 xLyra Cloud 控制台里查看和管理这台实例。",
-      "privacy": "连接后，实例会定期向 xLyra Cloud 上报 xLyra 版本号和已安装插件的状态（不包含站点地址、密钥或配置）。",
+      "privacy": "连接后，实例会定期向 xLyra Cloud 上报 xLyra 版本号、已安装插件的状态，以及已配对手机的名称、平台、最近活跃时间和是否开启通知（不包含站点地址、密钥或配置）。",
       "connect": "连接账号"
     },
     "pairing": {
@@ -1092,12 +1118,17 @@
       "heading": "配对",
       "viewCode": "查看配对码",
       "instruction": "在已登录的 xLyra Cloud 控制台点「连接实例」，输入这个配对码。",
+      "stepCopyOrScan": "点「复制并打开 Cloud」或扫码",
+      "stepApprove": "在 Cloud 登录后核对配对码与上面一致，点「批准」",
+      "stepReturn": "回到这里，几秒后会显示「已连接」",
+      "scanHint": "用手机扫码，在 xLyra Cloud 登录后核对配对码并批准",
+      "dismissHint": "关闭这个窗口不会取消配对，在 Cloud 批准后仍会自动连上。想放弃请点『取消配对』。",
       "open": "在 xLyra Cloud 打开",
       "cancel": "取消",
       "cancelPairing": "取消配对",
       "copyOpen": "复制并打开 Cloud",
       "countdown": "剩余 {{time}}",
-      "expired": "配对码已过期",
+      "expired": "配对码已过期，请重新生成配对码",
       "regenerate": "重新生成",
       "codeMissing": "配对码已不可见，请重新生成"
     },
@@ -1190,6 +1221,85 @@
     "toast": {
       "connected": "已连接到 xLyra Cloud",
       "disconnected": "已断开连接"
+    }
+  },
+  "devices": {
+    "title": "设备",
+    "description": "管理通过 xLyra App 配对的设备。",
+    "pairing": {
+      "title": "添加设备",
+      "generate": "生成配对码",
+      "regenerate": "重新生成",
+      "hint": "用 xLyra App 扫描二维码，或在 App 里输入实例地址和配对码。配对码 5 分钟内有效，只能使用一次。",
+      "copy": "复制",
+      "copied": "已复制配对码",
+      "expired": "配对码已过期",
+      "expiresIn": "{{time}} 后过期",
+      "createFailed": "配对码生成失败",
+      "connected": "已连接：{{name}}",
+      "confirmTitle": "确认连接地址",
+      "confirmDescription": "手机将通过下方地址连接 xLyra，请确保手机能够访问该地址。如需更换，请关闭此窗口，用手机可以访问的地址重新打开 xLyra。",
+      "confirmContinue": "使用此地址",
+      "serverAddress": "服务器地址",
+      "codeLabel": "配对码",
+      "addressCopied": "已复制服务器地址",
+      "scanHint": "使用 xLyra App 扫描二维码，或在 App 中手动输入服务器地址和配对码。"
+    },
+    "list": {
+      "title": "已连接的设备",
+      "current": "当前设备",
+      "revoke": "吊销",
+      "revokeAll": "全部吊销",
+      "loading": "正在加载设备列表…",
+      "loadFailed": "设备列表加载失败",
+      "empty": "暂无已连接的设备",
+      "emptyDescription": "生成配对码并用 xLyra App 扫码即可添加设备。",
+      "revoked": "设备已吊销",
+      "revokeFailed": "设备吊销失败",
+      "allRevoked": "已吊销全部设备",
+      "revokeAllFailed": "全部吊销失败",
+      "revokeDialog": {
+        "title": "吊销设备",
+        "description": "吊销后该设备将无法继续访问，需要重新配对才能恢复。",
+        "confirm": "吊销"
+      },
+      "revokeAllDialog": {
+        "title": "吊销全部设备",
+        "description": "所有已配对的设备都会被吊销，它们将无法继续访问。",
+        "confirm": "全部吊销"
+      }
+    },
+    "push": {
+      "unregistered": "未开启通知",
+      "ok": "推送正常",
+      "invalid": "推送失效",
+      "error": "最近推送失败",
+      "unregisteredHint": "在手机的 xLyra App 里开启通知后这里会显示推送状态",
+      "invalidHint": "请在手机上重新打开 xLyra App 以重新登记通知",
+      "registeredAt": "登记于 {{time}}",
+      "cloudRequired": "推送需要先把本实例绑定到 xLyra Cloud",
+      "cloudLink": "前往绑定",
+      "cloudUnbound": "未绑定 Cloud",
+      "cloudUnboundHint": "通知暂时不会发送,绑定 xLyra Cloud 后自动恢复",
+      "prefsOff": "已关闭：{{names}}",
+      "listSeparator": "、",
+      "kinds": {
+        "approval": "审批",
+        "question": "提问",
+        "done": "完成",
+        "error": "出错"
+      },
+      "test": {
+        "send": "发送测试通知",
+        "cloudNotBound": "请先绑定 xLyra Cloud",
+        "failed": "测试通知发送失败",
+        "result": {
+          "ok": "已发送，请看手机",
+          "unregistered": "这台手机的推送已失效，请在手机上重新打开 xLyra App",
+          "retry_later": "暂时没发出去，稍后再试",
+          "rejected": "发送被拒绝"
+        }
+      }
     }
   }
 }

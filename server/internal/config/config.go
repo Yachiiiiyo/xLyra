@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +50,13 @@ type Config struct {
 	AgentMaxConcurrent int           `env:"AGENT_MAX_CONCURRENT" envDefault:"16"`
 	AgentRunTimeout    time.Duration `env:"AGENT_RUN_TIMEOUT" envDefault:"60m"`
 	// AgentQuestionTimeout 是模型提问无人回答时自动跳过的等待时长;默认 0 表示一直等待、不超时。
-	AgentQuestionTimeout  time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"0"`
+	AgentQuestionTimeout time.Duration `env:"AGENT_QUESTION_TIMEOUT" envDefault:"0"`
+	// DeviceIdleDays 是设备令牌闲置失效天数;默认 180,0 表示不限。
+	DeviceIdleDays int `env:"DEVICE_IDLE_DAYS" envDefault:"180"`
+	// PushEnabled 控制是否订阅 Agent 事件并向已登记的手机发通知;默认开启。
+	PushEnabled bool `env:"PUSH_ENABLED" envDefault:"true"`
+	// PushDoneMinSeconds 是「对话已完成」通知的最短运行时长(秒);默认 20,0 表示总是发。
+	PushDoneMinSeconds    int           `env:"PUSH_DONE_MIN_SECONDS" envDefault:"20"`
 	AgentGatewayBaseURL   string        `env:"AGENT_GATEWAY_BASE_URL"`
 	AgentImageMaxCalls    int           `env:"AGENT_IMAGE_MAX_CALLS" envDefault:"3"`
 	AgentImageTimeout     time.Duration `env:"AGENT_IMAGE_TOTAL_TIMEOUT" envDefault:"10m"`
@@ -71,11 +79,14 @@ type Config struct {
 	AgentQueueTimeout      time.Duration `env:"AGENT_QUEUE_TIMEOUT" envDefault:"2m"`
 	// AgentQueueMax 是并发满时的排队上限;-1 关闭排队。
 	AgentQueueMax int `env:"AGENT_QUEUE_MAX" envDefault:"32"`
+	// TrustedProxies 是额外可信的代理 IP/CIDR;特殊值 * 表示信任任意对端。
+	TrustedProxies []string `env:"TRUSTED_PROXIES" envSeparator:","`
 }
 
 func Load() (Config, error) {
+	envMap := pushDoneMinEnv(envMapFromEnviron(os.Environ()))
 	var cfg Config
-	if err := env.Parse(&cfg); err != nil {
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: envMap}); err != nil {
 		return Config{}, err
 	}
 
@@ -199,6 +210,9 @@ func (c Config) Validate() error {
 	if c.AgentQuestionTimeout < 0 {
 		return fmt.Errorf("AGENT_QUESTION_TIMEOUT must not be negative")
 	}
+	if c.DeviceIdleDays < 0 {
+		return fmt.Errorf("DEVICE_IDLE_DAYS must not be negative")
+	}
 	if c.AgentRunTimeout <= 0 || c.AgentRunTimeout > agentRunTimeoutMax {
 		return fmt.Errorf("AGENT_RUN_TIMEOUT must be greater than 0 and at most %s", agentRunTimeoutMax)
 	}
@@ -258,6 +272,31 @@ func (c Config) Validate() error {
 	}
 
 	return nil
+}
+
+func envMapFromEnviron(environ []string) map[string]string {
+	out := make(map[string]string, len(environ))
+	for _, entry := range environ {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+// pushDoneMinEnv 把非法的 PUSH_DONE_MIN_SECONDS 回退到缺省 20。
+// 0 合法(总是发完成通知);未设置时不写入,交给 envDefault。
+func pushDoneMinEnv(envMap map[string]string) map[string]string {
+	raw, ok := envMap["PUSH_DONE_MIN_SECONDS"]
+	if !ok {
+		return envMap
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 0 {
+		envMap["PUSH_DONE_MIN_SECONDS"] = "20"
+	}
+	return envMap
 }
 
 func sanitizeOrigins(origins []string) []string {

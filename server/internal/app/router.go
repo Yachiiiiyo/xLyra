@@ -72,6 +72,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	var authService *auth.Service
 	if db != nil {
 		authService = auth.NewService(db.DB(), masterKey, confFile)
+		// 设备令牌闲置失效天数来自环境变量 DEVICE_IDLE_DAYS（0 表示不限）。
+		authService.SetDeviceIdleDays(cfg.DeviceIdleDays)
 		warmCtx, warmCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := authService.WarmBootstrapCache(warmCtx); err != nil {
 			logger.Warn("bootstrap admin cache warmup failed", "error", err)
@@ -94,7 +96,9 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	var jsPluginManager *jsplugin.Manager
 	var pluginMarket *market.Service
 	var cloudClient *cloudclient.Client
+	var deviceRepo store.AdminDeviceRepository
 	if db != nil {
+		deviceRepo = store.NewAdminDeviceRepository(db.DB())
 		jsPluginManager = jsplugin.NewManager(db, jsplugin.DefaultCatalog())
 		marketService, err := market.NewService(store.NewJSPluginRepository(db.DB()), httpClients, confFile, nil, nil)
 		if err != nil {
@@ -123,7 +127,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				return pluginMarket.CloudURL(ctx)
 			},
 			cloudclient.Options{
-				Logger: logger,
+				Logger:  logger,
+				Devices: devicePushStore{repo: deviceRepo},
 				Audit: func(ctx context.Context, action string, metadata map[string]any) {
 					if authService == nil {
 						return
@@ -164,13 +169,13 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		if oauthService == nil {
 			oauthService = oauthsvc.NewService(db, masterKey, confFile)
 		}
-		wireJSPluginAutomation(oauthService, jsPluginManager, authService, defaultHTTPClient)
 		// sharedSite is the instance background jobs already hold. Plugin modules
 		// have to land on it; a second service never sees them.
 		siteService = sharedSite
 		if siteService == nil {
 			siteService = site.NewServiceWithOAuthService(db, masterKey, appTimeZone, oauthService, confFile)
 		}
+		wireJSPluginAutomation(oauthService, siteService, jsPluginManager, authService, defaultHTTPClient)
 		siteProviderCurrent = func() *jsplugin.Registry {
 			return jsPluginManager.Catalog().Registry()
 		}
@@ -221,7 +226,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		go syncAgentAccessPolicy()
 	}
 	// 内置 Pi 是唯一引擎，始终装配。
-	builtin := newBuiltinAgent(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory)
+	builtin := newBuiltinAgentWithDevices(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, deviceRepo, agentModelSource{sites: siteService, db: db})
+	builtin.startPush(ctx, tasks, cloudClient)
 	if tasks != nil {
 		tasks.Add(1)
 		go func() {
@@ -241,6 +247,15 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	}
 	if cloudClient != nil {
 		adminHandler = adminHandler.WithCloudClient(cloudClient)
+		adminHandler.PushSyncWaker = cloudClient
+		adminHandler.PushSender = cloudClient
+		adminHandler.HubStatus = func(ctx context.Context) (bool, string) {
+			status, err := cloudClient.Status(ctx)
+			if err != nil {
+				return false, err.Error()
+			}
+			return status.Status == store.CloudStatusBound, status.LastError
+		}
 	}
 	healthHandler := health.NewHandler(cfg, db)
 	var preRestore, postRestore, databaseRestored func(context.Context) error
@@ -281,7 +296,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(httpx.WithRequestIDHeader)
-	r.Use(httpx.RealClientIP)
+	r.Use(httpx.RealClientIP(cfg.TrustedProxies))
 	r.Use(httpx.IPWhitelist(confFile))
 	r.Use(middleware.Recoverer)
 	r.Use(routeAwareTimeout(cfg.RequestTimeout))
@@ -313,6 +328,8 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 			v1.Get("/auth/state", adminHandler.AuthState)
 			v1.Post("/bootstrap/register", adminHandler.BootstrapRegister)
 			v1.Post("/auth/session", adminHandler.CreateSession)
+			// App 扫码后的配对兑换: 无需登录, 按 IP 限速。
+			v1.Post("/devices/pair", adminHandler.RedeemDevicePairing)
 			v1.Get("/system/version", func(w http.ResponseWriter, _ *http.Request) {
 				httpx.JSON(w, http.StatusOK, version.Current())
 			})
@@ -329,19 +346,12 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				})
 				protected.Get("/auth/session", adminHandler.CurrentSession)
 				protected.Delete("/auth/session", adminHandler.DeleteSession)
+				registerAdminProfileRoutes(protected, adminHandler)
+				registerAdminDeviceRoutes(protected, adminHandler)
 				protected.Get("/profile", adminHandler.GetProfile)
-				protected.Put("/profile/account", adminHandler.UpdateProfileAccount)
-				protected.Put("/profile/password", adminHandler.UpdateProfilePassword)
 				protected.Get("/profile/sessions", adminHandler.ListProfileSessions)
 				protected.Delete("/profile/sessions", adminHandler.DeleteOtherProfileSessions)
 				protected.Delete("/profile/sessions/{sessionID}", adminHandler.DeleteProfileSession)
-				protected.Get("/profile/access-token", adminHandler.GetProfileAccessToken)
-				protected.Post("/profile/access-token", adminHandler.CreateProfileAccessToken)
-				protected.Put("/profile/access-token/enabled", adminHandler.UpdateProfileAccessTokenEnabled)
-				protected.Delete("/profile/access-token", adminHandler.DeleteProfileAccessToken)
-				protected.Post("/profile/totp/setup", adminHandler.SetupProfileTOTP)
-				protected.Post("/profile/totp/enable", adminHandler.EnableProfileTOTP)
-				protected.Delete("/profile/totp", adminHandler.DisableProfileTOTP)
 				protected.Get("/audit-logs", adminHandler.ListAuditLogs)
 				protected.Get("/js-plugin-trusted-keys", adminHandler.ListJSPluginTrustedKeys)
 				protected.Post("/js-plugin-trusted-keys", adminHandler.CreateJSPluginTrustedKey)
@@ -350,6 +360,11 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Get("/js-plugins", adminHandler.ListJSPlugins)
 				protected.Post("/js-plugins", adminHandler.UploadJSPlugin)
 				protected.Get("/js-plugins/{id}", adminHandler.GetJSPlugin)
+				protected.Get("/js-plugins/{id}/settings", adminHandler.GetJSPluginSettings)
+				protected.Put("/js-plugins/{id}/settings", adminHandler.UpdateJSPluginSettings)
+				protected.Put("/js-plugins/{id}/sites/{site_id}/settings", adminHandler.UpdateJSPluginSiteSettings)
+				protected.Get("/js-plugins/{id}/schedule", adminHandler.GetJSPluginSchedule)
+				protected.Put("/js-plugins/{id}/schedule", adminHandler.UpdateJSPluginSchedule)
 				protected.Put("/js-plugins/{id}/subscription", adminHandler.UpdateJSPluginSubscription)
 				protected.Post("/js-plugins/{id}/versions/{version}/enable", adminHandler.EnableJSPluginVersion)
 				protected.Post("/js-plugins/{id}/disable", adminHandler.DisableJSPlugin)
@@ -417,6 +432,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Post("/sites/refresh", adminHandler.RefreshAllSites)
 				protected.Get("/sites/{siteID}", adminHandler.GetSite)
 				protected.Put("/sites/{siteID}", adminHandler.UpdateSite)
+				protected.Put("/sites/{siteID}/plugin-order", adminHandler.UpdateSitePluginOrder)
 				protected.Put("/sites/{siteID}/enabled", adminHandler.UpdateSiteEnabled)
 				protected.Delete("/sites/{siteID}", adminHandler.DeleteSite)
 				protected.Post("/sites/{siteID}/refresh", adminHandler.RefreshSite)
@@ -655,8 +671,10 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Get("/config", h.GetConfig)
 	agentRouter.Put("/config", h.PutConfig)
 	agentRouter.Get("/model-memory", h.ModelMemory)
+	agentRouter.Get("/models", h.Models)
 	agentRouter.Get("/sessions", h.ListSessions)
 	agentRouter.Post("/sessions", h.CreateSession)
+	agentRouter.Patch("/sessions/{id}", h.RenameSession)
 	agentRouter.Get("/sessions/{id}/transcript", h.SessionTranscript)
 	agentRouter.Get("/sessions/{id}/stats", h.SessionStats)
 	agentRouter.Delete("/sessions/{id}", h.DeleteSession)
@@ -673,6 +691,39 @@ func registerAgentRoutes(agentRouter chi.Router, cfg config.Config, confFile *co
 	agentRouter.Post("/sessions/{id}/answer-question", h.AnswerQuestion)
 	agentRouter.Post("/sessions/{id}/revoke-access", h.RevokeAccess)
 	agentRouter.Get("/sessions/{id}/events", h.SessionEvents)
+}
+
+// registerAdminProfileRoutes 注册会自我扩权的账号安全接口: 设备令牌与管理员
+// 同权, 但这些接口只允许 Web 会话 / Access Token 调用, 因此统一加
+// DenyDeviceActor。
+func registerAdminProfileRoutes(protected chi.Router, adminHandler admin.Handler) {
+	webOnly := protected.With(auth.DenyDeviceActor)
+	webOnly.Put("/profile/account", adminHandler.UpdateProfileAccount)
+	webOnly.Put("/profile/password", adminHandler.UpdateProfilePassword)
+	webOnly.Get("/profile/access-token", adminHandler.GetProfileAccessToken)
+	webOnly.Post("/profile/access-token", adminHandler.CreateProfileAccessToken)
+	webOnly.Put("/profile/access-token/enabled", adminHandler.UpdateProfileAccessTokenEnabled)
+	webOnly.Delete("/profile/access-token", adminHandler.DeleteProfileAccessToken)
+	webOnly.Post("/profile/totp/setup", adminHandler.SetupProfileTOTP)
+	webOnly.Post("/profile/totp/enable", adminHandler.EnableProfileTOTP)
+	webOnly.Delete("/profile/totp", adminHandler.DisableProfileTOTP)
+}
+
+// registerAdminDeviceRoutes 注册设备管理接口: 创建配对码、列出与吊销设备
+// 同样只允许 Web 会话 / Access Token; /devices/self 反而只给设备令牌用。
+func registerAdminDeviceRoutes(protected chi.Router, adminHandler admin.Handler) {
+	webOnly := protected.With(auth.DenyDeviceActor)
+	webOnly.Post("/devices/pairings", adminHandler.CreateDevicePairing)
+	webOnly.Get("/devices", adminHandler.ListDevices)
+	webOnly.Delete("/devices/{id}", adminHandler.RevokeDevice)
+	webOnly.Post("/devices/{id}/push/test", adminHandler.TestDevicePush)
+	webOnly.Post("/devices/revoke-all", adminHandler.RevokeAllDevices)
+	protected.Get("/devices/self", adminHandler.GetDeviceSelf)
+	protected.Delete("/devices/self", adminHandler.DeleteDeviceSelf)
+	protected.Put("/devices/self/push", adminHandler.PutDevicePush)
+	protected.Delete("/devices/self/push", adminHandler.DeleteDevicePush)
+	protected.Get("/devices/self/push", adminHandler.GetDevicePush)
+	protected.Put("/devices/self/push/prefs", adminHandler.PutDevicePushPrefs)
 }
 
 func requireAdmin(authService *auth.Service) func(http.Handler) http.Handler {
