@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.19.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.18.0...v1.19.0) (2026-11-19)
+
+本版本重点升级插件基座并补齐移动端配对与推送能力：支持设备扫码配对、独立设备管理页与经 xLyra Cloud 转发的手机推送通知；插件基座支持去 `kind` 清单、多插件有序组合、私有存储与配置覆盖、全站点请求改写/签名、流转换与周期计划；同时新增 OpenCode Zen 免费车道 Bun 传输伪装，并增强了网关 DSML 清洗与 OAuth 临时错误保活。
+
+### Features
+
+#### 插件基座
+* ✨ 新增 `hostApi 2` 宿主原语（`bytes` / `encoding` / `crypto`、冷热双池隔离）、按 `global` / `site` / `credential` 作用域隔离且拦截秘密值写入的私有 KV `storage`、`settings` 三级配置合并（站点覆盖 > 插件全局 > 清单默认值）与全钩子自检
+* ✨ 插件清单去 `kind` 化（按导出钩子自动接入、`classify`/`classifyError` 与 `handle`/`onEvent` 互为别名），启用确认合并为单步弹窗并落库权限授予（声明站点类型或 `secret.use` 强制受信签名）；插件详情新增设置与站点级覆盖表单，熔断按插件 × 版本 × 钩子独立计数
+* ✨ 全站点请求改写与签名：`signRequest` 支持直接改写与代签双模式（支持非 JSON 正文与跨端点签名拉取），顶层 `request` 头模板开放给叠加插件并新增 `random.hex` / `uuid` / `now` / `model` / `setting` / `session.key` 占位符与底座头注入，模型 `meta` 持久化并支持凭据级元数据透传
+* ✨ 传输指纹与流处理：支持声明式 `transport.profile`（`claude_code` / `bun`，按管理员开关 > 挂载插件 > 底座插件生效）与单层子域主机白名单通配（`*.example.com`）；支持声明式 SSE 流解包（`protocol.stream` 的 `unwrap` / `done` / `usage` 映射）与 `transformStream` 流钩子
+* ✨ 多插件组合编排：单站点支持有序挂载多个插件，`rewritePayload` 链式执行，`listModels` / `parsePricing` / `probe` / `describeModels` / `check` / `classifyError` 按优先级合并或回退，并支持区域多端点；站点编辑页新增插件优先级排序（支持拖拽、上下按钮与键盘排序）
+* ✨ 周期任务：新增清单 `schedule` 周期计划、`onSchedule` 账号动作与 `http` 代发能力，同步更新插件 SDK 类型声明与示例包
+
+#### 设备配对与手机推送
+* ✨ 新增设备令牌与扫码配对：一次性配对码 5 分钟有效，设备令牌支持手机长期登录（默认闲置 180 天失效、改密码自动作废，且受限于无法修改账号或管理设备）；默认仅信任内网代理转发的客户端 IP
+* ✨ Web 设置新增「设备」页：配对前先确认服务地址再弹窗展示二维码、地址与配对码；列表展示已配对设备的登记时间、推送状态与已关闭的通知类型，支持发送测试通知与吊销设备
+* ✨ 手机推送与 xLyra Cloud：设备登记 APNs 令牌后，经 xLyra Cloud 转发待审批、待回答、完成与出错通知并随心跳同步状态；未绑定 xLyra Cloud 时跳过推送且不占用去重窗口，设备页展示未绑定状态并禁用测试通知；xLyra Cloud 配对窗口新增二维码、操作步骤及隐私说明中的手机设备信息
+
+#### 内置 Agent
+* ✨ 审批与会话管理：「询问」模式下的命令审批标出命中的高危规则，已在会话内允许的工具遇到高危命令仍需逐条确认，转录记录保留审批说明与风险标记；支持重命名会话（手动修改后不再被自动标题覆盖）
+* ✨ 移动端与模型接口：系统版本接口返回 Agent 契约版本，会话列表带上等待审批和提问的数量；新增 Agent 可用模型接口，一次返回按范围策略过滤后的聊天模型与推理档位
+* ✨ 优化 Agent 可用模型弹窗为一级扁平列表，支持模型筛选与两行展示
+
+#### 网关
+* ✨ 新增 OpenCode Zen 免费车道的 Bun 线上形状传输与 `impersonate_opencode_client` 站点开关（[#5](https://github.com/Yachiiiiyo/xLyra/pull/5)，@zkl2333）：实现 `BunTransport`（uTLS BoringSSL 握手、HTTP/1.1 ALPN、Bun 请求头布局、gzip/deflate/br/zstd 解码与连接池），开启后按官方客户端形状发送请求头与降序时间戳 session ID（拦截旧编码 session 透传），未开启时既有站点零行为变化
+
+### Bug Fixes
+
+* 🐛 OAuth 刷新与批量导入遇到限流（429）、网关错误（502）等临时错误时不再将连接标记为需重连并关闭站点，仅在永久性认证失败（401、`invalid_grant`、`refresh_token_reused` 等）时禁用，并补齐 Token 刷新保活与站点状态同步（[#7](https://github.com/Yachiiiiyo/xLyra/pull/7)，@anlostyle）
+* 🐛 在网关层清洗泄漏的 DSML 标签残壳，防止多轮对话触发 400 中断
+* 🐛 Grok 站点放行 Responses 的缓存提示与推理历史字段（`prompt_cache_key`、`client_metadata`、`reasoning.encrypted_content` 等），选路兼容检查不再误跳过 Grok 站点
+* 🐛 修复插件账号池登录完成时的轮询竞态，并将转发链路钩子请求体上限上调至 16 MiB
+* 🐛 Cloud 推送发送失败时按返回的 `result` 归类，修复「最近推送失败」不记录及限流丢失 `Retry-After` 的问题
+* 🐛 统计与仪表盘接口在请求被客户端取消时不再误报为 500
+* 🐛 修复 Agent HTML 预览面板被液态玻璃折射滤镜叠盖导致模糊的问题
+* 🐛 升级 Go 至 `1.26.11` 修复 `net/http` 漏洞 `GO-2026-6859`，Dockerfile 基础镜像与文档同步
+
 ## [1.18.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.17.0...v1.18.0) (2026-11-09)
 
 本版本把内置 Agent（基于 Pi）作为正式功能上线：支持会话、分叉与引用、权限审批、提问、文件预览与文生图，命令沙箱改为可选；同时新增自定义实例背景、按类别备份与恢复，并移除「模型体验」页。
