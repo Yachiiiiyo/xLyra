@@ -287,6 +287,14 @@ func TestClearCooldownAfterRecoveryOnlyForCoolingCandidates(t *testing.T) {
 	if updates != 1 {
 		t.Fatalf("updates = %d, want one cooldown clear for recovered cooling candidate", updates)
 	}
+
+	breakerCandidate := resolverCooldownCandidate("openai")
+	breakerCandidate.Cooling = true
+	breakerCandidate.CoolingReason = store.CooldownReasonUpstreamSiteBreaker
+	handler.clearCooldownAfterRecovery(context.Background(), breakerCandidate)
+	if updates != 2 {
+		t.Fatalf("updates = %d, want exactly one more clear (the site-level breaker) for a candidate demoted by it", updates)
+	}
 }
 
 func streamFailureRequestLog() store.RequestLog {

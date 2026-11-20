@@ -32,6 +32,7 @@ type Handler struct {
 	rateLimits           *ratelimit.Service
 	modelsCache          *modelsCache
 	noRoutes             *noRouteSuppressionCache
+	breaker              *siteBreakers
 	userBalanceThrottle  *userBalanceThrottle
 	credentialSelector   *credentialWindowSelector
 	confFile             *config.ConfigFile
@@ -95,7 +96,7 @@ func newHandlerWithTimeZone(logger *slog.Logger, authService *auth.Service, rout
 	return Handler{
 		logger: logger, auth: authService, router: routerService, db: db, credentials: credential.NewService(masterKey),
 		httpClient: defaultClient, clients: clientManager, limits: newUpstreamConcurrencyCache(), recorder: NewRecorder(db, logger, timeZone),
-		oauth: oauthService, rateLimits: ratelimit.NewService(db), modelsCache: newModelsCache(), noRoutes: newNoRouteSuppressionCache(),
+		oauth: oauthService, rateLimits: ratelimit.NewService(db), modelsCache: newModelsCache(), noRoutes: newNoRouteSuppressionCache(), breaker: newSiteBreakers(),
 		userBalanceThrottle: newUserBalanceThrottle(), credentialSelector: newCredentialWindowSelector(time.Minute), confFile: confFile,
 		usage: usageService, timeZone: timeZone, cacheObservationKey: cacheObservationKey(masterKey),
 	}

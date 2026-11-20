@@ -99,6 +99,7 @@ func (h Handler) cooldownAfterFailure(ctx context.Context, candidate routeengine
 	if result.success {
 		return
 	}
+	h.noteSiteFailure(ctx, candidate, result)
 	input, ok := cooldownInputForFailure(candidate, result)
 	if !ok {
 		return
@@ -175,7 +176,17 @@ func (h Handler) cooldownAfterClientAbandon(ctx context.Context, candidate route
 }
 
 func (h Handler) clearCooldownAfterRecovery(ctx context.Context, candidate routeengine.Candidate) {
+	h.noteSiteSuccess(candidate)
 	if !candidate.Cooling {
+		return
+	}
+	if candidate.CoolingReason == store.CooldownReasonUpstreamSiteBreaker {
+		// A request that went through a demoted site proves the site answers again.
+		if err := h.router.ClearCooldown(ctx, candidate.Site.ID, nil, nil, "gateway"); err != nil {
+			h.logger.WarnContext(ctx, "failed to clear site breaker after recovery", "scope", "gateway", "site_id", candidate.Site.ID, "error", err)
+			return
+		}
+		h.InvalidateModelsCache()
 		return
 	}
 	siteModelID := candidate.Model.SiteModelID

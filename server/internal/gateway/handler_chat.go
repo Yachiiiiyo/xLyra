@@ -167,6 +167,8 @@ func (h Handler) serveEndpoint(
 	}
 	access := setup.access
 	plan := setup.plan
+	ctx = withRoutePick(ctx, plan.Pick)
+	r = r.WithContext(ctx)
 
 	reservation, limitErr, limitAcquireErr := h.acquireRateLimit(ctx, apiKey.ID, endpoint, request, startedAt)
 	if limitAcquireErr != nil {
@@ -245,6 +247,7 @@ func (h Handler) serveEndpoint(
 		imageIntent = fallbackIntent
 		access = fallbackSetup.access
 		plan = fallbackSetup.plan
+		ctx = withRoutePick(ctx, plan.Pick)
 		ctx = h.withCacheObservation(ctx, apiKey.ID, plan.CanonicalModel.ID, request)
 		ctx = h.withCacheShadowAffinity(ctx, apiKey.ID, plan.CanonicalModel.ID, request, plan, resolver)
 		r = r.WithContext(ctx)
@@ -561,6 +564,8 @@ func (h Handler) setupRoute(
 		AllowedSiteIDs:      access.AllowedSiteIDs,
 		AllowedSiteModelIDs: access.AllowedSiteModelIDs,
 		FailoverLimit:       3,
+		Spread:              true,
+		SpreadSeed:          routeAffinitySeed(request),
 	})
 	if err != nil {
 		if errors.Is(err, routeengine.ErrNoRouteCandidates) {

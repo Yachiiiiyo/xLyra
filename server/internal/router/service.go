@@ -34,6 +34,10 @@ type CandidateQuery struct {
 	ExcludeSiteModelIDs []uuid.UUID
 	Limit               int
 	FailoverLimit       int
+	// Spread shuffles equal-priority candidates in Plan (see spreadCandidates).
+	// SpreadSeed makes the shuffle stable for one conversation; empty means random.
+	Spread     bool
+	SpreadSeed string
 }
 
 type CandidateList struct {
@@ -64,6 +68,7 @@ type SelectionPlan struct {
 	CanonicalModel store.CanonicalModel
 	Selected       Candidate
 	Failover       []Candidate
+	Pick           RoutePick
 }
 
 type CandidateSite struct {
@@ -245,6 +250,9 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 		}
 		cooling, coolingReason := false, ""
 		if item, ok := cooldownState.transientModels[row.SiteModelID]; ok {
+			cooling = true
+			coolingReason = item.Reason
+		} else if item, ok := cooldownState.transientSites[row.SiteID]; ok {
 			cooling = true
 			coolingReason = item.Reason
 		}
@@ -491,6 +499,10 @@ func (s *Service) Plan(ctx context.Context, query CandidateQuery) (SelectionPlan
 	if len(result.Items) == 0 {
 		return SelectionPlan{}, ErrNoRouteCandidates
 	}
+	pick := RoutePick{Mode: RoutePickPriority, TierSize: 1}
+	if query.Spread {
+		result.Items, pick = spreadCandidates(result.Items, query.SpreadSeed, nil)
+	}
 
 	failoverLimit := query.FailoverLimit
 	if failoverLimit <= 0 {
@@ -513,6 +525,7 @@ func (s *Service) Plan(ctx context.Context, query CandidateQuery) (SelectionPlan
 		CanonicalModel: result.CanonicalModel,
 		Selected:       result.Items[0],
 		Failover:       failover,
+		Pick:           pick,
 	}, nil
 }
 
@@ -629,6 +642,7 @@ type cooldownIndex struct {
 	sites                 map[uuid.UUID]store.RouteCooldown
 	models                map[uuid.UUID]store.RouteCooldown
 	transientModels       map[uuid.UUID]store.RouteCooldown
+	transientSites        map[uuid.UUID]store.RouteCooldown
 	siteCredentialCounts  map[uuid.UUID]int
 	modelCredentialCounts map[uuid.UUID]int
 }
@@ -638,6 +652,7 @@ func indexCooldowns(items []store.RouteCooldown) cooldownIndex {
 		sites:                 make(map[uuid.UUID]store.RouteCooldown),
 		models:                make(map[uuid.UUID]store.RouteCooldown),
 		transientModels:       make(map[uuid.UUID]store.RouteCooldown),
+		transientSites:        make(map[uuid.UUID]store.RouteCooldown),
 		siteCredentialCounts:  make(map[uuid.UUID]int),
 		modelCredentialCounts: make(map[uuid.UUID]int),
 	}
@@ -656,6 +671,10 @@ func indexCooldowns(items []store.RouteCooldown) cooldownIndex {
 			} else {
 				index.models[item.SiteModelID.UUID] = item
 			}
+			continue
+		}
+		if store.TransientRouteCooldown(item) {
+			index.transientSites[item.SiteID] = item
 			continue
 		}
 		index.sites[item.SiteID] = item
