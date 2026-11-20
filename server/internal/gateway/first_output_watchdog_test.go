@@ -126,7 +126,7 @@ func TestStreamFirstOutputTimeoutResolution(t *testing.T) {
 		want         time.Duration
 	}{
 		{name: "default with fallback", fallback: true, stream: true, want: defaultStreamFirstOutputTimeout},
-		{name: "last candidate is never cut off", fallback: false, stream: true, want: 0},
+		{name: "last candidate gets the generous backstop", fallback: false, stream: true, want: lastCandidateFirstOutputTimeout},
 		{name: "non stream", fallback: true, stream: false, want: 0},
 		{name: "image or audio exempt", fallback: true, stream: true, imageOrAudio: true, want: 0},
 		{name: "site override applies without fallback", cfg: &site.GatewayConfig{FirstOutputTimeoutMS: &explicit}, stream: true, want: 12 * time.Second},

@@ -12,12 +12,17 @@ import (
 
 const (
 	// defaultStreamFirstOutputTimeout bounds how long a streaming attempt may sit
-	// after the response headers without producing any downstream output. It is
-	// only armed when another route candidate is waiting, so a slow but healthy
-	// answer on the last candidate is never cut off. It must stay below the
+	// after the response headers without producing any downstream output while a
+	// later route candidate is waiting to take over. It must stay below the
 	// streaming failover budget minus the response header timeout, otherwise the
 	// failover this exists for would already be out of budget.
 	defaultStreamFirstOutputTimeout = 50 * time.Second
+
+	// lastCandidateFirstOutputTimeout is the backstop for the last candidate.
+	// Nothing can take over, so it is generous: successful streams were seen
+	// answering after 90s, and this only exists to free a request that is hung
+	// for good instead of holding it until the upstream gives up on its own.
+	lastCandidateFirstOutputTimeout = 120 * time.Second
 
 	upstreamFirstOutputTimeoutErrorType = "upstream_first_output_timeout"
 )
@@ -51,8 +56,9 @@ func firstOutputTimeoutFromContext(ctx context.Context) time.Duration {
 
 // streamFirstOutputTimeout resolves the first-output timeout of one streaming
 // attempt. Zero disables the watchdog. A site that sets first_output_timeout_ms
-// always gets it; otherwise the default applies only while a fallback candidate
-// exists. Image and audio streams legitimately stay silent for a long time.
+// always gets it; every other site gets the default for its position: the short
+// one while a fallback candidate exists, the generous backstop for the last
+// candidate. Image and audio streams legitimately stay silent for a long time.
 func firstOutputExemptEndpoint(downstreamPath string) bool {
 	switch downstreamPath {
 	case gatewayEndpointImagesGenerations, gatewayEndpointImagesEdits, gatewayEndpointAudioSpeech:
@@ -70,7 +76,7 @@ func streamFirstOutputTimeout(cfg *site.GatewayConfig, plan firstOutputPlan, str
 		return time.Duration(*cfg.FirstOutputTimeoutMS) * time.Millisecond
 	}
 	if !plan.fallbackAvailable {
-		return 0
+		return lastCandidateFirstOutputTimeout
 	}
 	return defaultStreamFirstOutputTimeout
 }
