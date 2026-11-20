@@ -15,9 +15,19 @@ func waitTestCandidate(siteType string) routeengine.Candidate {
 }
 
 func TestUpstreamRateLimitWaitable(t *testing.T) {
-	limited := gatewayAttemptResult{statusCode: http.StatusTooManyRequests, upstreamStatusCode: http.StatusTooManyRequests}
+	limited := gatewayAttemptResult{statusCode: http.StatusTooManyRequests, upstreamStatusCode: http.StatusTooManyRequests, retryAfterSeconds: 8}
 	if !upstreamRateLimitWaitable(waitTestCandidate("openai"), limited) {
-		t.Fatal("openai-compatible 429 must be waitable")
+		t.Fatal("openai-compatible 429 with a short retry window must be waitable")
+	}
+	noHint := limited
+	noHint.retryAfterSeconds = 0
+	if upstreamRateLimitWaitable(waitTestCandidate("openai"), noHint) {
+		t.Fatal("429 without a retry hint cools the key for longer than the default wait, so waiting cannot help")
+	}
+	tooLong := limited
+	tooLong.retryAfterSeconds = int64(upstreamRateLimitMaxStep/time.Second) + 1
+	if upstreamRateLimitWaitable(waitTestCandidate("openai"), tooLong) {
+		t.Fatal("a retry window beyond the maximum wait step must not be waited for")
 	}
 	subscriptionLimited := limited
 	subscriptionLimited.errorType = "upstream_subscription_limit_exceeded"

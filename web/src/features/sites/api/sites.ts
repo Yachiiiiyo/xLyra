@@ -154,6 +154,7 @@ export type SiteGatewayConfig = {
   request_timeout_ms?: number
   connect_timeout_ms?: number
   response_header_timeout_ms?: number
+  first_output_timeout_ms?: number
   max_concurrency?: number
   max_model_concurrency?: number
   max_credential_concurrency?: number

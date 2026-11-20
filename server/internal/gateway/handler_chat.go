@@ -260,10 +260,12 @@ func (h Handler) serveEndpoint(
 	var retainedRateLimitFailure *gatewayAttemptResult
 	skippedImageUnsupported := false
 	var skippedGrokIncompatible []string
+	var skippedProtocolResolve error
 	for {
 		lastFailure = nil
 		skippedImageUnsupported = false
 		skippedGrokIncompatible = nil
+		skippedProtocolResolve = nil
 		waitableRateLimit := true
 		failoverBudgetExceeded := false
 	candidateLoop:
@@ -319,15 +321,13 @@ func (h Handler) serveEndpoint(
 			}
 			protocol, resolveErr := resolver.Resolve(ctx, attemptRequest, candidate)
 			if resolveErr != nil {
-				h.writeChatFailure(w, r, endpoint.DownstreamPath(), requestID, apiKey.ID, startedAt, chatFailure{
-					status:         http.StatusBadGateway,
-					code:           "protocol_resolution_failed",
-					message:        resolveErr.Error(),
-					requestedModel: access.ModelKey,
-					stream:         request.Stream,
-					stage:          "protocol_resolve",
-				})
-				return
+				// One candidate that cannot speak the requested protocol must not
+				// fail the request while other candidates can still serve it.
+				skippedProtocolResolve = resolveErr
+				if h.logger != nil {
+					h.logger.WarnContext(ctx, "gateway candidate skipped: protocol resolution failed", "scope", "gateway", "request_id", requestID, "site", candidate.Site.Slug, "error", resolveErr)
+				}
+				continue
 			}
 			if grokProtocol, ok := protocol.(*grokResponsesProtocolAdapter); ok {
 				if incompatible := grokProtocol.incompatibleRequestParams(attemptRequest); len(incompatible) > 0 {
@@ -336,7 +336,7 @@ func (h Handler) serveEndpoint(
 				}
 			}
 
-			result := h.forwardGatewayRequest(withCredentialProtocolResolver(ctx, resolver), w, requestID, index+1, apiKey.ID, plan.CanonicalModel.ID, candidate, attemptRequest, reservation, protocol)
+			result := h.forwardGatewayRequest(withFirstOutputPlan(withFailoverDeadline(withCredentialProtocolResolver(ctx, resolver), failoverDeadline), index+1 < len(attempts)), w, requestID, index+1, apiKey.ID, plan.CanonicalModel.ID, candidate, attemptRequest, reservation, protocol)
 			if result.success {
 				// Settle only the attempt actually served to the client; tokens from
 				// failed attempts retried via failover must not be added on top.
@@ -350,6 +350,7 @@ func (h Handler) serveEndpoint(
 				return
 			}
 			if result.errorType == "downstream_client_cancelled" {
+				h.cooldownAfterClientAbandon(ctx, candidate, result)
 				flowPhase = inflight.PhaseCancelled
 				return
 			}
@@ -388,7 +389,7 @@ func (h Handler) serveEndpoint(
 		}
 
 		if lastFailure == nil || !waitableRateLimit {
-			if (lastFailure != nil || skippedImageUnsupported || len(skippedGrokIncompatible) > 0) && engageSoftFallback() {
+			if (lastFailure != nil || skippedImageUnsupported || len(skippedGrokIncompatible) > 0 || skippedProtocolResolve != nil) && engageSoftFallback() {
 				continue
 			}
 			break
@@ -424,6 +425,18 @@ func (h Handler) serveEndpoint(
 		return
 	}
 	if bridge != nil && bridge.FailAll("upstream_failed", "all upstream route candidates failed") {
+		return
+	}
+
+	if lastFailure == nil && skippedProtocolResolve != nil && !skippedImageUnsupported {
+		h.writeChatFailure(w, r, endpoint.DownstreamPath(), requestID, apiKey.ID, startedAt, chatFailure{
+			status:         http.StatusBadGateway,
+			code:           "protocol_resolution_failed",
+			message:        skippedProtocolResolve.Error(),
+			requestedModel: access.ModelKey,
+			stream:         request.Stream,
+			stage:          "protocol_resolve",
+		})
 		return
 	}
 

@@ -268,6 +268,7 @@ type siteGatewayRequest struct {
 	RequestTimeoutMS               *int     `json:"request_timeout_ms"`
 	ConnectTimeoutMS               *int     `json:"connect_timeout_ms"`
 	ResponseHeaderTimeoutMS        *int     `json:"response_header_timeout_ms"`
+	FirstOutputTimeoutMS           *int     `json:"first_output_timeout_ms"`
 	MaxConcurrency                 *int     `json:"max_concurrency"`
 	MaxModelConcurrency            *int     `json:"max_model_concurrency"`
 	MaxCredentialConcurrency       *int     `json:"max_credential_concurrency"`
@@ -292,6 +293,7 @@ func (r *siteGatewayRequest) toSiteGatewayConfig() *site.GatewayConfig {
 		RequestTimeoutMS:               r.RequestTimeoutMS,
 		ConnectTimeoutMS:               r.ConnectTimeoutMS,
 		ResponseHeaderTimeoutMS:        r.ResponseHeaderTimeoutMS,
+		FirstOutputTimeoutMS:           r.FirstOutputTimeoutMS,
 		MaxConcurrency:                 r.MaxConcurrency,
 		MaxModelConcurrency:            r.MaxModelConcurrency,
 		MaxCredentialConcurrency:       r.MaxCredentialConcurrency,

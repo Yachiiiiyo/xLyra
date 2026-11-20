@@ -126,3 +126,63 @@ func TestClassifyResponseSubscriptionLimitPriorityAndFallback(t *testing.T) {
 		})
 	}
 }
+
+func TestFailureInsufficientBalance(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{name: "sub2api code", status: http.StatusForbidden, body: `{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}`, want: true},
+		{name: "billing error type", status: http.StatusForbidden, body: `{"error":{"type":"billing_error","message":"insufficient balance"}}`, want: true},
+		{name: "anthropic style billing error", status: http.StatusForbidden, body: `{"type":"error","error":{"type":"billing_error","message":"insufficient balance"}}`, want: true},
+		{name: "chinese message", status: http.StatusForbidden, body: `{"error":{"message":"账户余额不足 insufficient balance"}}`, want: true},
+		{name: "plain rate limit", status: http.StatusTooManyRequests, body: `{"error":{"code":"rate_limit_exceeded","message":"slow down"}}`, want: false},
+		{name: "daily key quota recovers on its own", status: http.StatusTooManyRequests, body: `{"code":"API_KEY_QUOTA_EXHAUSTED","message":"API key 额度已用完"}`, want: false},
+		{name: "invalid key", status: http.StatusUnauthorized, body: `{"code":"INVALID_API_KEY","message":"Invalid API key"}`, want: false},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := ClassifyResponse(test.status, nil, []byte(test.body))
+			if got.InsufficientBalance() != test.want {
+				t.Fatalf("InsufficientBalance() = %v, want %v (failure=%#v)", got.InsufficientBalance(), test.want, got)
+			}
+		})
+	}
+}
+
+func TestClassifyResponseTreatsWrappedUpstreamAuthFailureAsCredentialInvalid(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "openai style", body: `{"error":{"type":"upstream_error","message":"Upstream authentication failed, please contact administrator"}}`},
+		{name: "anthropic style", body: `{"type":"error","error":{"type":"upstream_error","message":"Upstream access forbidden, please contact administrator"}}`},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := ClassifyResponse(http.StatusBadGateway, nil, []byte(test.body))
+			if !got.CredentialInvalid() {
+				t.Fatalf("ClassifyResponse() = %#v, want credential_invalid", got)
+			}
+		})
+	}
+
+	for _, body := range []string{
+		`{"error":{"type":"upstream_error","message":"Upstream service temporarily unavailable"}}`,
+		`{"error":{"type":"upstream_error","message":"Upstream request failed"}}`,
+	} {
+		if got := ClassifyResponse(http.StatusBadGateway, nil, []byte(body)); got.CredentialInvalid() || !got.Transient() {
+			t.Fatalf("ClassifyResponse(%s) = %#v, want transient", body, got)
+		}
+	}
+}
