@@ -690,6 +690,57 @@ func TestSiteModelRepositoryUpsertListGetDeleteStatusAndCanonicalOffline(t *test
 	}
 }
 
+func TestSiteModelRepositoryUpsertPreservesManualCapabilitiesOffline(t *testing.T) {
+	t.Parallel()
+
+	siteID := uuid.New()
+	manual := JSON([]byte(`{"source":"manual","manual":true,"supported_endpoint_types":["openai-image"]}`))
+	db := storeRepositoryOfflineGorm(t)
+	storeReplaceQueryCallback(t, db, func(tx *gorm.DB) {
+		dest, ok := tx.Statement.Dest.(*SiteModel)
+		if !ok {
+			tx.AddError(errors.New("unexpected site model query destination"))
+			return
+		}
+		*dest = SiteModel{
+			ID:           uuid.New(),
+			SiteID:       siteID,
+			UpstreamName: "seedream-5.5",
+			DisplayName:  "Seedream 5.5",
+			Capabilities: manual,
+			Status:       "active",
+		}
+		tx.Statement.RowsAffected = 1
+	})
+	var saved SiteModel
+	storeReplaceUpdateCallback(t, db, func(tx *gorm.DB) {
+		item, ok := tx.Statement.Dest.(*SiteModel)
+		if !ok {
+			tx.AddError(errors.New("unexpected site model update destination"))
+			return
+		}
+		saved = *item
+		tx.Statement.RowsAffected = 1
+	})
+
+	upserted, err := NewSiteModelRepository(db).Upsert(context.Background(), UpsertSiteModelParams{
+		SiteID:       siteID,
+		UpstreamName: "seedream-5.5",
+		DisplayName:  "seedream-5.5",
+		Capabilities: JSON([]byte(`{"source":"upstream","supported_endpoint_types":["openai","anthropic-messages"]}`)),
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatalf("Upsert returned error: %v", err)
+	}
+	if string(upserted.Capabilities) != string(manual) || string(saved.Capabilities) != string(manual) {
+		t.Fatalf("manual capabilities were overwritten: upserted=%s saved=%s", upserted.Capabilities, saved.Capabilities)
+	}
+	if upserted.DisplayName != "seedream-5.5" {
+		t.Fatalf("display name = %q", upserted.DisplayName)
+	}
+}
+
 func TestRouteCooldownRepositoryActivateAndClearActiveOffline(t *testing.T) {
 	t.Parallel()
 

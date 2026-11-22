@@ -124,10 +124,78 @@ func inferEndpointTypesForModel(modelID string) []string {
 
 func IsImageGenerationModel(modelID string) bool {
 	modelID = normalizeImageModelID(modelID)
+	if modelID == "" {
+		return false
+	}
 	return strings.Contains(modelID, "image") ||
 		strings.Contains(modelID, "dall-e") ||
 		strings.Contains(modelID, "flux") ||
-		isNanoBananaModel(modelID)
+		isNanoBananaModel(modelID) ||
+		hasKnownImageGenerationFamily(modelID)
+}
+
+// imageGenerationFamilyMarkers are substrings that belong to image-generation
+// families and do not appear in chat model ids. "seed" is not one of them:
+// doubao-seed-1.6 is a chat model, while seedream and seededit are not.
+var imageGenerationFamilyMarkers = []string{
+	"seedream",
+	"seededit",
+	"cogview",
+	"kolors",
+	"recraft",
+	"ideogram",
+	"midjourney",
+	"stable-diffusion",
+	"sdxl",
+	"wanx",
+}
+
+func hasKnownImageGenerationFamily(modelID string) bool {
+	for _, marker := range imageGenerationFamilyMarkers {
+		if strings.Contains(modelID, marker) {
+			return true
+		}
+	}
+	if strings.Contains(modelID, "jimeng") && !hasVideoGenerationMarker(modelID) {
+		return true
+	}
+	return hasImageTaskToken(modelID) || hasStableDiffusionCheckpoint(modelID)
+}
+
+func hasVideoGenerationMarker(modelID string) bool {
+	return strings.Contains(modelID, "video") ||
+		strings.Contains(modelID, "vedio") ||
+		strings.Contains(modelID, "t2v") ||
+		strings.Contains(modelID, "i2v") ||
+		strings.Contains(modelID, "v2v")
+}
+
+func hasImageTaskToken(modelID string) bool {
+	for _, token := range splitImageModelTokens(modelID) {
+		switch token {
+		case "t2i", "i2i", "txt2img", "text2img":
+			return true
+		}
+	}
+	return false
+}
+
+func hasStableDiffusionCheckpoint(modelID string) bool {
+	for _, token := range splitImageModelTokens(modelID) {
+		if token == "sd" {
+			return true
+		}
+		if strings.HasPrefix(token, "sd") && len(token) > 2 && token[2] >= '0' && token[2] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+func splitImageModelTokens(modelID string) []string {
+	return strings.FieldsFunc(modelID, func(r rune) bool {
+		return r == '-' || r == '/' || r == ':' || r == '.'
+	})
 }
 
 func isNanoBananaModel(modelID string) bool {

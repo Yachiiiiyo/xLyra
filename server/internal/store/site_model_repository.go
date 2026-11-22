@@ -54,7 +54,9 @@ func (r SiteModelRepository) Upsert(ctx context.Context, params UpsertSiteModelP
 	model.SiteID = params.SiteID
 	model.UpstreamName = params.UpstreamName
 	model.DisplayName = params.DisplayName
-	model.Capabilities = jsonDefault(params.Capabilities, "{}")
+	// Refresh upserts the same upstream name the user added by hand. Keep the
+	// manual endpoint types unless this write is itself a manual update.
+	model.Capabilities = siteModelUpsertCapabilities(model, err == nil, params.Capabilities)
 	if model.Status != "disabled" {
 		model.Status = params.Status
 	}
@@ -189,6 +191,13 @@ func sortSiteModels(models []SiteModel) {
 	sort.SliceStable(models, func(i, j int) bool {
 		return models[i].UpstreamName < models[j].UpstreamName
 	})
+}
+
+func siteModelUpsertCapabilities(existing SiteModel, found bool, incoming JSON) JSON {
+	if found && SiteModelManual(existing) && !SiteModelManual(SiteModel{Capabilities: incoming}) {
+		return existing.Capabilities
+	}
+	return jsonDefault(incoming, "{}")
 }
 
 func SiteModelManual(model SiteModel) bool {
