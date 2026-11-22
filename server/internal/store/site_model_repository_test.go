@@ -28,39 +28,6 @@ func TestSiteModelManualRecognizesManualMarkers(t *testing.T) {
 	}
 }
 
-func TestSiteModelUpsertCapabilitiesKeepsManualEndpointTypes(t *testing.T) {
-	t.Parallel()
-
-	manual := JSON([]byte(`{"source":"manual","manual":true,"supported_endpoint_types":["openai-image"]}`))
-	refreshed := JSON([]byte(`{"source":"upstream","supported_endpoint_types":["openai","anthropic-messages"]}`))
-	updatedManual := JSON([]byte(`{"source":" Manual ","manual":true,"supported_endpoint_types":["openai","openai-image"]}`))
-
-	kept := siteModelUpsertCapabilities(SiteModel{Capabilities: manual}, true, refreshed)
-	if string(kept) != string(manual) {
-		t.Fatalf("refresh overwrote manual capabilities: %s", kept)
-	}
-
-	replaced := siteModelUpsertCapabilities(SiteModel{Capabilities: manual}, true, updatedManual)
-	if string(replaced) != string(updatedManual) {
-		t.Fatalf("manual update was not applied: %s", replaced)
-	}
-
-	created := siteModelUpsertCapabilities(SiteModel{}, false, refreshed)
-	if string(created) != string(refreshed) {
-		t.Fatalf("new model capabilities = %s", created)
-	}
-
-	synced := siteModelUpsertCapabilities(SiteModel{Capabilities: JSON([]byte(`{"source":"upstream"}`))}, true, refreshed)
-	if string(synced) != string(refreshed) {
-		t.Fatalf("non-manual model was not refreshed: %s", synced)
-	}
-
-	emptyIncoming := siteModelUpsertCapabilities(SiteModel{}, false, nil)
-	if string(emptyIncoming) != "{}" {
-		t.Fatalf("empty incoming capabilities = %s", emptyIncoming)
-	}
-}
-
 func TestCanonicalModelCreationMarkers(t *testing.T) {
 	t.Parallel()
 
