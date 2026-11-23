@@ -16,7 +16,7 @@ export function listModels(ctx, steps) { ... }
 
 - `ctx`：`siteType`、`baseURL`、`credentialType`、`now`，没有任何密钥；
 - `steps`：已完成的请求与响应；
-- 返回 `{ request }`、`{ result }`、`{ error }` 之一，最多调用 6 次，每次 200 ms；
+- 返回 `{ request }`、`{ result }`、`{ error }` 之一，最多调用 6 次，每次 500 ms；
 - 请求由 xLyra 发送并加上鉴权头。
 
 ## 清单

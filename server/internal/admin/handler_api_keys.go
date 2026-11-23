@@ -783,6 +783,7 @@ func (h Handler) apiKeyPayloadWithRateLimit(item store.APIKey, models []store.AP
 		"site_policy":            item.SitePolicy,
 		"model_mappings":         modelMappingsPayload(item.ModelMappings),
 		"image_tool_bridge":      imageToolBridgePayload(item),
+		"pipeline_binding":       h.pipelineBindingPayload(item.ID),
 		"billing_multiplier":     item.BillingMultiplier,
 		"quota_limit":            nullFloat64Value(item.QuotaLimit),
 		"quota_used":             item.QuotaUsed,

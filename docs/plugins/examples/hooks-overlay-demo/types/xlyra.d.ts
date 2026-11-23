@@ -527,6 +527,141 @@ export interface ScheduleSection {
   label?: Record<string, string>;
 }
 
+// ---- gateway_pipeline ----
+
+export type FindingSource = "rule" | "dictionary";
+
+export interface InspectSegmentsContext {
+  /** Downstream path, such as /v1/chat/completions. */
+  endpoint: string;
+  /** Model the client asked for. */
+  model: string;
+  binding: InspectSegmentsBinding;
+  /** Resolved admin settings when manifest declares settings. */
+  settings?: Record<string, SettingValue>;
+}
+
+export interface InspectSegmentsBinding {
+  id: string;
+  /** The parameters an admin set on the binding. */
+  params: Record<string, SettingValue>;
+}
+
+export interface SegmentItem {
+  id: string;
+  text: string;
+  /** system, user, assistant or tool. */
+  role?: string;
+  /** instructions, message.text, tool.arguments, tool.result, tool.definition, prompt or embedding.input. */
+  field: string;
+}
+
+export interface SegmentFinding {
+  /** SegmentItem.id. */
+  segment: string;
+  /** UTF-16 code unit index, inclusive. */
+  start: number;
+  /** UTF-16 code unit index, exclusive. */
+  end: number;
+  /** A type declared in gatewayPipeline.types. */
+  type: string;
+  source?: FindingSource;
+  score?: number;
+}
+
+export interface InspectSegmentsInput {
+  segments: SegmentItem[];
+  /** What the host rules and dictionaries found in these segments. */
+  findings: SegmentFinding[];
+}
+
+export interface InspectSegmentsReject {
+  /** Default 400. */
+  status?: 400 | 403;
+  /** Error code. Default plugin_payload_rejected. */
+  code?: string;
+  /** Shown to the client. Never quote the segment text. */
+  message?: string;
+}
+
+export interface InspectSegmentsResult {
+  /** More findings. */
+  add?: SegmentFinding[];
+  /** Indexes into input.findings to discard. */
+  drop?: number[];
+  /** Reject the request instead of sending it. */
+  reject?: InspectSegmentsReject;
+}
+
+export interface PipelineTransform {
+  /** token_placeholder replaces each finding with [[TYPE_N]]. none (default) leaves the text alone. */
+  mode?: "token_placeholder" | "none";
+  /** Restore placeholders in responses. Defaults to true with token_placeholder. */
+  reversible?: boolean;
+  /** Shortest value, in characters, replaced again wherever else it appears in the request. Default 2. */
+  propagateMinLength?: number;
+  /** Appended to the system prompt when the request got at least one new placeholder. At most 1024 bytes. */
+  systemHint?: string;
+}
+
+export interface PipelineType {
+  type: string;
+  label?: string | Record<string, string>;
+  /** A boolean input that turns this type on and off. */
+  enabledBy?: string;
+}
+
+export interface PipelineRule {
+  type: string;
+  /** Go RE2 syntax: linear time, no backreferences or lookaround. */
+  pattern: string;
+  /** Capture group that is the finding. 0 is the whole match. */
+  group?: number;
+  boundary?: "none" | "digit" | "alnum" | "word";
+  validate?: "luhn" | "cn_id_card" | "ipv4" | "ipv6" | "email";
+  /** Least Shannon entropy in bits per character. */
+  minEntropy?: number;
+  /** Keep the finding only when one of these words is near it (case-insensitive). */
+  contextAny?: string[];
+  /** Characters searched on each side for contextAny. Default 20. */
+  contextWindow?: number;
+}
+
+export interface PipelineDictionary {
+  /** A string input. One word per line; word<TAB>TYPE overrides the type. */
+  param: string;
+  type: string;
+  caseSensitive?: boolean;
+}
+
+export interface PipelineAllowlist {
+  param: string;
+  caseSensitive?: boolean;
+}
+
+export interface GatewayPipelineSection {
+  /** What an admin binds the pipeline to. Only api_key for now. */
+  scope: "api_key";
+  /** Each API key holds at most one gateway pipeline binding. */
+  exclusive?: boolean;
+  /** fail_open (default) skips the pipeline when it cannot run. fail_closed rejects the request with 503 instead. */
+  failurePolicy?: "fail_open" | "fail_closed";
+  /** What a bound key gets on an endpoint the host cannot extract text from. pass (default) or reject with 400 plugin_unsupported_endpoint. */
+  unsupportedEndpoint?: "pass" | "reject";
+  /** Largest total of extracted text per request. Default 8 MiB, at most 16 MiB. Larger requests get 413 plugin_payload_too_large. */
+  maxInspectBytes?: number;
+  /** Budget of all inspectSegments calls of one request. Default 1000, at most 10000. */
+  totalTimeoutMs?: number;
+  transform?: PipelineTransform;
+  types?: PipelineType[];
+  rules?: PipelineRule[];
+  dictionaries?: PipelineDictionary[];
+  allowlist?: PipelineAllowlist;
+  /** Binding form inputs, written like automation inputs. Exactly one input has type api_key. */
+  inputs: JsonObject[];
+  form?: JsonObject;
+}
+
 export type PluginKind = "quota_probe" | "protocol" | "model_list" | "credential_check" | "site_detect" | "error_classifier" | "model_metadata" | "pricing_parse" | "automation" | "site_provider";
 
 export interface PluginManifest {
@@ -542,6 +677,8 @@ export interface PluginManifest {
   stream?: StreamSection;
   /** Periodic onSchedule configuration. Requires schedule in permissions. */
   schedule?: ScheduleSection;
+  /** Inspect and transform request text for the API keys an admin binds, and restore it in responses. */
+  gatewayPipeline?: GatewayPipelineSection;
 }
 
 export interface PluginMeta {
@@ -715,4 +852,12 @@ export interface SiteProviderHooks {
   refreshTokens?: SiteProviderRefreshTokens;
   summarizeAccount?: SiteProviderSummarizeAccount;
   onSchedule?: SiteProviderOnSchedule;
+}
+
+// ---- gateway_pipeline hooks ----
+
+export type InspectSegments = (ctx: InspectSegmentsContext, input: InspectSegmentsInput) => InspectSegmentsResult;
+
+export interface GatewayPipelineHooks {
+  inspectSegments?: InspectSegments;
 }

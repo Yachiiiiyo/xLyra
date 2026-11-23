@@ -109,6 +109,14 @@ func (h Handler) serveEndpoint(
 		h.writeChatFailure(w, r, endpoint.DownstreamPath(), requestID, apiKey.ID, startedAt, *failure)
 		return
 	}
+	// The gateway pipeline runs once, before mapping and routing, so every
+	// retry and failover sends the same transformed payload.
+	pipelineCtx, pipelineFailure := h.applyGatewayIngressPipeline(r.Context(), apiKey.ID, &request)
+	r = r.WithContext(pipelineCtx)
+	if pipelineFailure != nil {
+		h.writeChatFailure(w, r, endpoint.DownstreamPath(), requestID, apiKey.ID, startedAt, *pipelineFailure)
+		return
+	}
 
 	request.OriginalModel = request.RequestedModel
 	ctx := withRequestedModel(r.Context(), request.OriginalModel)

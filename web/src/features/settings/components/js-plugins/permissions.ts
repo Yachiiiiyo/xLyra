@@ -5,6 +5,7 @@ const PERMISSION_LABEL_KEYS: Record<string, string> = {
   'http.request': 'httpRequest',
   storage: 'storage',
   'secret.use': 'secretUse',
+  'payload.inspect_raw': 'payloadInspectRaw',
   http: 'http',
   schedule: 'schedule',
 }
@@ -24,5 +25,5 @@ export function permissionLabelParams(permission: string): Record<string, string
 }
 
 export function isSecretUsePermission(permission: string) {
-  return permission === 'secret.use'
+  return permission === 'secret.use' || permission === 'payload.inspect_raw'
 }

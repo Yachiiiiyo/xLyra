@@ -33,9 +33,11 @@ type EnableOptions struct {
 var ErrSiteProviderUntrusted = errors.New("site_provider plugins must be signed by a trusted key")
 
 // SiteProviderUntrustedError is ErrSiteProviderUntrusted plus the trust state
-// the enable saw.
+// the enable saw. Permission names the sensitive permission that needs the
+// signature; it is empty when the package declares a site type.
 type SiteProviderUntrustedError struct {
-	Trust TrustStatus
+	Trust      TrustStatus
+	Permission string
 }
 
 func (e *SiteProviderUntrustedError) Error() string {
@@ -164,6 +166,9 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err == nil && m.catalog != nil && snap != nil && snap.Registry != nil {
 		registry = snap.Registry
 	}
+	if err != nil {
+		m.blockPipelinesWithoutIndex(ctx)
+	}
 	m.mu.Unlock()
 	if err != nil {
 		return err
@@ -218,6 +223,11 @@ func (m *Manager) reloadLocked(ctx context.Context) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	pipelines, err := m.buildPipelineIndex(ctx, snap.Registry, "")
+	if err != nil {
+		return nil, err
+	}
+	snap.Pipelines = pipelines
 	m.catalog.Replace(snap)
 	return snap, nil
 }
@@ -307,9 +317,16 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 		return err
 	}
 	marketplace := trust == TrustTrusted || trust == TrustMarketplace
-	if pkg.Manifest.DeclaresSiteType() || contains(pkg.Manifest.Permissions, "secret.use") {
+	if RequiresTrustedSignature(pkg.Manifest) {
 		if !marketplace {
-			return &SiteProviderUntrustedError{Trust: trust}
+			untrusted := &SiteProviderUntrustedError{Trust: trust}
+			if !pkg.Manifest.DeclaresSiteType() {
+				untrusted.Permission = "secret.use"
+				if contains(pkg.Manifest.Permissions, PermissionPayloadInspectRaw) {
+					untrusted.Permission = PermissionPayloadInspectRaw
+				}
+			}
+			return untrusted
 		}
 	} else if !marketplace && !opts.ConfirmUntrusted {
 		return &ConfirmRequiredError{Trust: trust}
@@ -353,6 +370,9 @@ func (m *Manager) Enable(ctx context.Context, pluginID, version string, opts Ena
 		return err
 	}
 	if err := m.repo.EnableVersion(ctx, pluginID, version, map[string]any{"ok": true}, granted); err != nil {
+		return err
+	}
+	if err := m.refreshPipelinePolicies(ctx, pkg.Manifest); err != nil {
 		return err
 	}
 	if !plugin.HasHook(HookOnSchedule) || !plugin.Manifest.AllowsSchedule() {
@@ -400,6 +420,11 @@ func (m *Manager) DeleteVersion(ctx context.Context, pluginID, version string) e
 			return err
 		}
 	}
+	// Bindings follow one version and go with it, so a fail_closed binding
+	// must be removed by the admin rather than by deleting its version.
+	if err := m.ensurePipelineBindingsReleased(ctx, pluginID, version); err != nil {
+		return err
+	}
 	if err := m.repo.DeleteVersion(ctx, pluginID, version); err != nil {
 		return err
 	}
@@ -410,6 +435,9 @@ func (m *Manager) DeleteVersion(ctx context.Context, pluginID, version string) e
 // An enabled plugin must be disabled first.
 func (m *Manager) DeletePlugin(ctx context.Context, pluginID string) error {
 	if err := m.ensureSiteProviderUnused(ctx, pluginID); err != nil {
+		return err
+	}
+	if err := m.ensurePipelineBindingsReleased(ctx, pluginID, ""); err != nil {
 		return err
 	}
 	err := m.repo.DeletePlugin(ctx, pluginID)

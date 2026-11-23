@@ -24,6 +24,7 @@ xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能�
 | [fixtures 测试样本](./fixtures.md) | 样本格式与比对规则 |
 | [宿主 API](./host-api.md) | 插件里可以调用的全局函数 |
 | [资源上限与安全规则](./limits-and-security.md) | 超时、内存、URL 与请求头限制，为什么拿不到密钥 |
+| [宿主能力支持规范](./host-capability-spec.md) | 主程序以通用原语支持插件能力的架构规范与工程约束 |
 | [错误码](./errors.md) | 运行时错误类型 |
 | [命令行工具](./cli.md) | `xlyra-plugin` 全部子命令 |
 | [发布、签名与安装](./publishing.md) | 打包、签名、上架 xLyra Cloud 市场或私下分发、管理员安装、更新与吊销 |

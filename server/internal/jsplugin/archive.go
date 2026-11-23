@@ -81,7 +81,9 @@ func ReadPackage(raw []byte, requireFixtures bool) (Package, error) {
 	if err := validatePluginIcon(manifest.Icon, files); err != nil {
 		return Package{}, err
 	}
-	if requireFixtures && len(fixtures) == 0 && !manifest.DeclaresSiteType() {
+	// A gateway pipeline may be declarative only; one that exports
+	// inspectSegments still fails SelfTest without samples.
+	if requireFixtures && len(fixtures) == 0 && !manifest.DeclaresSiteType() && !manifest.DeclaresGatewayPipeline() {
 		return Package{}, fmt.Errorf("at least one fixtures/*.json is required")
 	}
 	signer := ""

@@ -83,6 +83,19 @@ var tsTypes = []tsType{
 	{value: StreamTransformResult{}, name: "StreamTransformResult"},
 	{value: ScheduleContext{}, name: "ScheduleContext", section: "schedule"},
 	{value: ScheduleSectionSpec{}, name: "ScheduleSection"},
+	{value: InspectSegmentsContext{}, name: "InspectSegmentsContext", section: "gateway_pipeline", enum: &tsEnum{"FindingSource", FindingSources}},
+	{value: InspectSegmentsBinding{}, name: "InspectSegmentsBinding"},
+	{value: SegmentItem{}, name: "SegmentItem"},
+	{value: SegmentFinding{}, name: "SegmentFinding"},
+	{value: InspectSegmentsInput{}, name: "InspectSegmentsInput"},
+	{value: InspectSegmentsReject{}, name: "InspectSegmentsReject"},
+	{value: InspectSegmentsResult{}, name: "InspectSegmentsResult"},
+	{value: PipelineTransformSpec{}, name: "PipelineTransform"},
+	{value: PipelineTypeSpec{}, name: "PipelineType"},
+	{value: PipelineRuleSpec{}, name: "PipelineRule"},
+	{value: PipelineDictSpec{}, name: "PipelineDictionary"},
+	{value: PipelineAllowlistSpec{}, name: "PipelineAllowlist"},
+	{value: GatewayPipelineSection{}, name: "GatewayPipelineSection"},
 }
 
 // TypeDeclarations renders the plugin SDK .d.ts: interfaces generated from the
@@ -145,8 +158,20 @@ func TypeDeclarations() (string, error) {
 	}
 	out.WriteString("\n")
 	out.WriteString(siteProviderHookTypes)
+	out.WriteString("\n")
+	out.WriteString(gatewayPipelineHookTypes)
 	return out.String(), nil
 }
+
+// gatewayPipelineHookTypes names the hook of a gatewayPipeline plugin.
+const gatewayPipelineHookTypes = `// ---- gateway_pipeline hooks ----
+
+export type InspectSegments = (ctx: InspectSegmentsContext, input: InspectSegmentsInput) => InspectSegmentsResult;
+
+export interface GatewayPipelineHooks {
+  inspectSegments?: InspectSegments;
+}
+`
 
 // siteProviderHookTypes is appended after the shared hook aliases it names.
 const siteProviderHookTypes = `// ---- site_provider hooks ----

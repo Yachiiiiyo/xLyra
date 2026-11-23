@@ -33,12 +33,12 @@
 | --- | --- |
 | 分步类型及站点/账号分步钩子每次调用 | 500 ms |
 | `automation` / `onEvent` 每次调用（不在请求路径上） | 500 ms |
-| 协议、`rewritePayload` 和 `error_classifier`（`classifyError`）每次调用（在请求路径上） | 50 ms |
-| `signRequest` 每次调用（在请求路径上） | 100 ms |
+| 协议、`rewritePayload` 和 `error_classifier`（`classifyError`）每次调用（在请求路径上） | 150 ms |
+| `signRequest` 每次调用（在请求路径上） | 200 ms |
 | `onSchedule` 每次调用 | 1 s |
 | `model_metadata`、`pricing_parse` 每次调用 | 500 ms |
-| 每次调用的内存分配 | 32 MiB |
-| 钩子返回值大小 | 1 MiB |
+| 每次调用的内存分配 | 64 MiB |
+| 钩子返回值大小 | 16 MiB |
 | 分步类型的钩子调用次数 | 6 次（最多发 5 个 HTTP 请求） |
 | 额度探测单个请求体 | 64 KiB |
 | 额度探测发给插件的响应体 | 1 MiB |

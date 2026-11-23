@@ -66,6 +66,8 @@ type PluginManifestSpec struct {
 	Transport  *TransportProfileSpec `ts:"transport,optional"`
 	Stream     *StreamSectionSpec    `ts:"stream,optional,doc=Declarative SSE transform. On a protocol plugin this is protocol.stream. On a site type it is siteProvider.protocol.stream."`
 	Schedule   *ScheduleSectionSpec  `ts:"schedule,optional,doc=Periodic onSchedule configuration. Requires schedule in permissions."`
+	// GatewayPipeline is the manifest section itself; it carries ts tags.
+	GatewayPipeline *GatewayPipelineSection `ts:"gatewayPipeline,optional,doc=Inspect and transform request text for the API keys an admin binds, and restore it in responses."`
 }
 
 // ProbeContext is the credential-free object passed to a quota probe hook.

@@ -23,7 +23,7 @@ export function detect(ctx, steps) { ... }
 
 ## 调用方式
 
-分步方式与[额度探测](./quota-probe.md)相同，最多 6 次，每次 200 ms。区别是：**发出的请求不带 `Authorization` 头**。
+分步方式与[额度探测](./quota-probe.md)相同，最多 6 次，每次 500 ms。区别是：**发出的请求不带 `Authorization` 头**。
 
 ## 清单
 

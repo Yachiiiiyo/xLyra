@@ -215,7 +215,11 @@ func (h Handler) EnableJSPluginVersion(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &untrusted) {
 			code = "js_plugin_untrusted_not_allowed"
 			status = http.StatusForbidden
-			h.recordJSPluginAudit(r, "js_plugin.enable", pluginID, false, code, map[string]any{"version": version, "trust": untrusted.Trust})
+			h.recordJSPluginAudit(r, "js_plugin.enable", pluginID, false, code, map[string]any{"version": version, "trust": untrusted.Trust, "permission": untrusted.Permission})
+			if untrusted.Permission != "" {
+				h.writeErrorFields(w, r, status, code, "声明 "+untrusted.Permission+" 权限的插件必须由受信密钥签名,confirm_untrusted 不能绕过", map[string]any{"permission": untrusted.Permission})
+				return
+			}
 			h.writeError(w, r, status, code, "site_provider 插件必须由受信密钥签名,confirm_untrusted 不能绕过")
 			return
 		}
@@ -272,6 +276,9 @@ func (h Handler) DeleteJSPluginVersion(w http.ResponseWriter, r *http.Request) {
 	version := strings.TrimSpace(chi.URLParam(r, "version"))
 	meta := map[string]any{"version": version}
 	if err := h.jsPlugins.DeleteVersion(r.Context(), pluginID, version); err != nil {
+		if h.writePipelineInUse(w, r, "js_plugin.delete", pluginID, meta, err) {
+			return
+		}
 		var inUse *jsplugin.PluginInUseError
 		if errors.As(err, &inUse) {
 			meta["site_type"] = inUse.SiteType
@@ -305,6 +312,9 @@ func (h Handler) DeleteJSPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	pluginID := strings.TrimSpace(chi.URLParam(r, "id"))
 	if err := h.jsPlugins.DeletePlugin(r.Context(), pluginID); err != nil {
+		if h.writePipelineInUse(w, r, "js_plugin.delete_plugin", pluginID, nil, err) {
+			return
+		}
 		var inUse *jsplugin.PluginInUseError
 		if errors.As(err, &inUse) {
 			h.recordJSPluginAudit(r, "js_plugin.delete_plugin", pluginID, false, "js_plugin_in_use", map[string]any{"site_type": inUse.SiteType, "count": inUse.Count})

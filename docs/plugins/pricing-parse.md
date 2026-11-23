@@ -8,7 +8,7 @@ export const meta = { apiVersion: 1, id: "<与 manifest 一致>", kind: "pricing
 export function parsePricing(ctx, payload) { ... }
 ```
 
-一次性函数：不发请求，时限 200 ms。
+一次性函数：不发请求，时限 500 ms。
 
 ## 清单
 

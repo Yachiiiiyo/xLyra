@@ -1,0 +1,39 @@
+{
+  "name": "basic-roundtrip",
+  "hook": "gatewayPipeline",
+  "endpoint": "/v1/chat/completions",
+  "binding": {
+    "params": {
+      "token": true,
+      "dictionary": "AcmeSecret"
+    }
+  },
+  "payload": {
+    "model": "gpt-4o",
+    "messages": [
+      { "role": "user", "content": "Use tok_1234567890ab for AcmeSecret" }
+    ]
+  },
+  "upstream": {
+    "sseChunks": [
+      "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Got [[TOK\"}}]}\n\n",
+      "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"EN_1]] and [[CUS\"}}]}\n\n",
+      "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"TOM_1]]\"}}]}\n\n",
+      "data: [DONE]\n\n"
+    ]
+  },
+  "expect": {
+    "upstreamPayload": {
+      "model": "gpt-4o",
+      "messages": [
+        { "role": "system", "content": "Keep [[TYPE_N]] placeholders unchanged in responses and tool arguments." },
+        { "role": "user", "content": "Use [[TOKEN_1]] for [[CUSTOM_1]]" }
+      ]
+    },
+    "downstreamResponse": [
+      { "choices": [{ "index": 0, "delta": { "content": "Got " } }] },
+      { "choices": [{ "index": 0, "delta": { "content": "tok_1234567890ab and " } }] },
+      { "choices": [{ "index": 0, "delta": { "content": "AcmeSecret" } }] }
+    ]
+  }
+}

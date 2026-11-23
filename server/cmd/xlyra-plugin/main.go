@@ -29,6 +29,8 @@ func main() {
 		runRun(os.Args[2:])
 	case "test":
 		runTest(os.Args[2:])
+	case "dry-run":
+		runDryRun(os.Args[2:])
 	case "pack":
 		runPack(os.Args[2:])
 	case "verify":
@@ -55,6 +57,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin build [--out dist] [dir]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin run --key-env VAR [--base-url URL] [--site-type T] [--hook probe|listModels|check] [dir]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin test [--watch] [dir]\n")
+	fmt.Fprintf(os.Stderr, "  xlyra-plugin dry-run [--params params.json] [--host-options opts.json] [--endpoint PATH] [--dir DIR] <file>\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin pack [--sign key.pem] [--out file.xlp] [dir]\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin verify <package.xlp>\n")
 	fmt.Fprintf(os.Stderr, "  xlyra-plugin kinds\n")

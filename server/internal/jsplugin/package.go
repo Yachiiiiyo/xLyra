@@ -45,7 +45,10 @@ type Manifest struct {
 	Request   SiteProviderRequest `json:"request,omitempty"`
 	Transport TransportSection    `json:"transport,omitempty"`
 	Schedule  ScheduleSection     `json:"schedule,omitempty"`
-	SHA256    map[string]string   `json:"sha256"`
+	// GatewayPipeline binds the plugin to API keys to inspect and transform
+	// request text and restore it in responses.
+	GatewayPipeline *GatewayPipelineSection `json:"gatewayPipeline,omitempty"`
+	SHA256          map[string]string       `json:"sha256"`
 
 	// hasQuotaProbe and hasSite record that the JSON object contained the
 	// section, including {}. Kindless manifests use them to tell an empty
@@ -413,7 +416,7 @@ func (p *Plugin) HasSeparateHotPool() bool {
 func isHotHookName(name string) bool {
 	switch name {
 	case "decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
-		"classify", "classifyError", "rewritePayload", "transformStream":
+		"classify", "classifyError", "rewritePayload", "transformStream", HookInspectSegments:
 		return true
 	default:
 		return false
@@ -514,9 +517,13 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 		if err := rejectKindlessRestrictedHooks(manifest, program); err != nil {
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 		}
-		if !manifest.DeclaresSiteType() && len(program.knownHooks()) == 0 {
+		// A gatewayPipeline section may be purely declarative.
+		if !manifest.DeclaresSiteType() && !manifest.DeclaresGatewayPipeline() && len(program.knownHooks()) == 0 {
 			return nil, fmt.Errorf("%s: plugin exports no known hook", manifest.ID)
 		}
+	}
+	if err := validatePipelineProgram(manifest, program); err != nil {
+		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
 	if err := exportsMatchManifest(manifest, program); err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
@@ -588,7 +595,7 @@ var allKnownOptionalHooks = []string{
 	"parsePricing", "detect", "describeModels",
 	"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
 	"decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
-	"handle", "onEvent", "onSchedule",
+	"handle", "onEvent", "onSchedule", HookInspectSegments,
 }
 
 func (p *Plugin) poolForHook(hookName string) *pool {
@@ -735,6 +742,12 @@ func validateManifestFiles(manifest Manifest, source string, files map[string][]
 	if err := validateManifestSchedule(manifest); err != nil {
 		return err
 	}
+	if manifest.DeclaresGatewayPipeline() && manifest.Kind != "" {
+		return fmt.Errorf("gatewayPipeline needs a manifest without kind")
+	}
+	if err := validatePipelinePermissions(manifest); err != nil {
+		return err
+	}
 	switch manifest.Kind {
 	case KindQuotaProbe:
 		if err := validateBaseURLMode(manifest.QuotaProbe.BaseURLMode); err != nil {
@@ -818,8 +831,16 @@ func validateKindlessManifest(manifest Manifest, files map[string][]byte) error 
 	if manifest.DeclaresAutomation() {
 		sections++
 	}
+	if manifest.DeclaresGatewayPipeline() {
+		sections++
+	}
 	if sections > 1 {
-		return fmt.Errorf("siteProvider, protocol, and automation cannot be combined in one plugin")
+		return fmt.Errorf("siteProvider, protocol, automation, and gatewayPipeline cannot be combined in one plugin")
+	}
+	if manifest.DeclaresGatewayPipeline() {
+		if err := validateGatewayPipelineSection(*manifest.GatewayPipeline); err != nil {
+			return err
+		}
 	}
 	if manifest.DeclaresProtocol() {
 		if err := validateProtocolSection(manifest.Protocol); err != nil {
@@ -873,7 +894,7 @@ func automationSectionPresent(manifest Manifest) bool {
 }
 
 // kindlessRestrictedHooks require their matching manifest section when kind is omitted.
-var kindlessRestrictedHooks = []string{"decodeRequest", "buildRequest", "parseResponse", "handle", "onEvent"}
+var kindlessRestrictedHooks = []string{"decodeRequest", "buildRequest", "parseResponse", "handle", "onEvent", HookInspectSegments}
 
 func rejectKindlessRestrictedHooks(manifest Manifest, program *program) error {
 	for _, name := range kindlessRestrictedHooks {
@@ -882,6 +903,10 @@ func rejectKindlessRestrictedHooks(manifest Manifest, program *program) error {
 			case "decodeRequest", "buildRequest", "parseResponse":
 				if !manifest.DeclaresProtocol() {
 					return fmt.Errorf("export %s requires \"kind\": \"protocol\" or a \"protocol\" section", name)
+				}
+			case HookInspectSegments:
+				if !manifest.DeclaresGatewayPipeline() {
+					return fmt.Errorf("export %s requires a \"gatewayPipeline\" section", name)
 				}
 			default:
 				if !manifest.DeclaresAutomation() {

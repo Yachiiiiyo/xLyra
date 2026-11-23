@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"xlyra/server/internal/textpipeline"
+	"xlyra/server/internal/textxform"
 
 	routeengine "xlyra/server/internal/router"
 )
@@ -195,7 +197,7 @@ func proxyCodexResponsesImageStream(
 					}
 					return capture, headersWritten, nil
 				}
-				if writeErr := writeCodexImageStreamEvents(w, &capture, eventPrefix, event, writeHeaders); writeErr != nil {
+				if writeErr := writeCodexImageStreamEventsWithSession(w, &capture, eventPrefix, event, writeHeaders, textxform.RestoringSessionFromContext(ctx)); writeErr != nil {
 					return capture, headersWritten, writeErr
 				}
 			}
@@ -223,6 +225,12 @@ func proxyCodexResponsesImageStream(
 }
 
 func writeCodexImageStreamEvents(w http.ResponseWriter, capture *streamCaptureState, eventPrefix string, event responsesStreamBufferEvent, writeHeaders func()) error {
+	return writeCodexImageStreamEventsWithSession(w, capture, eventPrefix, event, writeHeaders, nil)
+}
+
+// writeCodexImageStreamEventsWithSession restores the request's placeholders
+// in revised_prompt when session is set.
+func writeCodexImageStreamEventsWithSession(w http.ResponseWriter, capture *streamCaptureState, eventPrefix string, event responsesStreamBufferEvent, writeHeaders func(), session *textxform.Session) error {
 	eventType := strings.TrimSpace(event.Type)
 	if eventType == "response.image_generation_call.partial_image" && strings.TrimSpace(event.PartialImageB64) != "" {
 		writeHeaders()
@@ -252,7 +260,7 @@ func writeCodexImageStreamEvents(w http.ResponseWriter, capture *streamCaptureSt
 			"b64_json": strings.TrimSpace(item.Result),
 		}
 		if revisedPrompt := strings.TrimSpace(item.RevisedPrompt); revisedPrompt != "" {
-			payload["revised_prompt"] = revisedPrompt
+			payload["revised_prompt"], _ = textpipeline.RestoreTokens(revisedPrompt, session, false)
 		}
 		if index == len(outputs)-1 && event.Response.Usage != nil {
 			payload["usage"] = openAIImagesUsageFromGatewayUsage(capture.usage)

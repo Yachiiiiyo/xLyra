@@ -787,6 +787,8 @@ func (h Handler) handleBufferedResponse(
 	if result.success {
 		result.body = sanitizeDSMLInBufferedResponse(result.body, result.contentType)
 	}
+	// Restoring follows usage parsing, so billing counts what the upstream saw.
+	result.body = restoreTokensInBufferedResponse(ctx, result.body, result.contentType)
 	if result.success {
 		result.promptTokens = transformed.Usage.PromptTokens
 		result.completionTokens = transformed.Usage.CompletionTokens
@@ -839,7 +841,7 @@ func (h Handler) finishBufferedSemanticFailure(
 	result.errorType = "upstream_response_failed"
 	result.errorMessage = failure.Error()
 	result.upstreamErrorCode = failure.Code
-	result.body = failure.Body
+	result.body = restoreTokensInBufferedResponse(ctx, failure.Body, result.contentType)
 	result.failureResponse = diagnosticFailureResponse(failure.Body)
 	result = classifyGatewayUpstreamErrorWithTimeZone(candidate, result, failure.Body, time.Now(), h.timeZone)
 	h.markOAuthConnectionUnavailableOnAuthFailure(ctx, candidate, result)
@@ -878,7 +880,7 @@ func (h Handler) handleStreamResponse(
 			result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, nil)
 			return result
 		}
-		result.body = responseBody
+		result.body = restoreTokensInBufferedResponse(ctx, responseBody, result.contentType)
 		result.upstreamResponseModel = upstreamResponseModel(responseBody)
 		result.errorType = "upstream_http_error"
 		result.errorMessage = fmt.Sprintf("upstream returned HTTP %d", resp.StatusCode)
@@ -1042,7 +1044,7 @@ func (h Handler) finishStreamSemanticFailure(
 	if failure != nil {
 		result.upstreamErrorCode = failure.Code
 	}
-	result.body = classificationBody
+	result.body = restoreTokensInBufferedResponse(ctx, classificationBody, result.contentType)
 	result.failureResponse = diagnosticFailureResponse(failure.Body)
 	result = classifyGatewayUpstreamErrorWithTimeZone(candidate, result, classificationBody, time.Now(), h.timeZone)
 	h.markOAuthConnectionUnavailableOnAuthFailure(ctx, candidate, result)

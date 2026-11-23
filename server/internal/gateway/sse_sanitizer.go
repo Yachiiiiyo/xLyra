@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"xlyra/server/internal/textpipeline"
 
 	"github.com/google/uuid"
 	routeengine "xlyra/server/internal/router"
@@ -501,6 +502,7 @@ type responsesSSEExit struct {
 	ctx           context.Context
 	dsmlText      dsmlStreamTextFilter
 	dsmlReasoning dsmlStreamTextFilter
+	restore       *textpipeline.StreamRestorer
 }
 
 func newResponsesSSEExit(ctx context.Context, dst io.Writer, flusher http.Flusher, capture *streamCaptureState) *responsesSSEExit {
@@ -510,6 +512,7 @@ func newResponsesSSEExit(ctx context.Context, dst io.Writer, flusher http.Flushe
 		state:   &responsesSanitizerState{},
 		capture: capture,
 		ctx:     ctx,
+		restore: newResponseStreamTransformState(ctx),
 	}
 }
 
@@ -530,12 +533,14 @@ func (e *responsesSSEExit) Write(p []byte) error {
 }
 
 func (e *responsesSSEExit) Finish() error {
-	if e.pending.Len() == 0 {
-		return nil
+	if e.pending.Len() > 0 {
+		block := append([]byte(nil), e.pending.Bytes()...)
+		e.pending.Reset()
+		if err := e.emit(block); err != nil {
+			return err
+		}
 	}
-	block := append([]byte(nil), e.pending.Bytes()...)
-	e.pending.Reset()
-	return e.emit(block)
+	return writeSSEBlocks(e.dst, e.flusher, e.restore.Flush())
 }
 
 func (e *responsesSSEExit) finishTerminal() error {
@@ -574,11 +579,7 @@ func (e *responsesSSEExit) emit(block []byte) error {
 	if len(out) == 0 {
 		return nil
 	}
-	if _, err := e.dst.Write(out); err != nil {
-		return err
-	}
-	e.flush()
-	return nil
+	return writeSSEBlocks(e.dst, e.flusher, e.restore.ApplyAll(out))
 }
 
 func (e *responsesSSEExit) record(repairs []string) {
@@ -645,10 +646,19 @@ type protocolSSEExit struct {
 	sanitize      func([]byte) ([]byte, []string)
 	dsmlText      dsmlStreamTextFilter
 	dsmlReasoning dsmlStreamTextFilter
+	restore       *textpipeline.StreamRestorer
+	// passthrough is set when the exit only restores placeholders: blocks
+	// are not sanitized and DSML is left alone, as without the exit.
+	passthrough bool
 }
 
 func newProtocolSSEExit(ctx context.Context, dst io.Writer, flusher http.Flusher, capture *streamCaptureState, sanitize func([]byte) ([]byte, []string)) *protocolSSEExit {
-	return &protocolSSEExit{dst: dst, flusher: flusher, capture: capture, ctx: ctx, sanitize: sanitize}
+	exit := &protocolSSEExit{dst: dst, flusher: flusher, capture: capture, ctx: ctx, sanitize: sanitize, restore: newResponseStreamTransformState(ctx)}
+	if sanitize == nil {
+		exit.passthrough = true
+		exit.sanitize = func(block []byte) ([]byte, []string) { return append([]byte(nil), block...), nil }
+	}
+	return exit
 }
 
 func (e *protocolSSEExit) Write(p []byte) error {
@@ -668,17 +678,19 @@ func (e *protocolSSEExit) Write(p []byte) error {
 }
 
 func (e *protocolSSEExit) Finish() error {
-	if e.pending.Len() == 0 {
-		return nil
+	if e.pending.Len() > 0 {
+		block := append([]byte(nil), e.pending.Bytes()...)
+		e.pending.Reset()
+		if err := e.emit(block); err != nil {
+			return err
+		}
 	}
-	block := append([]byte(nil), e.pending.Bytes()...)
-	e.pending.Reset()
-	return e.emit(block)
+	return writeSSEBlocks(e.dst, e.flusher, e.restore.Flush())
 }
 
 func (e *protocolSSEExit) emit(block []byte) error {
 	out, repairs := e.sanitize(block)
-	if len(out) > 0 {
+	if len(out) > 0 && !e.passthrough {
 		var dsmlStripped bool
 		out, dsmlStripped = sanitizeSSEBlockDSML(out, &e.dsmlText, &e.dsmlReasoning)
 		if dsmlStripped {
@@ -696,11 +708,22 @@ func (e *protocolSSEExit) emit(block []byte) error {
 	if len(out) == 0 {
 		return nil
 	}
-	if _, err := e.dst.Write(out); err != nil {
-		return err
+	return writeSSEBlocks(e.dst, e.flusher, e.restore.ApplyAll(out))
+}
+
+func writeSSEBlocks(dst io.Writer, flusher http.Flusher, blocks [][]byte) error {
+	wrote := false
+	for _, block := range blocks {
+		if len(block) == 0 {
+			continue
+		}
+		if _, err := dst.Write(block); err != nil {
+			return err
+		}
+		wrote = true
 	}
-	if e.flusher != nil {
-		e.flusher.Flush()
+	if wrote && flusher != nil {
+		flusher.Flush()
 	}
 	return nil
 }

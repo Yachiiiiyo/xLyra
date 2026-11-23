@@ -1,0 +1,18 @@
+import type {
+  InspectSegmentsContext,
+  InspectSegmentsInput,
+  InspectSegmentsResult,
+  PluginMeta,
+} from "../types/xlyra";
+
+export const meta: PluginMeta = {
+  apiVersion: 1,
+  id: "{{.ID}}",
+};
+
+export function inspectSegments(
+  _ctx: InspectSegmentsContext,
+  _input: InspectSegmentsInput,
+): InspectSegmentsResult {
+  return {};
+}
