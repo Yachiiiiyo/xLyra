@@ -47,6 +47,27 @@ RUN --mount=type=cache,id=npm,target=/root/.npm \
     npm ci --ignore-scripts --omit=dev
 
 COPY agent-runtime/extension ./extension
+COPY agent-runtime/skills ./skills
+
+FROM alpine:3.22 AS cli-fetch
+
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG XLYRA_CLI_REPO=Yachiiiiyo/xLyra-cli
+ARG XLYRA_CLI_VERSION=v0.1.1
+
+RUN apk add --no-cache ca-certificates curl \
+    && mkdir -p /tmp/xlyra /out \
+    && cd /tmp/xlyra \
+    && archive="xlyra_${XLYRA_CLI_VERSION}_${TARGETOS}_${TARGETARCH}.tar.gz" \
+    && base_url="https://github.com/${XLYRA_CLI_REPO}/releases/download/${XLYRA_CLI_VERSION}" \
+    && curl -fsSL "${base_url}/checksums.txt" -o checksums.txt \
+    && curl -fsSL "${base_url}/${archive}" -o "${archive}" \
+    && grep -F "  ${archive}" checksums.txt > target.sha256 \
+    && sha256sum -c target.sha256 \
+    && tar -xzf "${archive}" -C /out xlyra \
+    && chmod 0755 /out/xlyra \
+    && rm -rf /tmp/xlyra
 
 FROM alpine:3.22
 
@@ -63,7 +84,8 @@ ENV APP_ENV=production \
     HTTP_PORT=5801 \
     STATIC_DIR=/app/dist \
     AGENT_NODE_BIN=/usr/local/bin/node \
-    AGENT_PI_ENTRY=/app/agent-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
+    AGENT_PI_ENTRY=/app/agent-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js \
+    AGENT_CLI_BIN=/usr/local/bin/xlyra
 
 EXPOSE 5801
 VOLUME ["/data"]
@@ -71,5 +93,6 @@ VOLUME ["/data"]
 COPY --from=backend-build /out/xlyra-server /app/xlyra-server
 COPY --from=frontend-build /src/dist /app/dist
 COPY --from=agent-runtime-build /src/agent-runtime /app/agent-runtime
+COPY --from=cli-fetch /out/xlyra /usr/local/bin/xlyra
 
 ENTRYPOINT ["/sbin/tini", "--", "/app/xlyra-server"]
