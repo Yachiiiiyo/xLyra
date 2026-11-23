@@ -54,5 +54,9 @@ func applyUpstreamAuth(req *http.Request, protocol gatewayProtocolAdapter, upstr
 		call.ApplyUpstreamAuth(req, upstreamKey)
 		return
 	}
+	if strings.TrimSpace(upstreamKey) == "" {
+		req.Header.Del("Authorization")
+		return
+	}
 	req.Header.Set("Authorization", "Bearer "+upstreamKey)
 }

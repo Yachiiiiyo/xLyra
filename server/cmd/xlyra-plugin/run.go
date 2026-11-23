@@ -136,12 +136,17 @@ func exportedHooks(plugin *jsplugin.Plugin, names []string) []string {
 
 func runSteppedPlugin(call stepCaller, pkg jsplugin.Package, credential, keyEnv, baseURL, siteType, credType string) error {
 	// site_detect talks to public endpoints only, so it takes no key.
+	// site_provider plugins that declare credential.allowEmpty may also run without one.
 	secret := ""
+	allowEmpty := pkg.Manifest.DeclaresSiteType() &&
+		pkg.Manifest.SiteProvider.Credential.Model == "api_key" &&
+		pkg.Manifest.SiteProvider.Credential.AllowEmpty
 	if credential == "api_key" {
 		if keyEnv == "" {
-			return fmt.Errorf("--key-env is required")
-		}
-		if secret = os.Getenv(keyEnv); secret == "" {
+			if !allowEmpty {
+				return fmt.Errorf("--key-env is required")
+			}
+		} else if secret = os.Getenv(keyEnv); secret == "" && !allowEmpty {
 			return fmt.Errorf("environment variable %s is empty", keyEnv)
 		}
 	}

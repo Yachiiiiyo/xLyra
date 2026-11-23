@@ -44,6 +44,7 @@ export type SiteTypeInfo = {
   official_base_url?: string
   show_in_create_dialog: boolean
   icon_url?: string
+  allows_empty_api_key?: boolean
   accounts?: SiteAccountCapabilities
   plugin_id?: string
   provider_status?: ProviderStatus
@@ -67,6 +68,7 @@ export type Site = {
   capabilities?: string[]
   supports_multiple_api_keys?: boolean
   supports_api_key_cost_multiplier?: boolean
+  allows_empty_api_key?: boolean
   meta: Record<string, unknown>
   model_count?: number
   api_key_count?: number

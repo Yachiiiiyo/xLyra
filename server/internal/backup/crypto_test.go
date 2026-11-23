@@ -285,6 +285,45 @@ func TestSecretColumnsDecryptAndReencryptWithNewMasterKey(t *testing.T) {
 	}
 }
 
+func TestSiteCredentialEmptySecretRoundTrip(t *testing.T) {
+	oldMasterKey := "old-master-key"
+	newMasterKey := "new-master-key"
+	encrypted, err := crypto.EncryptSecret(oldMasterKey, "")
+	if err != nil {
+		t.Fatalf("encrypt empty secret: %v", err)
+	}
+	rows := []map[string]any{{
+		"id":               "cred-1",
+		"encrypted_secret": encrypted,
+		"masked_secret":    "",
+	}}
+
+	if err := decryptTableSecrets("site_credentials", rows, oldMasterKey); err != nil {
+		t.Fatalf("decrypt site_credentials: %v", err)
+	}
+	if rows[0]["secret"] != "" {
+		t.Fatalf("expected empty plaintext secret, got %#v", rows[0]["secret"])
+	}
+
+	if err := encryptTableSecrets("site_credentials", rows, newMasterKey); err != nil {
+		t.Fatalf("encrypt site_credentials: %v", err)
+	}
+	nextEncrypted, _ := rows[0]["encrypted_secret"].(string)
+	if nextEncrypted == "" {
+		t.Fatal("expected re-encrypted ciphertext for empty site_credentials secret")
+	}
+	plain, err := crypto.DecryptSecret(newMasterKey, nextEncrypted)
+	if err != nil {
+		t.Fatalf("decrypt restored empty secret: %v", err)
+	}
+	if plain != "" {
+		t.Fatalf("plain = %q, want empty", plain)
+	}
+	if rows[0]["masked_secret"] != "" {
+		t.Fatalf("masked_secret = %#v, want empty", rows[0]["masked_secret"])
+	}
+}
+
 func TestBackupValueKeepsJSONAsObject(t *testing.T) {
 	value := backupValue(store.JSON(`{"model":"gpt","tokens":123}`))
 	encoded, err := json.Marshal(map[string]any{"metadata": value})

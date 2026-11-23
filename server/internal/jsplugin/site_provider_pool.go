@@ -377,6 +377,9 @@ func rejectCredentialModelExtras(section SiteProviderSection) error {
 	case "api_key":
 		return rejectAccountPoolSections(section)
 	case "account_pool":
+		if section.Credential.AllowEmpty {
+			return fmt.Errorf("siteProvider.credential.allowEmpty is not allowed for credential.model %q", "account_pool")
+		}
 		return validateAccountPoolModels(section)
 	default:
 		return fmt.Errorf("siteProvider.credential.model must be %q or %q", "api_key", "account_pool")

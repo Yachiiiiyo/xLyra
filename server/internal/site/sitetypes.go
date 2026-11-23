@@ -27,6 +27,7 @@ type SiteTypeDescriptor struct {
 	ShowInCreateDialog           bool
 	IconURL                      string
 	SupportsAPIKeyCostMultiplier bool
+	AllowsEmptyAPIKey            bool
 	Accounts                     *AccountCapabilities
 }
 
@@ -393,6 +394,7 @@ func normalizePluginSiteType(item PluginSiteType, id string) PluginSiteType {
 		item.Pool = &pool
 		desc.APICredentialType = "account"
 		desc.CredentialCategory = "account"
+		desc.AllowsEmptyAPIKey = false
 		desc.RequiresBaseURL = false
 		if base := strings.TrimRight(strings.TrimSpace(pool.DefaultBaseURL()), "/"); base != "" {
 			desc.OfficialBaseURL = base

@@ -507,3 +507,47 @@ func compactJSON(t *testing.T, raw []byte) string {
 	}
 	return buf.String()
 }
+
+func TestConvertSiteProviderMapsAllowEmptyAPIKey(t *testing.T) {
+	t.Parallel()
+
+	openPlugin := &jsplugin.Plugin{
+		Manifest: jsplugin.Manifest{
+			ID:         "acme.open",
+			APIVersion: 1,
+			HostAPI:    1,
+			Kind:       jsplugin.KindSiteProvider,
+			SiteProvider: jsplugin.SiteProviderSection{
+				SiteType:   "acme.open/chat",
+				Display:    jsplugin.SiteProviderDisplay{Name: jsplugin.LocalizedText{"en": "Open"}},
+				Hosts:      []string{"open.example.com"},
+				Credential: jsplugin.SiteProviderCredential{Model: "api_key", AllowEmpty: true},
+				Protocol: jsplugin.SiteProviderProtocol{
+					Kind:                 "openai_chat",
+					Path:                 "/v1/chat/completions",
+					OfficialBaseURL:      "https://open.example.com",
+					DefaultEndpointTypes: []string{"openai"},
+				},
+			},
+		},
+	}
+	prepared, err := convertSiteProvider(openPlugin)
+	if err != nil {
+		t.Fatalf("convertSiteProvider(open): %v", err)
+	}
+	if !prepared.item.Descriptor.AllowsEmptyAPIKey {
+		t.Fatal("open plugin AllowsEmptyAPIKey = false, want true")
+	}
+
+	strictPlugin := *openPlugin
+	strictPlugin.Manifest.ID = "acme.strict"
+	strictPlugin.Manifest.SiteProvider.SiteType = "acme.strict/chat"
+	strictPlugin.Manifest.SiteProvider.Credential.AllowEmpty = false
+	preparedStrict, err := convertSiteProvider(&strictPlugin)
+	if err != nil {
+		t.Fatalf("convertSiteProvider(strict): %v", err)
+	}
+	if preparedStrict.item.Descriptor.AllowsEmptyAPIKey {
+		t.Fatal("strict plugin AllowsEmptyAPIKey = true, want false")
+	}
+}

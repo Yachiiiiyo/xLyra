@@ -53,6 +53,10 @@ function credentialTypeOf(siteType: string, siteTypes: SiteTypeInfo[] | undefine
   return siteTypes?.find(st => st.site_type === siteType)?.credential_type
 }
 
+function allowsEmptyAPIKey(siteType: string, siteTypes: SiteTypeInfo[] | undefined): boolean {
+  return siteTypes?.find(st => st.site_type === siteType)?.allows_empty_api_key === true
+}
+
 function requiresBaseURL(siteType: string, siteTypes: SiteTypeInfo[] | undefined): boolean {
   const info = siteTypes?.find(st => st.site_type === siteType)
   if (!info) return true
@@ -73,7 +77,7 @@ function createSiteSchema(mode: SiteFormMode, siteTypes: SiteTypeInfo[] | undefi
       siteType: z.string().refine(v => validTypes.includes(v), t('form.validation.typeRequired')),
       apiKey: z.string().trim(),
       apiKeys: z.array(z.object({
-        apiKey: z.string().trim().min(1),
+        apiKey: z.string().trim(),
         name: z.string(),
         routingPriority: z.number(),
         upstreamCostMultiplier: z.number().optional(),
@@ -150,12 +154,14 @@ function createSiteSchema(mode: SiteFormMode, siteTypes: SiteTypeInfo[] | undefi
         }
       }
 
-      if (!isAccountLoginSiteType(value.siteType, siteTypes) && credType !== 'system_token' && credType !== 'oauth' && credType !== 'xlyra' && mode === 'create' && value.apiKeys.length === 0) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['apiKeys'],
-          message: t('form.validation.apiKeyRequired'),
-        })
+      if (!isAccountLoginSiteType(value.siteType, siteTypes) && credType !== 'system_token' && credType !== 'oauth' && credType !== 'xlyra' && mode === 'create') {
+        if (value.apiKeys.length === 0 || (!allowsEmptyAPIKey(value.siteType, siteTypes) && value.apiKeys.some(item => !item.apiKey))) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['apiKeys'],
+            message: t('form.validation.apiKeyRequired'),
+          })
+        }
       }
 
       if (!isAccountLoginSiteType(value.siteType, siteTypes) && value.responsesToolPolicy === 'compatibility' && !value.disableResponsesImageGenerationTool) {
@@ -550,6 +556,7 @@ export function SiteCreateDialog({
   const accountHint = accountCreateHint(siteType, siteTypes?.find((item) => item.site_type === siteType), i18n.language)
   const canConfigureQuotaProbe = siteType === 'openai' || siteType === 'anthropic'
   const showAPIKeyField = !isGrok && currentCredType !== 'system_token' && currentCredType !== 'oauth' && currentCredType !== 'xlyra' && !!siteType && mode === 'create'
+  const allowEmptyAPIKey = allowsEmptyAPIKey(siteType, siteTypes)
   const supportsAPIKeyCostMultiplier = siteType === 'openai' || siteType === 'anthropic' || siteType === 'google_gemini'
   const groupOptions = useMemo(() => siteGroups.filter((group) => group.enabled).map((group) => ({
     value: group.id,
@@ -656,11 +663,11 @@ export function SiteCreateDialog({
   function saveAPIKeyDraft() {
     const parsed = parseSiteAPIKeyForm(apiKeyDraft, {
       includeCostMultiplier: supportsAPIKeyCostMultiplier,
-      requireAPIKey: true,
+      requireAPIKey: !allowEmptyAPIKey,
     })
-    if (!parsed?.apiKey) return
+    if (!parsed) return
     const nextAPIKey = {
-      apiKey: parsed.apiKey,
+      apiKey: parsed.apiKey ?? '',
       name: parsed.name,
       routingPriority: parsed.routingPriority,
       upstreamCostMultiplier: parsed.upstreamCostMultiplier,
@@ -951,6 +958,9 @@ export function SiteCreateDialog({
                                       <span>
                                         {t('apiKeys.routingPriority')} {apiKey.routingPriority}
                                       </span>
+                                      {!apiKey.apiKey ? (
+                                        <span>{t('apiKeys.emptySecret')}</span>
+                                      ) : null}
                                       {supportsAPIKeyCostMultiplier ? (
                                         <span>
                                           {t('apiKeys.costMultiplier')} {apiKey.upstreamCostMultiplier ?? 1}x
@@ -1310,6 +1320,7 @@ export function SiteCreateDialog({
               draft={apiKeyDraft}
               onChange={setAPIKeyDraft}
               showAPIKey
+              apiKeyOptional={allowEmptyAPIKey}
               showCostMultiplier={supportsAPIKeyCostMultiplier}
               t={t}
             />
@@ -1331,7 +1342,7 @@ export function SiteCreateDialog({
                 disabled={
                   !parseSiteAPIKeyForm(apiKeyDraft, {
                     includeCostMultiplier: supportsAPIKeyCostMultiplier,
-                    requireAPIKey: true,
+                    requireAPIKey: !allowEmptyAPIKey,
                   })
                 }
               >

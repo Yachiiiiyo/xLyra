@@ -56,4 +56,21 @@ describe('parseSiteAPIKeyForm', () => {
       ),
     ).toBeNull()
   })
+
+  it('allows an empty API key when requireAPIKey is false', () => {
+    expect(
+      parseSiteAPIKeyForm(
+        {
+          ...DEFAULT_API_KEY_FORM_DRAFT,
+          name: ' Public Endpoint ',
+          apiKey: '   ',
+          routingPriority: '2.0',
+        },
+        { includeCostMultiplier: false, requireAPIKey: false },
+      ),
+    ).toEqual({
+      name: 'Public Endpoint',
+      routingPriority: 2,
+    })
+  })
 })

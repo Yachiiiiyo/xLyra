@@ -14,7 +14,11 @@ func isGoogleSite(siteType string) bool {
 }
 
 func applyGoogleGatewayHeaders(req *http.Request, apiKey string) {
-	req.Header.Set("x-goog-api-key", strings.TrimSpace(apiKey))
+	if trimmed := strings.TrimSpace(apiKey); trimmed != "" {
+		req.Header.Set("x-goog-api-key", trimmed)
+	} else {
+		req.Header.Del("x-goog-api-key")
+	}
 	req.Header.Set("User-Agent", googleGatewayUserAgent)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Del("Authorization")

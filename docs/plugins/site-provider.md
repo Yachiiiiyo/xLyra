@@ -4,7 +4,7 @@
 
 | `credential.model` | 站点怎么接上游 |
 | --- | --- |
-| `api_key` | 一把站点 API Key。列模型、校验密钥、健康检查、转发都用这把 Key |
+| `api_key` | 站点 API Key。列模型、校验密钥、健康检查、转发都用这把 Key。可选配 `credential.allowEmpty: true`，允许管理员手动添加一条密钥内容为空的 API Key 记录（密钥为空时默认不发送上游认证头；也可配合 `request.headers` 里的 `when`/`unless: "cred.api_key"` 使用） |
 | `account_pool` | 多账号。登录、刷新、导入、按账号区域选地址、按账号额度选路，由 xLyra 执行。插件只描述流程 |
 
 两种模型的协议都只有清单里声明的那一种，不能再挂替代协议。没有独立的 OAuth 连接类型（没有 `connection`，也没有 `oauth2_pkce`）。账号池里的设备码登录是 `login.kind = oauth2_device_code`，由宿主的 OAuth 引擎执行，不经过 JS。

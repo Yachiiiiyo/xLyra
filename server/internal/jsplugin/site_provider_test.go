@@ -410,3 +410,27 @@ func oversizedPNG() []byte {
 	copy(body, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
 	return body
 }
+
+func TestSiteProviderCredentialAllowEmptyValidation(t *testing.T) {
+	t.Parallel()
+
+	source := "export const meta = { apiVersion: 1, id: \"acme.example\", kind: \"site_provider\" };\n"
+	manifest := siteProviderManifest(source)
+	manifest.SiteProvider.Credential.AllowEmpty = true
+
+	if err := readErr(siteProviderZip(t, manifest, source, nil)); err != nil {
+		t.Fatalf("api_key with allowEmpty=true rejected: %v", err)
+	}
+
+	poolManifest := manifest
+	poolManifest.SiteProvider.Credential = SiteProviderCredential{
+		Model:      "account_pool",
+		AllowEmpty: true,
+		Fields:     []SiteProviderField{{Name: "access_token", Secret: true}},
+		Identity:   CredentialSources{Items: []string{"claims.sub"}},
+	}
+	err := readErr(siteProviderZip(t, poolManifest, source, nil))
+	if err == nil || !strings.Contains(err.Error(), "siteProvider.credential.allowEmpty") {
+		t.Fatalf("account_pool with allowEmpty=true error = %v, want allowEmpty rejection", err)
+	}
+}

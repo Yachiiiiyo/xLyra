@@ -118,6 +118,7 @@ export function SiteAPIKeysDraw({
   const open = Boolean(site)
   const supportsCostMultiplier =
     site?.supports_api_key_cost_multiplier === true
+  const allowsEmptyAPIKey = site?.allows_empty_api_key === true
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
@@ -607,10 +608,15 @@ export function SiteAPIKeysDraw({
         <div className="divide-y divide-separator">
           {items.map((item) => {
             const ensureSKPrefix = site ? isNewAPISite(site) : false
-                  const displayKey = formatAPIKeyValue(item.key, {
-                    ensureSKPrefix,
-                  })
-                  const canCopy = !item.secret_missing
+                  const hasSecretValue = Boolean(item.key?.trim())
+                  const isIntentionallyEmpty =
+                    allowsEmptyAPIKey && !item.secret_missing && !hasSecretValue
+                  const displayKey = isIntentionallyEmpty
+                    ? t('apiKeys.emptySecret')
+                    : formatAPIKeyValue(item.key, {
+                        ensureSKPrefix,
+                      })
+                  const canCopy = !item.secret_missing && hasSecretValue
                   const remaining = item.usage?.data?.total_available ?? null
                   const total = item.usage?.data?.total_granted ?? null
                   const unlimited = item.usage?.data?.unlimited_quota === true
@@ -718,44 +724,50 @@ export function SiteAPIKeysDraw({
                         ) : null}
                       </div>
 
-                      <button
-                        type="button"
-                        className="block w-full cursor-pointer rounded-control bg-fill-3 px-3 py-2 text-left font-mono text-footnote text-label truncate hover:bg-fill-2 transition-colors"
-                        title={
-                          canCopy
-                            ? t('apiKeys.copyTooltip')
-                            : t('apiKeys.noCopyTooltip')
-                        }
-                        onClick={() => {
-                          if (!canCopy || !site) {
-                            toast.warning(t('apiKeys.noCopyTooltip'), {
-                              description: t('apiKeys.noCopyTooltip'),
-                            })
-                            return
+                      {isIntentionallyEmpty ? (
+                        <div className="block w-full rounded-control bg-fill-3 px-3 py-2 text-left font-mono text-footnote text-label-2 truncate">
+                          {displayKey}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="block w-full cursor-pointer rounded-control bg-fill-3 px-3 py-2 text-left font-mono text-footnote text-label truncate hover:bg-fill-2 transition-colors"
+                          title={
+                            canCopy
+                              ? t('apiKeys.copyTooltip')
+                              : t('apiKeys.noCopyTooltip')
                           }
-                          void revealSiteAPIKey(site.id, item.id)
-                            .then((revealed) => {
-                              const copyKey = revealed.copy_key?.trim()
-                              if (!copyKey) {
-                                toast.warning(t('apiKeys.noCopyTooltip'), {
-                                  description: t('apiKeys.noCopyTooltip'),
-                                })
-                                return
-                              }
-                              return copyToClipboard(
-                                copyKey,
-                                t('apiKeys.copied'),
-                              )
-                            })
-                            .catch(() => {
+                          onClick={() => {
+                            if (!canCopy || !site) {
                               toast.warning(t('apiKeys.noCopyTooltip'), {
                                 description: t('apiKeys.noCopyTooltip'),
                               })
-                            })
-                        }}
-                      >
-                        {displayKey}
-                      </button>
+                              return
+                            }
+                            void revealSiteAPIKey(site.id, item.id)
+                              .then((revealed) => {
+                                const copyKey = revealed.copy_key?.trim()
+                                if (!copyKey) {
+                                  toast.warning(t('apiKeys.noCopyTooltip'), {
+                                    description: t('apiKeys.noCopyTooltip'),
+                                  })
+                                  return
+                                }
+                                return copyToClipboard(
+                                  copyKey,
+                                  t('apiKeys.copied'),
+                                )
+                              })
+                              .catch(() => {
+                                toast.warning(t('apiKeys.noCopyTooltip'), {
+                                  description: t('apiKeys.noCopyTooltip'),
+                                })
+                              })
+                          }}
+                        >
+                          {displayKey}
+                        </button>
+                      )}
 
                       <div className="flex items-center justify-between text-footnote text-label-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -883,6 +895,7 @@ export function SiteAPIKeysDraw({
       draft={newAPIKeyDraft}
       onChange={setNewAPIKeyDraft}
       showAPIKey
+      apiKeyOptional={allowsEmptyAPIKey}
       showCostMultiplier={supportsCostMultiplier}
       t={t}
     />
@@ -894,13 +907,13 @@ export function SiteAPIKeysDraw({
           newAPIKeyDraft,
           {
             includeCostMultiplier: supportsCostMultiplier,
-            requireAPIKey: true,
+            requireAPIKey: !allowsEmptyAPIKey,
           },
         )
-        if (!values?.apiKey) return
+        if (!values) return
         createAPIKeyMutation.mutate({
           ...values,
-          apiKey: values.apiKey,
+          apiKey: values.apiKey ?? '',
         })
       }}
       disabled={
@@ -908,7 +921,7 @@ export function SiteAPIKeysDraw({
           newAPIKeyDraft,
           {
             includeCostMultiplier: supportsCostMultiplier,
-            requireAPIKey: true,
+            requireAPIKey: !allowsEmptyAPIKey,
           },
         ) ||
         createAPIKeyMutation.isPending
@@ -1000,6 +1013,9 @@ export function SiteAPIKeysDraw({
       <Input
         value={secretInput}
         autoComplete="off"
+        placeholder={
+          allowsEmptyAPIKey ? t('apiKeys.optionalPlaceholder') : undefined
+        }
         onChange={(event) => setSecretInput(event.target.value)}
       />
     </>
@@ -1008,13 +1024,16 @@ export function SiteAPIKeysDraw({
     <Button
       onClick={() => {
         const value = secretInput.trim()
-        if (!editingAPIKey || !value) return
+        if (!editingAPIKey || (!allowsEmptyAPIKey && !value)) return
         updateSecretMutation.mutate({
           apiKeyId: editingAPIKey.id,
           apiKey: value,
         })
       }}
-      disabled={!secretInput.trim() || updateSecretMutation.isPending}
+      disabled={
+        (!allowsEmptyAPIKey && !secretInput.trim()) ||
+        updateSecretMutation.isPending
+      }
     >
       {updateSecretMutation.isPending ? (
         <LoaderCircle className="h-4 w-4 animate-spin" />

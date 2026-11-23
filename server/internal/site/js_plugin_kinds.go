@@ -721,7 +721,9 @@ func fetchJSON(ctx context.Context, client *http.Client, base, path, secret stri
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+secret)
+	if strings.TrimSpace(secret) != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
 	req.Header.Set("Accept", "application/json")
 	httpClient := *client
 	httpClient.CheckRedirect = func(next *http.Request, via []*http.Request) error {

@@ -1228,6 +1228,7 @@ func (s *Service) RefreshSingleAPIKey(ctx context.Context, siteID uuid.UUID, cre
 	if len(credential.Meta) > 0 {
 		_ = json.Unmarshal(credential.Meta, &meta)
 	}
+	rawKeyMissing := boolFromMeta(meta, "raw_key_missing", false)
 	apiKey := strings.TrimSpace(secretFromCredentialMeta(secret, meta))
 	if strings.EqualFold(strings.TrimSpace(site.SiteType), "grok") {
 		apiKey, err = s.oauth.EnsureGrokAccessToken(ctx, credential.ID)
@@ -1235,7 +1236,7 @@ func (s *Service) RefreshSingleAPIKey(ctx context.Context, siteID uuid.UUID, cre
 			return RefreshSingleAPIKeyResult{}, fmt.Errorf("grok access token: %w", err)
 		}
 	}
-	if apiKey == "" || strings.HasPrefix(apiKey, "missing-api-key") {
+	if rawKeyMissing || strings.HasPrefix(apiKey, "missing-api-key") || (apiKey == "" && !AllowsEmptyAPIKey(site.SiteType)) {
 		return RefreshSingleAPIKeyResult{}, fmt.Errorf("raw api key is not available for this credential")
 	}
 

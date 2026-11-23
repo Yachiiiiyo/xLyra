@@ -943,7 +943,7 @@ func (h Handler) CreateSiteAPIKey(w http.ResponseWriter, r *http.Request) {
 	if secret == "" {
 		secret = strings.TrimSpace(payload.Secret)
 	}
-	if secret == "" {
+	if secret == "" && (h.sites == nil || !sitepkg.AnyPluginAllowsEmptyAPIKey()) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_api_key", "api_key is required")
 		return
 	}
@@ -951,6 +951,10 @@ func (h Handler) CreateSiteAPIKey(w http.ResponseWriter, r *http.Request) {
 	item, err := h.sites.Get(r.Context(), siteID)
 	if err != nil {
 		h.writeError(w, r, http.StatusNotFound, "site_not_found", "site was not found")
+		return
+	}
+	if secret == "" && !sitepkg.AllowsEmptyAPIKey(item.SiteType) {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_api_key", "api_key is required")
 		return
 	}
 
@@ -1208,7 +1212,7 @@ func (h Handler) UpdateSiteAPIKeySecret(w http.ResponseWriter, r *http.Request) 
 	if secret == "" {
 		secret = strings.TrimSpace(payload.Secret)
 	}
-	if secret == "" {
+	if secret == "" && (h.sites == nil || !sitepkg.AnyPluginAllowsEmptyAPIKey()) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_api_key", "api_key is required")
 		return
 	}
@@ -1216,6 +1220,10 @@ func (h Handler) UpdateSiteAPIKeySecret(w http.ResponseWriter, r *http.Request) 
 	item, err := h.sites.Get(r.Context(), siteID)
 	if err != nil {
 		h.writeError(w, r, http.StatusNotFound, "site_not_found", "site was not found")
+		return
+	}
+	if secret == "" && !sitepkg.AllowsEmptyAPIKey(item.SiteType) {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_api_key", "api_key is required")
 		return
 	}
 
@@ -1391,11 +1399,12 @@ func (h Handler) resolveSiteCredentials(w http.ResponseWriter, r *http.Request, 
 			},
 		}}, true
 	case "api_key":
+		allowEmpty := sitepkg.AllowsEmptyAPIKey(payload.SiteType)
 		if len(payload.APIKeys) > 0 {
 			credentials := make([]sitepkg.CredentialInput, 0, len(payload.APIKeys))
 			for index, item := range payload.APIKeys {
 				apiKey := strings.TrimSpace(item.APIKey)
-				if apiKey == "" {
+				if apiKey == "" && !allowEmpty {
 					h.writeError(w, r, http.StatusBadRequest, "invalid_api_key", fmt.Sprintf("api_keys[%d].api_key is required", index))
 					return nil, false
 				}
@@ -1910,6 +1919,7 @@ func (h Handler) sitePayloadWithCapabilities(item store.Site) map[string]any {
 	}
 	payload["supports_multiple_api_keys"] = sitepkg.SupportsMultipleAPIKeys(item.SiteType)
 	payload["supports_api_key_cost_multiplier"] = sitepkg.SupportsAPIKeyCostMultiplier(item.SiteType)
+	payload["allows_empty_api_key"] = sitepkg.AllowsEmptyAPIKey(item.SiteType)
 
 	return payload
 }

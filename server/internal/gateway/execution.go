@@ -22,6 +22,7 @@ import (
 	"xlyra/server/internal/inflight"
 	"xlyra/server/internal/ratelimit"
 	routeengine "xlyra/server/internal/router"
+	sitepkg "xlyra/server/internal/site"
 	"xlyra/server/internal/store"
 )
 
@@ -330,6 +331,21 @@ credentialLoop:
 				if resolved.GatewayEndpoints > 1 {
 					gatewayEndpoints = resolved.GatewayEndpoints
 				}
+			}
+			if store.IsAPIKeyCredentialType(selectedCredential.Credential.CredentialType) && strings.TrimSpace(upstreamKey) == "" && !sitepkg.AllowsEmptyAPIKey(candidate.Site.SiteType) {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_credential_unavailable"
+				result.errorMessage = "api key is empty"
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, true)
+				lastResult = result
+				if result.credentialDecision.ShouldTryNextCredential {
+					if releaseCredentialSelection != nil {
+						releaseCredentialSelection()
+					}
+					continue credentialLoop
+				}
+				return result
 			}
 
 			payload, err := buildGatewayUpstreamPayload(protocol, request, candidate)

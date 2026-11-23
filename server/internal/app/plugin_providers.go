@@ -213,6 +213,7 @@ func convertSiteProvider(plugin *jsplugin.Plugin) (preparedSiteProvider, error) 
 				OfficialBaseURL:    official,
 				ShowInCreateDialog: true,
 				IconURL:            siteProviderIconURL(plugin),
+				AllowsEmptyAPIKey:  section.Credential.Model == "api_key" && section.Credential.AllowEmpty,
 			},
 			PluginID:       plugin.Manifest.ID,
 			Enabled:        true,

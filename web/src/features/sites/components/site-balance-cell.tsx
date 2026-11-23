@@ -60,7 +60,7 @@ export function SiteBalanceDetailsContent({ site, apiKeys = [] }: { site: Site; 
               <span className="truncate text-label">{keyName || apiKey.key}</span>
               {apiKey.group ? <span className="shrink-0 text-label-2">{apiKey.group}</span> : null}
             </div>
-            {keyName ? <div className="truncate font-mono text-label-2">{apiKey.key}</div> : null}
+            {keyName && apiKey.key ? <div className="truncate font-mono text-label-2">{apiKey.key}</div> : null}
             {failure ? <div className="mt-1 text-warning">{failure}</div> : null}
             {plan || expiresAt || apiKeyDetails.length > 0 ? (
               <div className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-0.5">
@@ -115,7 +115,10 @@ export function SiteBalanceCell({ site, apiKeys = [], className }: { site: Site;
       ? `${value}: ${keyDetails.map(({ apiKey, details: apiKeyDetails }) => {
           const probe = apiKey.quota_probe
           const expiresAt = probe?.expires_at ? formatDateTime(probe.expires_at, i18n.language, 'h23') : ''
-          const values = [apiKey.name && apiKey.name !== apiKey.key ? `${apiKey.name}, ${apiKey.key}` : apiKey.key]
+          const keyLabel = apiKey.name && apiKey.name !== apiKey.key
+            ? (apiKey.key ? `${apiKey.name}, ${apiKey.key}` : apiKey.name)
+            : apiKey.key
+          const values = keyLabel ? [keyLabel] : []
           const plan = apiKeyDetails.some((detail) => detail.label === 'accountBalance') ? undefined : probe?.plan
           if (apiKey.group) values.push(apiKey.group)
           const failure = probeFailureText(probe)
