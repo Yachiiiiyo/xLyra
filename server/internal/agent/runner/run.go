@@ -62,16 +62,33 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	}
 	prep := &prepared{level: level, tokenFile: filepath.Join(agentDir, "token"), identity: identity}
 	var bashConfig *xlyraBashConfig
+	bashWanted := ar.kind != "compact" && ((r.cfg.Sandbox != nil && r.cfg.Sandbox.Bash) || r.cfg.LocalBash != nil)
+	if bashWanted && r.cfg.CtlEngine != nil {
+		ctlSrv, ctlErr := r.startRunControlServer(ar, prep, spec.mode, identity)
+		if ctlErr != nil {
+			return prep, ctlErr
+		}
+		prep.ctlServer = ctlSrv
+	}
 	if r.cfg.Sandbox != nil && r.cfg.Sandbox.Bash && ar.kind != "compact" {
 		sessionDir := r.cfg.Store.Dir(ar.sessionID)
 		audit, auditErr := execd.NewFileAudit(filepath.Join(sessionDir, "exec-audit.jsonl"))
 		if auditErr != nil {
 			r.logger.Warn("创建命令审计文件失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", auditErr)
 		}
+		var ctlSock, ctlNonce, cliBinDir string
+		if prep.ctlServer != nil {
+			ctlSock = prep.ctlServer.SocketPath()
+			ctlNonce = prep.ctlServer.Nonce()
+			cliBinDir = r.cfg.CLIBinDir
+		}
 		prep.executor, err = execd.New(execd.Config{
 			Exe: r.cfg.Sandbox.Exe, SessionDir: sessionDir,
 			PiUID: int(identity.PiUID), ExecUID: int(identity.ExecUID), GID: int(identity.GID),
 			Workspace:      r.cfg.Store.WorkDir(ar.sessionID),
+			CtlSocketPath:  ctlSock,
+			CtlNonce:       ctlNonce,
+			CLIBinDir:      cliBinDir,
 			DefaultTimeout: r.cfg.Sandbox.ExecDefaultTimeout, MaxTimeout: r.cfg.Sandbox.ExecMaxTimeout,
 			Audit: audit, Logger: r.logger,
 		})
@@ -87,6 +104,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 			Enabled: true, Socket: sock,
 			DefaultTimeout: int(r.cfg.Sandbox.ExecDefaultTimeout / time.Second),
 			MaxTimeout:     int(r.cfg.Sandbox.ExecMaxTimeout / time.Second),
+			CtlEnabled:     prep.ctlServer != nil,
 		}
 	} else if r.cfg.LocalBash != nil && ar.kind != "compact" {
 		// 沙箱未启用:bash 在本机直接执行,无 socket,只有超时限制。
@@ -94,6 +112,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 			Enabled: true, Mode: "local",
 			DefaultTimeout: int(r.cfg.LocalBash.DefaultTimeout / time.Second),
 			MaxTimeout:     int(r.cfg.LocalBash.MaxTimeout / time.Second),
+			CtlEnabled:     prep.ctlServer != nil,
 		}
 	}
 	token, _, err := r.cfg.Tokens.IssueRunToken(ar.ctx, ar.sessionID, ar.runID, spec.model)
@@ -137,6 +156,13 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	bashReady := prep.executor != nil || bashConfig != nil
 	localBash := bashConfig != nil && bashConfig.Mode == "local"
 	systemPrompt := r.systemPrompt(r.cfg.Store.WorkDir(ar.sessionID), bashReady, localBash, execDefaultTimeout, imageEnabled, questionEnabled, fastTaskEnabled)
+	if prep.ctlServer != nil {
+		systemPrompt += cliSystemPrompt
+	}
+	skillDirs := snap.SkillDirs
+	if len(r.cfg.BuiltinSkillDirs) > 0 && ar.kind != "compact" {
+		skillDirs = mergeSkillDirs(snap.SkillDirs, r.cfg.BuiltinSkillDirs)
+	}
 	files := map[string][]byte{
 		"settings.json": settingsJSON,
 	}
@@ -167,7 +193,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		Provider json.RawMessage `json:"provider"`
 		AgentsMD string          `json:"agentsMd"`
 	}{
-		Runtime:  xlyraConfigJSON(spec.mode, snap.SkillDirs, bashConfig, imageGeneration, fastTask),
+		Runtime:  xlyraConfigJSON(spec.mode, skillDirs, bashConfig, imageGeneration, fastTask),
 		Provider: modelsFile.Providers[piconfig.ProviderName],
 		AgentsMD: snap.AgentsMD,
 	})
@@ -194,7 +220,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	// 技能发现固定关闭,只加载快照里启用的目录(停用 = 不传,不依赖
 	// settings 排除写法);AGENTS.md 发现被关闭时加 --no-context-files。
 	args = append(args, "--no-skills")
-	for _, dir := range snap.SkillDirs {
+	for _, dir := range skillDirs {
 		args = append(args, "--skill", dir)
 	}
 	if !snap.EnableAgentsMD {
@@ -206,9 +232,18 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 	if identity != nil {
 		home = agentDir
 	}
+	pathEnv := r.cfg.PathEnv
+	var piCtlSock, piCtlNonce string
+	if prep.ctlServer != nil && prep.executor == nil {
+		// 本机模式下 bash 直接继承 Pi 环境；沙箱模式下改为只注入 execd 子环境，Pi 进程本身不持有控制面 nonce。
+		pathEnv = prependPathDir(r.cfg.CLIBinDir, pathEnv)
+		piCtlSock = prep.ctlServer.SocketPath()
+		piCtlNonce = prep.ctlServer.Nonce()
+	}
 	env := piconfig.Env(piconfig.EnvInput{
 		Home: home, AgentDir: agentDir, SessionDir: piDir,
-		Path: r.cfg.PathEnv, RunConfig: string(runConfigJSON),
+		Path: pathEnv, RunConfig: string(runConfigJSON),
+		CtlSock: piCtlSock, CtlNonce: piCtlNonce,
 	})
 	// 进程生命周期不由停止信号直接取消:Stop 要先 Abort 等待 agent_settled,
 	// 提前 Kill 会把取消变成 agent_error;收尾统一走 cleanup 的 Close。
@@ -232,7 +267,7 @@ func (r *Runner) prepare(ar *activeRun, spec runSpec, piSessionID string) (*prep
 		spec := sandbox.Spec{
 			UID: int(identity.PiUID), GID: int(identity.GID),
 			Workspace: r.cfg.Store.WorkDir(ar.sessionID), Cwd: r.cfg.Store.WorkDir(ar.sessionID),
-			ReadOnly:  piReadOnlyPaths(r.cfg.Command, piEntry, strings.TrimSpace(r.cfg.ExtensionPath), snap.SkillDirs, r.cfg.PathEnv),
+			ReadOnly:  piReadOnlyPaths(r.cfg.Command, piEntry, strings.TrimSpace(r.cfg.ExtensionPath), skillDirs, r.cfg.PathEnv),
 			ReadWrite: readWrite, Net: sandbox.NetConnectPorts, ConnectPorts: []int{port},
 			// umask 为 0:共享工作区里不同会话身份创建的文件要互相可写。
 			Umask: 0, Env: env, Limits: sandbox.Limits{NoFile: 4096, Core: 0},
@@ -473,6 +508,7 @@ type xlyraBashConfig struct {
 	Mode           string `json:"mode,omitempty"` // 本机直接执行时为 "local",沙箱模式不带
 	DefaultTimeout int    `json:"defaultTimeout"`
 	MaxTimeout     int    `json:"maxTimeout"`
+	CtlEnabled     bool   `json:"ctlEnabled,omitempty"`
 }
 
 type xlyraImageGenerationConfig struct {
@@ -875,11 +911,13 @@ func (r *Runner) resolveEscalation(ar *activeRun, id string, opts resolveOptions
 	if reviewing && opts.auto {
 		r.publish(ar, request)
 	}
-	if proc := ar.proc.Load(); proc != nil {
-		if err := proc.Send(map[string]any{
-			"type": "extension_ui_response", "id": id, "confirmed": opts.granted,
-		}); err != nil && !errors.Is(err, pirpc.ErrProcessExited) {
-			r.logger.Warn("回写审批失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", err)
+	if !r.deliverCLIApproval(ar, id, opts.granted) {
+		if proc := ar.proc.Load(); proc != nil {
+			if err := proc.Send(map[string]any{
+				"type": "extension_ui_response", "id": id, "confirmed": opts.granted,
+			}); err != nil && !errors.Is(err, pirpc.ErrProcessExited) {
+				r.logger.Warn("回写审批失败", "session_id", ar.sessionID, "run_id", ar.runID, "error", err)
+			}
 		}
 	}
 	if publishDecision {

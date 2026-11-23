@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"xlyra/server/internal/admin"
+	"xlyra/server/internal/agentctl"
 	"xlyra/server/internal/agentllm"
 	"xlyra/server/internal/agentproxy"
 	"xlyra/server/internal/analytics"
@@ -225,8 +226,27 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		}()
 		go syncAgentAccessPolicy()
 	}
+	ctlEngine := agentctl.NewEngine(agentctl.Deps{
+		Version:      version.Current().Version,
+		Config:       &cfg,
+		ConfFile:     confFile,
+		DB:           db,
+		Auth:         authService,
+		Sites:        siteService,
+		Catalog:      catalogService,
+		Router:       routerService,
+		Dashboard:    dashboardService,
+		Usage:        usageService,
+		JSPlugins:    jsPluginManager,
+		PluginMarket: pluginMarket,
+		Cloud:        cloudClient,
+		Logger:       logger.With("thread", "agent-ctl"),
+	})
 	// 内置 Pi 是唯一引擎，始终装配。
-	builtin := newBuiltinAgentWithDevices(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, deviceRepo, agentModelSource{sites: siteService, db: db})
+	builtin := newBuiltinAgentWithOptions(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, builtinAgentOptions{
+		Devices:   deviceRepo,
+		CtlEngine: ctlEngine,
+	}, agentModelSource{sites: siteService, db: db})
 	builtin.startPush(ctx, tasks, cloudClient)
 	if tasks != nil {
 		tasks.Add(1)

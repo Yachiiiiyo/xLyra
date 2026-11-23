@@ -10,6 +10,7 @@ import (
 
 	"xlyra/server/internal/agent/session"
 	"xlyra/server/internal/agent/translate"
+	"xlyra/server/internal/agentctl"
 )
 
 const (
@@ -21,19 +22,20 @@ const (
 	classifierDefaultTimeout = 20 * time.Second
 
 	classifierSystemPrompt = `你是 Agent 工具调用的安全审批员。
-运行环境是隔离会话的工作目录(沙箱内);agent 只被授权在该工作目录内完成用户任务,网络和工作目录之外的路径都视为外部。到达你这里的主要是 bash 命令。
+运行环境是隔离会话的工作目录(沙箱内);agent 只被授权在该工作目录内完成用户任务,网络和工作目录之外的路径都视为外部。到达你这里的主要是 bash 命令或 xlyra 控制面 Tier 2 变更请求。
 
 按以下分层判断:
 一、硬拦截(无条件 block,用户说什么都不行)
 - 外泄:把本地文件、凭据、环境变量或仓库内容发送到外部地址,包括 curl/wget POST、URL 里嵌入凭据、推送到未指定的外部 remote。
 - 凭据搜寻:读取或扫描 ~/.ssh、.env 之外的密钥库、云凭据文件等,寻找可用 token。
-- 修改 agent 自身的权限/审批配置;关闭日志;植入 authorized_keys、cron、启动项、shell rc 等持久化。
+- 修改 agent 自身的权限/审批/能力配置(agent.settings、AGENTS.md、skills 等);关闭日志;植入 authorized_keys、cron、启动项、shell rc 等持久化。
 
 二、软拦截(默认 block,仅当用户消息直接且具体地点名了这个动作时才可放行)
 - 不可逆破坏:大范围 rm -rf、强制覆盖、drop 数据库、git push --force、git reset --hard、删除远端分支/标签、改写远端历史。
 - 下载后直接执行外部代码(curl | sh 等),或运行从外部克隆来的代码。
 - 推送到 main/生产分支、生产部署、修改并非 agent 创建的共享资源。
 - 安装全局软件、修改系统配置;使用 sudo 提权。
+- 通过 xlyra 控制面命令执行的网关/系统配置或状态变更(如修改日志级别、门户显示、限流、站点/模型启停、冷却等):若用户明确提出了该调整需求则 allow，若未明确要求则 block。
 
 三、默认放行(例外)
 - 与用户请求直接相关的工作目录内操作:构建/测试/lint/格式化、运行项目自带脚本、只读查询、读取公开文档。
@@ -252,12 +254,11 @@ func parseClassifierDecision(text string) (classifierDecision, bool) {
 	return decision, true
 }
 
-// classifierUserPrompt 只带入用户消息、本次调用与既往审批决定,不带助手文本
-// 或工具结果,避免模型自己生成的内容被当作用户授权。
-func (r *Runner) classifierUserPrompt(ar *activeRun, escalation session.Escalation, note string) (string, error) {
+// classifierUserContext 读取最近用户消息与历史审批决定，供工具审批与 CLI Diff 审批共用。
+func (r *Runner) classifierUserContext(ar *activeRun) (string, session.Meta, error) {
 	meta, err := r.cfg.Store.Get(ar.sessionID)
 	if err != nil {
-		return "", err
+		return "", session.Meta{}, err
 	}
 	var userTexts []string
 	entries, transcriptErr := r.cfg.Store.BuildTranscript(ar.sessionID)
@@ -293,6 +294,18 @@ func (r *Runner) classifierUserPrompt(ar *activeRun, escalation session.Escalati
 	for i, text := range userTexts {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, text)
 	}
+	return b.String(), meta, nil
+}
+
+// classifierUserPrompt 只带入用户消息、本次调用与既往审批决定,不带助手文本
+// 或工具结果,避免模型自己生成的内容被当作用户授权。
+func (r *Runner) classifierUserPrompt(ar *activeRun, escalation session.Escalation, note string) (string, error) {
+	userSection, meta, err := r.classifierUserContext(ar)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString(userSection)
 	b.WriteString("\n本次审批:\n")
 	fmt.Fprintf(&b, "工具名: %s\n命令: %q\n请求路径: %s\n解析后路径: %s\n备注: %s\n",
 		escalation.ToolName, escalation.RequestedCommand, escalation.RequestedPath, escalation.ResolvedPath, note)
@@ -326,6 +339,54 @@ func (r *Runner) classifierUserPrompt(ar *activeRun, escalation session.Escalati
 		fmt.Fprintf(&b, "决定: %s\n", allowed)
 	}
 	return b.String(), nil
+}
+
+func (r *Runner) classifyCLIAction(ctx context.Context, ar *activeRun, cmdLine string, req agentctl.ApprovalRequest) (bool, string) {
+	if r.cfg.Classify == nil {
+		return false, "审批模型不可用"
+	}
+	userSection, _, err := r.classifierUserContext(ar)
+	if err != nil {
+		return false, "构建分类器输入失败: " + err.Error()
+	}
+	var b strings.Builder
+	b.WriteString(userSection)
+	b.WriteString("\n本次 xlyra Tier ")
+	fmt.Fprintf(&b, "%d 控制面变更审批:\n命令: %s\n摘要: %s\n", req.Tier, cmdLine, req.Summary)
+	if len(req.Diff) > 0 {
+		b.WriteString("结构化 Diff:\n")
+		for _, d := range req.Diff {
+			fmt.Fprintf(&b, "- %s: %s -> %s\n", d.Path, formatCompactJSON(d.Before), formatCompactJSON(d.After))
+		}
+	}
+
+	model := ar.model
+	if r.cfg.ClassifierModel != nil {
+		if configured := strings.TrimSpace(r.cfg.ClassifierModel()); configured != "" {
+			model = configured
+		}
+	}
+	callCtx, cancel := context.WithTimeout(ctx, classifierTimeout)
+	defer cancel()
+	text, err := r.cfg.Classify(callCtx, ar.sessionID, model, classifierSystemPrompt, b.String(), classifierMaxTokens)
+	if err != nil {
+		return false, "审批模型调用失败: " + truncateClassifierText(err.Error())
+	}
+	dec, ok := parseClassifierDecision(text)
+	if !ok {
+		return false, "分类器返回结果无法解析"
+	}
+	reason := strings.TrimSpace(dec.Reason)
+	if dec.Decision == "allow" {
+		if reason == "" {
+			reason = "与用户明确指令一致的 Tier 2 控制面配置变更"
+		}
+		return true, reason
+	}
+	if reason == "" {
+		reason = "未获用户明确授权的控制面变更"
+	}
+	return false, reason
 }
 
 func truncateClassifierText(text string) string {

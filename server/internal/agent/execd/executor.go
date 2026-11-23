@@ -38,6 +38,9 @@ type Config struct {
 	GID            int
 	Workspace      string
 	Tmp            string
+	CtlSocketPath  string
+	CtlNonce       string
+	CLIBinDir      string
 	DefaultTimeout time.Duration
 	MaxTimeout     time.Duration
 	MaxOutputBytes int64
@@ -61,6 +64,22 @@ type Executor struct {
 	ln      net.Listener
 	started bool
 	closed  bool
+
+	timerMu     sync.Mutex
+	activeTimer *activeExecTimer
+}
+
+type activeExecTimer struct {
+	mu        sync.Mutex
+	conn      net.Conn
+	writeMu   *sync.Mutex
+	timer     *time.Timer
+	paused    bool
+	pauseRefs int
+	startedAt time.Time
+	remaining time.Duration
+	onTimeout func()
+	closed    bool
 }
 
 func New(cfg Config) (*Executor, error) {
@@ -381,18 +400,127 @@ func (o *runOutcome) get() (bool, bool) {
 	return o.overflow, o.cancelled
 }
 
+// PauseTimer 暂停当前正在执行命令的超时计时，并向 xlyra.ts 发送暂停帧（主要用于审批弹窗等待期间）。
+func (e *Executor) PauseTimer() {
+	if e == nil {
+		return
+	}
+	e.timerMu.Lock()
+	at := e.activeTimer
+	e.timerMu.Unlock()
+	if at == nil {
+		return
+	}
+	at.pause()
+}
+
+// ResumeTimer 恢复先前暂停的命令超时计时，并通知 xlyra.ts 继续计时。
+func (e *Executor) ResumeTimer() {
+	if e == nil {
+		return
+	}
+	e.timerMu.Lock()
+	at := e.activeTimer
+	e.timerMu.Unlock()
+	if at == nil {
+		return
+	}
+	at.resume()
+}
+
+func (at *activeExecTimer) pause() {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if at.closed {
+		return
+	}
+	at.pauseRefs++
+	if at.paused {
+		return
+	}
+	at.paused = true
+	if at.timer != nil {
+		elapsed := time.Since(at.startedAt)
+		if at.remaining > elapsed {
+			at.remaining -= elapsed
+		} else {
+			at.remaining = time.Second
+		}
+		at.timer.Stop()
+	}
+	_ = writeProtocolLine(at.conn, at.writeMu, timerMsg{T: "timer", Action: "pause"})
+}
+
+func (at *activeExecTimer) resume() {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if at.closed || !at.paused {
+		return
+	}
+	if at.pauseRefs > 1 {
+		at.pauseRefs--
+		return
+	}
+	at.pauseRefs = 0
+	at.paused = false
+	if at.onTimeout != nil {
+		rem := at.remaining
+		if rem <= 0 {
+			rem = time.Second
+		}
+		at.startedAt = time.Now()
+		at.timer = time.AfterFunc(rem, at.onTimeout)
+	}
+	_ = writeProtocolLine(at.conn, at.writeMu, timerMsg{T: "timer", Action: "resume"})
+}
+
+func (at *activeExecTimer) stop() {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if at.closed {
+		return
+	}
+	at.closed = true
+	if at.timer != nil {
+		at.timer.Stop()
+	}
+}
+
 func (e *Executor) runCommand(conn net.Conn, req request, cwd string, disconnected <-chan struct{}, started time.Time) {
 	timeout := e.commandTimeout(req.Timeout)
+	pathEnv := defaultCommandPath
+	if dir := strings.TrimSpace(e.cfg.CLIBinDir); dir != "" {
+		pathEnv = dir + ":" + pathEnv
+	}
+	env := []string{
+		"PATH=" + pathEnv, "HOME=" + e.cfg.Tmp, "TMPDIR=" + e.cfg.Tmp,
+		"LANG=C.UTF-8", "TERM=dumb",
+	}
+	var readOnly, readWrite []string
+	if dir := strings.TrimSpace(e.cfg.CLIBinDir); dir != "" {
+		readOnly = append(readOnly, dir)
+	}
+	if sock := strings.TrimSpace(e.cfg.CtlSocketPath); sock != "" {
+		readWrite = append(readWrite, filepath.Dir(sock))
+		env = append(env, "XLYRA_CTL_SOCK="+sock)
+		if e.cfg.CtlNonce != "" {
+			env = append(env, "XLYRA_CTL_NONCE="+e.cfg.CtlNonce)
+		}
+	}
+	// 当启用控制面时，超时改由 Go 侧可暂停定时器托管，避免人工审批期间子进程被 sandbox 强杀。
+	sandboxTimeout := int(timeout / time.Second)
+	useManagedTimer := strings.TrimSpace(e.cfg.CtlSocketPath) != ""
+	if useManagedTimer {
+		sandboxTimeout = 0
+	}
 	spec := sandbox.Spec{
 		UID: e.cfg.ExecUID, GID: e.cfg.GID,
 		Workspace: e.cfg.Workspace, Tmp: e.cfg.Tmp, Cwd: cwd,
+		ReadOnly: readOnly, ReadWrite: readWrite,
 		// umask 为 0:共享工作区里不同会话身份创建的文件要互相可写。
 		Net: sandbox.NetNone, Umask: 0, Limits: e.cfg.Limits,
-		Timeout: int(timeout / time.Second),
-		Env: []string{
-			"PATH=" + defaultCommandPath, "HOME=" + e.cfg.Tmp, "TMPDIR=" + e.cfg.Tmp,
-			"LANG=C.UTF-8", "TERM=dumb",
-		},
+		Timeout: sandboxTimeout,
+		Env:     env,
 	}
 	cmd, err := sandbox.RunCommand(e.cfg.Exe, spec, []string{e.shell, "-c", req.Cmd})
 	if err != nil {
@@ -418,9 +546,36 @@ func (e *Executor) runCommand(conn net.Conn, req request, cwd string, disconnect
 		outcome.terminate.Do(func() { go e.terminateCommand(cmd, stdout, stderr, outcome.streamsDone) })
 	}
 	overflow := make(chan struct{})
+	managedTimedOut := make(chan struct{})
+	var managedTimeoutOnce sync.Once
 	var overflowOnce sync.Once
 	counter := &outputCounter{max: e.cfg.MaxOutputBytes}
 	var writeMu sync.Mutex
+
+	at := &activeExecTimer{
+		conn:      conn,
+		writeMu:   &writeMu,
+		startedAt: time.Now(),
+		remaining: timeout,
+	}
+	if useManagedTimer && timeout > 0 {
+		at.onTimeout = func() {
+			managedTimeoutOnce.Do(func() { close(managedTimedOut) })
+		}
+		at.timer = time.AfterFunc(timeout, at.onTimeout)
+	}
+	e.timerMu.Lock()
+	e.activeTimer = at
+	e.timerMu.Unlock()
+	defer func() {
+		at.stop()
+		e.timerMu.Lock()
+		if e.activeTimer == at {
+			e.activeTimer = nil
+		}
+		e.timerMu.Unlock()
+	}()
+
 	var readers sync.WaitGroup
 	readers.Add(2)
 	go func() {
@@ -443,6 +598,8 @@ func (e *Executor) runCommand(conn net.Conn, req request, cwd string, disconnect
 		case <-overflow:
 			outcome.set(true, false)
 			terminate()
+		case <-managedTimedOut:
+			terminate()
 		case <-e.dying:
 			outcome.set(false, true)
 			terminate()
@@ -455,9 +612,16 @@ func (e *Executor) runCommand(conn net.Conn, req request, cwd string, disconnect
 	waitErr := cmd.Wait()
 	close(outcome.finished)
 	code, signal := waitInfo(waitErr)
+	timedOutByManaged := false
+	select {
+	case <-managedTimedOut:
+		timedOutByManaged = true
+		code = 124
+	default:
+	}
 	reaped, residual := e.cleanupExecUID()
 	overflowed, cancelled := outcome.get()
-	exit := exitMsg{T: "exit", Code: code, Signal: signal, TimedOut: code == 124, Reaped: reaped}
+	exit := exitMsg{T: "exit", Code: code, Signal: signal, TimedOut: code == 124 || timedOutByManaged, Reaped: reaped}
 	var errs []string
 	if overflowed {
 		errs = append(errs, errOutputLimit.Error())

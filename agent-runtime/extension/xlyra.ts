@@ -64,11 +64,12 @@ const BLOCK_REASON_GENERIC = "扩展检查失败,已拒绝";
 // 执行器请求是一行 JSON:{"cmd":命令,"cwd":工作目录,"timeout":秒}\n;不传 env,
 // 环境由执行器构造。响应也是 JSON 行:{"t":"out"|"err","d":"<base64>"} 流式输出;
 // {"t":"exit","code":N,"signal":"","timed_out":bool,"reaped":N,"error":""} 结束。
-type BashSandboxConfig = { mode: "sandbox"; socket: string; defaultTimeout: number; maxTimeout: number };
-type BashLocalConfig = { mode: "local"; defaultTimeout: number; maxTimeout: number };
+type BashSandboxConfig = { mode: "sandbox"; socket: string; defaultTimeout: number; maxTimeout: number; ctlEnabled?: boolean };
+type BashLocalConfig = { mode: "local"; defaultTimeout: number; maxTimeout: number; ctlEnabled?: boolean };
 type BashConfig = BashSandboxConfig | BashLocalConfig;
 type ExecutorMessage =
 	| { t: "out" | "err"; d: string }
+	| { t: "timer"; action: "pause" | "resume" }
 	| { t: "exit"; code: number; signal?: string; timed_out?: boolean; reaped?: number; error?: string };
 
 const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
@@ -123,9 +124,12 @@ function loadBashConfig(): BashConfig | null {
 		const maxTimeout = optionalPositiveInt(record.maxTimeout, MAX_BASH_TIMEOUT_SECONDS);
 		if (defaultTimeout === null || maxTimeout === null) return null;
 		const clamped = Math.min(defaultTimeout, maxTimeout);
-		if (mode === "local") return { mode: "local", defaultTimeout: clamped, maxTimeout };
+		const ctlEnabled = record.ctlEnabled === true;
+		if (mode === "local") return ctlEnabled ? { mode: "local", defaultTimeout: clamped, maxTimeout, ctlEnabled: true } : { mode: "local", defaultTimeout: clamped, maxTimeout };
 		if (typeof record.socket !== "string" || !path.isAbsolute(record.socket)) return null;
-		return { mode: "sandbox", socket: record.socket, defaultTimeout: clamped, maxTimeout };
+		return ctlEnabled
+			? { mode: "sandbox", socket: record.socket, defaultTimeout: clamped, maxTimeout, ctlEnabled: true }
+			: { mode: "sandbox", socket: record.socket, defaultTimeout: clamped, maxTimeout };
 	} catch {
 		return null;
 	}
@@ -188,13 +192,85 @@ function matchHighRiskRules(command: string): string[] | null {
 	return names.length > 0 ? names : null;
 }
 
+// 识别纯单条 xlyra 命令：禁止复合命令（; && || | & ` $() < > 换行），只允许首词为 xlyra 或 */xlyra。
+export function isPureXLyraCLICommand(command: string): boolean {
+	const trimmed = command.trim();
+	if (trimmed === "" || trimmed.includes("\n") || trimmed.includes("\r")) return false;
+	const tokens: string[] = [];
+	let current = "";
+	let inToken = false;
+	let quote: "'" | '"' | null = null;
+	for (let i = 0; i < trimmed.length; i += 1) {
+		const ch = trimmed[i]!;
+		if (quote === "'") {
+			if (ch === "'") {
+				quote = null;
+			} else {
+				current += ch;
+			}
+			inToken = true;
+			continue;
+		}
+		if (quote === '"') {
+			if (ch === "\\" && i + 1 < trimmed.length) {
+				i += 1;
+				current += trimmed[i]!;
+				inToken = true;
+				continue;
+			}
+			if (ch === '"' ) {
+				quote = null;
+			} else if (ch === "`" || ch === "$") {
+				return false;
+			} else {
+				current += ch;
+			}
+			inToken = true;
+			continue;
+		}
+		if (ch === "'" || ch === '"') {
+			quote = ch;
+			inToken = true;
+			continue;
+		}
+		if (ch === "\\" && i + 1 < trimmed.length) {
+			i += 1;
+			current += trimmed[i]!;
+			inToken = true;
+			continue;
+		}
+		if (/\s/.test(ch)) {
+			if (inToken) {
+				tokens.push(current);
+				current = "";
+				inToken = false;
+			}
+			continue;
+		}
+		if (";&|<>`()$*?~".includes(ch)) {
+			return false;
+		}
+		current += ch;
+		inToken = true;
+	}
+	if (quote !== null) return false;
+	if (inToken) tokens.push(current);
+	if (tokens.length === 0) return false;
+	const bin = tokens[0]!;
+	if (bin.includes("=")) return false;
+	return path.posix.basename(bin) === "xlyra" && path.basename(bin) === "xlyra";
+}
+
 // 本机 operations:复用 Pi 自带的本地 shell 执行(含进程树终止与 abort),只统一超时:
-// Pi 没传用 defaultTimeout,传了与 maxTimeout 取小。
+// Pi 没传用 defaultTimeout,传了与 maxTimeout 取小;纯 xlyra 命令放宽到 maxTimeout 以便人工审批。
 function localOperations(config: BashLocalConfig): BashOperations {
 	const base = createLocalBashOperations();
 	return {
 		exec: (command, cwd, options) => {
-			const requested = typeof options.timeout === "number" && options.timeout > 0 ? options.timeout : config.defaultTimeout;
+			let requested = typeof options.timeout === "number" && options.timeout > 0 ? options.timeout : config.defaultTimeout;
+			if (config.ctlEnabled && isPureXLyraCLICommand(command)) {
+				requested = Math.max(requested, config.maxTimeout);
+			}
 			const seconds = Math.max(1, Math.min(Math.floor(requested), config.maxTimeout));
 			return base.exec(command, cwd, { ...options, timeout: seconds });
 		},
@@ -208,7 +284,10 @@ function sandboxOperations(config: BashSandboxConfig): BashOperations {
 		exec: (command, cwd, { onData, signal, timeout }) =>
 			new Promise<{ exitCode: number | null }>((resolve, reject) => {
 				// 发给执行器的超时永远是正整数:Pi 没传用 defaultTimeout,传了与 maxTimeout 取小
-				const requested = typeof timeout === "number" && timeout > 0 ? timeout : config.defaultTimeout;
+				let requested = typeof timeout === "number" && timeout > 0 ? timeout : config.defaultTimeout;
+				if (config.ctlEnabled && isPureXLyraCLICommand(command)) {
+					requested = Math.max(requested, config.maxTimeout);
+				}
 				const seconds = Math.max(1, Math.min(Math.floor(requested), config.maxTimeout));
 
 				if (signal?.aborted) {
@@ -220,6 +299,9 @@ function sandboxOperations(config: BashSandboxConfig): BashOperations {
 				let buffer = "";
 				let finished = false;
 				let hardTimer: NodeJS.Timeout | undefined;
+				let timerPaused = false;
+				let remainingMs = (seconds + TIMEOUT_GRACE_SECONDS) * 1000;
+				let timerStartedAt = Date.now();
 
 				const finish = (settle: () => void) => {
 					if (finished) return;
@@ -229,14 +311,33 @@ function sandboxOperations(config: BashSandboxConfig): BashOperations {
 					conn.destroy(); // 断开连接:执行器据此杀整棵进程树并 reap
 					settle();
 				};
+				const armHardTimer = () => {
+					if (hardTimer !== undefined) clearTimeout(hardTimer);
+					timerStartedAt = Date.now();
+					hardTimer = setTimeout(
+						() => finish(() => reject(new Error(`timeout:${seconds}`))),
+						Math.max(50, remainingMs),
+					);
+				};
+				const pauseHardTimer = () => {
+					if (timerPaused || finished) return;
+					timerPaused = true;
+					remainingMs = Math.max(1000, remainingMs - (Date.now() - timerStartedAt));
+					if (hardTimer !== undefined) {
+						clearTimeout(hardTimer);
+						hardTimer = undefined;
+					}
+				};
+				const resumeHardTimer = () => {
+					if (!timerPaused || finished) return;
+					timerPaused = false;
+					armHardTimer();
+				};
 				const onAbort = () => finish(() => reject(new Error("aborted")));
 				signal?.addEventListener("abort", onAbort, { once: true });
 
-				// 本地兜底:超时 + 3 秒仍未收到 exit 就不再等执行器
-				hardTimer = setTimeout(
-					() => finish(() => reject(new Error(`timeout:${seconds}`))),
-					(seconds + TIMEOUT_GRACE_SECONDS) * 1000,
-				);
+				// 本地兜底:超时 + 3 秒仍未收到 exit 就不再等执行器（收到 pause 帧期间暂停计时）
+				armHardTimer();
 
 				conn.on("connect", () => {
 					conn.write(JSON.stringify({ cmd: command, cwd, timeout: seconds }) + "\n");
@@ -266,6 +367,15 @@ function sandboxOperations(config: BashSandboxConfig): BashOperations {
 								return;
 							}
 							onData(Buffer.from(message.d, "base64")); // out/err 都交给 Pi
+						} else if (message.t === "timer") {
+							if (message.action === "pause") {
+								pauseHardTimer();
+							} else if (message.action === "resume") {
+								resumeHardTimer();
+							} else {
+								finish(() => reject(new Error("sandbox: malformed response")));
+								return;
+							}
 						} else if (message.t === "exit") {
 							if (typeof message.code !== "number") {
 								finish(() => reject(new Error("sandbox: malformed response")));
@@ -311,6 +421,7 @@ async function approveBashCall(
 	event: BashToolCallEvent,
 	ctx: ExtensionContext,
 	permissionMode: PermissionMode,
+	bashConfig: BashConfig | null,
 ): Promise<ToolCallEventResult | undefined> {
 	const command = event.input?.command;
 	if (typeof command !== "string" || command === "") {
@@ -318,6 +429,10 @@ async function approveBashCall(
 	}
 	if (Buffer.byteLength(command, "utf8") > MAX_APPROVAL_COMMAND_BYTES) {
 		return { block: true, reason: "命令过长,已拒绝(超过 8 KiB)" };
+	}
+	// 纯单条 xlyra 命令直接走控制面 UDS，由服务端统一按 Tier 0-3 鉴权与单卡 Diff 审批。
+	if (bashConfig?.ctlEnabled && isPureXLyraCLICommand(command)) {
+		return;
 	}
 	if (permissionMode === "full") return; // 完全访问:输入校验通过即放行,不审批
 	// ask 与 auto 都标注高危;full 已在上面直接放行。note 仍只在 auto 命中时拼「命中规则」,
@@ -986,7 +1101,7 @@ export default function (pi: ExtensionAPI) {
 			if (event.toolName === "bash") {
 				// 未启用:不做任何审批/拦截(此时由 Go 的 --tools 白名单保证 bash 不可用)
 				if (bashConfig === null) return;
-				return await approveBashCall(event, ctx, permissionMode);
+				return await approveBashCall(event, ctx, permissionMode, bashConfig);
 			}
 			if (!PATH_TOOLS.has(event.toolName)) return; // 其他工具放行,白名单由 Go 控制
 			const input = (event.input ?? {}) as Record<string, unknown>;

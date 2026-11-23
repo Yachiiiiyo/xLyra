@@ -18,6 +18,9 @@ const (
 	apiKeyKey       contextKey = "api_key"
 )
 
+// AgentCLIActorType identifies audit log entries recorded by the built-in Agent via xlyra CLI.
+const AgentCLIActorType = "agent_cli"
+
 type AdminActor struct {
 	Type          string
 	AdminID       uuid.UUID

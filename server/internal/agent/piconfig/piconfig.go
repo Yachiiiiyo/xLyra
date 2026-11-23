@@ -435,12 +435,22 @@ type EnvInput struct {
 	Token string
 	// RunConfig 是单次 run 的 JSON 配置;非空时经 XLYRA_RUN_CONFIG 传入。
 	RunConfig string
+	// CtlSock 与 CtlNonce 是本 run 控制面 UDS 地址与认证 nonce;非空时传入对应环境变量。
+	CtlSock  string
+	CtlNonce string
 }
+
+const (
+	// CtlSockEnvName 为 xlyra 控制面 UDS 路径环境变量名。
+	CtlSockEnvName = "XLYRA_CTL_SOCK"
+	// CtlNonceEnvName 为 xlyra 控制面认证 nonce 环境变量名。
+	CtlNonceEnvName = "XLYRA_CTL_NONCE"
+)
 
 // Env 构造 Pi 子进程的完整环境:PATH、HOME、PI_CODING_AGENT_DIR、
 // PI_CODING_AGENT_SESSION_DIR、PI_OFFLINE=1、PI_SKIP_VERSION_CHECK=1、
-// PI_TELEMETRY=0,Token / RunConfig 非空时分别再加 XLYRA_TOKEN /
-// XLYRA_RUN_CONFIG(最多共 9 个键);宿主进程的其余环境(含密钥)一律不继承
+// PI_TELEMETRY=0,Token / RunConfig / CtlSock / CtlNonce 非空时分别追加对应环境变量;
+// 宿主进程的其余环境(含密钥)一律不继承
 // (07 §二 T1:这样启动实测零出站连接)。
 func Env(in EnvInput) []string {
 	env := []string{
@@ -457,6 +467,12 @@ func Env(in EnvInput) []string {
 	}
 	if in.RunConfig != "" {
 		env = append(env, RunConfigEnvName+"="+in.RunConfig)
+	}
+	if in.CtlSock != "" {
+		env = append(env, CtlSockEnvName+"="+in.CtlSock)
+	}
+	if in.CtlNonce != "" {
+		env = append(env, CtlNonceEnvName+"="+in.CtlNonce)
 	}
 	return env
 }

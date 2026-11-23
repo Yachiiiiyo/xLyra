@@ -44,6 +44,7 @@ type Config struct {
 	AgentNodeBin        string        `env:"AGENT_NODE_BIN"`
 	AgentPiEntry        string        `env:"AGENT_PI_ENTRY"`
 	AgentExtensionPath  string        `env:"AGENT_EXTENSION_PATH"`
+	AgentCLIBin         string        `env:"AGENT_CLI_BIN"`
 	AgentDataDir        string        `env:"AGENT_DATA_DIR"`
 	// AgentWorkspaceDir 是 Agent 共享工作区目录,空则 <数据目录>/workspace。
 	AgentWorkspaceDir  string        `env:"AGENT_WORKSPACE_DIR"`
