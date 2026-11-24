@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 
 	"xlyra/server/internal/httpclient"
-	routeengine "xlyra/server/internal/router"
 	"xlyra/server/internal/site"
 	"xlyra/server/internal/store"
 	"xlyra/server/internal/usage"
@@ -245,9 +244,17 @@ func (e *Engine) handleSite(ctx context.Context, action string, req CallRequest)
 		states, _ := sites.SiteStates(ctx)
 		q := strings.ToLower(strings.TrimSpace(stringParam(req.Params, "q")))
 		typeFilter := strings.ToLower(strings.TrimSpace(stringParam(req.Params, "site_type")))
+		if typeFilter == "" {
+			typeFilter = strings.ToLower(strings.TrimSpace(stringParam(req.Params, "type")))
+		}
+		_, hasEnabledFilter := req.Params["enabled"]
+		enabledFilter := boolParam(req.Params, "enabled", true)
 		items := make([]map[string]any, 0, len(list))
 		for _, item := range list {
 			if typeFilter != "" && strings.ToLower(item.SiteType) != typeFilter {
+				continue
+			}
+			if hasEnabledFilter && item.Enabled != enabledFilter {
 				continue
 			}
 			if q != "" && !strings.Contains(strings.ToLower(item.Name+item.Slug+item.BaseURL), q) {
@@ -272,13 +279,9 @@ func (e *Engine) handleSite(ctx context.Context, action string, req CallRequest)
 		return callResult{Data: map[string]any{"items": items, "count": len(items)}}, nil
 
 	case "get":
-		id, ce := parseUUIDParam(req.Target, "site_id")
+		item, ce := e.resolveSite(ctx, req.Target)
 		if ce != nil {
 			return callResult{}, ce
-		}
-		item, err := sites.Get(ctx, id)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
 		}
 		var metaObj any
 		if len(item.Meta) > 0 {
@@ -308,25 +311,22 @@ func (e *Engine) handleSite(ctx context.Context, action string, req CallRequest)
 			}
 			return callResult{Data: map[string]any{"items": states, "count": len(states)}}, nil
 		}
-		id, ce := parseUUIDParam(req.Target, "site_id")
+		resolvedSite, ce := e.resolveSite(ctx, req.Target)
 		if ce != nil {
 			return callResult{}, ce
 		}
-		res, err := sites.SiteHealth(ctx, id)
+		res, err := sites.SiteHealth(ctx, resolvedSite.ID)
 		if err != nil {
 			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
 		}
 		return callResult{Data: res}, nil
 
 	case "enable", "disable":
-		id, ce := parseUUIDParam(req.Target, "site_id")
+		cur, ce := e.resolveSite(ctx, req.Target)
 		if ce != nil {
 			return callResult{}, ce
 		}
-		cur, err := sites.Get(ctx, id)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
-		}
+		id := cur.ID
 		want := action == "enable"
 		diffs := []DiffItem{{Path: fmt.Sprintf("site.%s.enabled", id), Before: cur.Enabled, After: want}}
 		return callResult{
@@ -347,10 +347,11 @@ func (e *Engine) handleSite(ctx context.Context, action string, req CallRequest)
 		}, nil
 
 	case "update":
-		id, ce := parseUUIDParam(req.Target, "site_id")
+		cur, ce := e.resolveSite(ctx, req.Target)
 		if ce != nil {
 			return callResult{}, ce
 		}
+		id := cur.ID
 		var body map[string]any
 		if ce := decodePayloadInto(req.Payload, &body); ce != nil {
 			return callResult{}, ce
@@ -360,10 +361,6 @@ func (e *Engine) handleSite(ctx context.Context, action string, req CallRequest)
 				return callResult{}, newCallError(http.StatusForbidden, ErrCodePolicyTier0Denied,
 					fmt.Sprintf("field %q cannot be modified via agent CLI", forbidden)).withTier(Tier0Forbidden).withField(forbidden)
 			}
-		}
-		cur, err := sites.Get(ctx, id)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
 		}
 		params := site.UpdateSiteParams{
 			ID:       cur.ID,
@@ -460,10 +457,11 @@ func (e *Engine) handleSiteKey(ctx context.Context, action string, req CallReque
 	if sites == nil {
 		return callResult{}, newCallError(http.StatusServiceUnavailable, ErrCodeInternal, "site service is unavailable")
 	}
-	siteID, ce := parseUUIDParam(req.Target, "site_id")
+	resolvedSite, ce := e.resolveSite(ctx, req.Target)
 	if ce != nil {
 		return callResult{}, ce
 	}
+	siteID := resolvedSite.ID
 	switch action {
 	case "list":
 		keys, err := sites.APIKeys(ctx, siteID)
@@ -508,133 +506,7 @@ func sanitizeSiteAPIKey(k site.APIKeyCredential) map[string]any {
 	}
 }
 
-// --- model & site-model & pricing ---
-
-func (e *Engine) handleModel(ctx context.Context, action string, req CallRequest) (callResult, *callError) {
-	cat := e.Deps().Catalog
-	if cat == nil {
-		return callResult{}, newCallError(http.StatusServiceUnavailable, ErrCodeInternal, "catalog service is unavailable")
-	}
-	switch action {
-	case "list":
-		items, err := cat.List(ctx)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusInternalServerError, ErrCodeInternal, err.Error())
-		}
-		q := strings.ToLower(strings.TrimSpace(stringParam(req.Params, "q")))
-		filtered := items
-		if q != "" {
-			filtered = nil
-			for _, it := range items {
-				if strings.Contains(strings.ToLower(it.Model.ModelKey+" "+it.Model.DisplayName+" "+it.Model.Provider), q) {
-					filtered = append(filtered, it)
-				}
-			}
-		}
-		return callResult{Data: map[string]any{"items": filtered, "count": len(filtered)}}, nil
-	case "get":
-		target := strings.TrimSpace(req.Target)
-		if target == "" {
-			return callResult{}, newCallError(http.StatusBadRequest, ErrCodeInvalidArgument, "model id or key is required").withField("target")
-		}
-		items, err := cat.List(ctx)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusInternalServerError, ErrCodeInternal, err.Error())
-		}
-		for _, it := range items {
-			if it.Model.ID.String() == target || strings.EqualFold(it.Model.ModelKey, target) {
-				return callResult{Data: it}, nil
-			}
-		}
-		return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, fmt.Sprintf("model %q not found", target))
-	case "matrix":
-		id, ce := parseUUIDParam(req.Target, "model_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		matrix, err := cat.Matrix(ctx, id)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
-		}
-		return callResult{Data: matrix}, nil
-	}
-	return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, "unknown model action")
-}
-
-func (e *Engine) handleSiteModel(ctx context.Context, action string, req CallRequest) (callResult, *callError) {
-	sites := e.Deps().Sites
-	if sites == nil {
-		return callResult{}, newCallError(http.StatusServiceUnavailable, ErrCodeInternal, "site service is unavailable")
-	}
-	switch action {
-	case "list":
-		if strings.TrimSpace(req.Target) == "" {
-			all, err := sites.ListAllModelsBySite(ctx)
-			if err != nil {
-				return callResult{}, newCallError(http.StatusInternalServerError, ErrCodeInternal, err.Error())
-			}
-			return callResult{Data: map[string]any{"by_site": all}}, nil
-		}
-		siteID, ce := parseUUIDParam(req.Target, "site_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		models, err := sites.ListModels(ctx, siteID)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
-		}
-		return callResult{Data: map[string]any{"items": models, "count": len(models)}}, nil
-
-	case "enable", "disable":
-		siteID, ce := parseUUIDParam(req.Target, "site_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		modelID, ce := parseUUIDParam(req.SubTarget, "site_model_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		want := action == "enable"
-		models, err := sites.ListModels(ctx, siteID)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
-		}
-		var before *store.SiteModel
-		for i := range models {
-			if models[i].ID == modelID {
-				before = &models[i]
-				break
-			}
-		}
-		if before == nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound,
-				fmt.Sprintf("site_model %s not found in site %s", modelID, siteID))
-		}
-		wasEnabled := strings.EqualFold(before.Status, "active")
-		diffs := []DiffItem{{
-			Path:   fmt.Sprintf("site.%s.model.%s.status", siteID, before.UpstreamName),
-			Before: before.Status,
-			After:  map[bool]string{true: "active", false: "disabled"}[want],
-		}}
-		return callResult{
-			Plan: &mutationPlan{
-				Tier:           Tier2Managed,
-				Summary:        fmt.Sprintf("%s 站点模型 %s", map[bool]string{true: "启用", false: "停用"}[want], before.UpstreamName),
-				Diff:           diffs,
-				NoOp:           wasEnabled == want,
-				AppliedEffects: []string{"site_model." + action},
-				Commit: func(commitCtx context.Context) (any, error) {
-					updated, err := sites.SetModelEnabled(commitCtx, siteID, modelID, want)
-					if err != nil {
-						return nil, newCallError(http.StatusBadRequest, ErrCodeInvalidArgument, err.Error())
-					}
-					return updated, nil
-				},
-			},
-		}, nil
-	}
-	return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, "unknown site-model action")
-}
+// --- pricing ---
 
 func (e *Engine) handlePricing(ctx context.Context, action string, req CallRequest) (callResult, *callError) {
 	sites := e.Deps().Sites
@@ -648,6 +520,13 @@ func (e *Engine) handlePricing(ctx context.Context, action string, req CallReque
 		ModelKey:      stringParam(req.Params, "model_key"),
 		BillingType:   stringParam(req.Params, "billing_type"),
 		PricingStatus: stringParam(req.Params, "pricing_status"),
+	}
+	if siteFilter := strings.TrimSpace(stringParam(req.Params, "site")); siteFilter != "" {
+		resolved, ce := e.resolveSite(ctx, siteFilter)
+		if ce != nil {
+			return callResult{}, ce
+		}
+		filters.SiteID = resolved.ID
 	}
 	if action == "get" && strings.TrimSpace(req.Target) != "" {
 		if filters.ModelKey == "" {
@@ -705,7 +584,7 @@ func (e *Engine) handleAPIKey(ctx context.Context, action string, req CallReques
 		return callResult{Data: map[string]any{"items": items, "count": len(items)}}, nil
 
 	case "get":
-		id, ce := parseUUIDParam(req.Target, "api_key_id")
+		id, ce := e.resolveAPIKeyID(ctx, req.Target)
 		if ce != nil {
 			return callResult{}, ce
 		}
@@ -734,189 +613,6 @@ func (e *Engine) handleAPIKey(ctx context.Context, action string, req CallReques
 		}}, nil
 	}
 	return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, "unknown api-key action")
-}
-
-// --- route & cooldown ---
-
-func (e *Engine) handleRoute(ctx context.Context, action string, req CallRequest) (callResult, *callError) {
-	routerSvc := e.Deps().Router
-	if routerSvc == nil {
-		return callResult{}, newCallError(http.StatusServiceUnavailable, ErrCodeInternal, "router service is unavailable")
-	}
-	switch action {
-	case "list":
-		since := time.Now().Add(-24 * time.Hour)
-		if hours, ok := toInt(req.Params["hours"]); ok && hours > 0 && hours <= 24*30 {
-			since = time.Now().Add(-time.Duration(hours) * time.Hour)
-		}
-		rows, err := routerSvc.Overview(ctx, since)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusInternalServerError, ErrCodeInternal, err.Error())
-		}
-		return callResult{Data: map[string]any{"items": rows, "count": len(rows)}}, nil
-
-	case "get", "test":
-		modelKey := strings.TrimSpace(req.Target)
-		if modelKey == "" {
-			modelKey = strings.TrimSpace(stringParam(req.Params, "model"))
-		}
-		if modelKey == "" {
-			return callResult{}, newCallError(http.StatusBadRequest, ErrCodeInvalidArgument,
-				"model key is required for route inspection").withField("target")
-		}
-		limit := 20
-		if v, ok := toInt(req.Params["limit"]); ok && v > 0 && v <= 100 {
-			limit = v
-		}
-		candidates, err := routerSvc.Candidates(ctx, routeengine.CandidateQuery{
-			ModelKey:     modelKey,
-			EndpointType: stringParam(req.Params, "endpoint_type"),
-			Debug:        true,
-			Limit:        limit,
-		})
-		if err != nil {
-			return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, err.Error())
-		}
-		return callResult{Data: candidates}, nil
-	}
-	return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, "unknown route action")
-}
-
-func (e *Engine) handleCooldown(ctx context.Context, action string, req CallRequest) (callResult, *callError) {
-	routerSvc := e.Deps().Router
-	if routerSvc == nil {
-		return callResult{}, newCallError(http.StatusServiceUnavailable, ErrCodeInternal, "router service is unavailable")
-	}
-	switch action {
-	case "list":
-		rows, err := routerSvc.ActiveCooldowns(ctx)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusInternalServerError, ErrCodeInternal, err.Error())
-		}
-		return callResult{Data: map[string]any{"items": rows, "count": len(rows)}}, nil
-	case "get":
-		id, ce := parseUUIDParam(req.Target, "cooldown_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		rows, err := routerSvc.ActiveCooldowns(ctx)
-		if err != nil {
-			return callResult{}, newCallError(http.StatusInternalServerError, ErrCodeInternal, err.Error())
-		}
-		for _, row := range rows {
-			if row.ID == id {
-				return callResult{Data: row}, nil
-			}
-		}
-		return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, "cooldown not found")
-
-	case "activate":
-		var body struct {
-			SiteID           string `json:"site_id"`
-			SiteModelID      string `json:"site_model_id"`
-			SiteCredentialID string `json:"site_credential_id"`
-			Scope            string `json:"scope"`
-			Source           string `json:"source"`
-			Reason           string `json:"reason"`
-			DurationSeconds  int    `json:"duration_seconds"`
-		}
-		if ce := decodePayloadInto(req.Payload, &body); ce != nil {
-			return callResult{}, ce
-		}
-		if body.SiteID == "" {
-			body.SiteID = req.Target
-		}
-		siteID, ce := parseUUIDParam(body.SiteID, "site_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		if body.DurationSeconds <= 0 {
-			body.DurationSeconds = 300
-		}
-		if strings.TrimSpace(body.Source) == "" {
-			body.Source = "agent_cli"
-		}
-		if strings.TrimSpace(body.Reason) == "" {
-			body.Reason = "manual cooldown triggered via xlyra"
-		}
-		in := routeengine.CooldownInput{
-			SiteID:   siteID,
-			Scope:    strings.TrimSpace(body.Scope),
-			Source:   strings.TrimSpace(body.Source),
-			Reason:   strings.TrimSpace(body.Reason),
-			Duration: time.Duration(body.DurationSeconds) * time.Second,
-		}
-		if body.SiteModelID != "" {
-			id, ce := parseUUIDParam(body.SiteModelID, "site_model_id")
-			if ce != nil {
-				return callResult{}, ce
-			}
-			in.SiteModelID = &id
-		}
-		if body.SiteCredentialID != "" {
-			id, ce := parseUUIDParam(body.SiteCredentialID, "site_credential_id")
-			if ce != nil {
-				return callResult{}, ce
-			}
-			in.SiteCredentialID = &id
-		}
-		return callResult{
-			Plan: &mutationPlan{
-				Tier:    Tier2Managed,
-				Summary: fmt.Sprintf("激活站点 %s 冷却 (%ds)", siteID, body.DurationSeconds),
-				Diff: []DiffItem{{
-					Path:   "cooldown." + siteID.String(),
-					Before: nil,
-					After:  map[string]any{"duration_seconds": body.DurationSeconds, "reason": in.Reason, "source": in.Source},
-				}},
-				AppliedEffects: []string{"cooldown.activated"},
-				Commit: func(commitCtx context.Context) (any, error) {
-					return routerSvc.ActivateCooldown(commitCtx, in)
-				},
-			},
-		}, nil
-
-	case "clear":
-		siteID, ce := parseUUIDParam(req.Target, "site_id")
-		if ce != nil {
-			return callResult{}, ce
-		}
-		var siteModelID, credID *uuid.UUID
-		if s := strings.TrimSpace(stringParam(req.Params, "site_model_id")); s != "" {
-			id, ce := parseUUIDParam(s, "site_model_id")
-			if ce != nil {
-				return callResult{}, ce
-			}
-			siteModelID = &id
-		}
-		if s := strings.TrimSpace(stringParam(req.Params, "site_credential_id")); s != "" {
-			id, ce := parseUUIDParam(s, "site_credential_id")
-			if ce != nil {
-				return callResult{}, ce
-			}
-			credID = &id
-		}
-		source := strings.TrimSpace(stringParam(req.Params, "source"))
-		return callResult{
-			Plan: &mutationPlan{
-				Tier:    Tier2Managed,
-				Summary: fmt.Sprintf("清除站点 %s 冷却状态", siteID),
-				Diff: []DiffItem{{
-					Path:   "cooldown." + siteID.String(),
-					Before: "active",
-					After:  "cleared",
-				}},
-				AppliedEffects: []string{"cooldown.cleared"},
-				Commit: func(commitCtx context.Context) (any, error) {
-					if err := routerSvc.ClearCooldown(commitCtx, siteID, siteModelID, credID, source); err != nil {
-						return nil, err
-					}
-					return map[string]any{"cleared": true, "site_id": siteID}, nil
-				},
-			},
-		}, nil
-	}
-	return callResult{}, newCallError(http.StatusNotFound, ErrCodeNotFound, "unknown cooldown action")
 }
 
 // --- capabilities / backup / cloud ---

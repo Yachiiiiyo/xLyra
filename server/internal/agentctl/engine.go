@@ -44,9 +44,10 @@ type Deps struct {
 	JSPlugins       *jsplugin.Manager
 	PluginMarket    *market.Service
 	Cloud           *cloudclient.Client
-	Approver        Approver
-	Logger          *slog.Logger
-	OnConfigChanged func(domain string)
+	Approver         Approver
+	Logger           *slog.Logger
+	OnConfigChanged  func(domain string)
+	OnCatalogChanged func()
 }
 
 // Engine executes normalized control-plane requests independent of transport (UDS CLI, MCP, tests).
@@ -126,7 +127,8 @@ func (e *Engine) Execute(ctx context.Context, caller Caller, req CallRequest) (i
 	if !ok {
 		return http.StatusNotFound, errorEnvelope(
 			newCallError(http.StatusNotFound, ErrCodeNotFound,
-				fmt.Sprintf("unknown operation %s/%s", req.Resource, req.Action)),
+				fmt.Sprintf("unknown operation %s/%s", req.Resource, req.Action)).
+				withHint("请运行 `xlyra schema` 查看当前服务端支持的操作，或检查 CLI 与服务端版本是否匹配"),
 		)
 	}
 
@@ -271,6 +273,12 @@ func (e *Engine) Execute(ctx context.Context, caller Caller, req CallRequest) (i
 
 	if e.deps.OnConfigChanged != nil && (spec.Domain == DomainConfig || spec.Domain == DomainNetwork) {
 		e.deps.OnConfigChanged(spec.Domain)
+	}
+	if e.deps.OnCatalogChanged != nil {
+		switch spec.Domain {
+		case DomainModel, DomainSiteModel, DomainSite, DomainSiteGroup, DomainSiteKey, DomainPricing, DomainAPIKey, DomainCooldown:
+			e.deps.OnCatalogChanged()
+		}
 	}
 	e.recordAudit(ctx, caller, spec, req, plan.Diff, true, "", plan.AppliedEffects)
 

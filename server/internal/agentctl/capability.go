@@ -327,21 +327,28 @@ var builtinOpSpecs = []OpSpec{
 	{Resource: "site-key", Action: "disable", Domain: DomainSiteKey, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_site_key_disable", Summary: "停用站点凭证"},
 
 	// Models
-	{Resource: "model", Action: "list", Domain: DomainModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_model_list", Summary: "列出全局标准模型目录"},
-	{Resource: "model", Action: "get", Domain: DomainModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_model_get", Summary: "查看标准模型详情与关联渠道"},
+	{Resource: "model", Action: "list", Domain: DomainModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_model_list", Summary: "列出全局标准模型目录（支持 --provider/--category/--search/分页）"},
+	{Resource: "model", Action: "get", Domain: DomainModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_model_get", Summary: "查看标准模型详情、别名、统计口径与可选站点矩阵（--matrix）"},
 	{Resource: "model", Action: "matrix", Domain: DomainModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_model_matrix", Summary: "查看标准模型的站点能力矩阵"},
-	{Resource: "model", Action: "create", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_model_create", Summary: "创建标准模型"},
-	{Resource: "model", Action: "update", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_model_update", Summary: "更新标准模型"},
-	{Resource: "model", Action: "delete", Domain: DomainModel, Verb: VerbDelete, Tier: Tier3HighRisk, Implemented: false, MCPName: "xlyra_model_delete", Summary: "删除标准模型"},
+	{Resource: "model", Action: "create", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_model_create", Summary: "创建标准模型"},
+	{Resource: "model", Action: "update", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_model_update", Summary: "更新标准模型"},
+	{Resource: "model", Action: "delete", Domain: DomainModel, Verb: VerbDelete, Tier: Tier3HighRisk, Implemented: true, MCPName: "xlyra_model_delete", Summary: "归档无关联站点的标准模型"},
+	{Resource: "model", Action: "merge", Domain: DomainModel, Verb: VerbWrite, Tier: Tier3HighRisk, Implemented: true, MCPName: "xlyra_model_merge", Summary: "合并源标准模型到目标标准模型（迁移渠道与别名并归档源模型）"},
+	{Resource: "model", Action: "alias-add", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_model_alias_add", Summary: "为标准模型添加手动别名"},
+	{Resource: "model", Action: "alias-delete", Domain: DomainModel, Verb: VerbDelete, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_model_alias_delete", Summary: "删除标准模型别名"},
+	{Resource: "model", Action: "pricing-set", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_model_pricing_set", Summary: "设置标准模型手动参考定价"},
+	{Resource: "model", Action: "pricing-reset", Domain: DomainModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_model_pricing_reset", Summary: "重置标准模型参考定价"},
 	{Resource: "model", Action: "discover", Domain: DomainModel, Verb: VerbTrigger, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_model_discover", Summary: "触发站点模型发现"},
 
 	// Site models
-	{Resource: "site-model", Action: "list", Domain: DomainSiteModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_site_model_list", Summary: "列出站点的下游模型列表"},
+	{Resource: "site-model", Action: "list", Domain: DomainSiteModel, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_site_model_list", Summary: "列出站点模型（支持 --site/--canonical/--enabled/--page/--page-size 过滤与分页）"},
 	{Resource: "site-model", Action: "enable", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_site_model_enable", Summary: "启用站点模型"},
 	{Resource: "site-model", Action: "disable", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_site_model_disable", Summary: "停用站点模型"},
+	{Resource: "site-model", Action: "update", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_site_model_update", Summary: "更新站点模型启停状态"},
+	{Resource: "site-model", Action: "batch-status", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_site_model_batch_status", Summary: "批量启停站点模型"},
+	{Resource: "site-model", Action: "bind-canonical", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_site_model_bind_canonical", Summary: "将站点模型绑定或解绑到指定标准模型"},
 	{Resource: "site-model", Action: "bulk-enable", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_site_model_bulk_enable", Summary: "批量启用站点模型"},
 	{Resource: "site-model", Action: "create", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_site_model_create", Summary: "新增站点模型"},
-	{Resource: "site-model", Action: "update", Domain: DomainSiteModel, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_site_model_update", Summary: "更新站点模型"},
 	{Resource: "site-model", Action: "delete", Domain: DomainSiteModel, Verb: VerbDelete, Tier: Tier3HighRisk, Implemented: false, MCPName: "xlyra_site_model_delete", Summary: "删除站点模型"},
 
 	// Pricing
@@ -363,16 +370,22 @@ var builtinOpSpecs = []OpSpec{
 	{Resource: "api-key", Action: "delete", Domain: DomainAPIKey, Verb: VerbDelete, Tier: Tier3HighRisk, Implemented: false, MCPName: "xlyra_api_key_delete", Summary: "删除外部 API Key"},
 
 	// Routing & Cooldowns
-	{Resource: "route", Action: "list", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_list", Summary: "列出路由概览与候选站点评分"},
-	{Resource: "route", Action: "get", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_get", Summary: "查看指定模型的路由候选明细"},
-	{Resource: "route", Action: "test", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_test", Summary: "模拟路由候选排序诊断"},
+	{Resource: "route", Action: "overview", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_overview", Summary: "列出路由概览与候选站点统计"},
+	{Resource: "route", Action: "list", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_list", Summary: "列出路由概览与候选站点评分（overview 别名）"},
+	{Resource: "route", Action: "candidates", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_candidates", Summary: "查看指定模型的全部路由候选明细与评分"},
+	{Resource: "route", Action: "select", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_select", Summary: "模拟路由主选与容灾计划"},
+	{Resource: "route", Action: "failover", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_failover", Summary: "模拟排除故障站点后的路由容灾计划"},
+	{Resource: "route", Action: "traces", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_traces", Summary: "查看近期路由决策轨迹"},
+	{Resource: "route", Action: "get", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_get", Summary: "查看指定模型的路由候选明细（candidates 别名）"},
+	{Resource: "route", Action: "test", Domain: DomainRoute, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_route_test", Summary: "模拟路由候选排序诊断（candidates 别名）"},
 	{Resource: "route", Action: "create", Domain: DomainRoute, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_route_create", Summary: "创建路由规则"},
 	{Resource: "route", Action: "update", Domain: DomainRoute, Verb: VerbWrite, Tier: Tier2Managed, Implemented: false, MCPName: "xlyra_route_update", Summary: "更新路由规则"},
 	{Resource: "route", Action: "delete", Domain: DomainRoute, Verb: VerbDelete, Tier: Tier3HighRisk, Implemented: false, MCPName: "xlyra_route_delete", Summary: "删除路由规则"},
 
 	{Resource: "cooldown", Action: "list", Domain: DomainCooldown, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_cooldown_list", Summary: "列出当前生效的模型或凭证冷却记录"},
 	{Resource: "cooldown", Action: "get", Domain: DomainCooldown, Verb: VerbRead, Tier: Tier1ReadOnly, Implemented: true, MCPName: "xlyra_cooldown_get", Summary: "查看冷却详情"},
-	{Resource: "cooldown", Action: "activate", Domain: DomainCooldown, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_cooldown_activate", Summary: "手动激活站点或模型冷却"},
+	{Resource: "cooldown", Action: "create", Domain: DomainCooldown, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_cooldown_create", Summary: "手动创建站点或模型冷却"},
+	{Resource: "cooldown", Action: "activate", Domain: DomainCooldown, Verb: VerbWrite, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_cooldown_activate", Summary: "手动激活站点或模型冷却（create 别名）"},
 	{Resource: "cooldown", Action: "clear", Domain: DomainCooldown, Verb: VerbDelete, Tier: Tier2Managed, Implemented: true, MCPName: "xlyra_cooldown_clear", Summary: "清除指定冷却记录"},
 	{Resource: "cooldown", Action: "clear-all", Domain: DomainCooldown, Verb: VerbDelete, Tier: Tier3HighRisk, Implemented: false, MCPName: "xlyra_cooldown_clear_all", Summary: "清空所有冷却记录"},
 

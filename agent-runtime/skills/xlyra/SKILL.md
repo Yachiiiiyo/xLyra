@@ -36,16 +36,23 @@ description: Use the xlyra control-plane CLI via the bash tool to inspect and sa
 
 ### 网关、站点、模型与路由
 - `xlyra proxy list` / `proxy get <id|name>` / `proxy create --name N --type http|https|socks5 --url U` / `proxy update <id|name> ...` / `proxy delete <id|name>`
-- `xlyra site list` / `site get <id|slug>` / `site health <id|slug>`
+- `xlyra site list [--enabled true|false] [--type T]` / `site get <id|slug>` / `site health <id|slug>`
 - `xlyra site enable <id|slug>` / `site disable <id|slug>` / `site update <id|slug> --json '{...}'`
 - `xlyra site-group list` / `site-group get <id|name>`
-- `xlyra site-key list <site-id>` / `site-key get <site-id> <cred-id>`（仅元数据，绝无明文）
-- `xlyra model list` / `model get <id|key>` / `model matrix <model-id>`
-- `xlyra site-model list <site-id>` / `site-model enable <site-id> <model-id>` / `site-model disable <site-id> <model-id>`
-- `xlyra pricing list` / `pricing get <model-key>`
+- `xlyra site-key list <site-id|slug>`（仅元数据，绝无明文）
+- `xlyra model list [--provider P] [--category C] [--search Q] [--status S] [--page N] [--page-size N]`
+- `xlyra model get <id|model_key|alias> [--matrix]`（加 `--matrix` 返回按站点模型去重后的模型↔站点矩阵与统一口径计数）
+- `xlyra model create|update|delete|merge`（如 `xlyra model merge <source> <target>` 将旧/分叉模型的渠道与别名合并到目标规范模型并归档源模型）
+- `xlyra model alias add <model> <alias>` / `model alias delete <model> <alias-id>`
+- `xlyra model pricing set <model> [--input F] [--output F]` / `model pricing reset <model>`
+- `xlyra site-model list [--site S] [--canonical M|none] [--enabled true|false] [--search Q] [--page N] [--page-size N] [--fields ...]`
+- `xlyra site-model update <site> <model-id> --enabled true|false` / `site-model batch-status <site> --ids id1,id2 --enabled true|false`
+- `xlyra site-model bind-canonical <site-model-id> <canonical-model-id|model_key|none>`
+- `xlyra pricing list [--site S]`
 - `xlyra api-key list` / `api-key get <id|name>`
-- `xlyra route list` / `route candidates <model-key>` / `route test <model-key>`
-- `xlyra cooldown list` / `cooldown get <id>` / `cooldown activate --site-id ...` / `cooldown clear <site-id>`
+- `xlyra route overview [--window-hours 24]` / `route candidates <model_key> [--limit N] [--debug]`
+- `xlyra route select --model <model_key> [--api-key ID] [--debug]` / `route failover --model <model_key> --failed-site-ids id1,id2 [--debug]` / `route traces [--model <model_key>] [--limit 20]`
+- `xlyra cooldown list` / `cooldown create --site <site> --duration 300 --reason "..."` / `cooldown clear --site <site>`
 
 ### 可观测性与只读诊断
 - `xlyra dashboard overview` / `dashboard insights`

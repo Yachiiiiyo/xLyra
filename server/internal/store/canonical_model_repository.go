@@ -46,8 +46,10 @@ type CanonicalModel struct {
 
 type CanonicalModelWithStats struct {
 	CanonicalModel
-	SiteModelCount int `gorm:"-"`
-	SiteCount      int `gorm:"-"`
+	SiteModelCount       int `gorm:"-"`
+	SiteCount            int `gorm:"-"`
+	ActiveSiteModelCount int `gorm:"-"`
+	ActiveSiteCount      int `gorm:"-"`
 }
 
 type UpsertCanonicalModelParams struct {
@@ -173,27 +175,34 @@ func (r CanonicalModelRepository) List(ctx context.Context) ([]CanonicalModelWit
 	if err := r.db.WithContext(ctx).Find(&sites).Error; err != nil {
 		return nil, fmt.Errorf("list canonical model site stats: %w", err)
 	}
-	activeSites := map[uuid.UUID]struct{}{}
+	activeSites := map[uuid.UUID]Site{}
 	for _, site := range filterActiveSites(sites) {
-		activeSites[site.ID] = struct{}{}
+		activeSites[site.ID] = site
 	}
 	result := make([]CanonicalModelWithStats, 0, len(models))
 	for _, model := range models {
 		item := CanonicalModelWithStats{CanonicalModel: model}
-		sites := map[uuid.UUID]struct{}{}
+		boundSites := map[uuid.UUID]struct{}{}
+		enabledSites := map[uuid.UUID]struct{}{}
 		for _, siteModel := range siteModels {
 			if siteModel.Status == "unavailable" {
 				continue
 			}
-			if _, ok := activeSites[siteModel.SiteID]; !ok {
+			site, ok := activeSites[siteModel.SiteID]
+			if !ok {
 				continue
 			}
 			if siteModel.CanonicalID.Valid && siteModel.CanonicalID.UUID == model.ID {
 				item.SiteModelCount++
-				sites[siteModel.SiteID] = struct{}{}
+				boundSites[siteModel.SiteID] = struct{}{}
+				if siteModel.Status == "active" && site.Enabled && site.Status == "active" {
+					item.ActiveSiteModelCount++
+					enabledSites[siteModel.SiteID] = struct{}{}
+				}
 			}
 		}
-		item.SiteCount = len(sites)
+		item.SiteCount = len(boundSites)
+		item.ActiveSiteCount = len(enabledSites)
 		result = append(result, item)
 	}
 	return result, nil

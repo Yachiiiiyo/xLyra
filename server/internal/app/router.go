@@ -239,8 +239,9 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		Usage:        usageService,
 		JSPlugins:    jsPluginManager,
 		PluginMarket: pluginMarket,
-		Cloud:        cloudClient,
-		Logger:       logger.With("thread", "agent-ctl"),
+		Cloud:            cloudClient,
+		Logger:           logger.With("thread", "agent-ctl"),
+		OnCatalogChanged: func() { gatewayHandler.InvalidateModelsCache() },
 	})
 	// 内置 Pi 是唯一引擎，始终装配。
 	builtin := newBuiltinAgentWithOptions(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, builtinAgentOptions{

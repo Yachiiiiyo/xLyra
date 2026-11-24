@@ -366,6 +366,8 @@ func canonicalModelItemPayload(item catalog.CanonicalModelItem) map[string]any {
 	payload := canonicalModelPayload(item.Model.CanonicalModel)
 	payload["site_model_count"] = item.Model.SiteModelCount
 	payload["site_count"] = item.Model.SiteCount
+	payload["active_site_model_count"] = item.Model.ActiveSiteModelCount
+	payload["active_site_count"] = item.Model.ActiveSiteCount
 	payload["aliases"] = canonicalModelAliasPayloads(item.Aliases)
 
 	return payload

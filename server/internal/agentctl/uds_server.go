@@ -162,6 +162,11 @@ func (s *UDSServer) Close(ctx context.Context) error {
 }
 
 func (s *UDSServer) handleCall(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(HeaderSchemaVersion, strconv.Itoa(SchemaVersion))
+	if ver := s.engine.Deps().Version; ver != "" {
+		w.Header().Set(HeaderServerVersion, ver)
+	}
+
 	if r.Method != http.MethodPost {
 		writeJSONEnvelope(w, http.StatusMethodNotAllowed, errorEnvelope(
 			newCallError(http.StatusMethodNotAllowed, ErrCodeInvalidArgument, "only POST /v1/call is supported"),

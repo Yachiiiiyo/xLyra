@@ -54,13 +54,21 @@ FROM alpine:3.22 AS cli-fetch
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG XLYRA_CLI_REPO=Yachiiiiyo/xLyra-cli
-ARG XLYRA_CLI_VERSION=v0.1.1
+ARG XLYRA_CLI_VERSION=latest
+ARG BUILD_TIMESTAMP
 
 RUN apk add --no-cache ca-certificates curl \
     && mkdir -p /tmp/xlyra /out \
     && cd /tmp/xlyra \
-    && archive="xlyra_${XLYRA_CLI_VERSION}_${TARGETOS}_${TARGETARCH}.tar.gz" \
-    && base_url="https://github.com/${XLYRA_CLI_REPO}/releases/download/${XLYRA_CLI_VERSION}" \
+    && cli_version="${XLYRA_CLI_VERSION}" \
+    && if [ "${cli_version}" = "latest" ] || [ -z "${cli_version}" ]; then \
+         latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${XLYRA_CLI_REPO}/releases/latest")"; \
+         cli_version="${latest_url##*/}"; \
+         echo "Resolved latest ${XLYRA_CLI_REPO} release: ${cli_version} (build=${BUILD_TIMESTAMP})"; \
+       fi \
+    && case "${cli_version}" in v*) ;; *) echo "error: failed to resolve release tag (got '${cli_version}')" >&2; exit 1 ;; esac \
+    && archive="xlyra_${cli_version}_${TARGETOS}_${TARGETARCH}.tar.gz" \
+    && base_url="https://github.com/${XLYRA_CLI_REPO}/releases/download/${cli_version}" \
     && curl -fsSL "${base_url}/checksums.txt" -o checksums.txt \
     && curl -fsSL "${base_url}/${archive}" -o "${archive}" \
     && grep -F "  ${archive}" checksums.txt > target.sha256 \

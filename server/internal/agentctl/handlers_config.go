@@ -100,6 +100,7 @@ func (e *Engine) handleStatusGet(ctx context.Context, caller Caller) (callResult
 		Data: map[string]any{
 			"server_version":     deps.Version,
 			"protocol_version":   ProtocolVersion,
+			"schema_version":     SchemaVersion,
 			"channel":            caller.Channel,
 			"permission_mode":    caller.PermissionMode,
 			"capability_policy":  policyMode,

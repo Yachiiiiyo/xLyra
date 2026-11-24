@@ -9,11 +9,24 @@ const (
 	// ProtocolVersion is the current UDS control-plane wire protocol version.
 	ProtocolVersion = 1
 
+	// SchemaVersion identifies the supported operation/parameter contract revision.
+	// Clients can inspect X-Xlyra-Ctl-Schema-Version or `status` to detect older servers.
+	SchemaVersion = 2
+
 	// HeaderProtocol carries the wire protocol version on every HTTP/UDS request.
 	HeaderProtocol = "X-Xlyra-Ctl-Protocol"
 
 	// HeaderNonce carries the per-run secret nonce in local (non-sandboxed) mode.
 	HeaderNonce = "X-Xlyra-Ctl-Nonce"
+
+	// HeaderCLIVersion optionally carries the calling xlyra CLI version.
+	HeaderCLIVersion = "X-Xlyra-Cli-Version"
+
+	// HeaderServerVersion carries the running xlyra-server version on every response.
+	HeaderServerVersion = "X-Xlyra-Server-Version"
+
+	// HeaderSchemaVersion carries SchemaVersion on every UDS response.
+	HeaderSchemaVersion = "X-Xlyra-Ctl-Schema-Version"
 )
 
 // CLI exit codes mirrored from xLyra-cli/internal/protocol/types.go for clarity.
