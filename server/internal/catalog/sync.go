@@ -208,8 +208,10 @@ func (s *SyncService) syncCatalogModel(ctx context.Context, repo store.Canonical
 		return err
 	}
 	for _, a := range m.Aliases {
-		if strings.TrimSpace(a) != "" {
-			_, _ = repo.CreateAlias(ctx, store.CreateCanonicalModelAliasParams{CanonicalModelID: model.ID, Alias: a, NormalizedAlias: strings.ToLower(strings.TrimSpace(a)), Source: "catalog"})
+		alias := strings.TrimSpace(a)
+		normalized := NormalizeModelKey(alias)
+		if alias != "" && normalized != "" {
+			_, _ = repo.CreateAlias(ctx, store.CreateCanonicalModelAliasParams{CanonicalModelID: model.ID, Alias: alias, NormalizedAlias: normalized, Source: "catalog"})
 		}
 	}
 	return nil

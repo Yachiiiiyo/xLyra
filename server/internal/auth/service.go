@@ -1937,27 +1937,7 @@ func (s *Service) normalizeExistingSiteModelIDs(ctx context.Context, siteModelID
 }
 
 func (s *Service) resolveCanonicalModel(ctx context.Context, modelKey string) (store.CanonicalModel, error) {
-	normalized := catalog.CanonicalModelKeyFromUpstream(modelKey)
-	if normalized == "" {
-		normalized = catalog.NormalizeModelKey(modelKey)
-	}
-	if normalized == "" {
-		return store.CanonicalModel{}, fmt.Errorf("model_key is required")
-	}
-
-	canonical, err := s.canonicalModels.GetByKey(ctx, normalized)
-	if err == nil {
-		return canonical, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.CanonicalModel{}, err
-	}
-
-	canonical, err = s.canonicalModels.GetByNormalizedAlias(ctx, normalized)
-	if err != nil {
-		return store.CanonicalModel{}, fmt.Errorf("canonical model %q was not found", modelKey)
-	}
-	return canonical, nil
+	return catalog.ResolveCanonicalModel(ctx, s.canonicalModels, modelKey)
 }
 
 func (s *Service) normalizeExistingModelKeys(ctx context.Context, modelKeys []string) ([]string, error) {

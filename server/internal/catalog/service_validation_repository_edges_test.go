@@ -24,29 +24,81 @@ func TestServiceValidationRejectsInvalidModelKeyBeforeRepository(t *testing.T) {
 	assertCatalogErrorContains(t, "Update", err, "model_key is required")
 }
 
-func TestArchiveRejectsAutoCreatedCanonicalBeforeCountingLinks(t *testing.T) {
+func TestArchiveAllowsEmptyAutoCreatedCanonicalAndRejectsLinkedModels(t *testing.T) {
 	t.Parallel()
 
 	canonicalID := uuid.New()
+	siteID := uuid.New()
+	var archivedModel store.CanonicalModel
+
 	db := catalogPostgresGorm(t)
 	replaceCatalogQueryCallback(t, db, func(tx *gorm.DB) {
-		if dest, ok := tx.Statement.Dest.(*store.CanonicalModel); ok {
+		switch dest := tx.Statement.Dest.(type) {
+		case *store.CanonicalModel:
 			*dest = store.CanonicalModel{
 				ID:           canonicalID,
-				ModelKey:     "gpt-4o",
-				DisplayName:  "GPT-4o",
-				Provider:     "openai",
+				ModelKey:     "deepseek-v4.1-flash",
+				DisplayName:  "DeepSeek V4.1 Flash",
+				Provider:     "deepseek",
 				Category:     "chat",
 				Capabilities: store.JSON(`{"auto_created":true,"source":"catalog_match"}`),
 				Status:       "active",
 			}
-			return
+			tx.Statement.RowsAffected = 1
+		case *[]store.SiteModel:
+			*dest = nil
+			tx.Statement.RowsAffected = 0
+		case *[]store.Site:
+			*dest = []store.Site{{ID: siteID, Status: "active", Enabled: true}}
+			tx.Statement.RowsAffected = 1
+		default:
+			tx.AddError(errors.New("unexpected repository query during empty auto-created archive"))
 		}
-		tx.AddError(errors.New("unexpected repository query after archive guard"))
+	})
+	replaceCatalogUpdateCallback(t, db, func(tx *gorm.DB) {
+		if model, ok := tx.Statement.Dest.(*store.CanonicalModel); ok {
+			archivedModel = *model
+		}
+		tx.Statement.RowsAffected = 1
 	})
 
-	_, err := (&Service{db: catalogStoreWithGorm(t, db)}).Archive(context.Background(), canonicalID)
-	assertCatalogErrorContains(t, "Archive", err, "only manually created canonical models can be archived manually")
+	archived, err := (&Service{db: catalogStoreWithGorm(t, db)}).Archive(context.Background(), canonicalID)
+	if err != nil {
+		t.Fatalf("Archive empty auto-created canonical returned error: %v", err)
+	}
+	if archived.Status != "archived" || archivedModel.Status != "archived" {
+		t.Fatalf("archived=%#v saved=%#v, want status=archived", archived, archivedModel)
+	}
+
+	linkedDB := catalogPostgresGorm(t)
+	replaceCatalogQueryCallback(t, linkedDB, func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *store.CanonicalModel:
+			*dest = store.CanonicalModel{
+				ID:           canonicalID,
+				ModelKey:     "deepseek-v4.1-flash",
+				Capabilities: store.JSON(`{"auto_created":true,"source":"catalog_match"}`),
+				Status:       "active",
+			}
+			tx.Statement.RowsAffected = 1
+		case *[]store.SiteModel:
+			*dest = []store.SiteModel{{
+				ID:          uuid.New(),
+				SiteID:      siteID,
+				CanonicalID: uuid.NullUUID{UUID: canonicalID, Valid: true},
+				Status:      "active",
+			}}
+			tx.Statement.RowsAffected = 1
+		case *[]store.Site:
+			*dest = []store.Site{{ID: siteID, Status: "active", Enabled: true}}
+			tx.Statement.RowsAffected = 1
+		default:
+			tx.AddError(errors.New("unexpected repository query during linked archive guard"))
+		}
+	})
+
+	_, err = (&Service{db: catalogStoreWithGorm(t, linkedDB)}).Archive(context.Background(), canonicalID)
+	assertCatalogErrorContains(t, "Archive", err, "canonical model still has linked site models")
 }
 
 func TestBindSiteModelPropagatesUnbindUpdateError(t *testing.T) {

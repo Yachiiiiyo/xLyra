@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"xlyra/server/internal/catalog"
 	sitepkg "xlyra/server/internal/site"
@@ -179,11 +178,32 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 		return CandidateList{}, fmt.Errorf("model_key is required")
 	}
 
-	canonicalModel, err := s.resolveCanonicalModel(ctx, modelKey)
+	canonicalCandidates, err := s.resolveCanonicalModels(ctx, modelKey)
 	if err != nil {
 		return CandidateList{}, err
 	}
 
+	var firstResult CandidateList
+	for index, canonicalModel := range canonicalCandidates {
+		if index > 0 && len(query.AllowedSiteModelIDs) > 0 {
+			break
+		}
+		result, err := s.candidatesForCanonical(ctx, canonicalModel, query)
+		if err != nil {
+			return CandidateList{}, err
+		}
+		if index == 0 {
+			firstResult = result
+		}
+		if len(result.Items) > 0 {
+			return result, nil
+		}
+	}
+
+	return firstResult, nil
+}
+
+func (s *Service) candidatesForCanonical(ctx context.Context, canonicalModel store.CanonicalModel, query CandidateQuery) (CandidateList, error) {
 	rows, err := store.NewRouteCandidateRepository(s.db.DB()).ListByCanonicalModel(ctx, canonicalModel.ID)
 	if err != nil {
 		return CandidateList{}, err
@@ -597,26 +617,11 @@ func (s *Service) ClearCooldown(ctx context.Context, siteID uuid.UUID, siteModel
 }
 
 func (s *Service) resolveCanonicalModel(ctx context.Context, modelKey string) (store.CanonicalModel, error) {
-	repo := store.NewCanonicalModelRepository(s.db.DB())
-	normalized := catalog.CanonicalModelKeyFromUpstream(modelKey)
-	if normalized == "" {
-		normalized = catalog.NormalizeModelKey(modelKey)
-	}
+	return catalog.ResolveCanonicalModel(ctx, store.NewCanonicalModelRepository(s.db.DB()), modelKey)
+}
 
-	canonical, err := repo.GetByKey(ctx, normalized)
-	if err == nil {
-		return canonical, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.CanonicalModel{}, err
-	}
-
-	canonical, err = repo.GetByNormalizedAlias(ctx, normalized)
-	if err != nil {
-		return store.CanonicalModel{}, fmt.Errorf("canonical model %q was not found", modelKey)
-	}
-
-	return canonical, nil
+func (s *Service) resolveCanonicalModels(ctx context.Context, modelKey string) ([]store.CanonicalModel, error) {
+	return catalog.ResolveCanonicalModelCandidates(ctx, store.NewCanonicalModelRepository(s.db.DB()), modelKey)
 }
 
 func scoreCandidate(item Candidate, minPrice float64, maxPrice float64) (float64, map[string]float64) {

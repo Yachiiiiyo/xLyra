@@ -41,6 +41,7 @@ func TestCanonicalModelHandlersRequireCatalogService(t *testing.T) {
 		{name: "create model", method: http.MethodPost, target: "/api/v1/models", body: `{"model_key":"gpt-5"}`, call: handler.CreateModel},
 		{name: "update model", req: adminRequestWithRouteParam(http.MethodPatch, "/api/v1/models/"+modelID, "", "modelID", modelID), body: `{"model_key":"gpt-5"}`, call: handler.UpdateModel},
 		{name: "delete model", req: adminRequestWithRouteParam(http.MethodDelete, "/api/v1/models/"+modelID, "", "modelID", modelID), call: handler.DeleteModel},
+		{name: "merge model", req: adminRequestWithRouteParam(http.MethodPost, "/api/v1/models/"+modelID+"/merge", "", "modelID", modelID), body: `{"target_model_id":"` + uuid.New().String() + `"}`, call: handler.MergeModel},
 		{name: "create alias", req: adminRequestWithRouteParam(http.MethodPost, "/api/v1/models/"+modelID+"/aliases", "", "modelID", modelID), body: `{"alias":"gpt-latest"}`, call: handler.CreateModelAlias},
 		{name: "delete alias", req: adminRequestWithRouteParam(http.MethodDelete, "/api/v1/models/"+modelID+"/aliases/"+aliasID, "", "modelID", modelID), call: handler.DeleteModelAlias},
 		{name: "bind site model", req: adminRequestWithRouteParam(http.MethodPatch, "/api/v1/site-models/"+siteModelID+"/canonical", "", "siteModelID", siteModelID), body: `{"canonical_model_id":"` + modelID + `"}`, call: handler.BindSiteModelCanonical},
@@ -88,6 +89,16 @@ func TestCanonicalModelHandlersRejectBadInputBeforeCatalogMutation(t *testing.T)
 	req.Body = ioNopCloserString(`{"canonical_model_id":"not-a-uuid"}`)
 	rec = adminPerform(handler.BindSiteModelCanonical, req)
 	assertAdminErrorCode(t, rec, http.StatusBadRequest, "invalid_canonical_model_id")
+
+	req = adminRequestWithRouteParam(http.MethodPost, "/api/v1/models/"+modelID+"/merge", "", "modelID", modelID)
+	req.Body = ioNopCloserString(`{"target_model_id":"not-a-uuid"}`)
+	rec = adminPerform(handler.MergeModel, req)
+	assertAdminErrorCode(t, rec, http.StatusBadRequest, "invalid_target_model_id")
+
+	req = adminRequestWithRouteParam(http.MethodPost, "/api/v1/models/"+modelID+"/merge", "", "modelID", modelID)
+	req.Body = ioNopCloserString(`{"target_model_id":"` + modelID + `"}`)
+	rec = adminPerform(handler.MergeModel, req)
+	assertAdminErrorCode(t, rec, http.StatusBadRequest, "canonical_model_merge_failed")
 }
 
 func TestModelHandlersRejectInvalidRouteIDsBeforeCatalogWork(t *testing.T) {

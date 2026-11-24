@@ -518,6 +518,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Post("/models", adminHandler.CreateModel)
 				protected.Put("/models/{modelID}", adminHandler.UpdateModel)
 				protected.Delete("/models/{modelID}", adminHandler.DeleteModel)
+				protected.Post("/models/{modelID}/merge", adminHandler.MergeModel)
 				protected.Get("/models/{modelID}/matrix", adminHandler.GetModelMatrix)
 				protected.Put("/models/{modelID}/pricing", adminHandler.UpdateModelPricing)
 				protected.Post("/models/{modelID}/pricing/reset", adminHandler.ResetModelPricing)
