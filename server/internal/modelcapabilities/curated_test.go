@@ -62,6 +62,10 @@ func TestInferEndpointTypesForModelUsesImageGrokAndFallbackRules(t *testing.T) {
 		{"mimo-v2.5-tts-voicedesign", []string{"openai", "openai-audio-speech"}},
 		{"mimo-v2.5-tts-voiceclone", []string{"openai", "openai-audio-speech"}},
 		{"flux-kontext-pro", []string{"openai-image"}},
+		{"seedream-4.0", []string{"openai-image"}},
+		{"seedream-5.5", []string{"openai-image"}},
+		{"seedream-5.5-uncensored", []string{"openai-image"}},
+		{"doubao-seedream-4-0-250828", []string{"openai-image"}},
 		{"gemini-image-3", []string{"google-gemini"}},
 		{"nano_banana_2", []string{"google-gemini"}},
 		{"nano-banana-pro", []string{"google-gemini"}},
@@ -99,6 +103,15 @@ func TestInferEndpointTypesForSiteModelHonorsAnthropicBasePath(t *testing.T) {
 		{"claude-sonnet-4-6", "openai", "", []string{"anthropic-messages"}},
 		{"grok-4.5", "openai", "", []string{"openai", "openai-response"}},
 		{"gemini-image-3", "openai", "", []string{"openai-image"}},
+		{"seedream-4.0", "openai", "", []string{"openai-image"}},
+		{"seedream-5.5", "openai", "", []string{"openai-image"}},
+		{"seedream-5.5-uncensored", "openai", "https://api.example.com/v1", []string{"openai-image"}},
+		{"Seedream_5.5", "openai", "", []string{"openai-image"}},
+		{"bytedance/seedream-v4", "openai", "", []string{"openai-image"}},
+		{"doubao-seed-1.6", "openai", "", []string{"openai", "anthropic-messages"}},
+		{"doubao-seed-1.6-thinking", "openai", "", []string{"openai", "anthropic-messages"}},
+		{"bytedance-seed-seed-oss-36b-instruct", "openai", "", []string{"openai", "anthropic-messages"}},
+		{"seedance-1.0-pro", "openai", "", []string{"openai", "anthropic-messages"}},
 		{"gemini-image-3", "xlyra", "", []string{"google-gemini"}},
 		{"nano_banana_2", "openai", "", []string{"openai-image"}},
 		{"nano-banana-pro", "openai", "", []string{"openai-image"}},
@@ -107,6 +120,41 @@ func TestInferEndpointTypesForSiteModelHonorsAnthropicBasePath(t *testing.T) {
 	for _, tc := range cases {
 		if got := InferEndpointTypesForSiteModel(tc.modelID, tc.siteType, tc.baseURL); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("InferEndpointTypesForSiteModel(%q, %q, %q) = %#v, want %#v", tc.modelID, tc.siteType, tc.baseURL, got, tc.want)
+		}
+	}
+}
+
+func TestIsImageGenerationModelRecognizesSeedreamWithoutSeedChatNames(t *testing.T) {
+	t.Parallel()
+
+	imageModels := []string{
+		"seedream-4.0",
+		"seedream-5.5",
+		"seedream-5.5-uncensored",
+		"Seedream_5.5",
+		"doubao-seedream-4-0-250828",
+		"bytedance/seedream-v4",
+	}
+	chatOrOtherModels := []string{
+		"doubao-seed-1.6",
+		"doubao-seed-1.6-thinking",
+		"doubao-seed-1.6-flash",
+		"seed-1.6",
+		"bytedance-seed-seed-oss-36b-instruct",
+		"seedance-1.0-pro",
+		"doubao-seedance-1.0",
+		"seededit-3.0",
+		"gpt-4o",
+		"",
+	}
+	for _, modelID := range imageModels {
+		if !IsImageGenerationModel(modelID) {
+			t.Errorf("IsImageGenerationModel(%q) = false, want true", modelID)
+		}
+	}
+	for _, modelID := range chatOrOtherModels {
+		if IsImageGenerationModel(modelID) {
+			t.Errorf("IsImageGenerationModel(%q) = true, want false", modelID)
 		}
 	}
 }

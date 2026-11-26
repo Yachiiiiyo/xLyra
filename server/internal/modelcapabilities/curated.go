@@ -127,6 +127,7 @@ func IsImageGenerationModel(modelID string) bool {
 	return strings.Contains(modelID, "image") ||
 		strings.Contains(modelID, "dall-e") ||
 		strings.Contains(modelID, "flux") ||
+		strings.Contains(modelID, "seedream") ||
 		isNanoBananaModel(modelID)
 }
 
