@@ -17,32 +17,10 @@ type StreamTransformContext struct {
 	Settings map[string]any `json:"settings,omitempty" ts:"settings,optional,type=Record<string, SettingValue>"`
 }
 
-func (c StreamTransformContext) asMap() map[string]any {
-	out := map[string]any{
-		"siteType": c.SiteType,
-		"model":    c.Model,
-		"protocol": c.Protocol,
-	}
-	if len(c.Settings) > 0 {
-		out["settings"] = c.Settings
-	}
-	return out
-}
-
 // StreamTransformEvent is the second argument passed to transformStream(ctx, event).
 type StreamTransformEvent struct {
 	Event string `json:"event,omitempty" ts:"event,optional"`
 	Data  string `json:"data" ts:"data"`
-}
-
-func (e StreamTransformEvent) asMap() map[string]any {
-	out := map[string]any{
-		"data": e.Data,
-	}
-	if e.Event != "" {
-		out["event"] = e.Event
-	}
-	return out
 }
 
 // StreamTransformResult is the object returned by transformStream(ctx, event).
@@ -55,7 +33,7 @@ type StreamTransformResult struct {
 
 // CallTransformStream runs transformStream(ctx, event) with the 5 ms per-event budget.
 func (p *Plugin) CallTransformStream(ctx context.Context, streamCtx StreamTransformContext, event StreamTransformEvent) (StreamTransformResult, []LogEntry, int, error) {
-	out, logs, dropped, err := p.callHook(ctx, HookTransformStream, streamHookTimeout, 0, streamCtx.asMap(), event.asMap())
+	out, logs, dropped, err := p.callHook(ctx, HookTransformStream, streamHookTimeout, 0, streamCtx, event)
 	if err != nil {
 		return StreamTransformResult{}, logs, dropped, err
 	}

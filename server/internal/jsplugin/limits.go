@@ -30,6 +30,10 @@ const (
 	MaxAllocBytes int64 = 64 << 20
 	// MaxResultBytes is the hook result bound passed to moejs.
 	MaxResultBytes int64 = 16 << 20
+	// MaxResultNodes is the hook result node-count bound passed to moejs.
+	MaxResultNodes int64 = 1 << 20
+	// MaxLiveBytes is the live JS heap limit checked after each call before returning a runtime to the pool.
+	MaxLiveBytes int64 = 16 << 20
 	// MaxStreamEventBytes bounds a single SSE frame data payload returned by transformStream.
 	MaxStreamEventBytes   = 1 << 20
 	maxRequestHeaders     = 32
@@ -45,8 +49,9 @@ const (
 	maxRandomBytes          = 64 << 10
 )
 
-// HeapLimitAvailable reports whether NewRuntime is configured with both an
-// allocation budget and a result-size bound. A zero value means that limit is off.
+// HeapLimitAvailable reports whether NewRuntime is configured with an
+// allocation budget, result bounds (bytes and nodes), and a live heap limit.
+// A zero value means that limit is off.
 func HeapLimitAvailable() bool {
-	return MaxAllocBytes > 0 && MaxResultBytes > 0
+	return MaxAllocBytes > 0 && MaxResultBytes > 0 && MaxResultNodes > 0 && MaxLiveBytes > 0
 }

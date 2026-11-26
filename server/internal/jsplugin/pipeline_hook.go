@@ -233,7 +233,7 @@ func (p *Plugin) inspectBatch(ctx context.Context, hookCtx InspectSegmentsContex
 	}
 	callCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
-	out, _, _, err := p.callHook(callCtx, HookInspectSegments, timeout, 0, encodeValue(hookCtx), encodeValue(input))
+	out, _, _, err := p.callHook(callCtx, HookInspectSegments, timeout, 0, hookCtx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -497,7 +497,7 @@ func (p *Plugin) runInspectSegmentsFixture(ctx context.Context, fixture Fixture)
 		Model:    fixture.Ctx.Model,
 		Binding:  InspectSegmentsBinding{ID: fixture.Ctx.BindingID, Params: params},
 	}
-	out, _, _, err := p.callHook(WithDiscardLogs(ctx), HookInspectSegments, protocolHookTimeout, 0, encodeValue(hookCtx), encodeValue(in))
+	out, _, _, err := p.callHook(WithDiscardLogs(ctx), HookInspectSegments, protocolHookTimeout, 0, hookCtx, in)
 	var result InspectSegmentsResult
 	if err == nil {
 		result, err = decodeInspectSegments(out)

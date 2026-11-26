@@ -638,21 +638,31 @@ func (p *Plugin) injectContextSettings(ctx context.Context, arg any) any {
 	if p == nil || len(p.Manifest.Settings) == 0 {
 		return arg
 	}
-	ctxMap, ok := arg.(map[string]any)
-	if !ok || ctxMap == nil {
-		return arg
-	}
-	cloned := maps.Clone(ctxMap)
-	var explicit map[string]any
-	if existing, ok := cloned["settings"].(map[string]any); ok {
-		explicit = existing
-	}
 	siteOverrides := siteSettingsFromContext(ctx)
 	p.stateMu.RLock()
 	global := p.globalSettings
 	p.stateMu.RUnlock()
-	cloned["settings"] = ResolveSettings(p.Manifest.Settings, global, siteOverrides, explicit)
-	return cloned
+	switch typed := arg.(type) {
+	case StreamTransformContext:
+		typed.Settings = ResolveSettings(p.Manifest.Settings, global, siteOverrides, typed.Settings)
+		return typed
+	case InspectSegmentsContext:
+		typed.Settings = ResolveSettings(p.Manifest.Settings, global, siteOverrides, typed.Settings)
+		return typed
+	case map[string]any:
+		if typed == nil {
+			return arg
+		}
+		cloned := maps.Clone(typed)
+		var explicit map[string]any
+		if existing, ok := cloned["settings"].(map[string]any); ok {
+			explicit = existing
+		}
+		cloned["settings"] = ResolveSettings(p.Manifest.Settings, global, siteOverrides, explicit)
+		return cloned
+	default:
+		return arg
+	}
 }
 
 // CallProbe runs the probe hook once.
