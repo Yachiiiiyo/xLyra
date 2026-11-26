@@ -2,26 +2,29 @@
 
 ## [1.20.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.19.0...v1.20.0) (2026-11-26)
 
+本版本新增通用插件网关双向文本管线与内置 Agent 的 `xlyra` 控制面：支持基于声明式规则与钩子的跨协议请求/响应双向内容处理及控制台 Dry-Run 预览；内置 Agent 可通过隔离的 Unix Domain Socket 直连主程序控制面完成自省与单次结构化 Diff 审批变更；同时上线真实流量站点熔断与会话粘滞选路、标准模型合并与别名回退修复、空 API Key 站点凭据支持，并治理了上游路由 Failover、Seedream 生图端点识别与用量分析无计费模型展示。
 
 ### Features
 
-* ✨ 实现通用插件网关双向文本管线与管理控制台支持 ([c16ef8c](https://github.com/Yachiiiiyo/xLyra/commit/c16ef8c390ed3e2327f1441e868d4960270b6883))
-* ✨ 接入内置 Agent 的 xlyra 控制面（UDS 引擎、单次 Diff 审批、内置技能与 MCP 能力矩阵预留） ([8cd7fcb](https://github.com/Yachiiiiyo/xLyra/commit/8cd7fcbf388d20a99c4481f97683d3bff4bec9f9))
-* ✨ 支持 api_key 类型站点插件通过 credential.allowEmpty 声明允许空 API Key 凭据 ([1b314b5](https://github.com/Yachiiiiyo/xLyra/commit/1b314b507d819c9d063b1c6486520c337fc083c4))
-* ✨ 新增真实流量站点熔断、同优先级加权与会话粘滞选路 ([1b99b96](https://github.com/Yachiiiiyo/xLyra/commit/1b99b964e3699d9ed12ebad6e5c3e81a59d59a2c))
+#### 插件基座与网关管线
+* ✨ 通用插件网关双向文本管线：新增宿主能力规范、纯 Go 文本匹配引擎（RE2 / 词典 / 格式校验器 / 缓存）、会话变换引擎与跨协议片段编解码内核；支持清单 `gatewayPipeline` 声明、`payload.inspect_raw` 权限门禁（强制受信签名与静态互斥校验）、`fail_closed` / `exclusive` 作用域绑定及 `inspectSegments` 钩子，打通网关入口拦截与缓冲响应、Canonical 流、透传 SSE、WebSocket 出口双向还原闭环
+* ✨ 管线工具链与管理控制台：新增管线 Dry-Run 试跑接口与端到端 Fixture 引擎，`xlyra-plugin` 新增 `dry-run` 命令与 `gateway_pipeline` 模板；Web 管理控制台支持管线绑定管理、Dry-Run 预览与下游 API Key 绑定徽章
+* ✨ 空凭据站点支持：支持 `api_key` 类型站点插件通过 `credential.allowEmpty` 声明允许空 API Key 凭据，打通站点与密钥表单、健康检查、网关上游调用及加密备份
 
+#### 内置 Agent 与控制面
+* ✨ 接入内置 Agent 的 `xlyra` 控制面：新增基于 Unix Domain Socket 的控制面引擎与 Schema 版本协商（Tier 0–3 风险分级与敏感字段脱敏），覆盖全局配置、站点、标准模型（含模型合并与矩阵视图）、路由诊断、冷却与观测查询；单条纯净 `xlyra` 命令走控制面直通通道（读操作免审批、写操作单次结构化 Diff 审批），镜像构建时自动拉取并校验最新 `xLyra-cli` 产物及内置 `xlyra` 技能
+
+#### 网关选路与标准模型
+* ✨ 真实流量站点熔断与会话粘滞选路：按近 5 分钟真实请求统计站点自身故障，失败率达 60% 时触发整站指数退避软冷却（1–5 分钟，仅降级排序不隐藏模型，探测成功即恢复）；同优先级且同冷却态候选采用加权 Rendezvous Hashing 与会话粘滞选路，请求日志新增 `route_pick` 元数据
+* ✨ 标准模型合并接口：管理后台与控制面新增模型合并能力，支持将分叉或旧模型的站点模型绑定与别名合并至目标标准模型并归档源模型
 
 ### Bug Fixes
 
-* 🐛 修复上游路由 failover 与冷却的多处问题 ([c01c7c9](https://github.com/Yachiiiiyo/xLyra/commit/c01c7c90f30086028dcaec329d87fe4d90a4dbc2))
-* 🐛 修复标准模型别名解析 503、站点匹配分叉与空壳归档限制，新增模型合并接口 ([7dd8d63](https://github.com/Yachiiiiyo/xLyra/commit/7dd8d63380741975fd3bdd46de17f0cb92eb38c8))
-* 🐛 图像端点识别只补充 Seedream ([96d9d23](https://github.com/Yachiiiiyo/xLyra/commit/96d9d2320c0378d470905796e4c17245f47cbbd9))
-* 🐛 对齐 xlyra 控制面命令与 Schema 版本协商、修复站点模型过滤分页与统计口径，Dockerfile 改为自动拉取最新 CLI 产物 ([8c22f76](https://github.com/Yachiiiiyo/xLyra/commit/8c22f76f89045815f4bcd4c1a0c99e2ca2131d2b))
-* 🐛 将 Seedream 等图像模型识别为 openai-image ([d364e90](https://github.com/Yachiiiiyo/xLyra/commit/d364e90d966399c55b8c4f9a403f279a6b94c156))
-* 🐛 将 Seedream 识别为 openai-image ([b4f0a64](https://github.com/Yachiiiiyo/xLyra/commit/b4f0a645c672338c7ec737f1dd4d96c1d53c7c6d))
-* 🐛 用量分析保留无计费模型展示与按指标排序，修正缺价提示文案 ([bda09ea](https://github.com/Yachiiiiyo/xLyra/commit/bda09ea5c7b13aeaaefccf497636fa80d48ae020)), closes [#11](https://github.com/Yachiiiiyo/xLyra/issues/11)
-* 🐛 镜像构建自动拉取 xlyra CLI 发布产物并打入内置 agent-runtime skills ([d044276](https://github.com/Yachiiiiyo/xLyra/commit/d04427627eca5f078a7170731685cbbe9860b338))
-* 🐛 首个输出超时为最后一个候选站点增加 120 秒兜底默认值 ([0ada2e4](https://github.com/Yachiiiiyo/xLyra/commit/0ada2e4793f62be44374e5cfdf2b5bfcd3a32c14))
+* 🐛 修复上游路由 Failover 与冷却的多处问题：统一识别余额不足并冷却至少 30 分钟；识别 502 包装的上游鉴权失败并冷却对应 Key；流式响应头返回后长时间无输出主动中止并切换（后续仍有候选站点默认 50 秒、最后一个候选站点默认 120 秒兜底，支持站点 `first_output_timeout_ms` 覆盖）；客户端在上游无响应时连续放弃 3 次触发站点模型 2 分钟软冷却；4xx 临时错误打模型软冷却；单候选协议解析失败改为跳过继续选路；单站点单请求最多尝试 8 个 Key 且检查 Failover 预算；无 Key-模型绑定站点以全部可用 Key 作为故障转移池；429 仅在 `Retry-After <= 30s` 时等待重试；非 JSON 上游错误体（如 Cloudflare HTML）转标准 JSON 错误返回；路由候选查询改为按目标模型过滤
+* 🐛 修复标准模型别名解析导致的 `503`、站点匹配分叉与空壳归档限制：归档模型不再遮蔽活跃别名，手动别名优先于同名标准模型并保留回退，空壳标准模型自动回退至有可路由站点模型的别名目标
+* 🐛 将 Seedream 系列模型正确识别为 `openai-image` 生图端点与 `image` 分类，修复 OpenAI 兼容站点同步后生图路由返回 `503` 的问题，且不误伤 `doubao-seed` 与 `seedance`（[#10](https://github.com/Yachiiiiyo/xLyra/pull/10)，@dysobo）
+* 🐛 用量分析不再静默丢弃无计费/免费模型：桌面与移动端费用构成列表保留无计费项并支持下钻，全部无估算费用时自动回退按 Tokens/请求数展示构成；趋势图切至 Tokens/请求数时按当前指标排 TopN，Breakdown 与矩阵在费用相同时按 Tokens 与请求数兜底排序；同步修正站点缺价警告文案为 `will omit estimated cost`（[#11](https://github.com/Yachiiiiyo/xLyra/issues/11)）
+* 🐛 修复站点模型列表按条件过滤时的分页与去重统计口径不一致问题
 
 ## [1.19.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.18.0...v1.19.0) (2026-11-19)
 
