@@ -11,6 +11,7 @@ import { JSPluginVersionMenu, type VersionMenuItem } from '@/features/settings/c
 import { PluginAvatar } from '@/features/settings/components/js-plugins/plugin-avatar'
 import { PluginMetrics24h } from '@/features/settings/components/js-plugins/plugin-metrics-24h'
 import { JSPluginAutomationSection } from '@/features/settings/components/js-plugins/js-plugin-automation'
+import { JSPluginPipelineSection } from '@/features/settings/components/js-plugins/js-plugin-pipeline'
 import {
   acceptEnableDialog,
   beginEnable,
@@ -69,6 +70,7 @@ import {
   deleteJSPluginVersion,
   disableJSPlugin,
   automationManifest,
+  gatewayPipelineManifest,
   siteProviderOf,
   enableJSPluginVersion,
   getJSPlugin,
@@ -177,7 +179,8 @@ function manifestHosts(manifest: Record<string, unknown> | undefined) {
 }
 
 function requiresTrustedSignature(manifest: Record<string, unknown> | undefined) {
-  return declaresSiteType(manifest) || manifestPermissions(manifest).includes('secret.use')
+  const permissions = manifestPermissions(manifest)
+  return declaresSiteType(manifest) || permissions.includes('secret.use') || permissions.includes('payload.inspect_raw')
 }
 
 function pluginDeclaresSettings(versions: JSPluginVersion[] | undefined) {
@@ -205,7 +208,7 @@ export function JSPluginsSettingsWorkspace() {
   const { t } = useTranslation(['settings', 'common'])
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [managePlugin, setManagePlugin] = useState<JSPluginListItem | null>(null)
+  const [managePluginState, setManagePlugin] = useState<JSPluginListItem | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ pluginId: string; version: string } | null>(null)
   const [uninstallTarget, setUninstallTarget] = useState<{ pluginId: string; name: string; versions: number } | null>(null)
   const enableFlowRef = useRef<EnableFlowState | null>(null)
@@ -242,6 +245,10 @@ export function JSPluginsSettingsWorkspace() {
     queryKey: jsPluginQueryKeys.uploaded(),
     queryFn: ({ signal }) => listUploadedJSPlugins(signal),
   })
+  const pluginParam = params.get('plugin')
+  const managePlugin =
+    managePluginState ??
+    (pluginParam ? (uploadedQuery.data ?? []).find((item) => item.id === pluginParam) ?? null : null)
   useEffect(() => {
     if (developerQuery.data?.status !== 'active') return
     void queryClient.invalidateQueries({ queryKey: jsPluginQueryKeys.uploaded() })
@@ -617,8 +624,16 @@ export function JSPluginsSettingsWorkspace() {
   )
   const showSettings = pluginDeclaresSettings(enabledVersionRow ? [enabledVersionRow] : [])
   const showSchedule = pluginDeclaresSchedule(enabledVersionRow ? [enabledVersionRow] : [])
+  const pipelineManifest = gatewayPipelineManifest(
+    enabledVersionRow?.manifest ?? detailQuery.data?.versions?.[0]?.manifest,
+  )
   const closeManage = () => {
     setManagePlugin(null)
+    if (params.has('plugin')) {
+      const next = new URLSearchParams(params)
+      next.delete('plugin')
+      setParams(next, { replace: true })
+    }
     setProtocolSlug('')
     setTrials({})
     siteBinding.reset()
@@ -964,6 +979,14 @@ export function JSPluginsSettingsWorkspace() {
                   <JSPluginAutomationSection
                     pluginId={managePlugin.id}
                     manifest={automationManifest(enabledVersionRow.manifest)!}
+                  />
+                ) : null}
+
+                {managePlugin && pipelineManifest ? (
+                  <JSPluginPipelineSection
+                    pluginId={managePlugin.id}
+                    manifest={pipelineManifest}
+                    enabled={Boolean(enabledVersionRow)}
                   />
                 ) : null}
 

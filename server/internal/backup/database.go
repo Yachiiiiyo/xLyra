@@ -877,7 +877,15 @@ func encryptTableSecrets(table string, rows []map[string]any, masterKey string) 
 			plain, _ := row[plainColumn].(string)
 			delete(row, plainColumn)
 			if strings.TrimSpace(plain) == "" {
-				row[column] = ""
+				if table == "site_credentials" {
+					encrypted, err := crypto.EncryptSecret(masterKey, "")
+					if err != nil {
+						return fmt.Errorf("encrypt %s.%s: %w", table, column, err)
+					}
+					row[column] = encrypted
+				} else {
+					row[column] = ""
+				}
 			} else {
 				encrypted, err := crypto.EncryptSecret(masterKey, plain)
 				if err != nil {

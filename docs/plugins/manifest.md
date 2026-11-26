@@ -176,6 +176,7 @@
 | `display.brandColor` | 否 | `#RRGGBB` |
 | `hosts` | 是 | 1–16 个小写 DNS 主机名，不能重复。不能带协议、端口、路径，至少含一个 `.`，不能是 IP，不能以 `.` 或 `-` 开头或结尾。可以以 `*.` 开头表示子域通配，见[通配主机](#通配主机) |
 | `credential.model` | 是 | `api_key` 或 `account_pool`。`api_key` 不能再写 `credential.fields`、`accessTokenField`、`refreshTokenField`、`expiresAtField`、`expiresFrom`、`identity`、`display`、`regions`、`defaultRegion`、`login`、`refresh`、`import`、`selection`、`ui`。`account_pool` 的 `models` 只能是 `perAccount: true`，或者整段省略 |
+| `credential.allowEmpty` | 否 | 只用于 `api_key`，默认 `false`。为 `true` 时允许站点添加密钥内容为空的 API Key 凭据记录（用于免鉴权或由请求头模板/钩子自定义鉴权的站点）。`account_pool` 写 `true` 会被拒绝 |
 | `protocol.kind` | 是 | `openai_chat`、`openai_responses`、`anthropic_messages`、`google_gemini` 之一 |
 | `protocol.path` | 是 | 以单个 `/` 开头的路径，不能含 `..` 或编码后的 `..` |
 | `protocol.officialBaseURL` | 是 | `https` URL，必须有主机，不能有用户信息、查询或片段。主机（忽略大小写，端口不算）必须在 `hosts` 里 |

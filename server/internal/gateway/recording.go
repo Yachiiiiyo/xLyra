@@ -27,6 +27,7 @@ func (h Handler) recordAttempt(
 	attemptRequestID := fmt.Sprintf("%s:%d:%s", requestID, result.attempt, uuid.NewString())
 	metadata := attemptMetadata(ctx, attemptRequestID, requestID, apiKeyID, canonicalModelID, candidate, result)
 	mergeInternalRequestMetadata(metadata, ctx)
+	mergeGatewayPipelineMetadata(metadata, ctx)
 	h.appendCacheObservationMetadata(ctx, metadata, candidate, result)
 	internal, parentLogID := bridgeRecordingFromContext(ctx)
 	requestLog, _, err := h.recorder.RecordGatewayRequest(recordCtx, GatewayRequestRecord{
@@ -93,6 +94,7 @@ func (h Handler) recordRequestFailure(
 
 	metadata := requestFailureMetadata(ctx, requestID, apiKeyID, statusCode, errorType, errorMessage, requestedModel, stream, stage, endpoint)
 	mergeInternalRequestMetadata(metadata, ctx)
+	mergeGatewayPipelineMetadata(metadata, ctx)
 	failureRequestID := fmt.Sprintf("%s:gateway:%s", requestID, uuid.NewString())
 	if _, _, err := recorder.RecordGatewayRequest(recordCtx, GatewayRequestRecord{
 		RequestID:       failureRequestID,
@@ -130,6 +132,16 @@ func WithInternalRequestMetadata(ctx context.Context, metadata map[string]any) c
 func InternalRequestMetadataFromContext(ctx context.Context) map[string]any {
 	metadata, _ := ctx.Value(internalRequestMetadataContextKey{}).(map[string]any)
 	return metadata
+}
+
+// mergeGatewayPipelineMetadata records what the gateway pipeline did: counts
+// and ids only, never text or placeholders.
+func mergeGatewayPipelineMetadata(metadata map[string]any, ctx context.Context) {
+	state := gatewayPipelineStateFrom(ctx)
+	if state == nil {
+		return
+	}
+	metadata["gateway_pipeline"] = state.metrics
 }
 
 func mergeInternalRequestMetadata(metadata map[string]any, ctx context.Context) {

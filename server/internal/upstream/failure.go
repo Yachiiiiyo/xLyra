@@ -43,6 +43,23 @@ func (f Failure) Limited() bool {
 	return f.Class == FailureLimited || f.Class == FailureSubscriptionLimit
 }
 
+// InsufficientBalance reports a limited failure caused by an exhausted
+// prepaid balance. Unlike a rate limit it does not recover on its own, so it
+// deserves a long cooldown even when the upstream wraps it in a 403 with only a
+// billing_error type and no machine-readable code.
+func (f Failure) InsufficientBalance() bool {
+	if f.Class != FailureLimited {
+		return false
+	}
+	if normalizeToken(f.Code) == "insufficient_balance" || normalizeToken(f.Type) == "billing_error" {
+		return true
+	}
+	message := strings.ToLower(f.Message)
+	return strings.Contains(message, "insufficient balance") ||
+		strings.Contains(message, "insufficient account balance") ||
+		strings.Contains(message, "余额不足")
+}
+
 func (f Failure) SubscriptionLimited() bool {
 	return f.Class == FailureSubscriptionLimit
 }
@@ -315,6 +332,11 @@ func credentialInvalidMessage(value string) bool {
 		"api key is disabled",
 		"api key is required",
 		"api key 已过期",
+		// Relays (sub2api style) wrap their own upstream credential failures in a
+		// 502 with these messages; the pooled account behind the key is bad, not
+		// the relay, so cool the key instead of retrying it as a transient error.
+		"upstream authentication failed",
+		"upstream access forbidden",
 		"refresh_token_reused",
 		"invalid_grant",
 		"token_invalidated",

@@ -46,8 +46,10 @@ type CanonicalModel struct {
 
 type CanonicalModelWithStats struct {
 	CanonicalModel
-	SiteModelCount int `gorm:"-"`
-	SiteCount      int `gorm:"-"`
+	SiteModelCount       int `gorm:"-"`
+	SiteCount            int `gorm:"-"`
+	ActiveSiteModelCount int `gorm:"-"`
+	ActiveSiteCount      int `gorm:"-"`
 }
 
 type UpsertCanonicalModelParams struct {
@@ -173,27 +175,34 @@ func (r CanonicalModelRepository) List(ctx context.Context) ([]CanonicalModelWit
 	if err := r.db.WithContext(ctx).Find(&sites).Error; err != nil {
 		return nil, fmt.Errorf("list canonical model site stats: %w", err)
 	}
-	activeSites := map[uuid.UUID]struct{}{}
+	activeSites := map[uuid.UUID]Site{}
 	for _, site := range filterActiveSites(sites) {
-		activeSites[site.ID] = struct{}{}
+		activeSites[site.ID] = site
 	}
 	result := make([]CanonicalModelWithStats, 0, len(models))
 	for _, model := range models {
 		item := CanonicalModelWithStats{CanonicalModel: model}
-		sites := map[uuid.UUID]struct{}{}
+		boundSites := map[uuid.UUID]struct{}{}
+		enabledSites := map[uuid.UUID]struct{}{}
 		for _, siteModel := range siteModels {
 			if siteModel.Status == "unavailable" {
 				continue
 			}
-			if _, ok := activeSites[siteModel.SiteID]; !ok {
+			site, ok := activeSites[siteModel.SiteID]
+			if !ok {
 				continue
 			}
 			if siteModel.CanonicalID.Valid && siteModel.CanonicalID.UUID == model.ID {
 				item.SiteModelCount++
-				sites[siteModel.SiteID] = struct{}{}
+				boundSites[siteModel.SiteID] = struct{}{}
+				if siteModel.Status == "active" && site.Enabled && site.Status == "active" {
+					item.ActiveSiteModelCount++
+					enabledSites[siteModel.SiteID] = struct{}{}
+				}
 			}
 		}
-		item.SiteCount = len(sites)
+		item.SiteCount = len(boundSites)
+		item.ActiveSiteCount = len(enabledSites)
 		result = append(result, item)
 	}
 	return result, nil
@@ -236,16 +245,24 @@ func (r CanonicalModelRepository) GetByKey(ctx context.Context, modelKey string)
 	return CanonicalModel{}, fmt.Errorf("get canonical model by key: %w", gorm.ErrRecordNotFound)
 }
 
-func (r CanonicalModelRepository) GetByNormalizedAlias(ctx context.Context, normalizedAlias string) (CanonicalModel, error) {
+func (r CanonicalModelRepository) GetAliasWithModel(ctx context.Context, normalizedAlias string) (CanonicalModelAlias, CanonicalModel, error) {
 	var alias CanonicalModelAlias
 	if err := r.db.WithContext(ctx).Where(&CanonicalModelAlias{NormalizedAlias: normalizedAlias}).First(&alias).Error; err != nil {
-		return CanonicalModel{}, fmt.Errorf("get canonical model by alias: %w", err)
+		return CanonicalModelAlias{}, CanonicalModel{}, fmt.Errorf("get canonical model by alias: %w", err)
+	}
+	if alias.CanonicalModelID == uuid.Nil {
+		return CanonicalModelAlias{}, CanonicalModel{}, fmt.Errorf("get canonical model by alias: %w", gorm.ErrRecordNotFound)
 	}
 	item, err := r.GetByID(ctx, alias.CanonicalModelID)
 	if err != nil {
-		return CanonicalModel{}, fmt.Errorf("get canonical model by alias: %w", err)
+		return CanonicalModelAlias{}, CanonicalModel{}, fmt.Errorf("get canonical model by alias: %w", err)
 	}
-	return item, nil
+	return alias, item, nil
+}
+
+func (r CanonicalModelRepository) GetByNormalizedAlias(ctx context.Context, normalizedAlias string) (CanonicalModel, error) {
+	_, item, err := r.GetAliasWithModel(ctx, normalizedAlias)
+	return item, err
 }
 
 func (r CanonicalModelRepository) Upsert(ctx context.Context, params UpsertCanonicalModelParams) (CanonicalModel, error) {
@@ -445,6 +462,16 @@ func (r CanonicalModelRepository) ListAliases(ctx context.Context, canonicalID u
 }
 
 func (r CanonicalModelRepository) CreateAlias(ctx context.Context, params CreateCanonicalModelAliasParams) (CanonicalModelAlias, error) {
+	if strings.EqualFold(strings.TrimSpace(params.Source), "catalog") {
+		var existing CanonicalModelAlias
+		err := r.db.WithContext(ctx).Where(&CanonicalModelAlias{NormalizedAlias: params.NormalizedAlias}).First(&existing).Error
+		if err == nil && existing.ID != uuid.Nil && strings.EqualFold(strings.TrimSpace(existing.Source), "manual") {
+			return existing, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return CanonicalModelAlias{}, fmt.Errorf("create canonical model alias: %w", err)
+		}
+	}
 	return upsertByKey(ctx, r.db, CanonicalModelAlias{NormalizedAlias: params.NormalizedAlias}, "create canonical model alias", func(item *CanonicalModelAlias) {
 		item.CanonicalModelID = params.CanonicalModelID
 		item.Alias = params.Alias
@@ -535,6 +562,39 @@ func (r CanonicalModelRepository) ActiveSiteModelCount(ctx context.Context, cano
 	return count, nil
 }
 
+// RoutableSiteModelCount counts active site models bound to canonicalID on
+// enabled, active, non-deleted sites.
+func (r CanonicalModelRepository) RoutableSiteModelCount(ctx context.Context, canonicalID uuid.UUID) (int, error) {
+	siteModels, err := NewSiteModelRepository(r.db).ListByCanonical(ctx, canonicalID)
+	if err != nil {
+		return 0, fmt.Errorf("count canonical model routable site models: %w", err)
+	}
+	if len(siteModels) == 0 {
+		return 0, nil
+	}
+	var sites []Site
+	if err := r.db.WithContext(ctx).Find(&sites).Error; err != nil {
+		return 0, fmt.Errorf("count canonical model routable site models: %w", err)
+	}
+	routableSites := map[uuid.UUID]struct{}{}
+	for _, site := range filterActiveSites(sites) {
+		if site.Enabled && site.Status == "active" {
+			routableSites[site.ID] = struct{}{}
+		}
+	}
+	count := 0
+	for _, siteModel := range siteModels {
+		if siteModel.Status != "active" {
+			continue
+		}
+		if _, ok := routableSites[siteModel.SiteID]; !ok {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
 func (r CanonicalModelRepository) ArchiveUnusedAutoCreated(ctx context.Context) (int64, error) {
 	var models []CanonicalModel
 	if err := r.db.WithContext(ctx).Find(&models).Error; err != nil {
@@ -611,6 +671,10 @@ func mergeCanonicalModelCapabilities(existing CanonicalModel, next JSON) JSON {
 		return jsonDefault(next, "{}")
 	}
 	return encoded
+}
+
+func CanonicalModelAutoCreated(model CanonicalModel) bool {
+	return canonicalModelAutoCreated(model)
 }
 
 func canonicalModelAutoCreated(model CanonicalModel) bool {

@@ -12,7 +12,7 @@ export function check(ctx, steps) { ... }
 
 ## 调用方式
 
-与[额度探测](./quota-probe.md)相同的分步方式：`ctx` 没有密钥，返回 `{ request }`、`{ result }`、`{ error }` 之一，最多 6 次，每次 200 ms。
+与[额度探测](./quota-probe.md)相同的分步方式：`ctx` 没有密钥，返回 `{ request }`、`{ result }`、`{ error }` 之一，最多 6 次，每次 500 ms。
 
 ## 清单
 

@@ -600,7 +600,7 @@ func (s *Service) Create(ctx context.Context, params CreateSiteParams) (store.Si
 
 		created = site
 		for index, input := range credentials {
-			credential, err := s.saveCredentialInput(ctx, credentialRepo, site.ID, input)
+			credential, err := s.saveCredentialInputForSiteType(ctx, credentialRepo, site.ID, site.SiteType, input)
 			if err != nil {
 				return err
 			}
@@ -672,7 +672,8 @@ func (s *Service) Update(ctx context.Context, params UpdateSiteParams) (store.Si
 		return store.Site{}, nil, err
 	}
 	for _, input := range credentialInputs(params.Credential, params.Credentials) {
-		if strings.TrimSpace(input.Secret) == "" {
+		credentialType := normalizeCredentialType(input.Type)
+		if strings.TrimSpace(input.Secret) == "" && !(store.IsAPIKeyCredentialType(credentialType) && AllowsEmptyAPIKey(params.SiteType)) {
 			return store.Site{}, nil, fmt.Errorf("api key must not be empty when provided")
 		}
 	}
@@ -734,7 +735,7 @@ func (s *Service) Update(ctx context.Context, params UpdateSiteParams) (store.Si
 			}
 		}
 		for index, input := range credentials {
-			credential, err := s.saveCredentialInput(ctx, credentialRepo, site.ID, input)
+			credential, err := s.saveCredentialInputForSiteType(ctx, credentialRepo, site.ID, site.SiteType, input)
 			if err != nil {
 				return err
 			}
@@ -970,7 +971,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, siteID uuid.UUID, input Crea
 		return APIKeyCredential{}, fmt.Errorf("site id is required")
 	}
 	apiKey := strings.TrimSpace(input.APIKey)
-	if apiKey == "" {
+	if apiKey == "" && (s.db == nil || !AnyPluginAllowsEmptyAPIKey()) {
 		return APIKeyCredential{}, fmt.Errorf("api key is required")
 	}
 	displayName, err := normalizeAPIKeyDisplayName(input.DisplayName)
@@ -993,6 +994,9 @@ func (s *Service) CreateAPIKey(ctx context.Context, siteID uuid.UUID, input Crea
 	site, err := s.Get(ctx, siteID)
 	if err != nil {
 		return APIKeyCredential{}, err
+	}
+	if apiKey == "" && !AllowsEmptyAPIKey(site.SiteType) {
+		return APIKeyCredential{}, fmt.Errorf("api key is required")
 	}
 	if !SupportsMultipleAPIKeys(site.SiteType) {
 		return APIKeyCredential{}, fmt.Errorf("site type %q does not support multiple api keys", site.SiteType)
@@ -1019,7 +1023,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, siteID uuid.UUID, input Crea
 				return err
 			}
 		}
-		credential, err := s.saveCredentialInput(ctx, credentialRepo, siteID, CredentialInput{
+		credential, err := s.saveCredentialInputForSiteType(ctx, credentialRepo, siteID, site.SiteType, CredentialInput{
 			Type:   scopedAPIKeyCredentialType(),
 			Secret: apiKey,
 			Meta: map[string]any{
@@ -1138,8 +1142,27 @@ func syncNewAPIKeyWithExistingSiteModels(ctx context.Context, tx store.Tx, siteI
 }
 
 func (s *Service) saveCredentialInput(ctx context.Context, repo store.SiteCredentialRepository, siteID uuid.UUID, input CredentialInput) (store.SiteCredential, error) {
+	return s.saveCredentialInputWithOptions(ctx, repo, siteID, input, false)
+}
+
+func (s *Service) saveCredentialInputForSiteType(ctx context.Context, repo store.SiteCredentialRepository, siteID uuid.UUID, siteType string, input CredentialInput) (store.SiteCredential, error) {
 	credentialType := normalizeCredentialType(input.Type)
-	encrypted, masked, err := s.credentials.Encrypt(input.Secret)
+	allowEmpty := store.IsAPIKeyCredentialType(credentialType) && AllowsEmptyAPIKey(siteType)
+	return s.saveCredentialInputWithOptions(ctx, repo, siteID, input, allowEmpty)
+}
+
+func (s *Service) saveCredentialInputWithOptions(ctx context.Context, repo store.SiteCredentialRepository, siteID uuid.UUID, input CredentialInput, allowEmpty bool) (store.SiteCredential, error) {
+	credentialType := normalizeCredentialType(input.Type)
+	var (
+		encrypted string
+		masked    string
+		err       error
+	)
+	if allowEmpty {
+		encrypted, masked, err = s.credentials.EncryptAllowEmpty(input.Secret)
+	} else {
+		encrypted, masked, err = s.credentials.Encrypt(input.Secret)
+	}
 	if err != nil {
 		return store.SiteCredential{}, err
 	}
@@ -1255,6 +1278,8 @@ func (s *Service) syncModelsLocked(ctx context.Context, siteID uuid.UUID) (SyncR
 		var err error
 		if isGrok {
 			secret, err = s.oauth.EnsureGrokAccessToken(ctx, apiKey.Credential.ID)
+		} else if apiKey.SecretMissing || (strings.TrimSpace(secret) == "" && !AllowsEmptyAPIKey(site.SiteType)) {
+			err = fmt.Errorf("api key is empty")
 		}
 		var models []adapter.Model
 		var accountSummary *adapter.APIKeySummary
@@ -1351,6 +1376,9 @@ func (s *Service) syncModelsLocked(ctx context.Context, siteID uuid.UUID) (SyncR
 			}
 		}
 		keyName := apiKey.Name
+		if keyName == "" {
+			keyName = apiKey.DisplayName
+		}
 		if keyName == "" {
 			keyName = apiKey.MaskedSecret
 		}
@@ -2135,7 +2163,14 @@ func (s *Service) SetAPIKeySecret(ctx context.Context, siteID uuid.UUID, credent
 	if err != nil {
 		return APIKeyCredential{}, err
 	}
-	if strings.TrimSpace(secret) == "" {
+	if strings.TrimSpace(secret) == "" && !AnyPluginAllowsEmptyAPIKey() {
+		return APIKeyCredential{}, fmt.Errorf("api key must not be empty")
+	}
+	site, err := s.Get(ctx, siteID)
+	if err != nil {
+		return APIKeyCredential{}, err
+	}
+	if strings.TrimSpace(secret) == "" && !AllowsEmptyAPIKey(site.SiteType) {
 		return APIKeyCredential{}, fmt.Errorf("api key must not be empty")
 	}
 
@@ -2145,7 +2180,7 @@ func (s *Service) SetAPIKeySecret(ctx context.Context, siteID uuid.UUID, credent
 
 	var updated store.SiteCredential
 	err = s.db.WithinTx(ctx, func(tx store.Tx) error {
-		saved, err := s.saveCredentialInput(ctx, store.NewSiteCredentialRepository(tx), siteID, CredentialInput{
+		saved, err := s.saveCredentialInputForSiteType(ctx, store.NewSiteCredentialRepository(tx), siteID, site.SiteType, CredentialInput{
 			Type:   credential.CredentialType,
 			Secret: secret,
 			Meta:   meta,
@@ -2347,8 +2382,9 @@ func (s *Service) siteWithAPIKeyCredential(ctx context.Context, siteID uuid.UUID
 	if err != nil {
 		return store.Site{}, APIKeyCredential{}, err
 	}
+	allowEmpty := AllowsEmptyAPIKey(site.SiteType)
 	for _, apiKey := range apiKeys {
-		if apiKey.Enabled && strings.TrimSpace(apiKey.Secret) != "" {
+		if apiKey.Enabled && !apiKey.SecretMissing && (strings.TrimSpace(apiKey.Secret) != "" || allowEmpty) {
 			return site, apiKey, nil
 		}
 	}
@@ -2500,6 +2536,25 @@ func SupportsAPIKeyCostMultiplier(siteType string) bool {
 	return ok && desc.SupportsAPIKeyCostMultiplier
 }
 
+// AllowsEmptyAPIKey reports whether siteType is an enabled api_key plugin site
+// type whose manifest explicitly declared credential.allowEmpty = true.
+// Built-in site types and account-pool plugins always return false.
+func AllowsEmptyAPIKey(siteType string) bool {
+	item, ok := LookupPluginSiteType(siteType)
+	return ok && item.Enabled && item.Pool == nil && item.Descriptor.AllowsEmptyAPIKey
+}
+
+// AnyPluginAllowsEmptyAPIKey reports whether at least one enabled plugin site
+// type currently allows empty API keys.
+func AnyPluginAllowsEmptyAPIKey() bool {
+	for _, item := range loadPluginSiteTypes() {
+		if item.Enabled && item.Pool == nil && item.Descriptor.AllowsEmptyAPIKey {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeCredentialType(credentialType string) string {
 	if strings.TrimSpace(credentialType) == "" {
 		return defaultCredentialType
@@ -2598,9 +2653,13 @@ func prepareCreateCredentialInputs(siteType string, inputs []CredentialInput) ([
 	if apiKeyCount > 1 && !SupportsMultipleAPIKeys(siteType) {
 		return nil, fmt.Errorf("site type %q does not support multiple api keys", siteType)
 	}
+	allowEmpty := AllowsEmptyAPIKey(siteType)
 	for index := range result {
 		credentialType := normalizeCredentialType(result[index].Type)
 		isAPIKey := store.IsAPIKeyCredentialType(credentialType)
+		if isAPIKey && strings.TrimSpace(result[index].Secret) == "" && !allowEmpty {
+			return nil, fmt.Errorf("api key is required")
+		}
 		if apiKeyCount > 1 && credentialType == defaultCredentialType {
 			result[index].Type = scopedAPIKeyCredentialType()
 		}

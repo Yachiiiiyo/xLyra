@@ -747,6 +747,7 @@
       "untrustedNotAllowed": "此插件类型必须由受信密钥签名，请先在「受信密钥」中导入对应公钥",
       "siteTypeLocked": "该插件已有站点在使用站点类型 {{from}}，新版本不能改为 {{to}}（共 {{count}} 个站点）",
       "inUse": "仍有 {{count}} 个站点在使用站点类型 {{site_type}}，请先删除这些站点",
+      "pipelineInUse": "仍有 {{count}} 个 fail_closed 网关管线绑定正在使用该插件，请先删除对应绑定",
       "hostsRequired": "启用前需要确认该插件可访问的主机列表"
     },
     "disableSuccess": "已停用插件",
@@ -829,6 +830,7 @@
       "httpRequest": "向管理员在绑定里填写的地址发送 HTTP 请求（比如推送通知）",
       "storage": "读写该插件自己的存储",
       "secretUse": "读取站点密钥明文。只授予你完全信任的插件",
+      "payloadInspectRaw": "在网关管线中读取已绑定 API 密钥的原始请求文本片段。只授予你完全信任且已签名的插件（且不能与网络出站权限同时申请）",
       "http": "由插件自行发起 HTTP 请求",
       "schedule": "按计划定时运行",
       "net": "访问主机 {{host}}",
@@ -864,7 +866,67 @@
       "selectedUnit": "项",
       "reason": {
         "provider_not_supported": "不支持这个账号类型",
-        "no_finite_total_quota": "未设置有限的总额度"
+        "no_finite_total_quota": "未设置有限的总额度",
+        "already_bound": "已绑定到其他互斥的网关管线"
+      }
+    },
+    "pipeline": {
+      "title": "网关管线绑定",
+      "hint": "将此插件绑定到指定下游 API Key，并在请求入站/响应出站时按声明的转换模式自动执行。",
+      "add": "新增绑定",
+      "editTitle": "编辑管线绑定",
+      "empty": "还没有绑定任何 API Key。新增绑定后，网关才会对相应请求执行该管线。",
+      "saved": "已保存绑定",
+      "deleted": "已删除绑定",
+      "saveFailed": "保存失败",
+      "nameLabel": "绑定名称",
+      "nameHint": "用于在 API Key 列表和日志中标识该配置，例如「严格模式」。",
+      "namePlaceholder": "例如：默认策略",
+      "disabledHint": "请先启用插件版本再新增绑定",
+      "disabledBindingsHint": "当前插件未启用；已有绑定不可编辑，但你可以删除绑定以解除对已绑定 API Key 的拦截。",
+      "failClosedWarning": "此插件采用 fail_closed 策略：一旦插件停用、执行失败或触发熔断，已绑定的 API Key 请求将被网关直接拒绝（HTTP 503），不会绕过放行。",
+      "policy": {
+        "fail_open": "fail_open（失败放行）",
+        "fail_closed": "fail_closed（失败阻断）"
+      },
+      "status": {
+        "active": "生效中",
+        "unavailable": "不可用",
+        "bypassed": "已跳过"
+      },
+      "hostOptions": {
+        "title": "宿主选项",
+        "propagateSameValue": {
+          "label": "同值传播替换",
+          "hint": "同一请求内多次出现相同命中值时，自动复用同一占位符保持上下文一致。"
+        },
+        "scanToolDefinitions": {
+          "label": "扫描工具定义（tools）",
+          "hint": "同时扫描请求体中的工具定义描述文本；默认关闭以减少额外开销。"
+        },
+        "transformReasoning": {
+          "label": "还原推理内容（reasoning）",
+          "hint": "在响应中同时对 reasoning / thinking 片段执行占位符还原。"
+        }
+      },
+      "dryRun": {
+        "button": "试跑预览",
+        "title": "试跑预览 · {{name}}",
+        "description": "使用当前绑定配置在本地执行一次完整入站管线，不发送给上游，也不计入请求记录与熔断状态。",
+        "modeText": "纯文本",
+        "modeJson": "请求 JSON",
+        "endpoint": "端点协议",
+        "model": "模型名称",
+        "textInput": "测试文本",
+        "textPlaceholder": "粘贴一段文本，检查命中片段与转换结果...",
+        "jsonInput": "完整请求 JSON",
+        "invalidJson": "请输入合法的 JSON 对象",
+        "run": "运行试跑",
+        "failed": "试跑失败",
+        "metricsSummary": "片段 {{segments}} · 命中 {{detected}} · 耗时 {{latency}} ms",
+        "output": "转换后输出",
+        "findings": "命中明细（{{count}}）",
+        "noFindings": "未命中任何片段。"
       }
     },
     "bindProtocolTitle": "协议下游 slug",

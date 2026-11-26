@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"xlyra/server/internal/inflight"
 	"xlyra/server/internal/ratelimit"
 	routeengine "xlyra/server/internal/router"
+	sitepkg "xlyra/server/internal/site"
 	"xlyra/server/internal/store"
 )
 
@@ -172,9 +174,18 @@ func (h Handler) forwardGatewayRequest(
 		return result
 	}
 
+	if len(credentials) > maxCredentialAttemptsPerSite {
+		credentials = credentials[:maxCredentialAttemptsPerSite]
+	}
+
 	var lastResult gatewayAttemptResult
 credentialLoop:
 	for credentialIndex, selectedCredential := range credentials {
+		if credentialIndex > 0 && failoverBudgetExhausted(ctx) {
+			// Walking a long key list must not outlive the request's failover
+			// budget; hand the last failure back so the caller can decide.
+			break
+		}
 		var releaseCredentialSelection func()
 		if isGrokSite(candidate.Site.SiteType) {
 			selector := h.credentialSelector
@@ -321,6 +332,21 @@ credentialLoop:
 					gatewayEndpoints = resolved.GatewayEndpoints
 				}
 			}
+			if store.IsAPIKeyCredentialType(selectedCredential.Credential.CredentialType) && strings.TrimSpace(upstreamKey) == "" && !sitepkg.AllowsEmptyAPIKey(candidate.Site.SiteType) {
+				result.statusCode = http.StatusBadGateway
+				result.errorType = "upstream_credential_unavailable"
+				result.errorMessage = "api key is empty"
+				result.latencyMS = time.Since(startedAt).Milliseconds()
+				result = recordCredentialAttempt(result, nil, true)
+				lastResult = result
+				if result.credentialDecision.ShouldTryNextCredential {
+					if releaseCredentialSelection != nil {
+						releaseCredentialSelection()
+					}
+					continue credentialLoop
+				}
+				return result
+			}
 
 			payload, err := buildGatewayUpstreamPayload(protocol, request, candidate)
 			if err != nil {
@@ -375,6 +401,12 @@ credentialLoop:
 				result = recordCredentialAttempt(result, nil, false)
 				return result
 			}
+			ctx = withFirstOutputTimeout(ctx, streamFirstOutputTimeout(
+				siteConfig,
+				firstOutputPlanFromContext(ctx),
+				upstreamStream,
+				upstreamProfileRequest.ImageGeneration || firstOutputExemptEndpoint(request.DownstreamPath),
+			))
 			claudeCodeSessionID := applyGatewayClientImpersonationPayloadForAccount(payload, siteConfig, protocol, request, candidate, accountID)
 			body, contentType, err := buildUpstreamRequestBody(protocol, request, payload)
 			if err != nil {
@@ -771,6 +803,8 @@ func (h Handler) handleBufferedResponse(
 	if result.success {
 		result.body = sanitizeDSMLInBufferedResponse(result.body, result.contentType)
 	}
+	// Restoring follows usage parsing, so billing counts what the upstream saw.
+	result.body = restoreTokensInBufferedResponse(ctx, result.body, result.contentType)
 	if result.success {
 		result.promptTokens = transformed.Usage.PromptTokens
 		result.completionTokens = transformed.Usage.CompletionTokens
@@ -823,7 +857,7 @@ func (h Handler) finishBufferedSemanticFailure(
 	result.errorType = "upstream_response_failed"
 	result.errorMessage = failure.Error()
 	result.upstreamErrorCode = failure.Code
-	result.body = failure.Body
+	result.body = restoreTokensInBufferedResponse(ctx, failure.Body, result.contentType)
 	result.failureResponse = diagnosticFailureResponse(failure.Body)
 	result = classifyGatewayUpstreamErrorWithTimeZone(candidate, result, failure.Body, time.Now(), h.timeZone)
 	h.markOAuthConnectionUnavailableOnAuthFailure(ctx, candidate, result)
@@ -862,7 +896,7 @@ func (h Handler) handleStreamResponse(
 			result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, nil)
 			return result
 		}
-		result.body = responseBody
+		result.body = restoreTokensInBufferedResponse(ctx, responseBody, result.contentType)
 		result.upstreamResponseModel = upstreamResponseModel(responseBody)
 		result.errorType = "upstream_http_error"
 		result.errorMessage = fmt.Sprintf("upstream returned HTTP %d", resp.StatusCode)
@@ -879,7 +913,17 @@ func (h Handler) handleStreamResponse(
 		return result
 	}
 
-	capture, responseStarted, proxyErr := protocol.ProxyStream(ctx, w, resp, startedAt, candidate)
+	proxyWriter := w
+	var firstOutput *firstOutputWatchdog
+	if timeout := firstOutputTimeoutFromContext(ctx); timeout > 0 {
+		firstOutput = newFirstOutputWatchdog(w, resp.Body, timeout)
+		proxyWriter = firstOutput.writer
+		defer firstOutput.Stop()
+	}
+	capture, responseStarted, proxyErr := protocol.ProxyStream(ctx, proxyWriter, resp, startedAt, candidate)
+	if firstOutput != nil {
+		firstOutput.Stop()
+	}
 	result.upstreamResponseModel = capture.responseModel
 	if proxyErr != nil && streamCompletedAfterReadError(capture, proxyErr) {
 		proxyErr = nil
@@ -909,6 +953,13 @@ func (h Handler) handleStreamResponse(
 	}
 	result = applyStreamUsage(result, streamUsage)
 	result.latencyMS = time.Since(startedAt).Milliseconds()
+	if !responseStarted && firstOutput != nil && firstOutput.TimedOut() && ctx.Err() == nil {
+		result.statusCode = http.StatusBadGateway
+		result.errorType = upstreamFirstOutputTimeoutErrorType
+		result.errorMessage = fmt.Sprintf("upstream produced no output within %s after the response headers", firstOutputTimeoutFromContext(ctx))
+		result.requestLogID = h.recordAttempt(ctx, requestID, apiKeyID, canonicalModelID, candidate, result, streamMetadataEnvelope(capture))
+		return result
+	}
 	if !responseStarted && capture.semanticFailure == nil && proxyErr != nil {
 		var semanticFailure *upstreamSemanticFailure
 		if errors.As(proxyErr, &semanticFailure) {
@@ -1009,7 +1060,7 @@ func (h Handler) finishStreamSemanticFailure(
 	if failure != nil {
 		result.upstreamErrorCode = failure.Code
 	}
-	result.body = classificationBody
+	result.body = restoreTokensInBufferedResponse(ctx, classificationBody, result.contentType)
 	result.failureResponse = diagnosticFailureResponse(failure.Body)
 	result = classifyGatewayUpstreamErrorWithTimeZone(candidate, result, classificationBody, time.Now(), h.timeZone)
 	h.markOAuthConnectionUnavailableOnAuthFailure(ctx, candidate, result)
@@ -1131,11 +1182,7 @@ func (h Handler) gatewayCredentials(ctx context.Context, candidate routeengine.C
 	if hasBindings {
 		return nil, gorm.ErrRecordNotFound
 	}
-	credentialRecord, err := repo.GetFallbackCredentialForSite(ctx, candidate.Site.ID)
-	if err != nil {
-		return nil, err
-	}
-	return []store.GatewayCredential{credentialRecord}, nil
+	return repo.ListFallbackCredentialsForSite(ctx, candidate.Site.ID)
 }
 
 func (h Handler) markCredentialModelUnavailableAfterNotFound(ctx context.Context, candidate routeengine.Candidate, credential store.SiteCredential, result gatewayAttemptResult) {
@@ -1199,7 +1246,24 @@ func writeUpstreamFailure(w http.ResponseWriter, result gatewayAttemptResult, re
 	if writer, ok := w.(downstreamSSEFailureWriter); ok && writer.WriteSSEFailure(downstreamFailureFromAttempt(result, requestID)) {
 		return
 	}
-	writeUpstreamBody(w, result.statusCode, result.contentType, result.body)
+	body, contentType := downstreamErrorBody(result, requestID)
+	writeUpstreamBody(w, result.statusCode, contentType, body)
+}
+
+// downstreamErrorBody keeps JSON error bodies as the upstream sent them. A body
+// that is not JSON (a Cloudflare or nginx HTML error page, plain text) is
+// replaced by a small JSON error: SDK clients choke on it and it exposes the
+// upstream's infrastructure. The raw body stays in the request log.
+func downstreamErrorBody(result gatewayAttemptResult, requestID string) ([]byte, string) {
+	if len(bytes.TrimSpace(result.body)) == 0 || json.Valid(result.body) {
+		return result.body, result.contentType
+	}
+	failure := downstreamFailureFromAttempt(gatewayAttemptResult{
+		statusCode:        result.statusCode,
+		errorType:         "upstream_http_error",
+		retryAfterSeconds: result.retryAfterSeconds,
+	}, requestID)
+	return gatewayRequestFailureBody(failure.Code, failure.Message, requestID), "application/json"
 }
 
 func downstreamFailureFromAttempt(result gatewayAttemptResult, requestID string) downstreamSSEFailure {

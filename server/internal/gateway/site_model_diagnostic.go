@@ -559,6 +559,9 @@ func (h Handler) siteModelTestCredential(ctx context.Context, candidate routeeng
 	if err != nil {
 		return "", "", "", credential.Credential.ID, "", "upstream_credential_decrypt_failed", err
 	}
+	if store.IsAPIKeyCredentialType(credential.Credential.CredentialType) && strings.TrimSpace(upstreamKey) == "" && !sitepkg.AllowsEmptyAPIKey(candidate.Site.SiteType) {
+		return "", "", "", credential.Credential.ID, "", "upstream_credential_unavailable", fmt.Errorf("api key is empty")
+	}
 	return upstreamKey, gatewayCredentialMetaString(credential.Credential, "account_id"), credential.Credential.MaskedSecret, credential.Credential.ID, credential.GroupName.String, "", nil
 }
 

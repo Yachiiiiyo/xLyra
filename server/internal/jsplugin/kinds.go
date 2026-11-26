@@ -71,6 +71,9 @@ const (
 	// and a confirmed host list; the plugin then applies to that site type
 	// without a per-site binding.
 	ScopeSiteType Scope = "site_type"
+	// ScopeGatewayPipeline is bound by an admin to API keys. Requests made with
+	// those keys run through the plugin's gatewayPipeline section.
+	ScopeGatewayPipeline Scope = "gateway_pipeline"
 )
 
 // kindSpec describes one kind: what it exports, how it is called and what it may touch.
@@ -190,6 +193,9 @@ func ScopeOfManifest(manifest Manifest, exports []string) Scope {
 	}
 	if manifest.DeclaresSiteType() {
 		return ScopeSiteType
+	}
+	if manifest.DeclaresGatewayPipeline() {
+		return ScopeGatewayPipeline
 	}
 	if manifest.DeclaresProtocol() {
 		return ScopeEndpoint

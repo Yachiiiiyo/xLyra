@@ -12,7 +12,7 @@ export const meta = { apiVersion: 1, id: "<与 manifest 一致>", kind: "error_c
 export function classify(ctx, input) { ... }
 ```
 
-这是**一次性函数**：不发请求，一次调用得出结论。因为在请求路径上，时限只有 **50 ms**。
+这是**一次性函数**：不发请求，一次调用得出结论。因为在请求路径上，时限只有 **150 ms**。
 
 ## 输入
 

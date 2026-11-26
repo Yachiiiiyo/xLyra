@@ -63,7 +63,7 @@ func validateManifestPermissions(permissions []string) error {
 
 func validManifestPermission(perm string) bool {
 	switch perm {
-	case PermissionStorage, "secret.use", "http", "schedule":
+	case PermissionStorage, "secret.use", "http", "schedule", PermissionPayloadInspectRaw:
 		return true
 	}
 	if host, ok := strings.CutPrefix(perm, "net:"); ok {

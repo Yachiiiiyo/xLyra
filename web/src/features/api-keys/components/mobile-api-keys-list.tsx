@@ -1,5 +1,7 @@
 import { LoaderCircle, PencilLine, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { Badge } from '@/components/ui/badge'
 import { CardAction, CardFooter, CardHeading, CardMetric, CardMetrics, ItemCard } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -110,7 +112,25 @@ function MobileAPIKeyCard({
     <ItemCard>
       <CardHeading
         title={apiKey.name}
-        meta={<APIKeyCopyMenu apiKey={apiKey} triggerClassName="-mt-0.5" />}
+        meta={(
+          <div className="space-y-1">
+            <APIKeyCopyMenu apiKey={apiKey} triggerClassName="-mt-0.5" />
+            {apiKey.pipeline_binding ? (
+              <Link
+                to={`/system/plugins?plugin=${encodeURIComponent(apiKey.pipeline_binding.plugin_id)}`}
+                className="inline-block max-w-full"
+                title={`${apiKey.pipeline_binding.plugin_name} / ${apiKey.pipeline_binding.name}`}
+              >
+                <Badge
+                  variant={apiKey.pipeline_binding.status === 'unavailable' ? 'danger' : 'secondary'}
+                  className="max-w-full truncate text-caption hover:opacity-80"
+                >
+                  {apiKey.pipeline_binding.plugin_name} / {apiKey.pipeline_binding.name}
+                </Badge>
+              </Link>
+            ) : null}
+          </div>
+        )}
         trailing={(
           <Switch
             checked={active}

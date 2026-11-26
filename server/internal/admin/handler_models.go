@@ -166,6 +166,45 @@ func (h Handler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h Handler) MergeModel(w http.ResponseWriter, r *http.Request) {
+	if h.catalog == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "catalog_service_unavailable", "catalog service is not available")
+		return
+	}
+
+	sourceID, ok := modelIDParam(w, r)
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		TargetModelID string `json:"target_model_id"`
+	}
+	if !h.decodeJSON(w, r, &payload) {
+		return
+	}
+
+	targetID, err := uuid.Parse(strings.TrimSpace(payload.TargetModelID))
+	if err != nil || targetID == uuid.Nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_target_model_id", "target_model_id must be a valid UUID")
+		return
+	}
+
+	result, err := h.catalog.Merge(r.Context(), sourceID, targetID)
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "canonical_model_merge_failed", err.Error())
+		return
+	}
+
+	h.invalidateGatewayModelsCache()
+	h.writePayload(w, http.StatusOK, map[string]any{
+		"source_model":      canonicalModelPayload(result.Source),
+		"target_model":      canonicalModelPayload(result.Target),
+		"moved_site_models": result.MovedSiteModels,
+		"moved_aliases":     result.MovedAliases,
+	})
+}
+
 func (h Handler) CreateModelAlias(w http.ResponseWriter, r *http.Request) {
 	if h.catalog == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "catalog_service_unavailable", "catalog service is not available")
@@ -327,6 +366,8 @@ func canonicalModelItemPayload(item catalog.CanonicalModelItem) map[string]any {
 	payload := canonicalModelPayload(item.Model.CanonicalModel)
 	payload["site_model_count"] = item.Model.SiteModelCount
 	payload["site_count"] = item.Model.SiteCount
+	payload["active_site_model_count"] = item.Model.ActiveSiteModelCount
+	payload["active_site_count"] = item.Model.ActiveSiteCount
 	payload["aliases"] = canonicalModelAliasPayloads(item.Aliases)
 
 	return payload

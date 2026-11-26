@@ -29,6 +29,7 @@ type GatewayConfig struct {
 	RequestTimeoutMS               *int     `json:"request_timeout_ms,omitempty"`
 	ConnectTimeoutMS               *int     `json:"connect_timeout_ms,omitempty"`
 	ResponseHeaderTimeoutMS        *int     `json:"response_header_timeout_ms,omitempty"`
+	FirstOutputTimeoutMS           *int     `json:"first_output_timeout_ms,omitempty"`
 	MaxConcurrency                 *int     `json:"max_concurrency,omitempty"`
 	MaxModelConcurrency            *int     `json:"max_model_concurrency,omitempty"`
 	MaxCredentialConcurrency       *int     `json:"max_credential_concurrency,omitempty"`
@@ -220,6 +221,7 @@ func NormalizeGatewayConfig(input *GatewayConfig) (*GatewayConfig, error) {
 		{name: "request_timeout_ms", value: normalized.RequestTimeoutMS},
 		{name: "connect_timeout_ms", value: normalized.ConnectTimeoutMS},
 		{name: "response_header_timeout_ms", value: normalized.ResponseHeaderTimeoutMS},
+		{name: "first_output_timeout_ms", value: normalized.FirstOutputTimeoutMS},
 		{name: "max_concurrency", value: normalized.MaxConcurrency},
 		{name: "max_model_concurrency", value: normalized.MaxModelConcurrency},
 		{name: "max_credential_concurrency", value: normalized.MaxCredentialConcurrency},
@@ -424,6 +426,9 @@ func mergeGatewayConfig(existing *GatewayConfig, patch *GatewayConfig) *GatewayC
 	}
 	if patch.ResponseHeaderTimeoutMS != nil {
 		merged.ResponseHeaderTimeoutMS = patch.ResponseHeaderTimeoutMS
+	}
+	if patch.FirstOutputTimeoutMS != nil {
+		merged.FirstOutputTimeoutMS = patch.FirstOutputTimeoutMS
 	}
 	if patch.MaxConcurrency != nil {
 		merged.MaxConcurrency = patch.MaxConcurrency

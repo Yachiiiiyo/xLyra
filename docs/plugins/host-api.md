@@ -94,7 +94,7 @@
 
 `req` 是 `{ method, url, headers, body }`。返回两种形状之一：
 
-- 直接改写：`{ headers?, query?, body? }`，至少一项。`headers` 与 `query` 各最多 32 项，值不能含控制字符。`body` 替换整段正文（最大 1 MiB）；仅当改写前后仍为 JSON 对象时，JSON 里的 `model`、`stream` 必须与改写前相同（允许在 `signRequest` 中将正文编码为非 JSON 字节/文本流）。不需要 `secret.use`。
+- 直接改写：`{ headers?, query?, body? }`，至少一项。`headers` 与 `query` 各最多 32 项，值不能含控制字符。`body` 替换整段正文（最大 16 MiB）；仅当改写前后仍为 JSON 对象时，JSON 里的 `model`、`stream` 必须与改写前相同（允许在 `signRequest` 中将正文编码为非 JSON 字节/文本流）。不需要 `secret.use`。
 - 代签：`{ stringToSign, algorithm, header, encoding?, prefix?, headers? }`。必须声明 `secret.use`，由宿主用当前凭据做 HMAC。
 
 钩子抛错、超时或返回不合法时，这次尝试记为 `upstream_sign_failed` 并中止（可换下一个凭据），不会带着缺头的请求发出去。

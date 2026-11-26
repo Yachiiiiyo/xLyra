@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"xlyra/server/internal/catalog"
 	sitepkg "xlyra/server/internal/site"
@@ -34,6 +33,10 @@ type CandidateQuery struct {
 	ExcludeSiteModelIDs []uuid.UUID
 	Limit               int
 	FailoverLimit       int
+	// Spread shuffles equal-priority candidates in Plan (see spreadCandidates).
+	// SpreadSeed makes the shuffle stable for one conversation; empty means random.
+	Spread     bool
+	SpreadSeed string
 }
 
 type CandidateList struct {
@@ -64,6 +67,7 @@ type SelectionPlan struct {
 	CanonicalModel store.CanonicalModel
 	Selected       Candidate
 	Failover       []Candidate
+	Pick           RoutePick
 }
 
 type CandidateSite struct {
@@ -174,11 +178,32 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 		return CandidateList{}, fmt.Errorf("model_key is required")
 	}
 
-	canonicalModel, err := s.resolveCanonicalModel(ctx, modelKey)
+	canonicalCandidates, err := s.resolveCanonicalModels(ctx, modelKey)
 	if err != nil {
 		return CandidateList{}, err
 	}
 
+	var firstResult CandidateList
+	for index, canonicalModel := range canonicalCandidates {
+		if index > 0 && len(query.AllowedSiteModelIDs) > 0 {
+			break
+		}
+		result, err := s.candidatesForCanonical(ctx, canonicalModel, query)
+		if err != nil {
+			return CandidateList{}, err
+		}
+		if index == 0 {
+			firstResult = result
+		}
+		if len(result.Items) > 0 {
+			return result, nil
+		}
+	}
+
+	return firstResult, nil
+}
+
+func (s *Service) candidatesForCanonical(ctx context.Context, canonicalModel store.CanonicalModel, query CandidateQuery) (CandidateList, error) {
 	rows, err := store.NewRouteCandidateRepository(s.db.DB()).ListByCanonicalModel(ctx, canonicalModel.ID)
 	if err != nil {
 		return CandidateList{}, err
@@ -245,6 +270,9 @@ func (s *Service) Candidates(ctx context.Context, query CandidateQuery) (Candida
 		}
 		cooling, coolingReason := false, ""
 		if item, ok := cooldownState.transientModels[row.SiteModelID]; ok {
+			cooling = true
+			coolingReason = item.Reason
+		} else if item, ok := cooldownState.transientSites[row.SiteID]; ok {
 			cooling = true
 			coolingReason = item.Reason
 		}
@@ -491,6 +519,10 @@ func (s *Service) Plan(ctx context.Context, query CandidateQuery) (SelectionPlan
 	if len(result.Items) == 0 {
 		return SelectionPlan{}, ErrNoRouteCandidates
 	}
+	pick := RoutePick{Mode: RoutePickPriority, TierSize: 1}
+	if query.Spread {
+		result.Items, pick = spreadCandidates(result.Items, query.SpreadSeed, nil)
+	}
 
 	failoverLimit := query.FailoverLimit
 	if failoverLimit <= 0 {
@@ -513,6 +545,7 @@ func (s *Service) Plan(ctx context.Context, query CandidateQuery) (SelectionPlan
 		CanonicalModel: result.CanonicalModel,
 		Selected:       result.Items[0],
 		Failover:       failover,
+		Pick:           pick,
 	}, nil
 }
 
@@ -584,26 +617,11 @@ func (s *Service) ClearCooldown(ctx context.Context, siteID uuid.UUID, siteModel
 }
 
 func (s *Service) resolveCanonicalModel(ctx context.Context, modelKey string) (store.CanonicalModel, error) {
-	repo := store.NewCanonicalModelRepository(s.db.DB())
-	normalized := catalog.CanonicalModelKeyFromUpstream(modelKey)
-	if normalized == "" {
-		normalized = catalog.NormalizeModelKey(modelKey)
-	}
+	return catalog.ResolveCanonicalModel(ctx, store.NewCanonicalModelRepository(s.db.DB()), modelKey)
+}
 
-	canonical, err := repo.GetByKey(ctx, normalized)
-	if err == nil {
-		return canonical, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.CanonicalModel{}, err
-	}
-
-	canonical, err = repo.GetByNormalizedAlias(ctx, normalized)
-	if err != nil {
-		return store.CanonicalModel{}, fmt.Errorf("canonical model %q was not found", modelKey)
-	}
-
-	return canonical, nil
+func (s *Service) resolveCanonicalModels(ctx context.Context, modelKey string) ([]store.CanonicalModel, error) {
+	return catalog.ResolveCanonicalModelCandidates(ctx, store.NewCanonicalModelRepository(s.db.DB()), modelKey)
 }
 
 func scoreCandidate(item Candidate, minPrice float64, maxPrice float64) (float64, map[string]float64) {
@@ -629,6 +647,7 @@ type cooldownIndex struct {
 	sites                 map[uuid.UUID]store.RouteCooldown
 	models                map[uuid.UUID]store.RouteCooldown
 	transientModels       map[uuid.UUID]store.RouteCooldown
+	transientSites        map[uuid.UUID]store.RouteCooldown
 	siteCredentialCounts  map[uuid.UUID]int
 	modelCredentialCounts map[uuid.UUID]int
 }
@@ -638,6 +657,7 @@ func indexCooldowns(items []store.RouteCooldown) cooldownIndex {
 		sites:                 make(map[uuid.UUID]store.RouteCooldown),
 		models:                make(map[uuid.UUID]store.RouteCooldown),
 		transientModels:       make(map[uuid.UUID]store.RouteCooldown),
+		transientSites:        make(map[uuid.UUID]store.RouteCooldown),
 		siteCredentialCounts:  make(map[uuid.UUID]int),
 		modelCredentialCounts: make(map[uuid.UUID]int),
 	}
@@ -656,6 +676,10 @@ func indexCooldowns(items []store.RouteCooldown) cooldownIndex {
 			} else {
 				index.models[item.SiteModelID.UUID] = item
 			}
+			continue
+		}
+		if store.TransientRouteCooldown(item) {
+			index.transientSites[item.SiteID] = item
 			continue
 		}
 		index.sites[item.SiteID] = item

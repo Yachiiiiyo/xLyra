@@ -747,6 +747,7 @@
       "untrustedNotAllowed": "This plugin type must be signed by a trusted key. Import the matching public key under Trusted keys first.",
       "siteTypeLocked": "Sites are still using site type {{from}}. The new version cannot change it to {{to}} ({{count}} sites).",
       "inUse": "{{count}} sites still use site type {{site_type}}. Delete those sites first.",
+      "pipelineInUse": "{{count}} fail_closed gateway pipeline bindings still use this plugin. Remove those bindings first.",
       "hostsRequired": "Confirm the hosts this plugin may access before enabling it."
     },
     "disableSuccess": "Plugin disabled",
@@ -829,6 +830,7 @@
       "httpRequest": "Send HTTP requests to the addresses you enter in a binding (for example push notifications)",
       "storage": "Read and write this plugin's own storage",
       "secretUse": "Read site credentials in plain text. Grant this only to a plugin you fully trust",
+      "payloadInspectRaw": "Inspect raw request text segments for bound API keys in a gateway pipeline. Grant only to a trusted signed plugin (mutually exclusive with outbound network permissions)",
       "http": "Let the plugin make its own HTTP requests",
       "schedule": "Run on a schedule",
       "net": "Access the host {{host}}",
@@ -864,7 +866,67 @@
       "selectedUnit": "selected",
       "reason": {
         "provider_not_supported": "This account type is not supported",
-        "no_finite_total_quota": "No finite total quota"
+        "no_finite_total_quota": "No finite total quota",
+        "already_bound": "Already bound to another exclusive gateway pipeline"
+      }
+    },
+    "pipeline": {
+      "title": "Gateway pipeline bindings",
+      "hint": "Bind this plugin to downstream API keys to inspect and transform gateway traffic according to the plugin's declared mode.",
+      "add": "Add binding",
+      "editTitle": "Edit pipeline binding",
+      "empty": "No bindings yet. Add a binding to apply this pipeline to selected API keys.",
+      "saved": "Binding saved",
+      "deleted": "Binding deleted",
+      "saveFailed": "Failed to save",
+      "nameLabel": "Binding name",
+      "nameHint": "Identifies this policy in the API keys table and logs (e.g. Strict).",
+      "namePlaceholder": "e.g. Default policy",
+      "disabledHint": "Enable a plugin version before adding bindings",
+      "disabledBindingsHint": "This plugin is currently disabled. Existing bindings cannot be edited, but you can delete them to release bound API keys.",
+      "failClosedWarning": "This plugin uses a fail_closed policy: if disabled, failing, or circuit-broken, requests from bound API keys are rejected with HTTP 503 instead of bypassed.",
+      "policy": {
+        "fail_open": "fail_open",
+        "fail_closed": "fail_closed"
+      },
+      "status": {
+        "active": "Active",
+        "unavailable": "Unavailable",
+        "bypassed": "Bypassed"
+      },
+      "hostOptions": {
+        "title": "Host options",
+        "propagateSameValue": {
+          "label": "Propagate identical values",
+          "hint": "Reuse the same placeholder whenever an identical matched value appears elsewhere in the request."
+        },
+        "scanToolDefinitions": {
+          "label": "Scan tool definitions",
+          "hint": "Also inspect tool definition descriptions in the request payload (off by default)."
+        },
+        "transformReasoning": {
+          "label": "Restore reasoning content",
+          "hint": "Also restore placeholders inside model reasoning / thinking blocks in responses."
+        }
+      },
+      "dryRun": {
+        "button": "Dry-run preview",
+        "title": "Dry-run preview · {{name}}",
+        "description": "Runs the full ingress pipeline locally with this binding without calling any upstream provider or recording request logs.",
+        "modeText": "Plain text",
+        "modeJson": "Request JSON",
+        "endpoint": "Endpoint",
+        "model": "Model",
+        "textInput": "Sample text",
+        "textPlaceholder": "Paste text to inspect matched spans and transformed output...",
+        "jsonInput": "Request JSON payload",
+        "invalidJson": "Please enter a valid JSON object",
+        "run": "Run dry-run",
+        "failed": "Dry-run failed",
+        "metricsSummary": "{{segments}} segments · {{detected}} findings · {{latency}} ms",
+        "output": "Transformed output",
+        "findings": "Findings ({{count}})",
+        "noFindings": "No spans matched."
       }
     },
     "bindProtocolTitle": "Protocol slug",

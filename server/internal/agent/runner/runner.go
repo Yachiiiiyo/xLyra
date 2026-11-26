@@ -26,6 +26,7 @@ import (
 	"xlyra/server/internal/agent/sandbox"
 	"xlyra/server/internal/agent/session"
 	"xlyra/server/internal/agent/translate"
+	"xlyra/server/internal/agentctl"
 )
 
 var (
@@ -133,9 +134,15 @@ type Config struct {
 	Sandbox *SandboxConfig
 	// LocalBash 非 nil 表示 bash 在本机直接执行(不经沙箱,可联网),
 	// 与 Sandbox.Bash 互斥。
-	LocalBash  *LocalBashConfig
-	AbortGrace time.Duration
-	Logger     *slog.Logger
+	LocalBash *LocalBashConfig
+	// CtlEngine 非 nil 且启用 bash 时，为每次 run 拉起隔离控制面 UDS，供 xlyra CLI 调用。
+	CtlEngine *agentctl.Engine
+	// CLIBinDir 为包含 xlyra 可执行文件的目录；启用控制面时加入 PATH / 沙箱只读白名单。
+	CLIBinDir string
+	// BuiltinSkillDirs 为内置随包发布的技能目录（例如 xlyra），会自动并入技能与 readRoots。
+	BuiltinSkillDirs []string
+	AbortGrace       time.Duration
+	Logger           *slog.Logger
 }
 
 type Runner struct {
@@ -189,6 +196,7 @@ type activeRun struct {
 	singleTerminal   bool
 	endReason        string
 	pending          map[string]session.Escalation
+	cliApprovals     map[string]chan bool        // xlyra 控制面等待中的交互式审批通道
 	autoReviewing    map[string]translate.Event  // auto 决定前的原审批请求;这些审批不等用户,决定时随结果补发
 	resolved         map[string]resolveOptions   // 已回写的审批决定:决定先于落盘到达时由 recordEscalation 补写
 	pendingQuestions map[string]session.Question // 未回答的提问,id 即 extension_ui_request 的 id
@@ -222,6 +230,7 @@ type retrySpec struct {
 type prepared struct {
 	proc        *pirpc.Process
 	executor    *execd.Executor
+	ctlServer   *agentctl.UDSServer
 	level       string
 	tokenFile   string // 令牌文件路径,续期时原子重写
 	tokenIssued bool
@@ -760,7 +769,7 @@ func (r *Runner) admit(sessionID string, spec runSpec, kind string) (*activeRun,
 	ar := &activeRun{
 		sessionID: sessionID, runID: uuid.NewString(), model: spec.model, mode: spec.mode, kind: kind,
 		tr: translate.New(), ctx: ctx, cancel: cancel, done: make(chan struct{}), grant: make(chan struct{}),
-		pending: map[string]session.Escalation{}, autoReviewing: map[string]translate.Event{}, resolved: map[string]resolveOptions{}, startedAt: time.Now(),
+		pending: map[string]session.Escalation{}, cliApprovals: map[string]chan bool{}, autoReviewing: map[string]translate.Event{}, resolved: map[string]resolveOptions{}, startedAt: time.Now(),
 		pendingQuestions: map[string]session.Question{}, questionTimers: map[string]*time.Timer{},
 		waitChanged: make(chan struct{}, 1),
 	}
@@ -861,8 +870,9 @@ func (r *Runner) start(ar *activeRun, spec runSpec) {
 func (r *Runner) cleanup(ar *activeRun, prep *prepared) {
 	ar.cleanOnce.Do(func() {
 		defer r.wg.Done()
-		// 进程异常退出等路径下仍未回答的提问在关闭进程、结束 run 之前标记取消。
+		// 进程异常退出等路径下仍未回答的提问与控制面审批在关闭进程、结束 run 之前标记取消。
 		r.cancelPendingQuestions(ar)
+		r.cancelPendingCLIApprovals(ar)
 		exitCode := 0
 		if prep != nil && prep.proc != nil {
 			_ = prep.proc.Close()
@@ -871,6 +881,9 @@ func (r *Runner) cleanup(ar *activeRun, prep *prepared) {
 			if info.Err != nil {
 				r.logger.Warn("Pi 进程异常退出", "session_id", ar.sessionID, "run_id", ar.runID, "code", info.Code, "signal", info.Signal)
 			}
+		}
+		if prep != nil && prep.ctlServer != nil {
+			closeRunControlServer(prep.ctlServer)
 		}
 		if prep != nil && prep.executor != nil {
 			if err := prep.executor.Close(); err != nil {

@@ -4,7 +4,7 @@
 
 | 类型 | 含义 | 常见原因 |
 | --- | --- | --- |
-| `js_timeout` | 钩子超过时限被中断 | 死循环、重计算；额度探测 200 ms，协议 50 ms |
+| `js_timeout` | 钩子超过时限被中断 | 死循环、重计算；额度探测 500 ms，协议 150 ms |
 | `js_heap_limit` | 超过内存上限被中断 | 构造了巨大的字符串或数组 |
 | `js_shape_error` | 返回值结构不对 | 多了不认识的字段；`probe` 同时返回了 `request` 和 `result`；必填字段缺失或类型错误；`entries` 项没有 `label` |
 | `js_exception` | 插件抛出了未捕获的异常 | 访问了 `undefined` 的属性；宿主函数参数错误且没接住 |
@@ -71,7 +71,7 @@ js_timeout: interrupted: timeout
 
 | 错误码 | 含义 |
 | --- | --- |
-| `plugin_rewrite_failed` | 站点类型的 `rewritePayload` 失败（抛错、超时、形状不对、改了 `model` 或 `stream`、正文超过 1 MiB）。错误信息里带插件 id |
+| `plugin_rewrite_failed` | 站点类型的 `rewritePayload` 失败（抛错、超时、形状不对、改了 `model` 或 `stream`、正文超过 16 MiB）。错误信息里带插件 id |
 | `upstream_host_not_allowed` | 插件站点类型的上游主机不在启用时确认的列表里，或该类型已停用 |
 | `plugin_header_template_failed` | 插件站点的请求头模板渲染失败（变量不存在，或结果含 CR、LF、其它控制字符）。错误信息里有头名，不含密钥的值 |
 

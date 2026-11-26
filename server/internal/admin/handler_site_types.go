@@ -20,6 +20,7 @@ type siteTypeInfo struct {
 	OfficialBaseURL    string                       `json:"official_base_url,omitempty"`
 	ShowInCreateDialog bool                         `json:"show_in_create_dialog"`
 	IconURL            string                       `json:"icon_url"`
+	AllowsEmptyAPIKey  bool                         `json:"allows_empty_api_key,omitempty"`
 	Accounts           *siteTypeAccountCapabilities `json:"accounts,omitempty"`
 	PluginID           string                       `json:"plugin_id,omitempty"`
 	ProviderStatus     string                       `json:"provider_status,omitempty"`
@@ -65,6 +66,7 @@ func (h Handler) ListSiteTypes(w http.ResponseWriter, r *http.Request) {
 			OfficialBaseURL:    officialBaseURL,
 			ShowInCreateDialog: desc.ShowInCreateDialog,
 			IconURL:            desc.IconURL,
+			AllowsEmptyAPIKey:  isPlugin && desc.AllowsEmptyAPIKey,
 			Accounts:           accounts,
 		}
 		if isPlugin {

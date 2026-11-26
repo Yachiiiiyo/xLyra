@@ -13,8 +13,8 @@ export type JSPluginKind =
   | 'site_provider'
   | string
 
-/** site: bind to sites; endpoint: gets a downstream path; global: applies everywhere; site_type: declares a site type. */
-export type JSPluginScope = 'site' | 'endpoint' | 'global' | 'subject' | 'site_type'
+/** site: bind to sites; endpoint: gets a downstream path; global: applies everywhere; site_type: declares a site type; gateway_pipeline: binds to API keys on the gateway request/response pipeline. */
+export type JSPluginScope = 'site' | 'endpoint' | 'global' | 'subject' | 'site_type' | 'gateway_pipeline'
 
 export type JSPluginMetrics24h = {
   calls: number
@@ -502,4 +502,172 @@ export async function listJSPluginActionLog(pluginId: string, signal?: AbortSign
     { signal },
   )
   return result.items ?? []
+}
+
+// ---- gateway pipeline bindings ----
+
+export type JSPluginGatewayPipelineManifest = {
+  scope: string
+  exclusive?: boolean
+  failurePolicy?: 'fail_open' | 'fail_closed' | string
+  unsupportedEndpoint?: 'pass' | 'reject' | string
+  transform?: {
+    mode?: string
+    reversible?: boolean
+    propagateMinLength?: number
+    systemHint?: string
+  }
+  form?: { title?: LocalizedText; description?: LocalizedText; addLabel?: LocalizedText; emptyText?: LocalizedText }
+  inputs: JSPluginAutomationInput[]
+}
+
+export function gatewayPipelineManifest(manifest?: Record<string, unknown>): JSPluginGatewayPipelineManifest | null {
+  const raw = manifest?.gatewayPipeline as Partial<JSPluginGatewayPipelineManifest> | undefined
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    scope: typeof raw.scope === 'string' ? raw.scope : 'api_key',
+    exclusive: raw.exclusive,
+    failurePolicy: raw.failurePolicy,
+    unsupportedEndpoint: raw.unsupportedEndpoint,
+    transform: raw.transform,
+    form: raw.form,
+    inputs: raw.inputs ?? [],
+  }
+}
+
+export type JSPluginPipelineHostOptionSpec = {
+  key: string
+  type: 'boolean' | string
+  default: boolean | string
+}
+
+export type JSPluginPipelineHostOptions = {
+  propagateSameValue?: boolean
+  scanToolDefinitions?: boolean
+  transformReasoning?: boolean
+}
+
+export type JSPluginPipelineBinding = {
+  id: string
+  version: string
+  name: string
+  inputs: Array<{
+    name: string
+    entities?: Array<{ type: string; id: string; name: string }>
+    value?: string | number | boolean
+  }>
+  host_options: JSPluginPipelineHostOptions
+  policy: {
+    failurePolicy?: string
+    unsupportedEndpoint?: string
+    pluginName?: string
+    inspectRaw?: boolean
+  }
+  status: 'active' | 'unavailable' | 'bypassed' | string
+  unavailable_reason?: string
+  created_at: string
+}
+
+export type JSPluginPipelineDryRunFinding = {
+  segment_id: string
+  role?: string
+  field: string
+  start: number
+  end: number
+  type: string
+  source?: string
+  score?: number
+  placeholder?: string
+  applied: boolean
+}
+
+export type JSPluginPipelineDryRunResult = {
+  outcome: string
+  changed: boolean
+  bypassed?: boolean
+  error_kind?: string
+  metrics: {
+    plugin_id: string
+    binding_id: string
+    outcome: string
+    counts?: Record<string, number>
+    segments: number
+    cached: number
+    hook_calls?: number
+    latency_ms: number
+  }
+  failure?: {
+    status: number
+    code: string
+    message: string
+  }
+  findings: JSPluginPipelineDryRunFinding[]
+  transformed_text?: string
+  transformed_payload?: Record<string, unknown>
+}
+
+export const jsPluginPipelineQueryKeys = {
+  list: (pluginId: string) => [...jsPluginQueryKeys.all, 'pipeline-bindings', pluginId] as const,
+  options: (pluginId: string, inputName: string, bindingId?: string) =>
+    [...jsPluginQueryKeys.all, 'pipeline-options', pluginId, inputName, bindingId ?? ''] as const,
+}
+
+export async function listJSPluginPipelineBindings(pluginId: string, signal?: AbortSignal) {
+  return apiFetch<{ items: JSPluginPipelineBinding[]; host_options: JSPluginPipelineHostOptionSpec[] }>(
+    `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/bindings`,
+    { signal },
+  )
+}
+
+export async function createJSPluginPipelineBinding(
+  pluginId: string,
+  body: { name: string; inputs: Record<string, JSPluginAutomationValue>; host_options: Record<string, unknown> },
+) {
+  return apiFetch<{ ok: boolean; id: string }>(`/api/v1/js-plugins/${encodeURIComponent(pluginId)}/bindings`, {
+    method: 'POST',
+    body,
+  })
+}
+
+export async function updateJSPluginPipelineBinding(
+  pluginId: string,
+  bindingId: string,
+  body: { name: string; inputs: Record<string, JSPluginAutomationValue>; host_options: Record<string, unknown> },
+) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/bindings/${encodeURIComponent(bindingId)}`,
+    { method: 'PUT', body },
+  )
+}
+
+export async function deleteJSPluginPipelineBinding(pluginId: string, bindingId: string) {
+  return apiFetch<{ ok: boolean }>(
+    `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/bindings/${encodeURIComponent(bindingId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function listJSPluginPipelineInputOptions(
+  pluginId: string,
+  inputName: string,
+  bindingId?: string,
+  signal?: AbortSignal,
+) {
+  const qs = bindingId ? `?binding_id=${encodeURIComponent(bindingId)}` : ''
+  const result = await apiFetch<{ items: JSPluginAutomationOption[] }>(
+    `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/pipeline-inputs/${encodeURIComponent(inputName)}/options${qs}`,
+    { signal },
+  )
+  return result.items ?? []
+}
+
+export async function dryRunJSPluginPipelineBinding(
+  pluginId: string,
+  bindingId: string,
+  body: { text?: string; endpoint?: string; model?: string; payload?: Record<string, unknown> },
+) {
+  return apiFetch<JSPluginPipelineDryRunResult>(
+    `/api/v1/js-plugins/${encodeURIComponent(pluginId)}/bindings/${encodeURIComponent(bindingId)}/dry-run`,
+    { method: 'POST', body },
+  )
 }

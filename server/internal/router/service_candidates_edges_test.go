@@ -24,12 +24,13 @@ func TestCandidatesFilterSortAndLimit(t *testing.T) {
 	excludedSiteID := uuid.New()
 	canonicalID := uuid.New()
 	modelKey := "openai/gpt-5-mini"
+	canonicalModelKey := "gpt-5-mini"
 	service := routerServiceWithRepositoryRows(t, routerRepositoryRows{
 		canonicalModels: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		canonicalModelsByID: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		siteModels: []store.SiteModel{
 			{
@@ -119,14 +120,15 @@ func TestCandidatesRankHigherPriorityAboveHealthierLowerPriority(t *testing.T) {
 	degradedHighPrioritySiteID := uuid.New()
 	canonicalID := uuid.New()
 	modelKey := "openai/gpt-5-mini"
+	canonicalModelKey := "gpt-5-mini"
 	healthySuccessRate := 1.0
 	degradedSuccessRate := 0.2
 	service := routerServiceWithRepositoryRows(t, routerRepositoryRows{
 		canonicalModels: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		canonicalModelsByID: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		siteModels: []store.SiteModel{
 			{
@@ -192,9 +194,10 @@ func TestCandidatesDoNotFallbackWhenGenericModelHasUnusableBindings(t *testing.T
 	siteModelID := uuid.New()
 	credentialID := uuid.New()
 	modelKey := "openai/gpt-5-mini"
+	canonicalModelKey := "gpt-5-mini"
 	service := routerServiceWithRepositoryRows(t, routerRepositoryRows{
-		canonicalModels:     []store.CanonicalModel{{ID: canonicalID, ModelKey: modelKey, Status: "active"}},
-		canonicalModelsByID: []store.CanonicalModel{{ID: canonicalID, ModelKey: modelKey, Status: "active"}},
+		canonicalModels:     []store.CanonicalModel{{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"}},
+		canonicalModelsByID: []store.CanonicalModel{{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"}},
 		siteModels: []store.SiteModel{{
 			ID:           siteModelID,
 			SiteID:       siteID,
@@ -234,6 +237,7 @@ func TestCandidatesDemoteTransientCooldownAndFilterHardAndCredentialCooldowns(t 
 	keyCooledCredentialID := uuid.New()
 	canonicalID := uuid.New()
 	modelKey := "openai/gpt-5-mini"
+	canonicalModelKey := "gpt-5-mini"
 	activeUntil := time.Now().Add(time.Hour)
 	siteModel := func(siteID uuid.UUID, modelID uuid.UUID, name string) store.SiteModel {
 		return store.SiteModel{
@@ -250,10 +254,10 @@ func TestCandidatesDemoteTransientCooldownAndFilterHardAndCredentialCooldowns(t 
 	}
 	service := routerServiceWithRepositoryRows(t, routerRepositoryRows{
 		canonicalModels: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		canonicalModelsByID: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		siteModels: []store.SiteModel{
 			siteModel(steadySiteID, uuid.New(), "steady-model"),
@@ -327,7 +331,7 @@ func TestPlanUsesDefaultAndExplicitFailoverLimits(t *testing.T) {
 
 	ctx := context.Background()
 	canonicalID := uuid.New()
-	modelKey := "openai/gpt-5-mini"
+	modelKey := "gpt-5-mini"
 	rows := routerPlanRepositoryRows(canonicalID, modelKey, []string{"selected", "failover-1", "failover-2", "failover-3", "failover-4"})
 	service := routerServiceWithRepositoryRows(t, rows)
 
@@ -354,14 +358,15 @@ func TestCandidatesReturnsCooldownRepositoryError(t *testing.T) {
 	ctx := context.Background()
 	canonicalID := uuid.New()
 	modelKey := "openai/gpt-5-mini"
+	canonicalModelKey := "gpt-5-mini"
 	cooldownErr := errors.New("cooldown repository offline")
 	service := routerServiceWithRepositoryRows(t, routerRepositoryRows{
 		errOnRouteCooldowns: cooldownErr,
 		canonicalModels: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 		canonicalModelsByID: []store.CanonicalModel{
-			{ID: canonicalID, ModelKey: modelKey, Status: "active"},
+			{ID: canonicalID, ModelKey: canonicalModelKey, Status: "active"},
 		},
 	})
 

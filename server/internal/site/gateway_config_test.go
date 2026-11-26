@@ -310,3 +310,25 @@ func TestRequestHeadersFromSiteMetaReturnsNilForInvalidOrEmptyMeta(t *testing.T)
 func testBool(value bool) *bool {
 	return &value
 }
+
+func TestMergeSiteGatewayConfigKeepsFirstOutputTimeout(t *testing.T) {
+	t.Parallel()
+
+	firstOutput := 25_000
+	raw, err := MergeSiteGatewayConfig([]byte(`{"gateway":{"request_timeout_ms":9000}}`), &GatewayConfig{FirstOutputTimeoutMS: &firstOutput})
+	if err != nil {
+		t.Fatalf("merge gateway config: %v", err)
+	}
+	cfg := GatewayConfigFromSiteMeta(raw)
+	if cfg == nil || cfg.FirstOutputTimeoutMS == nil || *cfg.FirstOutputTimeoutMS != firstOutput {
+		t.Fatalf("first output timeout = %#v, want %d", cfg, firstOutput)
+	}
+	if cfg.RequestTimeoutMS == nil || *cfg.RequestTimeoutMS != 9000 {
+		t.Fatalf("existing fields must survive the merge: %#v", cfg)
+	}
+
+	invalid := 0
+	if _, err := NormalizeGatewayConfig(&GatewayConfig{FirstOutputTimeoutMS: &invalid}); err == nil {
+		t.Fatal("a non-positive first_output_timeout_ms must be rejected")
+	}
+}

@@ -176,6 +176,16 @@ func (h Handler) generateImage(ctx context.Context, req ImageGenerationRequest, 
 			Stream:            false,
 			Payload:           payload,
 		}
+		// The prompt goes through the key's gateway pipeline like any other
+		// request; a bridged call reuses the session of the request it serves.
+		pipelineCtx, pipelineFailure := h.applyGatewayIngressPipeline(ctx, req.APIKeyID, &request)
+		if pipelineFailure != nil {
+			message := fmt.Sprintf("%s: %s", pipelineFailure.code, pipelineFailure.message)
+			result.Attempts = append(result.Attempts, ImageGenerationAttempt{Model: model, Error: message})
+			result.ErrorMessage = message
+			return result
+		}
+		ctx := pipelineCtx
 		candidates := append([]routeengine.Candidate{plan.Selected}, plan.Failover...)
 		lastError := "image generation failed"
 		skipModel := false

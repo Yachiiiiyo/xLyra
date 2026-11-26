@@ -287,6 +287,14 @@ func TestClearCooldownAfterRecoveryOnlyForCoolingCandidates(t *testing.T) {
 	if updates != 1 {
 		t.Fatalf("updates = %d, want one cooldown clear for recovered cooling candidate", updates)
 	}
+
+	breakerCandidate := resolverCooldownCandidate("openai")
+	breakerCandidate.Cooling = true
+	breakerCandidate.CoolingReason = store.CooldownReasonUpstreamSiteBreaker
+	handler.clearCooldownAfterRecovery(context.Background(), breakerCandidate)
+	if updates != 2 {
+		t.Fatalf("updates = %d, want exactly one more clear (the site-level breaker) for a candidate demoted by it", updates)
+	}
 }
 
 func streamFailureRequestLog() store.RequestLog {
@@ -310,5 +318,57 @@ func successRequestLog() store.RequestLog {
 		StatusCode: http.StatusOK,
 		Success:    true,
 		Metadata:   store.JSON([]byte(`{}`)),
+	}
+}
+
+func abandonedRequestLog(latencyMS int64, metadata string) store.RequestLog {
+	return store.RequestLog{
+		StatusCode: 499,
+		ErrorType:  sql.NullString{String: "downstream_client_cancelled", Valid: true},
+		LatencyMS:  sql.NullInt64{Int64: latencyMS, Valid: true},
+		Metadata:   store.JSON([]byte(metadata)),
+	}
+}
+
+func TestClientAbandonedWhileWaitingNeedsSilentUpstreamAndLongWait(t *testing.T) {
+	t.Parallel()
+
+	base := gatewayAttemptResult{errorType: "downstream_client_cancelled", statusCode: 499, latencyMS: 29_600}
+	if !clientAbandonedWhileWaiting(base) {
+		t.Fatal("a 29.6s hang-up before any upstream answer should count")
+	}
+	for name, mutate := range map[string]func(*gatewayAttemptResult){
+		"short wait":        func(r *gatewayAttemptResult) { r.latencyMS = 2_000 },
+		"upstream answered": func(r *gatewayAttemptResult) { r.upstreamStatusCode = 200 },
+		"stream started":    func(r *gatewayAttemptResult) { r.responseStarted = true },
+		"other error":       func(r *gatewayAttemptResult) { r.errorType = "upstream_timeout" },
+		"success":           func(r *gatewayAttemptResult) { r.success = true },
+	} {
+		result := base
+		mutate(&result)
+		if clientAbandonedWhileWaiting(result) {
+			t.Fatalf("%s: must not count as an abandoned slow upstream", name)
+		}
+	}
+}
+
+func TestClientAbandonStreakNeedsThreeConsecutiveHangUps(t *testing.T) {
+	t.Parallel()
+
+	slow := abandonedRequestLog(29_500, `{"upstream_status_code":0}`)
+	if failureStreakReached([]store.RequestLog{slow, slow}, clientAbandonCooldownThreshold, requestLogClientAbandoned) {
+		t.Fatal("two hang-ups stay below the threshold")
+	}
+	if !failureStreakReached([]store.RequestLog{slow, slow, slow}, clientAbandonCooldownThreshold, requestLogClientAbandoned) {
+		t.Fatal("three consecutive hang-ups should reach the threshold")
+	}
+	if failureStreakReached([]store.RequestLog{slow, successRequestLog(), slow, slow}, clientAbandonCooldownThreshold, requestLogClientAbandoned) {
+		t.Fatal("a success in between must break the streak")
+	}
+	fast := abandonedRequestLog(1_200, `{"upstream_status_code":0}`)
+	started := abandonedRequestLog(29_500, `{"upstream_status_code":200,"stream_started":true}`)
+	if failureStreakReached([]store.RequestLog{slow, fast, slow}, clientAbandonCooldownThreshold, requestLogClientAbandoned) ||
+		failureStreakReached([]store.RequestLog{slow, started, slow}, clientAbandonCooldownThreshold, requestLogClientAbandoned) {
+		t.Fatal("quick cancels and cancels after output started are user actions, not latency")
 	}
 }

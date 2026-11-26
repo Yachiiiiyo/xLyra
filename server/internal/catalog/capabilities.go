@@ -25,8 +25,13 @@ func (s capabilitySource) Lookup(ctx context.Context, input modelcapabilities.In
 	key := CanonicalModelKeyFromUpstream(input.ModelID)
 	repo := store.NewCanonicalModelRepository(s.db.DB())
 	model, err := repo.GetByKey(ctx, key)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model, err = repo.GetByNormalizedAlias(ctx, NormalizeModelKey(input.ModelID))
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && model.Status == "archived") {
+		if _, aliasModel, found, aliasErr := lookupCanonicalAlias(ctx, repo, NormalizeModelKey(input.ModelID), key); aliasErr != nil {
+			return nil, false, aliasErr
+		} else if found && aliasModel.Status != "archived" {
+			model = aliasModel
+			err = nil
+		}
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, false, nil

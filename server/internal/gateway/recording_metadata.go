@@ -166,6 +166,7 @@ func attemptMetadata(
 		"site_model_id":                       nullableCredentialID(candidate.Model.SiteModelID),
 		"canonical_model_id":                  nullableCredentialID(canonicalModelID),
 		"attempt":                             result.attempt,
+		"route_pick":                          routePickMetadata(ctx),
 		"credential_attempt":                  result.credentialAttempt,
 		"credential_total":                    result.credentialTotal,
 		"next_credential_available":           failoverDecision.NextCredentialAvailable,

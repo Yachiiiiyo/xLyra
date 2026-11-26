@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"xlyra/server/internal/admin"
+	"xlyra/server/internal/agentctl"
 	"xlyra/server/internal/agentllm"
 	"xlyra/server/internal/agentproxy"
 	"xlyra/server/internal/analytics"
@@ -225,8 +226,28 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 		}()
 		go syncAgentAccessPolicy()
 	}
+	ctlEngine := agentctl.NewEngine(agentctl.Deps{
+		Version:      version.Current().Version,
+		Config:       &cfg,
+		ConfFile:     confFile,
+		DB:           db,
+		Auth:         authService,
+		Sites:        siteService,
+		Catalog:      catalogService,
+		Router:       routerService,
+		Dashboard:    dashboardService,
+		Usage:        usageService,
+		JSPlugins:    jsPluginManager,
+		PluginMarket: pluginMarket,
+		Cloud:            cloudClient,
+		Logger:           logger.With("thread", "agent-ctl"),
+		OnCatalogChanged: func() { gatewayHandler.InvalidateModelsCache() },
+	})
 	// 内置 Pi 是唯一引擎，始终装配。
-	builtin := newBuiltinAgentWithDevices(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, deviceRepo, agentModelSource{sites: siteService, db: db})
+	builtin := newBuiltinAgentWithOptions(cfg, logger.With("thread", "agent-builtin"), confFile, routerService, agentLLMHandler, agentLLMHandler.ModelMemory, builtinAgentOptions{
+		Devices:   deviceRepo,
+		CtlEngine: ctlEngine,
+	}, agentModelSource{sites: siteService, db: db})
 	builtin.startPush(ctx, tasks, cloudClient)
 	if tasks != nil {
 		tasks.Add(1)
@@ -380,6 +401,12 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Put("/js-plugins/{id}/automations/{binding_id}", adminHandler.UpdateJSPluginAutomation)
 				protected.Delete("/js-plugins/{id}/automations/{binding_id}", adminHandler.DeleteJSPluginAutomation)
 				protected.Get("/js-plugins/{id}/inputs/{name}/options", adminHandler.ListJSPluginAutomationOptions)
+				protected.Get("/js-plugins/{id}/bindings", adminHandler.ListJSPluginBindings)
+				protected.Post("/js-plugins/{id}/bindings", adminHandler.CreateJSPluginBinding)
+				protected.Put("/js-plugins/{id}/bindings/{binding_id}", adminHandler.UpdateJSPluginBinding)
+				protected.Delete("/js-plugins/{id}/bindings/{binding_id}", adminHandler.DeleteJSPluginBinding)
+				protected.Post("/js-plugins/{id}/bindings/{binding_id}/dry-run", adminHandler.DryRunJSPluginBinding)
+				protected.Get("/js-plugins/{id}/pipeline-inputs/{name}/options", adminHandler.ListJSPluginPipelineInputOptions)
 				protected.Get("/js-plugins/{id}/action-log", adminHandler.ListJSPluginActionLog)
 				admin.RegisterPluginMarket(protected, adminHandler)
 				admin.RegisterCloudBinding(protected, adminHandler, cloudClient)
@@ -492,6 +519,7 @@ func NewRouterWithGatewayWithOAuth(ctx context.Context, tasks *sync.WaitGroup, c
 				protected.Post("/models", adminHandler.CreateModel)
 				protected.Put("/models/{modelID}", adminHandler.UpdateModel)
 				protected.Delete("/models/{modelID}", adminHandler.DeleteModel)
+				protected.Post("/models/{modelID}/merge", adminHandler.MergeModel)
 				protected.Get("/models/{modelID}/matrix", adminHandler.GetModelMatrix)
 				protected.Put("/models/{modelID}/pricing", adminHandler.UpdateModelPricing)
 				protected.Post("/models/{modelID}/pricing/reset", adminHandler.ResetModelPricing)

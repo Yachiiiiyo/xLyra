@@ -181,6 +181,8 @@ func TestResolveAPIKeyRouteAccessRejectsEmptySiteAndModelSetsOffline(t *testing.
 		case *[]store.CanonicalModel:
 			*dest = []store.CanonicalModel{{ID: canonicalID, ModelKey: "route-denied-model", Status: "active"}}
 			tx.Statement.RowsAffected = 1
+		case *store.CanonicalModelAlias:
+			tx.AddError(gorm.ErrRecordNotFound)
 		case *[]store.APIKeySitePermission:
 			*dest = nil
 			tx.Statement.RowsAffected = 0
@@ -208,6 +210,8 @@ func TestResolveAPIKeyRouteAccessRejectsEmptySiteAndModelSetsOffline(t *testing.
 		case *[]store.CanonicalModel:
 			*dest = []store.CanonicalModel{{ID: canonicalID, ModelKey: "route-denied-model", Status: "active"}}
 			tx.Statement.RowsAffected = 1
+		case *store.CanonicalModelAlias:
+			tx.AddError(gorm.ErrRecordNotFound)
 		case *[]store.APIKeySiteModelPermission:
 			*dest = nil
 			tx.Statement.RowsAffected = 0

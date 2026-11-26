@@ -134,16 +134,24 @@ func chooseTemplate(templateName, kind string) (string, error) {
 	if templateName != "" && kind != "" && templateName != kind {
 		return "", fmt.Errorf("--template %q and --kind %q disagree", templateName, kind)
 	}
+	chosen := ""
 	if templateName != "" {
-		return templateName, nil
+		chosen = templateName
+	} else if kind != "" {
+		chosen = kind
+	} else {
+		return jsplugin.KindQuotaProbe, nil
 	}
-	if kind != "" {
-		return kind, nil
+	if chosen == "gateway-pipeline" {
+		return "gateway_pipeline", nil
 	}
-	return jsplugin.KindQuotaProbe, nil
+	return chosen, nil
 }
 
 func validKind(kind string) bool {
+	if kind == "gateway_pipeline" {
+		return true
+	}
 	for _, info := range jsplugin.SupportedKinds() {
 		if info.Name == kind {
 			return true

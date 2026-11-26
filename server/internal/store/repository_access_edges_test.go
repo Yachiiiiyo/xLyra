@@ -757,3 +757,43 @@ func TestSiteStateAPIKeyModelAndAPIKeyStateRepositoriesCreateAndUpdateUpsertsOff
 		t.Fatalf("createCalls=%d updateCalls=%d, want 3 each", createCalls, updateCalls)
 	}
 }
+
+func TestGatewayRepositoryFallbackCredentialsKeepEveryUsableKeyInRoutingOrder(t *testing.T) {
+	t.Parallel()
+
+	siteID := uuid.New()
+	first, second, cooling, disabled := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	db := storeRepositoryOfflineGorm(t)
+	storeReplaceQueryCallback(t, db, func(tx *gorm.DB) {
+		switch dest := tx.Statement.Dest.(type) {
+		case *[]SiteCredential:
+			*dest = []SiteCredential{
+				{ID: second, SiteID: siteID, CredentialType: "api_key", RoutingPriority: 1, Meta: JSON(`{}`), CreatedAt: time.Date(2026, 6, 23, 8, 0, 0, 0, time.UTC)},
+				{ID: first, SiteID: siteID, CredentialType: "api_key", RoutingPriority: 3, Meta: JSON(`{}`), CreatedAt: time.Date(2026, 6, 23, 9, 0, 0, 0, time.UTC)},
+				{ID: cooling, SiteID: siteID, CredentialType: "api_key", RoutingPriority: 5, Meta: JSON(`{}`), CreatedAt: time.Date(2026, 6, 23, 7, 0, 0, 0, time.UTC)},
+				{ID: disabled, SiteID: siteID, CredentialType: "api_key", RoutingPriority: 5, Meta: JSON(`{"enabled":false}`), CreatedAt: time.Date(2026, 6, 23, 6, 0, 0, 0, time.UTC)},
+			}
+		case *[]SiteAPIKeyState:
+			*dest = nil
+		case *[]RouteCooldown:
+			*dest = []RouteCooldown{{SiteID: siteID, SiteCredentialID: uuid.NullUUID{UUID: cooling, Valid: true}, ActiveUntil: time.Now().Add(time.Minute)}}
+		default:
+			tx.AddError(errors.New("unexpected gateway query destination"))
+			return
+		}
+		tx.Statement.RowsAffected = 1
+	})
+
+	repo := NewGatewayRepository(db)
+	items, err := repo.ListFallbackCredentialsForSite(context.Background(), siteID)
+	if err != nil {
+		t.Fatalf("ListFallbackCredentialsForSite returned error: %v", err)
+	}
+	if len(items) != 2 || items[0].Credential.ID != first || items[1].Credential.ID != second {
+		t.Fatalf("fallback credentials = %#v, want the two usable keys by routing priority", items)
+	}
+	one, err := repo.GetFallbackCredentialForSite(context.Background(), siteID)
+	if err != nil || one.Credential.ID != first {
+		t.Fatalf("GetFallbackCredentialForSite = %#v err=%v, want the first of the list", one, err)
+	}
+}

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -39,5 +40,19 @@ func TestUpstreamModelUnavailableFailureMasksUpstreamDetails(t *testing.T) {
 	}
 	if upstreamModelUnavailableFailure(gatewayAttemptResult{statusCode: 500, errorMessage: "upstream overloaded"}) {
 		t.Fatal("ordinary upstream failure was recognized as model unavailable")
+	}
+}
+
+func TestFailoverBudgetExhaustedFollowsContextDeadline(t *testing.T) {
+	t.Parallel()
+
+	if failoverBudgetExhausted(context.Background()) {
+		t.Fatal("a context without a failover deadline must never report exhaustion")
+	}
+	if failoverBudgetExhausted(withFailoverDeadline(context.Background(), time.Now().Add(time.Minute))) {
+		t.Fatal("a future deadline is not exhausted")
+	}
+	if !failoverBudgetExhausted(withFailoverDeadline(context.Background(), time.Now().Add(-time.Millisecond))) {
+		t.Fatal("a past deadline is exhausted")
 	}
 }

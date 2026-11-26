@@ -20,6 +20,7 @@ import (
 	"xlyra/server/internal/agent/runner"
 	"xlyra/server/internal/agent/sandbox"
 	"xlyra/server/internal/agent/session"
+	"xlyra/server/internal/agentctl"
 	"xlyra/server/internal/agentproxy"
 	"xlyra/server/internal/cloudclient"
 	"xlyra/server/internal/config"
@@ -75,17 +76,29 @@ func (b agentBins) ready() bool {
 	return b.command != "" && b.piEntry != "" && b.extension != ""
 }
 
+type builtinAgentOptions struct {
+	Devices   notify.DeviceLister
+	CtlEngine *agentctl.Engine
+}
+
 // newBuiltinAgent 按配置装配内置 Agent(session 存储、能力存储、run 事件流、
 // 隔离启动流程、runner 与 HTTP handler)。node 命令或 Pi 入口脚本缺失时不
 // 报错:handler 正常路由,health 会报告不可用原因。
 func newBuiltinAgent(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc, modelSources ...agentModelSource) *builtinAgent {
-	return newBuiltinAgentWithDevices(cfg, logger, confFile, routerService, tokens, modelMemory, nil, modelSources...)
+	return newBuiltinAgentWithOptions(cfg, logger, confFile, routerService, tokens, modelMemory, builtinAgentOptions{}, modelSources...)
 }
 
 func newBuiltinAgentWithDevices(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc, devices notify.DeviceLister, modelSources ...agentModelSource) *builtinAgent {
+	return newBuiltinAgentWithOptions(cfg, logger, confFile, routerService, tokens, modelMemory, builtinAgentOptions{Devices: devices}, modelSources...)
+}
+
+func newBuiltinAgentWithOptions(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, tokens runner.TokenIssuer, modelMemory http.HandlerFunc, opts builtinAgentOptions, modelSources ...agentModelSource) *builtinAgent {
 	dataDir := resolveAgentDataDir(cfg)
 	// 能力存储与 sessions 同级:<dataDir>/skills、AGENTS.md、config.json。
 	caps := capabilities.NewStore(dataDir)
+	if opts.CtlEngine != nil {
+		opts.CtlEngine.SetCaps(caps)
+	}
 	workspaceDir := resolveAgentWorkspaceDir(cfg, dataDir)
 	store := session.NewStore(filepath.Join(dataDir, "sessions")).SetWorkspace(workspaceDir)
 	if err := os.MkdirAll(workspaceDir, 0o750); err != nil {
@@ -101,7 +114,7 @@ func newBuiltinAgentWithDevices(cfg config.Config, logger *slog.Logger, confFile
 	if cfg.PushEnabled {
 		notifier = notify.New(notify.Deps{
 			Sessions: notify.StoreSessions{Store: store},
-			Devices:  notify.StoreDevices{Repo: devices},
+			Devices:  notify.StoreDevices{Repo: opts.Devices},
 			Logger:   logger,
 		}, notify.Options{DoneMinDuration: time.Duration(cfg.PushDoneMinSeconds) * time.Second})
 		runsOpts = append(runsOpts, runlog.WithObserver(notifier.Observe))
@@ -117,7 +130,17 @@ func newBuiltinAgentWithDevices(cfg config.Config, logger *slog.Logger, confFile
 		}
 	}
 
-	run, shutdown := newBuiltinRunner(cfg, logger, confFile, routerService, store, runs, tokens, caps, decision, bins)
+	cliBin := resolveCLIBin(cfg)
+	var ctlEngine *agentctl.Engine
+	var cliBinDir string
+	var builtinSkills []string
+	if cliBin != "" && opts.CtlEngine != nil {
+		ctlEngine = opts.CtlEngine
+		cliBinDir = filepath.Dir(cliBin)
+		builtinSkills = resolveBuiltinSkillDirs(bins.extension)
+	}
+
+	run, shutdown := newBuiltinRunner(cfg, logger, confFile, routerService, store, runs, tokens, caps, decision, bins, ctlEngine, cliBinDir, builtinSkills)
 	var suggest func(context.Context, string, string, string, string, int) (string, error)
 	if completer, ok := tokens.(interface {
 		CompleteText(context.Context, string, string, string, string, int) (string, error)
@@ -624,9 +647,28 @@ func execSelfCheckWithRetry(logger *slog.Logger, dataDir string, isoCfg isolatio
 	return &rep
 }
 
+type cliConfigPair struct {
+	engine   *agentctl.Engine
+	binDir   string
+	skillDir []string
+}
+
 // newBuiltinRunner 解析 node 命令与 Pi 入口并构造 runner;隔离决策为 failed
 // 或任一入口缺失时返回降级实现(所有操作不可用),保证服务仍可启动。
-func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, store *session.Store, runs *runlog.Registry, tokens runner.TokenIssuer, caps runner.CapabilitiesSource, decision isolationDecision, bins agentBins) (agent.Runner, func(context.Context)) {
+func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.ConfigFile, routerService *routeengine.Service, store *session.Store, runs *runlog.Registry, tokens runner.TokenIssuer, caps runner.CapabilitiesSource, decision isolationDecision, bins agentBins, extra ...any) (agent.Runner, func(context.Context)) {
+	var cliPair cliConfigPair
+	for _, item := range extra {
+		switch v := item.(type) {
+		case *agentctl.Engine:
+			cliPair.engine = v
+		case string:
+			if v != "" {
+				cliPair.binDir = v
+			}
+		case []string:
+			cliPair.skillDir = v
+		}
+	}
 	reason := ""
 	switch {
 	case bins.command == "":
@@ -670,6 +712,9 @@ func newBuiltinRunner(cfg config.Config, logger *slog.Logger, confFile *config.C
 		QueueTimeout:      cfg.AgentQueueTimeout,
 		QueueMax:          cfg.AgentQueueMax,
 		Isolation:         decision.Isolation,
+		CtlEngine:         cliPair.engine,
+		CLIBinDir:         cliPair.binDir,
+		BuiltinSkillDirs:  cliPair.skillDir,
 		Logger:            logger,
 	}
 	if completer, ok := tokens.(interface {
@@ -745,6 +790,64 @@ func agentExtensionPath(configured, piEntry string) string {
 		}
 		dir = parent
 	}
+}
+
+func resolveCLIBin(cfg config.Config) string {
+	candidates := []string{
+		strings.TrimSpace(cfg.AgentCLIBin),
+		filepath.Join(config.ResolveWorkdir(), "bin", "xlyra"),
+		filepath.Join("data", "bin", "xlyra"),
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(wd, "data", "bin", "xlyra"),
+			filepath.Join(wd, "..", "data", "bin", "xlyra"),
+		)
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			if abs, err := filepath.Abs(c); err == nil {
+				return abs
+			}
+			return c
+		}
+	}
+	if pathBin, err := exec.LookPath("xlyra"); err == nil {
+		if abs, err := filepath.Abs(pathBin); err == nil {
+			return abs
+		}
+		return pathBin
+	}
+	return ""
+}
+
+func resolveBuiltinSkillDirs(extensionPath string) []string {
+	var candidates []string
+	if extensionPath != "" {
+		candidates = append(candidates, filepath.Join(filepath.Dir(filepath.Dir(extensionPath)), "skills", "xlyra"))
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(wd, "agent-runtime", "skills", "xlyra"),
+			filepath.Join(wd, "..", "agent-runtime", "skills", "xlyra"),
+		)
+	}
+	candidates = append(candidates, "/app/agent-runtime/skills/xlyra")
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(dir, "SKILL.md")); err == nil && !info.IsDir() {
+			if abs, err := filepath.Abs(dir); err == nil {
+				return []string{abs}
+			}
+			return []string{dir}
+		}
+	}
+	return nil
 }
 
 // unavailableRunner 是缺配置时的降级实现:health 给出原因,其余操作一律

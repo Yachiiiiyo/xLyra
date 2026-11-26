@@ -29,6 +29,9 @@ const (
 	// config, not here.
 	JSPluginScopeEndpoint   = "endpoint"
 	JSPluginScopeAutomation = "automation"
+	// A gateway pipeline binding attaches a plugin to downstream API keys. Its
+	// scope id and slot are its own id; the keys are its inputs.
+	JSPluginScopeGatewayPipeline = "gateway_pipeline"
 )
 
 // ErrJSPluginEnabled is returned when a plugin is removed while one of its versions is enabled.

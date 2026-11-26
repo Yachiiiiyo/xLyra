@@ -590,6 +590,10 @@ func gatewayCooldownSets(items []store.RouteCooldown) (map[uuid.UUID]struct{}, m
 			modelCooldowns[item.SiteModelID.UUID] = struct{}{}
 			continue
 		}
+		if store.TransientRouteCooldown(item) {
+			// A site breaker only demotes the site; its models stay listed and routable.
+			continue
+		}
 		siteCooldowns[item.SiteID] = struct{}{}
 	}
 	return siteCooldowns, modelCooldowns

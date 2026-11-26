@@ -45,6 +45,11 @@ type chunkMsg struct {
 	D string `json:"d"`
 }
 
+type timerMsg struct {
+	T      string `json:"t"`
+	Action string `json:"action"`
+}
+
 type exitMsg struct {
 	T        string `json:"t"`
 	Code     int    `json:"code"`

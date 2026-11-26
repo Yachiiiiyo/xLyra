@@ -11,7 +11,7 @@ export const meta = { apiVersion: 1, id: "<与 manifest 一致>", kind: "automat
 export function handle(ctx, event) { ... }
 ```
 
-这是**事件驱动**的函数：自己不发请求（要往外发就返回 `http.request` 动作，由 xLyra 代发），不在请求路径上，时限 **200 ms**。xLyra 把事件放进队列，由后台循环依次交给插件处理。
+这是**事件驱动**的函数：自己不发请求（要往外发就返回 `http.request` 动作，由 xLyra 代发），不在请求路径上，时限 **500 ms**。xLyra 把事件放进队列，由后台循环依次交给插件处理。
 
 ## 它怎么工作
 

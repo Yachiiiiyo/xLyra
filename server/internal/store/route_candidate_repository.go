@@ -83,6 +83,22 @@ func (r RouteCandidateRepository) ListByCanonicalModel(ctx context.Context, cano
 	if err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
+	if len(siteModels) == 0 {
+		return []RouteCandidateRow{}, nil
+	}
+	// Every lookup below is scoped to the sites and site models of this one
+	// canonical model. Loading whole tables (health snapshots grow with every
+	// request) made route selection cost grow with total traffic.
+	siteIDs := make([]uuid.UUID, 0, len(siteModels))
+	siteIDSeen := map[uuid.UUID]struct{}{}
+	siteModelIDs := make([]uuid.UUID, 0, len(siteModels))
+	for _, model := range siteModels {
+		siteModelIDs = append(siteModelIDs, model.ID)
+		if _, ok := siteIDSeen[model.SiteID]; !ok {
+			siteIDSeen[model.SiteID] = struct{}{}
+			siteIDs = append(siteIDs, model.SiteID)
+		}
+	}
 	var sites []Site
 	var healthStates []SiteHealthState
 	var healthSnapshots []HealthSnapshot
@@ -91,28 +107,30 @@ func (r RouteCandidateRepository) ListByCanonicalModel(ctx context.Context, cano
 	var keyStates []SiteAPIKeyState
 	var pricings []SiteModelPricing
 	var overrides []SiteModelEndpointOverride
-	if err := r.db.WithContext(ctx).Find(&sites).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id IN ?", siteIDs).Find(&sites).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Find(&healthStates).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("site_id IN ?", siteIDs).Find(&healthStates).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Find(&healthSnapshots).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("site_model_id IN ? AND scope = ? AND source = ? AND checked_at >= ?", siteModelIDs, "model", "gateway", time.Now().Add(-modelHealthWindow)).
+		Find(&healthSnapshots).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Find(&apiKeyModels).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("site_model_id IN ?", siteModelIDs).Find(&apiKeyModels).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Find(&credentials).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("site_id IN ?", siteIDs).Find(&credentials).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Find(&keyStates).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("site_id IN ?", siteIDs).Find(&keyStates).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Where(&SiteModelPricing{Available: true}).Find(&pricings).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where(&SiteModelPricing{Available: true}).Where("site_model_id IN ?", siteModelIDs).Find(&pricings).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
-	if err := r.db.WithContext(ctx).Find(&overrides).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("site_model_id IN ?", siteModelIDs).Find(&overrides).Error; err != nil {
 		return nil, fmt.Errorf("list route candidates: %w", err)
 	}
 	overrideByModel := map[uuid.UUID]SiteModelEndpointOverride{}
@@ -213,8 +231,12 @@ func defaultHealthStatus(value string) string {
 	return value
 }
 
+// modelHealthWindow is how far back gateway snapshots count towards a model's
+// success rate and latency.
+const modelHealthWindow = 24 * time.Hour
+
 func fillModelHealth(row *RouteCandidateRow, snapshots []HealthSnapshot) {
-	since := time.Now().Add(-24 * time.Hour)
+	since := time.Now().Add(-modelHealthWindow)
 	total := 0
 	success := 0
 	latencySum := int64(0)

@@ -53,10 +53,18 @@ func (a *jsProtocolAdapter) ApplyUpstreamAuth(req *http.Request, upstreamKey str
 	case section.Auth == "none":
 		return
 	case section.Auth == "bearer":
+		if strings.TrimSpace(upstreamKey) == "" {
+			req.Header.Del("Authorization")
+			return
+		}
 		req.Header.Set("Authorization", "Bearer "+upstreamKey)
 	default:
 		header := section.AuthHeader()
 		if header != "" {
+			if strings.TrimSpace(upstreamKey) == "" {
+				req.Header.Del(header)
+				return
+			}
 			req.Header.Set(header, upstreamKey)
 		}
 	}

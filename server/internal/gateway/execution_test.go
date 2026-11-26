@@ -497,3 +497,51 @@ func TestOAuthModelRequestAuthFailureMessageIncludesRequestContext(t *testing.T)
 		}
 	}
 }
+
+func TestCooldownInputForTransientErrorUsesModelScope(t *testing.T) {
+	t.Parallel()
+
+	siteID, siteModelID, credentialID := uuid.New(), uuid.New(), uuid.New()
+	candidate := routeengine.Candidate{Site: routeengine.CandidateSite{ID: siteID}, Model: routeengine.CandidateModel{SiteModelID: siteModelID}}
+	input, ok := cooldownInputForFailure(candidate, gatewayAttemptResult{
+		statusCode:         http.StatusRequestTimeout,
+		upstreamStatusCode: http.StatusRequestTimeout,
+		errorType:          upstreamTransientErrorType,
+		credentialID:       credentialID,
+	})
+	if !ok {
+		t.Fatal("a transient 4xx must produce a cooldown")
+	}
+	if input.Scope != "model" || input.SiteModelID == nil || *input.SiteModelID != siteModelID || input.SiteCredentialID != nil {
+		t.Fatalf("cooldown input = %#v, want model scope without a credential", input)
+	}
+	if input.Reason != upstreamTransientErrorType || input.Duration != transientCooldownBaseDuration {
+		t.Fatalf("cooldown reason/duration = %q/%s", input.Reason, input.Duration)
+	}
+	if shouldTryNextCredential(gatewayAttemptResult{errorType: upstreamTransientErrorType, statusCode: http.StatusRequestTimeout}) {
+		t.Fatal("a transient model failure must move to the next site, not burn the remaining keys")
+	}
+}
+
+func TestDownstreamErrorBodyReplacesNonJSONUpstreamErrors(t *testing.T) {
+	t.Parallel()
+
+	html := gatewayAttemptResult{statusCode: http.StatusBadGateway, contentType: "text/html; charset=UTF-8", body: []byte("<!DOCTYPE html><html><title>502 Bad Gateway</title></html>")}
+	body, contentType := downstreamErrorBody(html, "req-1")
+	if contentType != "application/json" || !json.Valid(body) {
+		t.Fatalf("body = %q contentType = %q, want a JSON error", body, contentType)
+	}
+	if strings.Contains(string(body), "DOCTYPE") || !strings.Contains(string(body), "upstream returned HTTP 502") || !strings.Contains(string(body), "req-1") {
+		t.Fatalf("body = %s, want a sanitized upstream_http_error carrying the request id", body)
+	}
+
+	upstreamJSON := gatewayAttemptResult{statusCode: http.StatusBadRequest, contentType: "application/json", body: []byte(`{"error":{"message":"bad"}}`)}
+	if body, contentType := downstreamErrorBody(upstreamJSON, "req-2"); string(body) != `{"error":{"message":"bad"}}` || contentType != "application/json" {
+		t.Fatalf("JSON error body must pass through unchanged, got %q %q", body, contentType)
+	}
+
+	empty := gatewayAttemptResult{statusCode: http.StatusBadGateway, contentType: "text/plain"}
+	if body, contentType := downstreamErrorBody(empty, "req-3"); len(body) != 0 || contentType != "text/plain" {
+		t.Fatalf("empty body must stay as is, got %q %q", body, contentType)
+	}
+}

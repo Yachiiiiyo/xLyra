@@ -5,12 +5,14 @@ export function SiteAPIKeyFormFields({
   draft,
   onChange,
   showAPIKey,
+  apiKeyOptional = false,
   showCostMultiplier,
   t,
 }: {
   draft: APIKeyFormDraft
   onChange: (value: APIKeyFormDraft) => void
   showAPIKey: boolean
+  apiKeyOptional?: boolean
   showCostMultiplier: boolean
   t: (key: string) => string
 }) {
@@ -69,6 +71,9 @@ export function SiteAPIKeyFormFields({
           <Input
             value={draft.apiKey}
             autoComplete="off"
+            placeholder={
+              apiKeyOptional ? t('apiKeys.optionalPlaceholder') : undefined
+            }
             onChange={(event) =>
               onChange({ ...draft, apiKey: event.target.value })
             }

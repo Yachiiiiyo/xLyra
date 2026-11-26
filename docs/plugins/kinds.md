@@ -65,19 +65,19 @@ xlyra-plugin kinds
 - `{ result }`：完成；
 - `{ error: "原因" }`：失败。
 
-最多调用 6 次（发 5 个请求），每次 200 ms。写法详见[额度探测插件](./quota-probe.md)，其他三种只说明与它的区别。`site_detect` 不带凭据，请求不会有 `Authorization` 头。
+最多调用 6 次（发 5 个请求），每次 500 ms。写法详见[额度探测插件](./quota-probe.md)，其他三种只说明与它的区别。`site_detect` 不带凭据，请求不会有 `Authorization` 头。
 
 ### 请求转换：`protocol`
 
-每次客户端请求都会调用，时限 50 ms，只处理非流式请求。详见[协议插件](./protocol.md)。
+每次客户端请求都会调用，时限 150 ms，只处理非流式请求。详见[协议插件](./protocol.md)。
 
 ### 一次性函数：`error_classifier`、`model_metadata`、`pricing_parse`
 
-纯函数：xLyra 给你输入，你返回结果，**不发任何 HTTP 请求**。其中 `error_classifier` 在请求路径上，时限 50 ms；另外两个 200 ms。
+纯函数：xLyra 给你输入，你返回结果，**不发任何 HTTP 请求**。其中 `error_classifier` 在请求路径上，时限 150 ms；另外两个 500 ms。
 
 ### 事件驱动：`automation`
 
-xLyra 在某件事发生后把事件放进队列，后台依次交给插件，插件返回**声明式动作**，由 xLyra 校验权限和目标范围后执行。不在请求路径上，时限 200 ms。详见[自动化插件](./automation.md)。
+xLyra 在某件事发生后把事件放进队列，后台依次交给插件，插件返回**声明式动作**，由 xLyra 校验权限和目标范围后执行。不在请求路径上，时限 500 ms。详见[自动化插件](./automation.md)。
 
 ### 站点类型：`site_provider`
 

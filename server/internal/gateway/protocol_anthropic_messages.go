@@ -212,7 +212,11 @@ func (a anthropicMessagesProtocolAdapter) responseTools() map[string]responsesTo
 
 func (anthropicMessagesProtocolAdapter) ApplyUpstreamHeaders(req *http.Request, upstreamKey string, _ string, _ bool) {
 	req.Header.Del("Authorization")
-	req.Header.Set("x-api-key", upstreamKey)
+	if strings.TrimSpace(upstreamKey) != "" {
+		req.Header.Set("x-api-key", upstreamKey)
+	} else {
+		req.Header.Del("x-api-key")
+	}
 	if strings.TrimSpace(req.Header.Get("anthropic-version")) == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
@@ -314,7 +318,11 @@ func (a providerAnthropicMessagesProtocolAdapter) ProxyStream(ctx context.Contex
 
 func (a providerAnthropicMessagesProtocolAdapter) ApplyUpstreamHeaders(req *http.Request, upstreamKey string, _ string, _ bool) {
 	// Authorization is preserved: some Anthropic-compatible relays authenticate via the downstream bearer.
-	req.Header.Set("x-api-key", upstreamKey)
+	if strings.TrimSpace(upstreamKey) != "" {
+		req.Header.Set("x-api-key", upstreamKey)
+	} else {
+		req.Header.Del("x-api-key")
+	}
 	if strings.TrimSpace(req.Header.Get("anthropic-version")) == "" {
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"xlyra/server/internal/textpipeline"
+	"xlyra/server/internal/textxform"
 
 	"github.com/google/uuid"
 
@@ -132,6 +134,11 @@ func (h Handler) forwardBridgedResponses(
 		if round > 1 {
 			payload := clonePayload(roundRequest.Payload)
 			payload["input"] = inputItems
+			// Replayed items were captured from the restored response;
+			// put the request's placeholders back before going upstream.
+			if session := textxform.RestoringSessionFromContext(ctx); session != nil {
+				payload["input"] = textpipeline.Retokenize(textpipeline.DeepCopyJSON(inputItems), session)
+			}
 			payload["tool_choice"] = "auto"
 			roundRequest.Payload = payload
 			if canonical, err := canonicalRequestFromOpenAIResponsesPayload(payload, roundRequest.RequestedModel); err == nil {

@@ -8,21 +8,53 @@ import (
 	"strings"
 )
 
+// HookGatewayPipelineFixture is the end-to-end fixture hook name for a
+// gatewayPipeline plugin (runs native rules, inspectSegments, transformation
+// and response restoration).
+const HookGatewayPipelineFixture = "gatewayPipeline"
+
+var gatewayPipelineFixtureRunner func(ctx context.Context, plugin *Plugin, fixture Fixture) error
+
+// RegisterGatewayPipelineFixtureRunner installs the full pipeline fixture runner
+// from internal/textpipeline without introducing an import cycle.
+func RegisterGatewayPipelineFixtureRunner(fn func(ctx context.Context, plugin *Plugin, fixture Fixture) error) {
+	gatewayPipelineFixtureRunner = fn
+}
+
+// FixturePipelineBinding configures the binding parameters and host options of
+// a gatewayPipeline end-to-end fixture.
+type FixturePipelineBinding struct {
+	Params      map[string]any `json:"params,omitempty"`
+	HostOptions map[string]any `json:"hostOptions,omitempty"`
+}
+
+// FixturePipelineUpstream is a simulated upstream response (buffered or SSE chunks).
+type FixturePipelineUpstream struct {
+	Status      int      `json:"status,omitempty"`
+	ContentType string   `json:"contentType,omitempty"`
+	Body        string   `json:"body,omitempty"`
+	JSON        any      `json:"json,omitempty"`
+	SSEChunks   []string `json:"sseChunks,omitempty"`
+}
+
 // Fixture is one recorded sample. Hook selects the export for a site_provider
 // or multi-hook sample; single-hook kinds may leave it empty.
 type Fixture struct {
 	Name string `json:"name"`
 	Hook string `json:"hook,omitempty"`
 	// File is the package path, such as fixtures/ok.json. It is not part of the sample JSON.
-	File      string             `json:"-"`
-	Ctx       fixtureContext     `json:"ctx"`
-	Storage   map[string]any     `json:"storage,omitempty"`
-	Responses []FixtureResponse  `json:"responses"`
-	Expect    fixtureExpectation `json:"expect"`
-	Payload   map[string]any     `json:"payload"`
-	Input     any                `json:"input"`
-	Candidate fixtureCandidate   `json:"candidate"`
-	Response  fixtureUpstream    `json:"response"`
+	File              string                    `json:"-"`
+	Ctx               fixtureContext            `json:"ctx"`
+	Storage           map[string]any            `json:"storage,omitempty"`
+	Responses         []FixtureResponse         `json:"responses"`
+	Expect            fixtureExpectation        `json:"expect"`
+	Payload           map[string]any            `json:"payload"`
+	Input             any                       `json:"input"`
+	Candidate         fixtureCandidate          `json:"candidate"`
+	Response          fixtureUpstream           `json:"response"`
+	Binding           *FixturePipelineBinding   `json:"binding,omitempty"`
+	Endpoint          string                    `json:"endpoint,omitempty"`
+	Upstream          *FixturePipelineUpstream  `json:"upstream,omitempty"`
 }
 
 type fixtureCandidate struct {
@@ -54,6 +86,7 @@ type fixtureContext struct {
 	Inputs     map[string]any    `json:"inputs"`
 	State      map[string]any    `json:"state"`
 	Model      string            `json:"model"`
+	Endpoint   string            `json:"endpoint,omitempty"`
 	Stream     bool              `json:"stream"`
 	Protocol   string            `json:"protocol"`
 	SessionKey string            `json:"sessionKey,omitempty"`
@@ -89,13 +122,23 @@ type fixtureExpectation struct {
 	Sign map[string]any `json:"sign"`
 	// ParseError is compared with the parseError result (contentType, body).
 	ParseError map[string]any `json:"parseError"`
+	// GatewayPipeline e2e fixture expectations.
+	UpstreamPayload    map[string]any `json:"upstreamPayload,omitempty"`
+	DownstreamResponse any            `json:"downstreamResponse,omitempty"`
+	DownstreamSSE      string         `json:"downstreamSSE,omitempty"`
+	Status             int            `json:"status,omitempty"`
+	ErrorCode          string         `json:"errorCode,omitempty"`
 }
 
 // SelfTest runs the package fixtures inside the sandbox. A site_provider with
-// no samples still passes: enabling the package is enough.
+// no samples still passes: enabling the package is enough. So does a gateway
+// pipeline that exports no hook, whose rules the manifest check already compiled.
 func (p *Plugin) SelfTest(ctx context.Context) error {
 	if len(p.fixtures) == 0 {
 		if p.Manifest.DeclaresSiteType() {
+			return nil
+		}
+		if p.Manifest.DeclaresGatewayPipeline() && len(p.program.knownHooks()) == 0 {
 			return nil
 		}
 		return fmt.Errorf("%s: no fixtures", p.Manifest.ID)
@@ -206,6 +249,9 @@ func (p *Plugin) checkFixtureHook(fixture Fixture) error {
 		}
 		return fmt.Errorf("%s: hook is required", ref)
 	}
+	if p.Manifest.DeclaresGatewayPipeline() && fixture.Hook == HookGatewayPipelineFixture {
+		return nil
+	}
 	if p.Manifest.DeclaresSiteType() {
 		if !isValidSiteProviderFixtureHook(fixture.Hook) {
 			return fmt.Errorf("%s: unknown hook %q", ref, fixture.Hook)
@@ -255,6 +301,13 @@ func (p *Plugin) runHookFixture(ctx context.Context, fixture Fixture) error {
 		return p.runTransformStreamFixture(ctx, fixture)
 	case HookParseError:
 		return p.runStandaloneParseErrorFixture(ctx, fixture)
+	case HookInspectSegments:
+		return p.runInspectSegmentsFixture(ctx, fixture)
+	case HookGatewayPipelineFixture:
+		if gatewayPipelineFixtureRunner == nil {
+			return fmt.Errorf("%s: gatewayPipeline fixture runner is not registered", fixtureRef(fixture))
+		}
+		return gatewayPipelineFixtureRunner(ctx, p, fixture)
 	case "decodeRequest", "buildRequest", "parseResponse":
 		return p.runProtocolFixture(ctx, fixture)
 	default:

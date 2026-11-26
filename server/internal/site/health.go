@@ -557,8 +557,9 @@ func (s *Service) runAPIKeySiteHealthCheck(ctx context.Context, item store.Site,
 		if len(credential.Meta) > 0 {
 			_ = json.Unmarshal(credential.Meta, &meta)
 		}
+		rawKeyMissing := boolFromMeta(meta, "raw_key_missing", false)
 		secret = secretFromCredentialMeta(secret, meta)
-		if strings.TrimSpace(secret) == "" {
+		if rawKeyMissing || (strings.TrimSpace(secret) == "" && !AllowsEmptyAPIKey(item.SiteType)) {
 			lastError = "api key is empty"
 			attempt["status"] = "failed"
 			attempt["error"] = lastError

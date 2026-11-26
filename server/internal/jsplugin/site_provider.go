@@ -93,9 +93,11 @@ type SiteProviderDisplay struct {
 }
 
 // SiteProviderCredential is how a site of this type authenticates.
+// AllowEmpty applies only when Model is api_key.
 // Fields, token names, identity, and display apply only when Model is account_pool.
 type SiteProviderCredential struct {
 	Model             string              `json:"model"`
+	AllowEmpty        bool                `json:"allowEmpty,omitempty"`
 	Fields            []SiteProviderField `json:"fields,omitempty"`
 	AccessTokenField  string              `json:"accessTokenField,omitempty"`
 	RefreshTokenField string              `json:"refreshTokenField,omitempty"`

@@ -253,6 +253,8 @@
     "editConfig": "编辑 Key 配置",
     "editConfigLabel": "编辑 {{name}} 的配置",
     "noKey": "暂无 Key",
+    "emptySecret": "无密钥（留空）",
+    "optionalPlaceholder": "可选，留空表示不使用密钥",
     "complete": "补全",
     "refresh": "刷新",
     "refreshLabel": "刷新 {{name}}",

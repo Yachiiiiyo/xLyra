@@ -24,6 +24,20 @@ const (
 
 	streamFailureCooldownThreshold = 3
 
+	upstreamTransientErrorType = "upstream_transient_error"
+
+	// A client that hangs up while the upstream is still silent is a latency
+	// signal: a few abandoned attempts in a row mean the site is too slow for its
+	// callers, so it is demoted behind the other candidates for a short while.
+	clientAbandonCooldownReason    = "upstream_client_abandoned"
+	clientAbandonCooldownDuration  = 2 * time.Minute
+	clientAbandonCooldownThreshold = 3
+	clientAbandonMinWait           = 10 * time.Second
+
+	// An exhausted prepaid balance does not recover by itself; a quota probe or
+	// credential refresh clears the cooldown early once the account is topped up.
+	insufficientBalanceCooldownDuration = 30 * time.Minute
+
 	credentialUnauthorizedCooldownDuration       = 5 * time.Minute
 	credentialUnauthorizedRepeatCooldownDuration = 30 * time.Minute
 )
@@ -85,6 +99,7 @@ func (h Handler) cooldownAfterFailure(ctx context.Context, candidate routeengine
 	if result.success {
 		return
 	}
+	h.noteSiteFailure(ctx, candidate, result)
 	input, ok := cooldownInputForFailure(candidate, result)
 	if !ok {
 		return
@@ -104,8 +119,74 @@ func (h Handler) cooldownAfterFailure(ctx context.Context, candidate routeengine
 	h.InvalidateModelsCache()
 }
 
+// clientAbandonedWhileWaiting reports a downstream cancellation that happened
+// before the upstream answered anything and after a meaningful wait.
+func clientAbandonedWhileWaiting(result gatewayAttemptResult) bool {
+	return result.errorType == "downstream_client_cancelled" &&
+		!result.success &&
+		!result.responseStarted &&
+		result.upstreamStatusCode == 0 &&
+		result.latencyMS >= clientAbandonMinWait.Milliseconds()
+}
+
+func requestLogClientAbandoned(item store.RequestLog) bool {
+	if item.Success || !item.ErrorType.Valid || item.ErrorType.String != "downstream_client_cancelled" {
+		return false
+	}
+	if item.LatencyMS.Valid && item.LatencyMS.Int64 < clientAbandonMinWait.Milliseconds() {
+		return false
+	}
+	metadata := map[string]any{}
+	if len(item.Metadata) > 0 {
+		_ = json.Unmarshal(item.Metadata, &metadata)
+	}
+	return numericMetadataValue(metadata["upstream_status_code"]) == 0 && !boolMetadataValue(metadata["stream_started"])
+}
+
+// cooldownAfterClientAbandon soft-cools a site model after repeated client
+// hang-ups on a silent upstream. The request context is already cancelled, so
+// the writes use a detached one.
+func (h Handler) cooldownAfterClientAbandon(ctx context.Context, candidate routeengine.Candidate, result gatewayAttemptResult) {
+	if h.router == nil || h.db == nil || candidate.Model.SiteModelID == uuid.Nil || !clientAbandonedWhileWaiting(result) {
+		return
+	}
+	writeCtx, cancel := detachedRecordingContext(ctx)
+	defer cancel()
+	if !h.failureCooldownThresholdReached(writeCtx, candidate, "client-abandon", clientAbandonCooldownThreshold, requestLogClientAbandoned) {
+		return
+	}
+	siteModelID := candidate.Model.SiteModelID
+	_, err := h.router.ActivateCooldown(writeCtx, routeengine.CooldownInput{
+		SiteID:      candidate.Site.ID,
+		SiteModelID: &siteModelID,
+		Scope:       "model",
+		Source:      "gateway",
+		Reason:      clientAbandonCooldownReason,
+		Duration:    clientAbandonCooldownDuration,
+		Metadata: map[string]any{
+			"upstream_model": candidate.Model.UpstreamName,
+			"waited_ms":      result.latencyMS,
+		},
+	})
+	if err != nil {
+		h.logger.WarnContext(ctx, "failed to activate client abandon cooldown", "scope", "gateway", "site_id", candidate.Site.ID, "site_model_id", siteModelID, "error", err)
+		return
+	}
+	h.InvalidateModelsCache()
+}
+
 func (h Handler) clearCooldownAfterRecovery(ctx context.Context, candidate routeengine.Candidate) {
+	h.noteSiteSuccess(candidate)
 	if !candidate.Cooling {
+		return
+	}
+	if candidate.CoolingReason == store.CooldownReasonUpstreamSiteBreaker {
+		// A request that went through a demoted site proves the site answers again.
+		if err := h.router.ClearCooldown(ctx, candidate.Site.ID, nil, nil, "gateway"); err != nil {
+			h.logger.WarnContext(ctx, "failed to clear site breaker after recovery", "scope", "gateway", "site_id", candidate.Site.ID, "error", err)
+			return
+		}
+		h.InvalidateModelsCache()
 		return
 	}
 	siteModelID := candidate.Model.SiteModelID
@@ -201,6 +282,12 @@ func cooldownInputForFailure(candidate routeengine.Candidate, result gatewayAtte
 		base.SiteModelID = &siteModelID
 		base.Scope = "model"
 		base.Reason = store.CooldownReasonUpstreamStreamUnstable
+		base.Duration = transientCooldownBaseDuration
+		return base, true
+	case result.errorType == upstreamTransientErrorType:
+		base.SiteModelID = &siteModelID
+		base.Scope = "model"
+		base.Reason = upstreamTransientErrorType
 		base.Duration = transientCooldownBaseDuration
 		return base, true
 	case result.errorType == "upstream_credential_unavailable":
@@ -422,7 +509,7 @@ func upstreamStreamFailure(result gatewayAttemptResult) bool {
 		return false
 	}
 	switch result.errorType {
-	case "upstream_stream_failed", "upstream_stream_incomplete", "upstream_stream_eof", "upstream_stream_error", "upstream_stream_read_failed", "upstream_stream_empty", "upstream_stream_preoutput_too_large":
+	case "upstream_stream_failed", "upstream_stream_incomplete", "upstream_stream_eof", "upstream_stream_error", "upstream_stream_read_failed", "upstream_stream_empty", "upstream_stream_preoutput_too_large", upstreamFirstOutputTimeoutErrorType:
 		return true
 	default:
 		return false
@@ -434,7 +521,7 @@ func requestLogStreamFailure(item store.RequestLog) bool {
 		return false
 	}
 	switch item.ErrorType.String {
-	case "upstream_stream_failed", "upstream_stream_incomplete", "upstream_stream_eof", "upstream_stream_error", "upstream_stream_read_failed", "upstream_stream_empty", "upstream_stream_preoutput_too_large":
+	case "upstream_stream_failed", "upstream_stream_incomplete", "upstream_stream_eof", "upstream_stream_error", "upstream_stream_read_failed", "upstream_stream_empty", "upstream_stream_preoutput_too_large", upstreamFirstOutputTimeoutErrorType:
 		return true
 	default:
 		return false

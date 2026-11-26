@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"xlyra/server/internal/textxform"
 )
 
 type streamCaptureState struct {
@@ -65,7 +67,9 @@ func proxyUpstreamStreamSanitized(
 	reader := bufio.NewReader(resp.Body)
 	headersWritten := false
 	var client *protocolSSEExit
-	if sanitize != nil {
+	// A stream without sanitizing, such as Gemini passthrough, still needs
+	// the exit when the request's placeholders must be restored.
+	if sanitize != nil || textxform.RestoringSessionFromContext(ctx) != nil {
 		client = newProtocolSSEExit(ctx, w, flusher, &capture, sanitize)
 	}
 

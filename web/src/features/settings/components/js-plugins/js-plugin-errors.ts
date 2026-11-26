@@ -6,6 +6,7 @@ export type JSPluginErrorFields = {
   to?: string
   count?: number
   site_type?: string
+  scope?: string
 }
 
 export type JSPluginErrorNotice = {
@@ -26,6 +27,7 @@ export function readJSPluginErrorFields(details: Record<string, unknown> | null 
   if (typeof details.to === 'string') fields.to = details.to
   if (typeof details.count === 'number' && Number.isFinite(details.count)) fields.count = details.count
   if (typeof details.site_type === 'string') fields.site_type = details.site_type
+  if (typeof details.scope === 'string') fields.scope = details.scope
   return fields
 }
 
@@ -39,6 +41,12 @@ export function jsPluginErrorNotice(code: string | undefined, fields: JSPluginEr
         params: { from: fields.from ?? '', to: fields.to ?? '', count: fields.count ?? 0 },
       }
     case 'js_plugin_in_use':
+      if (fields.scope === 'gateway_pipeline') {
+        return {
+          key: 'settings:jsPlugins.errors.pipelineInUse',
+          params: { count: fields.count ?? 0 },
+        }
+      }
       return {
         key: 'settings:jsPlugins.errors.inUse',
         params: { count: fields.count ?? 0, site_type: fields.site_type ?? '' },

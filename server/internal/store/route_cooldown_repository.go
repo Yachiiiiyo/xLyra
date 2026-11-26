@@ -48,11 +48,22 @@ const (
 	CooldownReasonCodingPlanQuotaExhausted = "coding_plan_quota_exhausted"
 )
 
+// CooldownReasonUpstreamSiteBreaker marks a site-wide soft cooldown opened by
+// the gateway's real-traffic circuit breaker.
+const CooldownReasonUpstreamSiteBreaker = "upstream_site_breaker"
+
+// TransientRouteCooldown reports a gateway-written cooldown that only demotes a
+// route instead of removing it: a model-level one (except model_not_found) or a
+// site-level traffic breaker. A demoted route is tried last but still tried, so
+// a key whose only candidate is cooling keeps working.
 func TransientRouteCooldown(item RouteCooldown) bool {
-	return item.Source == "gateway" &&
-		item.SiteModelID.Valid &&
-		!item.SiteCredentialID.Valid &&
-		item.Reason != CooldownReasonUpstreamModelNotFound
+	if item.Source != "gateway" || item.SiteCredentialID.Valid {
+		return false
+	}
+	if item.SiteModelID.Valid {
+		return item.Reason != CooldownReasonUpstreamModelNotFound
+	}
+	return item.Reason == CooldownReasonUpstreamSiteBreaker
 }
 
 // CodexQuotaCooldownReasons lists the cooldown reasons that a Codex quota recovery

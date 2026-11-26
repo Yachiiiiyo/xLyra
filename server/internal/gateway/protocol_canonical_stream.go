@@ -173,6 +173,7 @@ func proxyCanonicalStream(ctx context.Context, w http.ResponseWriter, resp *http
 	encoder := target.NewEncoder(options, w, &capture)
 	stopFilter := newCanonicalStopSequenceFilter(options.StopSequences)
 	dsmlFilter := newDSMLCanonicalStreamFilter()
+	restoreFilter := newCanonicalTokenRestoreFilter(ctx)
 	deferResponsesPreOutput := from == canonicalProtocolOpenAIResponses || from == canonicalProtocolCodexResponses
 	var preOutputEvents []canonicalStreamEvent
 	preOutputBytes := 0
@@ -196,6 +197,9 @@ func proxyCanonicalStream(ctx context.Context, w http.ResponseWriter, resp *http
 			if stripped {
 				capture.sseRepairs = appendRepair(capture.sseRepairs, sseRepairDSMLTagStripped)
 			}
+		}
+		if restoreFilter != nil {
+			events = restoreFilter.Apply(events)
 		}
 		if stopFilter != nil {
 			events = stopFilter.Apply(events)
@@ -317,10 +321,13 @@ func proxyCanonicalStream(ctx context.Context, w http.ResponseWriter, resp *http
 			if flushErr := flushPreOutput(); flushErr != nil {
 				return capture, headersWritten, flushErr
 			}
-			if dsmlFilter != nil {
+			if dsmlFilter != nil || restoreFilter != nil {
 				flushed, stripped := dsmlFilter.Flush()
 				if stripped {
 					capture.sseRepairs = appendRepair(capture.sseRepairs, sseRepairDSMLTagStripped)
+				}
+				if restoreFilter != nil {
+					flushed = append(restoreFilter.Apply(flushed), restoreFilter.Flush()...)
 				}
 				if len(flushed) > 0 {
 					if stopFilter != nil {

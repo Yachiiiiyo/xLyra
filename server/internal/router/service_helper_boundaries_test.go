@@ -361,3 +361,26 @@ func TestSiteGatewayConfigIgnoresUnusableGatewayValues(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexCooldownsTreatsSiteBreakerAsSoftAndOtherSiteCooldownsAsHard(t *testing.T) {
+	t.Parallel()
+
+	breakerSite, healthSite := uuid.New(), uuid.New()
+	index := indexCooldowns([]store.RouteCooldown{
+		{SiteID: breakerSite, Source: "gateway", Reason: store.CooldownReasonUpstreamSiteBreaker},
+		{SiteID: healthSite, Source: "site_health", Reason: "site health is unhealthy"},
+	})
+
+	if _, ok := index.transientSites[breakerSite]; !ok {
+		t.Fatal("a gateway site breaker must only demote the site")
+	}
+	if _, ok := index.sites[breakerSite]; ok {
+		t.Fatal("a gateway site breaker must not hard-exclude the site")
+	}
+	if _, ok := index.sites[healthSite]; !ok {
+		t.Fatal("a site health cooldown stays a hard exclusion")
+	}
+	if _, ok := index.transientSites[healthSite]; ok {
+		t.Fatal("a site health cooldown must not be treated as soft")
+	}
+}

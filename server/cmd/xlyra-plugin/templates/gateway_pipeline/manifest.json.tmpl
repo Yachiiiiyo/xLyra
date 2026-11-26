@@ -1,0 +1,39 @@
+{
+  "id": "{{.ID}}",
+  "name": "{{.Name}}",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "hostApi": 2,
+  "description": "Gateway bidirectional text pipeline plugin",
+  "license": "MIT",
+  "permissions": ["payload.inspect_raw"],
+  "gatewayPipeline": {
+    "scope": "api_key",
+    "exclusive": true,
+    "failurePolicy": "fail_closed",
+    "unsupportedEndpoint": "reject",
+    "transform": {
+      "mode": "token_placeholder",
+      "reversible": true,
+      "propagateMinLength": 2,
+      "systemHint": "Keep [[TYPE_N]] placeholders unchanged in responses and tool arguments."
+    },
+    "types": [
+      { "type": "TOKEN", "label": { "zh": "令牌", "en": "Token" }, "enabledBy": "token" },
+      { "type": "CUSTOM", "label": { "zh": "自定义", "en": "Custom" } }
+    ],
+    "rules": [
+      { "type": "TOKEN", "pattern": "tok_[A-Za-z0-9]{12,}", "boundary": "alnum" }
+    ],
+    "dictionaries": [
+      { "param": "dictionary", "type": "CUSTOM" }
+    ],
+    "allowlist": { "param": "allowlist" },
+    "inputs": [
+      { "name": "keys", "type": "api_key", "multiple": true, "title": { "zh": "绑定的 API 密钥", "en": "API keys" } },
+      { "name": "token", "type": "boolean", "default": true, "title": { "zh": "令牌规则", "en": "Token rule" } },
+      { "name": "dictionary", "type": "string", "control": "textarea", "title": { "zh": "自定义词典", "en": "Dictionary" } },
+      { "name": "allowlist", "type": "string", "control": "textarea", "title": { "zh": "白名单", "en": "Allowlist" } }
+    ]
+  }
+}

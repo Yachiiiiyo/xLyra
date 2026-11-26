@@ -747,6 +747,7 @@
       "untrustedNotAllowed": "このプラグイン種別は信頼済みキーによる署名が必要です。先に「信頼済みキー」で対応する公開鍵をインポートしてください",
       "siteTypeLocked": "サイトタイプ {{from}} を使用中のサイトが {{count}} 件あります。新しいバージョンで {{to}} に変更できません",
       "inUse": "サイトタイプ {{site_type}} を使用中のサイトが {{count}} 件あります。先にそれらのサイトを削除してください",
+      "pipelineInUse": "fail_closed のゲートウェイパイプラインバインディングが {{count}} 件残っています。先にそれらを削除してください",
       "hostsRequired": "有効にする前に、このプラグインがアクセスできるホストを確認してください"
     },
     "disableSuccess": "プラグインを無効化しました",
@@ -829,6 +830,7 @@
       "httpRequest": "バインドで入力したアドレスへ HTTP リクエストを送信（プッシュ通知など）",
       "storage": "このプラグイン自身のストレージを読み書き",
       "secretUse": "サイトの認証情報を平文で読み取ります。完全に信頼できるプラグインにだけ付与してください",
+      "payloadInspectRaw": "ゲートウェイパイプラインで紐づけ済み API キーの元リクエストテキストを参照します。信頼できる署名済みプラグインにのみ付与してください（外部ネットワーク権限とは併用不可）",
       "http": "プラグイン自身が HTTP リクエストを送信",
       "schedule": "スケジュールに従って実行",
       "net": "ホスト {{host}} にアクセス",
@@ -864,7 +866,67 @@
       "selectedUnit": "件",
       "reason": {
         "provider_not_supported": "このアカウント種別には対応していません",
-        "no_finite_total_quota": "合計クォータが無制限です"
+        "no_finite_total_quota": "合計クォータが無制限です",
+        "already_bound": "別の排他ゲートウェイパイプラインに紐づけ済みです"
+      }
+    },
+    "pipeline": {
+      "title": "ゲートウェイパイプライン紐付け",
+      "hint": "このプラグインを下流 API キーに紐づけ、宣言されたモードに従ってリクエストとレスポンスを処理します。",
+      "add": "紐付けを追加",
+      "editTitle": "パイプライン紐付けを編集",
+      "empty": "紐付けはまだありません。追加すると選択した API キーにパイプラインが適用されます。",
+      "saved": "紐付けを保存しました",
+      "deleted": "紐付けを削除しました",
+      "saveFailed": "保存に失敗しました",
+      "nameLabel": "紐付け名",
+      "nameHint": "API キー一覧やログで識別する名前です（例：厳格モード）。",
+      "namePlaceholder": "例：既定ポリシー",
+      "disabledHint": "紐付けを追加する前にプラグインバージョンを有効化してください",
+      "disabledBindingsHint": "現在プラグインは無効です。既存の紐付けは編集できませんが、削除して API キーのブロックを解除できます。",
+      "failClosedWarning": "このプラグインは fail_closed ポリシーです。無効化・実行失敗・サーキットブレーカー作動時、紐づけ済み API キーのリクエストはバイパスされず HTTP 503 で拒否されます。",
+      "policy": {
+        "fail_open": "fail_open",
+        "fail_closed": "fail_closed"
+      },
+      "status": {
+        "active": "有効",
+        "unavailable": "利用不可",
+        "bypassed": "スキップ"
+      },
+      "hostOptions": {
+        "title": "ホストオプション",
+        "propagateSameValue": {
+          "label": "同一値の伝播置換",
+          "hint": "同一リクエスト内で一致した値が複数回出現する場合、同じプレースホルダーを再利用します。"
+        },
+        "scanToolDefinitions": {
+          "label": "ツール定義（tools）をスキャン",
+          "hint": "リクエスト内のツール定義テキストも検査対象に含めます（既定ではオフ）。"
+        },
+        "transformReasoning": {
+          "label": "推論コンテンツ（reasoning）を復元",
+          "hint": "レスポンス内の reasoning / thinking ブロックでもプレースホルダーを復元します。"
+        }
+      },
+      "dryRun": {
+        "button": "ドライランプレビュー",
+        "title": "ドライランプレビュー · {{name}}",
+        "description": "この紐付け設定でローカルの入力パイプラインを実行します。アップストリームへの送信やログ記録は行いません。",
+        "modeText": "プレーンテキスト",
+        "modeJson": "リクエスト JSON",
+        "endpoint": "エンドポイント",
+        "model": "モデル",
+        "textInput": "テストテキスト",
+        "textPlaceholder": "テキストを貼り付けて検出箇所と変換結果を確認...",
+        "jsonInput": "リクエスト JSON ペイロード",
+        "invalidJson": "有効な JSON オブジェクトを入力してください",
+        "run": "ドライランを実行",
+        "failed": "ドライランに失敗しました",
+        "metricsSummary": "セグメント {{segments}} · 検出 {{detected}} · {{latency}} ms",
+        "output": "変換結果",
+        "findings": "検出明細（{{count}}）",
+        "noFindings": "一致する箇所はありませんでした。"
       }
     },
     "bindProtocolTitle": "プロトコル slug",

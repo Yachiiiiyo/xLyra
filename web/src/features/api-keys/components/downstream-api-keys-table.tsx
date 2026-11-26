@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
 import { DataTable } from '@/components/common/data-table'
 import { defaultTableColumnWidths } from '@/lib/table-column-widths'
 import { EmptyState } from '@/components/common/empty-state'
+import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import type { DownstreamAPIKey } from '@/features/api-keys/api/api-keys'
 import { APIKeyActionsMenu } from '@/features/api-keys/components/api-key-actions-menu'
@@ -65,14 +67,31 @@ export function DownstreamAPIKeysTable({
       {
         id: 'key',
         header: t('table.headers.key'),
-        cell: ({ row }) => (
-          <div className="min-w-0 space-y-1">
-            <div className="truncate font-medium text-label" title={row.original.name}>
-              {row.original.name}
+        cell: ({ row }) => {
+          const binding = row.original.pipeline_binding
+          return (
+            <div className="min-w-0 space-y-1">
+              <div className="truncate font-medium text-label" title={row.original.name}>
+                {row.original.name}
+              </div>
+              <APIKeyCopyMenu apiKey={row.original} />
+              {binding ? (
+                <Link
+                  to={`/system/plugins?plugin=${encodeURIComponent(binding.plugin_id)}`}
+                  className="inline-block max-w-full"
+                  title={`${binding.plugin_name} / ${binding.name}`}
+                >
+                  <Badge
+                    variant={binding.status === 'unavailable' ? 'danger' : 'secondary'}
+                    className="max-w-full truncate text-caption hover:opacity-80"
+                  >
+                    {binding.plugin_name} / {binding.name}
+                  </Badge>
+                </Link>
+              ) : null}
             </div>
-            <APIKeyCopyMenu apiKey={row.original} />
-          </div>
-        ),
+          )
+        },
         meta: {
           cellClassName: 'min-w-0',
         },

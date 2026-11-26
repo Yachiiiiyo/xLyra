@@ -255,6 +255,8 @@
     "editConfig": "Edit key settings",
     "editConfigLabel": "Edit settings for {{name}}",
     "noKey": "No Key",
+    "emptySecret": "Empty key",
+    "optionalPlaceholder": "Optional — leave blank if no key is needed",
     "complete": "Complete",
     "delete": "Delete Apikey",
     "deleteLabel": "Delete {{name}}",

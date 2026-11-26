@@ -10,6 +10,9 @@ import (
 type Snapshot struct {
 	Gen      int64
 	Registry *Registry
+	// Pipelines maps API keys to gateway pipeline bindings. It is nil until a
+	// manager reload has read the bindings.
+	Pipelines *PipelineIndex
 }
 
 // Catalog holds the active plugin generation and coordinates hot swaps.

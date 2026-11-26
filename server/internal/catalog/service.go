@@ -436,21 +436,27 @@ func (s *Service) BindSiteModel(ctx context.Context, siteModelID uuid.UUID, cano
 			canonicalIDs = append(canonicalIDs, current.CanonicalID.UUID)
 		}
 
+		canonicalRepo := store.NewCanonicalModelRepository(tx)
 		if canonicalID == nil || *canonicalID == uuid.Nil {
 			updated, err = repo.UpdateCanonical(ctx, siteModelID, nil, "unmatched", 0, nil)
 			if err != nil {
 				return err
 			}
+			if _, err := canonicalRepo.ArchiveUnusedAutoCreated(ctx); err != nil {
+				return err
+			}
 			return ReconcileCanonicalCategories(ctx, tx, canonicalIDs...)
 		}
 
-		canonicalRepo := store.NewCanonicalModelRepository(tx)
 		if _, err := canonicalRepo.Restore(ctx, *canonicalID); err != nil {
 			return err
 		}
 		canonicalIDs = append(canonicalIDs, *canonicalID)
 		updated, err = repo.UpdateCanonical(ctx, siteModelID, *canonicalID, "manual", 100, time.Now())
 		if err != nil {
+			return err
+		}
+		if _, err := canonicalRepo.ArchiveUnusedAutoCreated(ctx); err != nil {
 			return err
 		}
 		return ReconcileCanonicalCategories(ctx, tx, canonicalIDs...)
@@ -654,17 +660,20 @@ func endpointTypeValues(value any) []string {
 	return items
 }
 
+type MergeCanonicalModelResult struct {
+	Source          store.CanonicalModel
+	Target          store.CanonicalModel
+	MovedSiteModels int
+	MovedAliases    int
+}
+
 func (s *Service) Archive(ctx context.Context, canonicalID uuid.UUID) (store.CanonicalModel, error) {
 	if canonicalID == uuid.Nil {
 		return store.CanonicalModel{}, fmt.Errorf("canonical model id is required")
 	}
 	repo := store.NewCanonicalModelRepository(s.db.DB())
-	model, err := repo.GetByID(ctx, canonicalID)
-	if err != nil {
+	if _, err := repo.GetByID(ctx, canonicalID); err != nil {
 		return store.CanonicalModel{}, err
-	}
-	if !store.CanonicalModelManualCreated(model) {
-		return store.CanonicalModel{}, fmt.Errorf("only manually created canonical models can be archived manually")
 	}
 	count, err := repo.ActiveSiteModelCount(ctx, canonicalID)
 	if err != nil {
@@ -674,6 +683,104 @@ func (s *Service) Archive(ctx context.Context, canonicalID uuid.UUID) (store.Can
 		return store.CanonicalModel{}, fmt.Errorf("canonical model still has linked site models")
 	}
 	return repo.Archive(ctx, canonicalID)
+}
+
+// Merge consolidates sourceID into targetID by rebinding all linked site
+// models, migrating aliases, registering source.ModelKey as a manual alias on
+// target, and archiving source.
+func (s *Service) Merge(ctx context.Context, sourceID uuid.UUID, targetID uuid.UUID) (MergeCanonicalModelResult, error) {
+	if sourceID == uuid.Nil || targetID == uuid.Nil {
+		return MergeCanonicalModelResult{}, fmt.Errorf("source and target canonical model ids are required")
+	}
+	if sourceID == targetID {
+		return MergeCanonicalModelResult{}, fmt.Errorf("source and target canonical models must be different")
+	}
+
+	var result MergeCanonicalModelResult
+	err := s.db.WithinTx(ctx, func(tx store.Tx) error {
+		canonicalRepo := store.NewCanonicalModelRepository(tx)
+		siteModelRepo := store.NewSiteModelRepository(tx)
+
+		source, err := canonicalRepo.GetByID(ctx, sourceID)
+		if err != nil {
+			return err
+		}
+		target, err := canonicalRepo.GetByID(ctx, targetID)
+		if err != nil {
+			return err
+		}
+		target, err = canonicalRepo.Restore(ctx, target.ID)
+		if err != nil {
+			return err
+		}
+
+		siteModels, err := siteModelRepo.ListByCanonical(ctx, source.ID)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		for _, sm := range siteModels {
+			if _, err := siteModelRepo.UpdateCanonical(ctx, sm.ID, target.ID, "manual", 100, now); err != nil {
+				return err
+			}
+			result.MovedSiteModels++
+		}
+
+		targetNormalizedKey := NormalizeModelKey(target.ModelKey)
+		sourceAliases, err := canonicalRepo.ListAliases(ctx, source.ID)
+		if err != nil {
+			return err
+		}
+		for _, alias := range sourceAliases {
+			if alias.NormalizedAlias == targetNormalizedKey {
+				if err := canonicalRepo.DeleteAlias(ctx, source.ID, alias.ID); err != nil {
+					return err
+				}
+				continue
+			}
+			aliasSource := strings.TrimSpace(alias.Source)
+			if aliasSource == "" {
+				aliasSource = "manual"
+			}
+			if _, err := canonicalRepo.CreateAlias(ctx, store.CreateCanonicalModelAliasParams{
+				CanonicalModelID: target.ID,
+				Alias:            alias.Alias,
+				NormalizedAlias:  alias.NormalizedAlias,
+				Source:           aliasSource,
+			}); err != nil {
+				return err
+			}
+			result.MovedAliases++
+		}
+
+		sourceNormalizedKey := NormalizeModelKey(source.ModelKey)
+		if sourceNormalizedKey != "" && sourceNormalizedKey != targetNormalizedKey {
+			if _, err := canonicalRepo.CreateAlias(ctx, store.CreateCanonicalModelAliasParams{
+				CanonicalModelID: target.ID,
+				Alias:            source.ModelKey,
+				NormalizedAlias:  sourceNormalizedKey,
+				Source:           "manual",
+			}); err != nil {
+				return err
+			}
+			result.MovedAliases++
+		}
+
+		archivedSource, err := canonicalRepo.Archive(ctx, source.ID)
+		if err != nil {
+			return err
+		}
+		if err := ReconcileCanonicalCategories(ctx, tx, target.ID); err != nil {
+			return err
+		}
+		result.Source = archivedSource
+		result.Target = target
+		return nil
+	})
+	if err != nil {
+		return MergeCanonicalModelResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) Matrix(ctx context.Context, canonicalID uuid.UUID) (Matrix, error) {
@@ -705,48 +812,54 @@ func (s *Service) matchOrCreateCanonical(ctx context.Context, repo store.Canonic
 		return store.CanonicalModel{}, 0, fmt.Errorf("site model %s has no usable model name", model.ID)
 	}
 
-	if canonical, err := repo.GetByKey(ctx, normalized); err == nil {
-		if canonical.Status == "archived" {
-			restored, err := repo.Restore(ctx, canonical.ID)
+	keyModel, keyErr := repo.GetByKey(ctx, normalized)
+	keyFound := keyErr == nil
+	if keyErr != nil && !errors.Is(keyErr, gorm.ErrRecordNotFound) {
+		return store.CanonicalModel{}, 0, keyErr
+	}
+
+	aliasRow, aliasModel, aliasFound, aliasErr := lookupCanonicalAlias(ctx, repo, rawNormalized, normalized)
+	if aliasErr != nil {
+		return store.CanonicalModel{}, 0, aliasErr
+	}
+
+	if aliasFound && isManualAliasSource(aliasRow.Source) && aliasModel.Status == "active" {
+		s.syncOfficialDisplayName(ctx, repo, &aliasModel)
+		return aliasModel, 95, nil
+	}
+
+	if keyFound && keyModel.Status == "active" {
+		s.syncOfficialDisplayName(ctx, repo, &keyModel)
+		return keyModel, 100, nil
+	}
+
+	if aliasFound && aliasModel.Status == "active" {
+		s.syncOfficialDisplayName(ctx, repo, &aliasModel)
+		return aliasModel, 95, nil
+	}
+
+	if keyFound {
+		if keyModel.Status == "archived" {
+			restored, err := repo.Restore(ctx, keyModel.ID)
 			if err != nil {
 				return store.CanonicalModel{}, 0, err
 			}
-			canonical = restored
+			keyModel = restored
 		}
-		s.syncOfficialDisplayName(ctx, repo, &canonical)
-		return canonical, 100, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.CanonicalModel{}, 0, err
+		s.syncOfficialDisplayName(ctx, repo, &keyModel)
+		return keyModel, 100, nil
 	}
 
-	if canonical, err := repo.GetByNormalizedAlias(ctx, normalized); err == nil {
-		if canonical.Status == "archived" {
-			restored, err := repo.Restore(ctx, canonical.ID)
+	if aliasFound {
+		if aliasModel.Status == "archived" {
+			restored, err := repo.Restore(ctx, aliasModel.ID)
 			if err != nil {
 				return store.CanonicalModel{}, 0, err
 			}
-			canonical = restored
+			aliasModel = restored
 		}
-		s.syncOfficialDisplayName(ctx, repo, &canonical)
-		return canonical, 95, nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.CanonicalModel{}, 0, err
-	}
-
-	if rawNormalized != "" && rawNormalized != normalized {
-		if canonical, err := repo.GetByNormalizedAlias(ctx, rawNormalized); err == nil {
-			if canonical.Status == "archived" {
-				restored, err := repo.Restore(ctx, canonical.ID)
-				if err != nil {
-					return store.CanonicalModel{}, 0, err
-				}
-				canonical = restored
-			}
-			s.syncOfficialDisplayName(ctx, repo, &canonical)
-			return canonical, 95, nil
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return store.CanonicalModel{}, 0, err
-		}
+		s.syncOfficialDisplayName(ctx, repo, &aliasModel)
+		return aliasModel, 95, nil
 	}
 
 	capabilities := map[string]any{

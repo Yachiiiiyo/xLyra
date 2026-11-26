@@ -28,7 +28,11 @@ func upstreamRateLimitWaitable(candidate routeengine.Candidate, result gatewayAt
 	if isCodexSite(candidate.Site.SiteType) || isAntigravitySite(candidate.Site.SiteType) {
 		return false
 	}
-	return true
+	// The rate-limited key is cooled for the advertised window (30s when the
+	// upstream gives no hint). Waiting less than that retries into the cooldown
+	// and only turns the 429 into a credential-unavailable error, so wait only
+	// when the upstream names a window the wait can actually cover.
+	return result.retryAfterSeconds > 0 && time.Duration(result.retryAfterSeconds)*time.Second <= upstreamRateLimitMaxStep
 }
 
 func upstreamRateLimitWaitDuration(result gatewayAttemptResult) time.Duration {

@@ -47,6 +47,35 @@ RUN --mount=type=cache,id=npm,target=/root/.npm \
     npm ci --ignore-scripts --omit=dev
 
 COPY agent-runtime/extension ./extension
+COPY agent-runtime/skills ./skills
+
+FROM alpine:3.22 AS cli-fetch
+
+ARG TARGETOS=linux
+ARG TARGETARCH
+ARG XLYRA_CLI_REPO=Yachiiiiyo/xLyra-cli
+ARG XLYRA_CLI_VERSION=latest
+ARG BUILD_TIMESTAMP
+
+RUN apk add --no-cache ca-certificates curl \
+    && mkdir -p /tmp/xlyra /out \
+    && cd /tmp/xlyra \
+    && cli_version="${XLYRA_CLI_VERSION}" \
+    && if [ "${cli_version}" = "latest" ] || [ -z "${cli_version}" ]; then \
+         latest_url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${XLYRA_CLI_REPO}/releases/latest")"; \
+         cli_version="${latest_url##*/}"; \
+         echo "Resolved latest ${XLYRA_CLI_REPO} release: ${cli_version} (build=${BUILD_TIMESTAMP})"; \
+       fi \
+    && case "${cli_version}" in v*) ;; *) echo "error: failed to resolve release tag (got '${cli_version}')" >&2; exit 1 ;; esac \
+    && archive="xlyra_${cli_version}_${TARGETOS}_${TARGETARCH}.tar.gz" \
+    && base_url="https://github.com/${XLYRA_CLI_REPO}/releases/download/${cli_version}" \
+    && curl -fsSL "${base_url}/checksums.txt" -o checksums.txt \
+    && curl -fsSL "${base_url}/${archive}" -o "${archive}" \
+    && grep -F "  ${archive}" checksums.txt > target.sha256 \
+    && sha256sum -c target.sha256 \
+    && tar -xzf "${archive}" -C /out xlyra \
+    && chmod 0755 /out/xlyra \
+    && rm -rf /tmp/xlyra
 
 FROM alpine:3.22
 
@@ -63,7 +92,8 @@ ENV APP_ENV=production \
     HTTP_PORT=5801 \
     STATIC_DIR=/app/dist \
     AGENT_NODE_BIN=/usr/local/bin/node \
-    AGENT_PI_ENTRY=/app/agent-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
+    AGENT_PI_ENTRY=/app/agent-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js \
+    AGENT_CLI_BIN=/usr/local/bin/xlyra
 
 EXPOSE 5801
 VOLUME ["/data"]
@@ -71,5 +101,6 @@ VOLUME ["/data"]
 COPY --from=backend-build /out/xlyra-server /app/xlyra-server
 COPY --from=frontend-build /src/dist /app/dist
 COPY --from=agent-runtime-build /src/agent-runtime /app/agent-runtime
+COPY --from=cli-fetch /out/xlyra /usr/local/bin/xlyra
 
 ENTRYPOINT ["/sbin/tini", "--", "/app/xlyra-server"]

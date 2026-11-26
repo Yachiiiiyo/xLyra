@@ -276,10 +276,10 @@ func classifyGatewayUpstreamErrorWithTimeZone(candidate routeengine.Candidate, r
 			}
 			reason := store.CooldownReasonUpstreamCredentialLimited
 			duration := time.Duration(retryAfterSeconds) * time.Second
-			if strings.EqualFold(failure.Code, "INSUFFICIENT_BALANCE") {
+			if failure.InsufficientBalance() {
 				reason = store.CooldownReasonUpstreamInsufficientBalance
-				if duration <= 0 {
-					duration = 30 * time.Minute
+				if duration < insufficientBalanceCooldownDuration {
+					duration = insufficientBalanceCooldownDuration
 				}
 			}
 			classified = codexUpstreamError{
@@ -300,6 +300,20 @@ func classifyGatewayUpstreamErrorWithTimeZone(candidate routeengine.Candidate, r
 				CooldownReason:   store.CooldownReasonUpstreamCredentialUnauthorized,
 				CooldownScope:    "credential",
 				CooldownDuration: credentialUnauthorizedCooldownDuration,
+			}
+			ok = true
+		} else if failure.Transient() && result.upstreamStatusCode >= 400 && result.upstreamStatusCode < 500 {
+			// 5xx and transport failures already cool the model through their
+			// status. A transient verdict on a 4xx (408/425, an upstream timeout
+			// wrapped in a 400, or an error_classifier plugin) would otherwise be
+			// retried on the same model without any backoff.
+			classified = codexUpstreamError{
+				StatusCode:       result.statusCode,
+				ErrorType:        upstreamTransientErrorType,
+				ErrorMessage:     nonEmptyString(failure.Message, result.errorMessage),
+				CooldownReason:   upstreamTransientErrorType,
+				CooldownScope:    "model",
+				CooldownDuration: transientCooldownBaseDuration,
 			}
 			ok = true
 		}

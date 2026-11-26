@@ -60,6 +60,15 @@ export type DownstreamAPIKeySiteGroup = {
   updated_at?: string
 }
 
+export type DownstreamAPIKeyPipelineBinding = {
+  id: string
+  name: string
+  plugin_id: string
+  plugin_name: string
+  status: 'active' | 'unavailable' | 'bypassed' | string
+  unavailable_reason?: string
+}
+
 export type DownstreamAPIKey = {
   sort_order?: number
   id: string
@@ -74,6 +83,7 @@ export type DownstreamAPIKey = {
   site_policy: DownstreamAPIKeyModelPolicy
   model_mappings?: ModelRule[] | null
   image_tool_bridge?: ImageToolBridgeConfig | null
+  pipeline_binding?: DownstreamAPIKeyPipelineBinding | null
   billing_multiplier?: number | null
   quota_limit?: number | null
   quota_total_used?: number

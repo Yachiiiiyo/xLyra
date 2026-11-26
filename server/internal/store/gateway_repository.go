@@ -148,17 +148,28 @@ func (r GatewayRepository) HasCredentialBindingsForSiteModel(ctx context.Context
 }
 
 func (r GatewayRepository) GetFallbackCredentialForSite(ctx context.Context, siteID uuid.UUID) (GatewayCredential, error) {
+	items, err := r.ListFallbackCredentialsForSite(ctx, siteID)
+	if err != nil {
+		return GatewayCredential{}, err
+	}
+	return items[0], nil
+}
+
+// ListFallbackCredentialsForSite returns every usable API key of a site in
+// routing order. A site whose models carry no key bindings serves requests with
+// these, and the whole list is the failover pool.
+func (r GatewayRepository) ListFallbackCredentialsForSite(ctx context.Context, siteID uuid.UUID) ([]GatewayCredential, error) {
 	var credentials []SiteCredential
 	if err := r.db.WithContext(ctx).Where(&SiteCredential{SiteID: siteID}).Find(&credentials).Error; err != nil {
-		return GatewayCredential{}, fmt.Errorf("get fallback gateway credential for site: %w", err)
+		return nil, fmt.Errorf("get fallback gateway credential for site: %w", err)
 	}
 	var states []SiteAPIKeyState
 	if err := r.db.WithContext(ctx).Where(&SiteAPIKeyState{SiteID: siteID}).Find(&states).Error; err != nil {
-		return GatewayCredential{}, fmt.Errorf("get fallback gateway credential for site: %w", err)
+		return nil, fmt.Errorf("get fallback gateway credential for site: %w", err)
 	}
 	cooldowns, err := NewRouteCooldownRepository(r.db).ListActive(ctx, time.Now())
 	if err != nil {
-		return GatewayCredential{}, err
+		return nil, err
 	}
 	statesByCredentialID := map[uuid.UUID]SiteAPIKeyState{}
 	for _, state := range states {
@@ -176,10 +187,10 @@ func (r GatewayRepository) GetFallbackCredentialForSite(ctx context.Context, sit
 		candidates = append(candidates, GatewayCredential{Credential: credential, State: state, GroupName: state.GroupName})
 	}
 	SortGatewayCredentials(candidates)
-	if len(candidates) > 0 {
-		return candidates[0], nil
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("get fallback gateway credential for site: %w", gorm.ErrRecordNotFound)
 	}
-	return GatewayCredential{}, fmt.Errorf("get fallback gateway credential for site: %w", gorm.ErrRecordNotFound)
+	return candidates, nil
 }
 
 func (r GatewayRepository) GetPricingForSiteModel(ctx context.Context, siteModelID uuid.UUID, groupName string) (GatewayPricing, error) {

@@ -57,8 +57,16 @@ const localBashSystemPrompt = `
 - 命令在本机直接执行(与 xLyra 同权限),可以联网、安装依赖。
 - 每条命令是否需要用户确认取决于用户的权限设置,需要时系统会自动弹出确认。
 - 单条命令有超时限制,默认 %d 秒;长时间运行的命令请拆分,不要依赖常驻进程。
-- 谨慎执行破坏性命令(批量删除、覆盖、格式化);不要修改 xLyra 自身的数据与配置。
+- 谨慎执行破坏性命令(批量删除、覆盖、格式化);不要直接修改 xLyra 自身的数据文件或目录,如需读取或调整 xLyra 系统与网关配置请通过 xlyra 命令执行。
 - 修改代码后,运行最相关的测试或类型检查,并根据结果继续修正。`
+
+const cliSystemPrompt = `
+
+xlyra 控制面规则:
+- 你可以通过独立 bash 工具执行 xlyra 命令读取与调整受控的 xLyra 配置（常规、门户、限流、外观、代理、站点启停、路由、冷却、用量审计等）。
+- 执行写操作前先用 xlyra schema / config get / --dry-run 核对当前值与 diff，并发控制可加 --if-match <revision>。
+- 所有 Agent 自身配置与高危凭据（agent.settings.*、agent.capabilities.*、AGENTS.md、skills、backup restore/import、api-key reveal、site-key create 等）受 Tier 0 硬拦截，禁止修改或绕过。
+- xlyra 返回的所有密钥与凭据字段均为脱敏结果，禁止尝试搜寻或输出明文密钥；以实际命令退出码与 JSON 返回为准。`
 
 const imageGenerationSystemPrompt = `
 

@@ -4,7 +4,7 @@
 
 | `credential.model` | 站点怎么接上游 |
 | --- | --- |
-| `api_key` | 一把站点 API Key。列模型、校验密钥、健康检查、转发都用这把 Key |
+| `api_key` | 站点 API Key。列模型、校验密钥、健康检查、转发都用这把 Key。可选配 `credential.allowEmpty: true`，允许管理员手动添加一条密钥内容为空的 API Key 记录（密钥为空时默认不发送上游认证头；也可配合 `request.headers` 里的 `when`/`unless: "cred.api_key"` 使用） |
 | `account_pool` | 多账号。登录、刷新、导入、按账号区域选地址、按账号额度选路，由 xLyra 执行。插件只描述流程 |
 
 两种模型的协议都只有清单里声明的那一种，不能再挂替代协议。没有独立的 OAuth 连接类型（没有 `connection`，也没有 `oauth2_pkce`）。账号池里的设备码登录是 `login.kind = oauth2_device_code`，由宿主的 OAuth 引擎执行，不经过 JS。
@@ -399,7 +399,7 @@ xlyra-plugin run --hook listModels --key-env RELAY_KEY --base-url https://api.ex
 
 ### 钩子
 
-账号池钩子和 `probe` 一样是分步的：返回 `{ request }`、`{ result }` 或 `{ error }` 之一，三者只能有一个。时限 200 ms，最多调用 6 次（最多 5 个 HTTP 请求）。单个请求体 64 KiB，交给插件的响应体 1 MiB，单次 HTTP 20 秒。内存 16 MiB，返回值 1 MiB。日志每次调用最多 20 条，每条 1024 字节。
+账号池钩子和 `probe` 一样是分步的：返回 `{ request }`、`{ result }` 或 `{ error }` 之一，三者只能有一个。时限 500 ms，最多调用 6 次（最多 5 个 HTTP 请求）。单个请求体 64 KiB，交给插件的响应体 1 MiB，单次 HTTP 20 秒。内存 64 MiB，返回值 16 MiB。日志每次调用最多 50 条，每条 2048 字节。
 
 `result.kind` 不是插件 kind，是这次返回值的种类：
 
@@ -495,9 +495,9 @@ account:<siteType>:<uuid>
 
 | 钩子 | 每次调用 | 说明 |
 | --- | --- | --- |
-| `probe`、`listModels`、`check` | 200 ms | 最多调用 6 次（最多 5 个 HTTP 请求）。单个请求体 64 KiB，交给插件的响应体 1 MiB，单次 HTTP 20 秒 |
-| `classify`、`rewritePayload` | 50 ms | 在请求路径上。等待运行时的上限是 250 ms，钩子本身仍是 50 ms |
-| 所有钩子 | 内存 16 MiB，返回值 1 MiB | 日志每次调用最多 20 条，每条 1024 字节 |
+| `probe`、`listModels`、`check` | 500 ms | 最多调用 6 次（最多 5 个 HTTP 请求）。单个请求体 64 KiB，交给插件的响应体 1 MiB，单次 HTTP 20 秒 |
+| `classify`、`rewritePayload` | 150 ms | 在请求路径上。等待运行时的上限是 1 s，钩子本身仍是 150 ms |
+| 所有钩子 | 内存 64 MiB，返回值 16 MiB | 日志每次调用最多 50 条，每条 2048 字节 |
 
 分步钩子的 `ctx` 是 `siteType`、`baseURL`、`credentialType`、`now`（毫秒）。没有密钥。`models.perAccount` 的 `listModels` 另外带 `account`，见 [按账号列模型](#按账号列模型)。`site_provider` 没有 `baseURLMode`，地址按 `as_is` 整理（去掉尾部 `/`）；没传地址时用 `officialBaseURL`。API Key 站点的 `listModels` 仍不带 `account`。
 
@@ -646,7 +646,7 @@ export function classify(_ctx: ErrorClassifyContext, input: ErrorClassifyInput):
 | `stream` | 正文里的 `stream` 是布尔值时用它，否则是 `false` |
 | `protocol` | 这次上游正文的规范协议名。四种清单协议对应 `openai_chat`、`openai_responses`、`anthropic_messages`、`google_gemini` |
 
-返回值必须是对象。**不得新增、删除或修改 `model` 和 `stream` 这两个键**：原来没有的不能补上，原来有的必须原样保留（`ctx.stream` 为 `false` 也不代表可以写上 `"stream": false`）。`google_gemini` 在把其它协议转换成 Gemini 正文时会删掉 `model`，这时不能再把 `model` 写回去。违反、抛错、超时、形状不对，或正文 JSON 超过 1 MiB（1048576 字节），本次请求失败，HTTP 502，错误类型 `plugin_rewrite_failed`，上游请求不会发出，也不会换下一把密钥重试。
+返回值必须是对象。**不得新增、删除或修改 `model` 和 `stream` 这两个键**：原来没有的不能补上，原来有的必须原样保留（`ctx.stream` 为 `false` 也不代表可以写上 `"stream": false`）。`google_gemini` 在把其它协议转换成 Gemini 正文时会删掉 `model`，这时不能再把 `model` 写回去。违反、抛错、超时、形状不对，或正文 JSON 超过 16 MiB（16777216 字节），本次请求失败，HTTP 502，错误类型 `plugin_rewrite_failed`，上游请求不会发出，也不会换下一把密钥重试。
 
 没导出这个钩子则正文原样继续。
 
@@ -704,7 +704,7 @@ export function rewritePayload(_ctx: RewritePayloadContext, payload: Record<stri
 - 创建页的额度探测下拉只对 `openai` 和 `anthropic` 出现，倍率只对 `openai`、`anthropic`、`google_gemini` 出现。插件站点类型的倍率能力固定为关。创建时写入的额度探测值是 `none`，服务端把它当成没配置；导出了 `probe` 就会自动探测。
 - 显示名和副标题按界面语言展示，见 [display](#display)。`display_name` / `subtitle` 字符串仍按 `zh`、然后 `en`、再按语言标签字母序取第一个非空值。
 - 替代协议不开放。协议规格里不能写 `alternate_protocols`。
-- `rewritePayload` 的输入或返回值，JSON 超过 1 MiB 会失败。大图 base64 很容易超过。构造超大返回值时，也可能先碰到 50 ms 时限，错误是 `js_timeout` 而不是体积错误。
+- `rewritePayload` 的输入或返回值，JSON 超过 16 MiB 会失败。大图 base64 很容易超过。构造超大返回值时，也可能先碰到 150 ms 时限，错误是 `js_timeout` 而不是体积错误。
 
 ## 排错
 
