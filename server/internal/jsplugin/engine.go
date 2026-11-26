@@ -13,7 +13,10 @@ import (
 	"github.com/Yachiiiiyo/moejs"
 )
 
-var errHookTimeout = errors.New("hook timeout")
+var (
+	errHookTimeout     = errors.New("hook timeout")
+	errReturnedPromise = errors.New("hook returned a promise")
+)
 
 // Reusable ObjectTemplates for hot-path hook input objects. Keys are ordered
 // alphabetically to match moejs.FromGo map enumeration order; optional fields
@@ -207,23 +210,37 @@ type callEnv struct {
 
 // session is one runtime borrowed from a pool.
 type session struct {
-	rt       *moejs.Runtime
-	logs     *callLog
-	env      callEnv
-	liveDebt int64
+	rt              *moejs.Runtime
+	logs            *callLog
+	env             callEnv
+	liveDebt        int64
+	callsSinceCheck int
+}
+
+func addSaturating(a, b int64) int64 {
+	if b > 0 && a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return math.MinInt64
+	}
+	return a + b
 }
 
 func (s *session) checkLiveLimit(allocDelta int64) error {
-	if MaxLiveBytes <= 0 {
+	limit := s.rt.MaxLiveBytes()
+	if limit <= 0 {
 		return nil
 	}
 	if allocDelta > 0 {
-		s.liveDebt += allocDelta
+		s.liveDebt = addSaturating(s.liveDebt, allocDelta)
 	}
-	if s.rt.Stats().LiveBytes+s.liveDebt <= MaxLiveBytes {
+	s.callsSinceCheck++
+	if s.callsSinceCheck < liveCheckCallInterval && addSaturating(s.rt.Stats().LiveBytes, s.liveDebt) <= limit {
 		return nil
 	}
 	s.liveDebt = 0
+	s.callsSinceCheck = 0
 	return s.rt.CheckLiveLimit()
 }
 
@@ -238,6 +255,28 @@ func (s *session) stats() RuntimeStats {
 		PendingJobs:        st.PendingJobs,
 		RegisterStackBytes: st.RegisterStackBytes,
 	}
+}
+
+func classifySessionError(err error, runCtx context.Context) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, moejs.ErrAllocLimit) {
+		return allocLimitCallError(err, nil, 0)
+	}
+	if errors.Is(err, moejs.ErrLiveLimit) {
+		return &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: err.Error(), Err: err}
+	}
+	if errors.Is(err, moejs.ErrResultTooLarge) {
+		return &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err}
+	}
+	if reason, interrupted := interruptReason(err); interrupted {
+		if errors.Is(err, errHookTimeout) || (runCtx != nil && errors.Is(context.Cause(runCtx), errHookTimeout)) {
+			reason = "timeout"
+		}
+		return &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err}
+	}
+	return err
 }
 
 func newSession(p *program) (*session, error) {
@@ -255,11 +294,17 @@ func newSession(p *program) (*session, error) {
 	if err := installHost(sess); err != nil {
 		return nil, err
 	}
-	if err := rt.Load(p.mod); err != nil {
-		return nil, err
+	loadCtx, cancel := context.WithTimeoutCause(context.Background(), loadHookTimeout, errHookTimeout)
+	defer cancel()
+	if err := rt.RunContext(loadCtx, func(rt *moejs.Runtime) error {
+		return rt.Load(p.mod)
+	}); err != nil {
+		return nil, classifySessionError(err, loadCtx)
 	}
+	rt.ClearInterrupt()
+	rt.ReleaseCallData()
 	if err := rt.CheckLiveLimit(); err != nil {
-		return nil, err
+		return nil, classifySessionError(err, nil)
 	}
 	return sess, nil
 }
@@ -389,6 +434,17 @@ func hostString1(fn func(string) (string, error)) moejs.NativeFunc {
 	}
 }
 
+func newOwnedUint8ArrayValue(r *moejs.Realm, data []byte) (moejs.Value, error) {
+	if data == nil {
+		data = []byte{}
+	}
+	o, err := r.NewUint8Array(data)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	return moejs.ObjectValue(o), nil
+}
+
 func hostString2[T any](fn func(string, string) (T, error)) moejs.NativeFunc {
 	return func(r *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
 		first, err := argString(r, args, 0)
@@ -403,6 +459,13 @@ func hostString2[T any](fn func(string, string) (T, error)) moejs.NativeFunc {
 		if err != nil {
 			return moejs.Undefined(), err
 		}
+		if _, isStr := any(out).(string); !isStr {
+			if est := estimateGoValueBytes(out); est > 0 {
+				if err := r.ChargeAlloc(est); err != nil {
+					return moejs.Undefined(), err
+				}
+			}
+		}
 		return r.FromGo(out)
 	}
 }
@@ -416,7 +479,7 @@ func hostBytesFromUTF8() moejs.NativeFunc {
 		if len(text) > maxBinaryInputBytes {
 			return moejs.Undefined(), fmt.Errorf("input exceeds %d bytes", maxBinaryInputBytes)
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes([]byte(text)))), nil
+		return newOwnedUint8ArrayValue(r, []byte(text))
 	}
 }
 
@@ -430,7 +493,7 @@ func hostStringToBytes(fn func(string) ([]byte, error)) moejs.NativeFunc {
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -464,15 +527,11 @@ func hostBinaryToString(fn func([]byte) (string, error)) moejs.NativeFunc {
 
 func hostBytesConcat() moejs.NativeFunc {
 	return func(r *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
-		chunks, err := argBytesSlice(r, args, 0)
+		out, err := argConcatBytes(r, args, 0)
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		out, err := bytesConcat(chunks)
-		if err != nil {
-			return moejs.Undefined(), err
-		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -522,7 +581,7 @@ func hostDigestBytes() moejs.NativeFunc {
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -570,7 +629,7 @@ func hostHMACBytes() moejs.NativeFunc {
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -584,7 +643,7 @@ func hostRandomBytes() moejs.NativeFunc {
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -614,7 +673,7 @@ func hostAES(fn func(string, []byte, []byte, []byte, []byte) ([]byte, error)) mo
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -636,7 +695,7 @@ func hostRSAEncrypt() moejs.NativeFunc {
 		if err != nil {
 			return moejs.Undefined(), err
 		}
-		return moejs.ObjectValue(r.NewUint8Array(nonNilBytes(out))), nil
+		return newOwnedUint8ArrayValue(r, out)
 	}
 }
 
@@ -666,6 +725,9 @@ func hostStorageGet(sess *session) moejs.NativeFunc {
 		}
 		val, err := store.Get(ctx, key)
 		if err != nil {
+			return moejs.Undefined(), err
+		}
+		if err := r.ChargeAlloc(estimateGoValueBytes(val)); err != nil {
 			return moejs.Undefined(), err
 		}
 		return r.FromGo(val)
@@ -727,6 +789,9 @@ func hostStorageKeys(sess *session) moejs.NativeFunc {
 		}
 		if keys == nil {
 			keys = []string{}
+		}
+		if err := r.ChargeAlloc(estimateGoValueBytes(keys)); err != nil {
+			return moejs.Undefined(), err
 		}
 		return r.FromGo(keys)
 	}
@@ -825,20 +890,6 @@ func argInt(r *moejs.Realm, args []moejs.Value, index int) (int, error) {
 	}
 }
 
-func isDetachedByteBuffer(v moejs.Value) bool {
-	if !v.IsObject() {
-		return false
-	}
-	o := v.AsObject()
-	switch o.ClassName() {
-	case "TypedArray", "ArrayBuffer", "SharedArrayBuffer", "DataView":
-		_, ok := o.BytesView()
-		return !ok
-	default:
-		return false
-	}
-}
-
 func decodeBinaryValue(raw moejs.Value) ([]byte, error) {
 	if raw.IsString() {
 		text := raw.AsString().GoString()
@@ -853,7 +904,7 @@ func decodeBinaryValue(raw moejs.Value) ([]byte, error) {
 		}
 		return data, nil
 	}
-	if isDetachedByteBuffer(raw) {
+	if raw.IsUint8Array() {
 		return nil, errors.New("detached byte buffer")
 	}
 	return nil, errors.New("expected string or Uint8Array")
@@ -882,10 +933,8 @@ func argStrictBytes(_ *moejs.Realm, args []moejs.Value, index int) ([]byte, erro
 		}
 		return data, nil
 	}
-	if raw.IsObject() && raw.AsObject().ClassName() == "TypedArray" {
-		if _, ok := raw.BytesView(); !ok {
-			return nil, errors.New("detached byte buffer")
-		}
+	if raw.IsUint8Array() {
+		return nil, errors.New("detached byte buffer")
 	}
 	return nil, errors.New("expected Uint8Array")
 }
@@ -897,15 +946,13 @@ func decodeStrictBytesChunk(elem moejs.Value, i int) ([]byte, error) {
 		}
 		return chunk, nil
 	}
-	if elem.IsObject() && elem.AsObject().ClassName() == "TypedArray" {
-		if _, ok := elem.BytesView(); !ok {
-			return nil, fmt.Errorf("chunks[%d]: detached byte buffer", i)
-		}
+	if elem.IsUint8Array() {
+		return nil, fmt.Errorf("chunks[%d]: detached byte buffer", i)
 	}
 	return nil, fmt.Errorf("chunks[%d]: expected Uint8Array", i)
 }
 
-func argBytesSlice(r *moejs.Realm, args []moejs.Value, index int) ([][]byte, error) {
+func argConcatBytes(r *moejs.Realm, args []moejs.Value, index int) ([]byte, error) {
 	raw := moejs.Arg(args, index)
 	if !raw.IsObject() || raw.AsObject().ClassName() != "Array" {
 		return nil, errors.New("expected array of Uint8Array")
@@ -913,177 +960,516 @@ func argBytesSlice(r *moejs.Realm, args []moejs.Value, index int) ([][]byte, err
 	o := raw.AsObject()
 	if o.IsDenseArray() {
 		elems := o.Elements()
-		out := make([][]byte, len(elems))
+		if len(elems) > maxConcatChunks {
+			return nil, fmt.Errorf("too many chunks: %d exceeds %d", len(elems), maxConcatChunks)
+		}
+		total := 0
 		for i, elem := range elems {
+			if i&1023 == 0 {
+				if err := r.CheckInterrupt(); err != nil {
+					return nil, err
+				}
+			}
 			chunk, err := decodeStrictBytesChunk(elem, i)
 			if err != nil {
 				return nil, err
 			}
-			out[i] = chunk
+			if len(chunk) > maxBinaryInputBytes-total {
+				return nil, fmt.Errorf("concatenated bytes exceed %d bytes", maxBinaryInputBytes)
+			}
+			total += len(chunk)
+		}
+		if total == 0 {
+			return []byte{}, nil
+		}
+		out := make([]byte, 0, total)
+		for i, elem := range elems {
+			if i&1023 == 0 {
+				if err := r.CheckInterrupt(); err != nil {
+					return nil, err
+				}
+			}
+			chunk, _ := elem.Uint8ArrayBytes()
+			out = append(out, chunk...)
 		}
 		return out, nil
 	}
-	n := int(o.ArrayLength())
-	out := make([][]byte, 0, min(n, 64))
-	for i := 0; i < n; i++ {
-		if i&1023 == 0 {
+	length := o.ArrayLength()
+	if uint64(length) > maxConcatChunks {
+		return nil, fmt.Errorf("too many chunks: %d exceeds %d", length, maxConcatChunks)
+	}
+	var out []byte
+	for i := uint32(0); i < length; i++ {
+		if i&255 == 0 {
 			if err := r.CheckInterrupt(); err != nil {
 				return nil, err
 			}
 		}
-		elem, err := o.GetIndex(r, uint32(i))
+		elem, err := o.GetIndex(r, i)
 		if err != nil {
 			return nil, err
 		}
-		chunk, err := decodeStrictBytesChunk(elem, i)
+		chunk, err := decodeStrictBytesChunk(elem, int(i))
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, chunk)
+		if len(chunk) > maxBinaryInputBytes-len(out) {
+			return nil, fmt.Errorf("concatenated bytes exceed %d bytes", maxBinaryInputBytes)
+		}
+		out = append(out, chunk...)
+	}
+	if out == nil {
+		return []byte{}, nil
 	}
 	return out, nil
 }
 
-func argToValue(rt *moejs.Runtime, arg any) (moejs.Value, error) {
-	switch v := arg.(type) {
-	case StreamTransformEvent:
-		return streamEventToValue(rt, v), nil
-	case *StreamTransformEvent:
-		if v == nil {
-			return moejs.Null(), nil
-		}
-		return streamEventToValue(rt, *v), nil
-	case StreamTransformContext:
-		return streamCtxToValue(rt, v)
-	case *StreamTransformContext:
-		if v == nil {
-			return moejs.Null(), nil
-		}
-		return streamCtxToValue(rt, *v)
-	case SegmentItem:
-		return segmentItemToValue(rt, v), nil
-	case *SegmentItem:
-		if v == nil {
-			return moejs.Null(), nil
-		}
-		return segmentItemToValue(rt, *v), nil
-	case SegmentFinding:
-		return segmentFindingToValue(rt, v), nil
-	case *SegmentFinding:
-		if v == nil {
-			return moejs.Null(), nil
-		}
-		return segmentFindingToValue(rt, *v), nil
-	case []SegmentItem:
-		return segmentItemsToValue(rt, v)
-	case []SegmentFinding:
-		return segmentFindingsToValue(rt, v)
-	case InspectSegmentsBinding:
-		return inspectBindingToValue(rt, v)
-	case InspectSegmentsContext:
-		return inspectCtxToValue(rt, v)
-	case InspectSegmentsInput:
-		return inspectInputToValue(rt, v)
-	default:
-		return rt.FromGo(arg)
+const maxEstimateSteps = 65536
+
+// estimateGoValueBytes returns a bounded, conservative byte estimate of a
+// JSON-shaped Go value passed into or returned from moejs.FromGo. It mirrors
+// moejs's live-heap estimator iteratively so liveDebt pacing and storage.get
+// billing account for unmaterialized Go containers.
+func estimateGoValueBytes(root any) int64 {
+	if root == nil {
+		return 0
 	}
+	limit := MaxAllocBytes + 1
+	var total int64
+	add := func(n int64) bool {
+		if n <= 0 {
+			return total >= limit
+		}
+		total = addSaturating(total, n)
+		if total >= limit {
+			total = limit
+			return true
+		}
+		return false
+	}
+	var stack []any
+	pushOrCount := func(v any) bool {
+		switch x := v.(type) {
+		case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			return false
+		case string:
+			return add(32 + int64(len(x)))
+		case json.Number:
+			return add(32 + int64(len(x)))
+		case []byte:
+			if cap(x) == 0 {
+				return false
+			}
+			return add(64 + int64(cap(x)))
+		default:
+			stack = append(stack, v)
+			return false
+		}
+	}
+	if pushOrCount(root) {
+		return total
+	}
+	steps := 0
+	for len(stack) > 0 {
+		if steps >= maxEstimateSteps {
+			add(MaxLiveBytes)
+			return total
+		}
+		steps++
+		n := len(stack) - 1
+		cur := stack[n]
+		stack[n] = nil
+		stack = stack[:n]
+		switch x := cur.(type) {
+		case map[string]any:
+			if x == nil {
+				continue
+			}
+			if add(48 + int64(len(x))*48) {
+				return total
+			}
+			for k, v := range x {
+				steps++
+				if add(int64(len(k))) || pushOrCount(v) {
+					return total
+				}
+				if steps >= maxEstimateSteps {
+					add(MaxLiveBytes)
+					return total
+				}
+			}
+		case []any:
+			if cap(x) == 0 {
+				continue
+			}
+			if add(24 + int64(cap(x))*16) {
+				return total
+			}
+			for _, elem := range x {
+				steps++
+				if pushOrCount(elem) {
+					return total
+				}
+				if steps >= maxEstimateSteps {
+					add(MaxLiveBytes)
+					return total
+				}
+			}
+		case map[string]string:
+			if x == nil {
+				continue
+			}
+			if add(48 + int64(len(x))*48) {
+				return total
+			}
+			for k, v := range x {
+				steps++
+				if add(int64(len(k)) + int64(len(v))) {
+					return total
+				}
+				if steps >= maxEstimateSteps {
+					add(MaxLiveBytes)
+					return total
+				}
+			}
+		case []string:
+			if cap(x) == 0 {
+				continue
+			}
+			if add(24 + int64(cap(x))*16) {
+				return total
+			}
+			for _, elem := range x {
+				steps++
+				if add(int64(len(elem))) {
+					return total
+				}
+				if steps >= maxEstimateSteps {
+					add(MaxLiveBytes)
+					return total
+				}
+			}
+		case map[string][]string:
+			if x == nil {
+				continue
+			}
+			if add(48 + int64(len(x))*48) {
+				return total
+			}
+			for k, list := range x {
+				steps++
+				if add(int64(len(k))) {
+					return total
+				}
+				if cap(list) > 0 {
+					if add(24 + int64(cap(list))*16) {
+						return total
+					}
+					for _, elem := range list {
+						steps++
+						if add(int64(len(elem))) {
+							return total
+						}
+						if steps >= maxEstimateSteps {
+							add(MaxLiveBytes)
+							return total
+						}
+					}
+				}
+				if steps >= maxEstimateSteps {
+					add(MaxLiveBytes)
+					return total
+				}
+			}
+		case []map[string]any:
+			if cap(x) == 0 {
+				continue
+			}
+			if add(24 + int64(cap(x))*8) {
+				return total
+			}
+			for _, m := range x {
+				steps++
+				if m != nil {
+					stack = append(stack, m)
+				}
+				if steps >= maxEstimateSteps {
+					add(MaxLiveBytes)
+					return total
+				}
+			}
+		}
+	}
+	return total
 }
 
-func streamEventToValue(rt *moejs.Runtime, e StreamTransformEvent) moejs.Value {
-	if e.Event == "" {
-		return rt.NewObjectFrom(tplStreamEventDataOnly, moejs.String(e.Data))
+func realmString(r *moejs.Realm, s string) (moejs.Value, error) {
+	if s == "" {
+		return moejs.String(""), nil
 	}
-	return rt.NewObjectFrom(tplStreamEventFull, moejs.String(e.Data), moejs.String(e.Event))
+	return r.FromGo(s)
 }
 
-func streamCtxToValue(rt *moejs.Runtime, c StreamTransformContext) (moejs.Value, error) {
-	if len(c.Settings) == 0 {
-		return rt.NewObjectFrom(tplStreamCtxBase, moejs.String(c.Model), moejs.String(c.Protocol), moejs.String(c.SiteType)), nil
-	}
-	settingsVal, err := rt.FromGo(c.Settings)
+func newObjectFromValue(r *moejs.Realm, tpl *moejs.ObjectTemplate, values ...moejs.Value) (moejs.Value, error) {
+	o, err := r.NewObjectFrom(tpl, values...)
 	if err != nil {
 		return moejs.Undefined(), err
 	}
-	return rt.NewObjectFrom(tplStreamCtxWithSettings, moejs.String(c.Model), moejs.String(c.Protocol), settingsVal, moejs.String(c.SiteType)), nil
+	return moejs.ObjectValue(o), nil
 }
 
-func segmentItemToValue(rt *moejs.Runtime, s SegmentItem) moejs.Value {
-	if s.Role == "" {
-		return rt.NewObjectFrom(tplSegmentItemBase, moejs.String(s.Field), moejs.String(s.ID), moejs.String(s.Text))
+func argToValue(r *moejs.Realm, arg any) (moejs.Value, int64, error) {
+	switch v := arg.(type) {
+	case StreamTransformEvent:
+		val, err := streamEventToValue(r, v)
+		return val, 0, err
+	case *StreamTransformEvent:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		val, err := streamEventToValue(r, *v)
+		return val, 0, err
+	case StreamTransformContext:
+		return streamCtxToValue(r, v)
+	case *StreamTransformContext:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		return streamCtxToValue(r, *v)
+	case SegmentItem:
+		val, err := segmentItemToValue(r, v)
+		return val, 0, err
+	case *SegmentItem:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		val, err := segmentItemToValue(r, *v)
+		return val, 0, err
+	case SegmentFinding:
+		val, err := segmentFindingToValue(r, v)
+		return val, 0, err
+	case *SegmentFinding:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		val, err := segmentFindingToValue(r, *v)
+		return val, 0, err
+	case []SegmentItem:
+		val, err := segmentItemsToValue(r, v)
+		return val, 0, err
+	case []SegmentFinding:
+		val, err := segmentFindingsToValue(r, v)
+		return val, 0, err
+	case InspectSegmentsBinding:
+		return inspectBindingToValue(r, v)
+	case *InspectSegmentsBinding:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		return inspectBindingToValue(r, *v)
+	case InspectSegmentsContext:
+		return inspectCtxToValue(r, v)
+	case *InspectSegmentsContext:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		return inspectCtxToValue(r, *v)
+	case InspectSegmentsInput:
+		val, err := inspectInputToValue(r, v)
+		return val, 0, err
+	case *InspectSegmentsInput:
+		if v == nil {
+			return moejs.Null(), 0, nil
+		}
+		val, err := inspectInputToValue(r, *v)
+		return val, 0, err
+	default:
+		val, err := r.FromGo(arg)
+		if err != nil {
+			return moejs.Undefined(), 0, err
+		}
+		return val, estimateGoValueBytes(arg), nil
 	}
-	return rt.NewObjectFrom(tplSegmentItemWithRole, moejs.String(s.Field), moejs.String(s.ID), moejs.String(s.Role), moejs.String(s.Text))
 }
 
-func segmentFindingToValue(rt *moejs.Runtime, f SegmentFinding) moejs.Value {
+func streamEventToValue(r *moejs.Realm, e StreamTransformEvent) (moejs.Value, error) {
+	dataVal, err := realmString(r, e.Data)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	if e.Event == "" {
+		return newObjectFromValue(r, tplStreamEventDataOnly, dataVal)
+	}
+	eventVal, err := realmString(r, e.Event)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	return newObjectFromValue(r, tplStreamEventFull, dataVal, eventVal)
+}
+
+func streamCtxToValue(r *moejs.Realm, c StreamTransformContext) (moejs.Value, int64, error) {
+	modelVal, err := realmString(r, c.Model)
+	if err != nil {
+		return moejs.Undefined(), 0, err
+	}
+	protocolVal, err := realmString(r, c.Protocol)
+	if err != nil {
+		return moejs.Undefined(), 0, err
+	}
+	siteTypeVal, err := realmString(r, c.SiteType)
+	if err != nil {
+		return moejs.Undefined(), 0, err
+	}
+	if len(c.Settings) == 0 {
+		val, err := newObjectFromValue(r, tplStreamCtxBase, modelVal, protocolVal, siteTypeVal)
+		return val, 0, err
+	}
+	settingsVal, err := r.FromGo(c.Settings)
+	if err != nil {
+		return moejs.Undefined(), 0, err
+	}
+	val, err := newObjectFromValue(r, tplStreamCtxWithSettings, modelVal, protocolVal, settingsVal, siteTypeVal)
+	return val, estimateGoValueBytes(c.Settings), err
+}
+
+func segmentItemToValue(r *moejs.Realm, s SegmentItem) (moejs.Value, error) {
+	fieldVal, err := realmString(r, s.Field)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	idVal, err := realmString(r, s.ID)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	textVal, err := realmString(r, s.Text)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	if s.Role == "" {
+		return newObjectFromValue(r, tplSegmentItemBase, fieldVal, idVal, textVal)
+	}
+	roleVal, err := realmString(r, s.Role)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	return newObjectFromValue(r, tplSegmentItemWithRole, fieldVal, idVal, roleVal, textVal)
+}
+
+func segmentFindingToValue(r *moejs.Realm, f SegmentFinding) (moejs.Value, error) {
+	segVal, err := realmString(r, f.Segment)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	typeVal, err := realmString(r, f.Type)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
 	hasSource := f.Source != ""
 	hasScore := f.Score != 0
 	switch {
 	case hasSource && hasScore:
-		return rt.NewObjectFrom(tplFindingFull, moejs.Int(int64(f.End)), moejs.Number(f.Score), moejs.String(f.Segment), moejs.String(f.Source), moejs.Int(int64(f.Start)), moejs.String(f.Type))
+		srcVal, err := realmString(r, f.Source)
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		return newObjectFromValue(r, tplFindingFull, moejs.Int(int64(f.End)), moejs.Number(f.Score), segVal, srcVal, moejs.Int(int64(f.Start)), typeVal)
 	case hasSource:
-		return rt.NewObjectFrom(tplFindingSource, moejs.Int(int64(f.End)), moejs.String(f.Segment), moejs.String(f.Source), moejs.Int(int64(f.Start)), moejs.String(f.Type))
+		srcVal, err := realmString(r, f.Source)
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		return newObjectFromValue(r, tplFindingSource, moejs.Int(int64(f.End)), segVal, srcVal, moejs.Int(int64(f.Start)), typeVal)
 	case hasScore:
-		return rt.NewObjectFrom(tplFindingScore, moejs.Int(int64(f.End)), moejs.Number(f.Score), moejs.String(f.Segment), moejs.Int(int64(f.Start)), moejs.String(f.Type))
+		return newObjectFromValue(r, tplFindingScore, moejs.Int(int64(f.End)), moejs.Number(f.Score), segVal, moejs.Int(int64(f.Start)), typeVal)
 	default:
-		return rt.NewObjectFrom(tplFindingBase, moejs.Int(int64(f.End)), moejs.String(f.Segment), moejs.Int(int64(f.Start)), moejs.String(f.Type))
+		return newObjectFromValue(r, tplFindingBase, moejs.Int(int64(f.End)), segVal, moejs.Int(int64(f.Start)), typeVal)
 	}
 }
 
-func segmentItemsToValue(rt *moejs.Runtime, items []SegmentItem) (moejs.Value, error) {
+func segmentItemsToValue(r *moejs.Realm, items []SegmentItem) (moejs.Value, error) {
 	if len(items) == 0 {
-		return rt.FromGo([]any{})
+		return moejs.ObjectValue(r.NewArrayFromSlice(nil)), nil
+	}
+	if err := r.ChargeAlloc(int64(len(items)) * 16); err != nil {
+		return moejs.Undefined(), err
 	}
 	vals := make([]moejs.Value, len(items))
 	for i, item := range items {
-		vals[i] = segmentItemToValue(rt, item)
+		val, err := segmentItemToValue(r, item)
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		vals[i] = val
 	}
-	return moejs.ObjectValue(rt.Realm().NewArrayFromSlice(vals)), nil
+	return moejs.ObjectValue(r.NewArrayFromSlice(vals)), nil
 }
 
-func segmentFindingsToValue(rt *moejs.Runtime, items []SegmentFinding) (moejs.Value, error) {
+func segmentFindingsToValue(r *moejs.Realm, items []SegmentFinding) (moejs.Value, error) {
 	if len(items) == 0 {
-		return rt.FromGo([]any{})
+		return moejs.ObjectValue(r.NewArrayFromSlice(nil)), nil
+	}
+	if err := r.ChargeAlloc(int64(len(items)) * 16); err != nil {
+		return moejs.Undefined(), err
 	}
 	vals := make([]moejs.Value, len(items))
 	for i, item := range items {
-		vals[i] = segmentFindingToValue(rt, item)
+		val, err := segmentFindingToValue(r, item)
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		vals[i] = val
 	}
-	return moejs.ObjectValue(rt.Realm().NewArrayFromSlice(vals)), nil
+	return moejs.ObjectValue(r.NewArrayFromSlice(vals)), nil
 }
 
-func inspectBindingToValue(rt *moejs.Runtime, b InspectSegmentsBinding) (moejs.Value, error) {
-	paramsVal, err := rt.FromGo(b.Params)
+func inspectBindingToValue(r *moejs.Realm, b InspectSegmentsBinding) (moejs.Value, int64, error) {
+	idVal, err := realmString(r, b.ID)
 	if err != nil {
-		return moejs.Undefined(), err
+		return moejs.Undefined(), 0, err
 	}
-	return rt.NewObjectFrom(tplInspectBinding, moejs.String(b.ID), paramsVal), nil
+	paramsVal, err := r.FromGo(b.Params)
+	if err != nil {
+		return moejs.Undefined(), 0, err
+	}
+	val, err := newObjectFromValue(r, tplInspectBinding, idVal, paramsVal)
+	return val, estimateGoValueBytes(b.Params), err
 }
 
-func inspectCtxToValue(rt *moejs.Runtime, c InspectSegmentsContext) (moejs.Value, error) {
-	bindingVal, err := inspectBindingToValue(rt, c.Binding)
+func inspectCtxToValue(r *moejs.Realm, c InspectSegmentsContext) (moejs.Value, int64, error) {
+	bindingVal, bindingBytes, err := inspectBindingToValue(r, c.Binding)
 	if err != nil {
-		return moejs.Undefined(), err
+		return moejs.Undefined(), 0, err
+	}
+	endpointVal, err := realmString(r, c.Endpoint)
+	if err != nil {
+		return moejs.Undefined(), 0, err
+	}
+	modelVal, err := realmString(r, c.Model)
+	if err != nil {
+		return moejs.Undefined(), 0, err
 	}
 	if c.Settings == nil {
-		return rt.NewObjectFrom(tplInspectCtxBase, bindingVal, moejs.String(c.Endpoint), moejs.String(c.Model)), nil
+		val, err := newObjectFromValue(r, tplInspectCtxBase, bindingVal, endpointVal, modelVal)
+		return val, bindingBytes, err
 	}
-	settingsVal, err := rt.FromGo(c.Settings)
+	settingsVal, err := r.FromGo(c.Settings)
 	if err != nil {
-		return moejs.Undefined(), err
+		return moejs.Undefined(), 0, err
 	}
-	return rt.NewObjectFrom(tplInspectCtxWithSettings, bindingVal, moejs.String(c.Endpoint), moejs.String(c.Model), settingsVal), nil
+	val, err := newObjectFromValue(r, tplInspectCtxWithSettings, bindingVal, endpointVal, modelVal, settingsVal)
+	return val, addSaturating(bindingBytes, estimateGoValueBytes(c.Settings)), err
 }
 
-func inspectInputToValue(rt *moejs.Runtime, in InspectSegmentsInput) (moejs.Value, error) {
-	findingsVal, err := segmentFindingsToValue(rt, in.Findings)
+func inspectInputToValue(r *moejs.Realm, in InspectSegmentsInput) (moejs.Value, error) {
+	findingsVal, err := segmentFindingsToValue(r, in.Findings)
 	if err != nil {
 		return moejs.Undefined(), err
 	}
-	segmentsVal, err := segmentItemsToValue(rt, in.Segments)
+	segmentsVal, err := segmentItemsToValue(r, in.Segments)
 	if err != nil {
 		return moejs.Undefined(), err
 	}
-	return rt.NewObjectFrom(tplInspectInput, findingsVal, segmentsVal), nil
+	return newObjectFromValue(r, tplInspectInput, findingsVal, segmentsVal)
 }
 
 func allocLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
@@ -1120,30 +1506,48 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 	defer func() { s.env = callEnv{} }()
 
 	values := make([]moejs.Value, len(args))
-	var callAlloc int64
+	r := s.rt.Realm()
+	r.SetAllocBudget(MaxAllocBytes)
+	var argErr error
+	var unchargedGoBytes int64
 	for i, arg := range args {
-		value, err := argToValue(s.rt, arg)
-		callAlloc += s.rt.AllocatedBytes()
-		if err != nil {
-			s.rt.ReleaseCallData()
-			if errors.Is(err, moejs.ErrAllocLimit) {
-				return nil, nil, 0, true, allocLimitCallError(err, nil, 0)
-			}
-			return nil, nil, 0, false, err
+		var goBytes int64
+		values[i], goBytes, argErr = argToValue(r, arg)
+		if goBytes > 0 {
+			unchargedGoBytes = addSaturating(unchargedGoBytes, goBytes)
 		}
-		values[i] = value
+		if argErr != nil {
+			break
+		}
+	}
+	argErr = r.FinishOutermost(argErr)
+	callAlloc := addSaturating(r.AllocatedBytes(), unchargedGoBytes)
+	if argErr != nil {
+		s.rt.ReleaseCallData()
+		if errors.Is(argErr, moejs.ErrAllocLimit) {
+			return nil, nil, 0, true, allocLimitCallError(argErr, nil, 0)
+		}
+		return nil, nil, 0, false, argErr
 	}
 
 	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
 	defer cancel()
 
-	var result moejs.Value
+	var out any
 	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
-		var callErr error
-		result, callErr = rt.Call(hook, values...)
-		return callErr
+		result, callErr := rt.Call(hook, values...)
+		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+		if callErr != nil {
+			return callErr
+		}
+		if _, _, ok := moejs.PromiseResult(result); ok {
+			return errReturnedPromise
+		}
+		var toGoErr error
+		out, toGoErr = rt.ToGo(result)
+		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+		return toGoErr
 	})
-	callAlloc += s.rt.AllocatedBytes()
 	logs, dropped := s.logs.snapshot()
 	if ctx.Err() != nil {
 		return nil, logs, dropped, true, ctx.Err()
@@ -1161,39 +1565,14 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		if errors.Is(err, errHookTimeout) || errors.Is(context.Cause(callCtx), errHookTimeout) {
 			reason = "timeout"
 		}
-		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err, Logs: logs, DroppedLogs: dropped}
 	}
 	s.rt.ClearInterrupt()
-	if err != nil {
-		wrapped := wrapEngineError(err)
-		if call, ok := wrapped.(*CallError); ok {
-			call.Logs = logs
-			call.DroppedLogs = dropped
-		}
-		if fatalRuntime(wrapped) {
-			return nil, logs, dropped, true, wrapped
-		}
-		s.rt.ReleaseCallData()
-		discard := s.checkLiveLimit(callAlloc) != nil
-		return nil, logs, dropped, discard, wrapped
-	}
-	if _, _, ok := moejs.PromiseResult(result); ok {
+	if errors.Is(err, errReturnedPromise) {
 		s.rt.ReleaseCallData()
 		discard := s.checkLiveLimit(callAlloc) != nil
 		return nil, logs, dropped, discard, &CallError{Kind: KindShape, Detail: "hook returned a promise", Logs: logs, DroppedLogs: dropped}
 	}
-	out, err := s.rt.ToGo(result)
-	callAlloc += s.rt.AllocatedBytes()
-	if errors.Is(err, moejs.ErrResultTooLarge) {
-		s.rt.ClearInterrupt()
-		s.rt.ReleaseCallData()
-		discard := s.checkLiveLimit(callAlloc) != nil
-		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err, Logs: logs, DroppedLogs: dropped}
-	}
-	if errors.Is(err, moejs.ErrAllocLimit) {
-		return nil, logs, dropped, true, allocLimitCallError(err, logs, dropped)
-	}
-	s.rt.ReleaseCallData()
 	if err != nil {
 		wrapped := wrapEngineError(err)
 		if call, ok := wrapped.(*CallError); ok {
@@ -1203,9 +1582,11 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		if fatalRuntime(wrapped) {
 			return nil, logs, dropped, true, wrapped
 		}
+		s.rt.ReleaseCallData()
 		discard := s.checkLiveLimit(callAlloc) != nil
 		return nil, logs, dropped, discard, wrapped
 	}
+	s.rt.ReleaseCallData()
 	if liveErr := s.checkLiveLimit(callAlloc); liveErr != nil {
 		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
 	}
@@ -1217,10 +1598,18 @@ func (s *session) exportMeta() (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("meta export is missing")
 	}
-	out, err := s.rt.ToGo(value)
+	metaCtx, cancel := context.WithTimeoutCause(context.Background(), loadHookTimeout, errHookTimeout)
+	defer cancel()
+	var out any
+	err := s.rt.RunContext(metaCtx, func(rt *moejs.Runtime) error {
+		var toGoErr error
+		out, toGoErr = rt.ToGo(value)
+		return toGoErr
+	})
+	s.rt.ClearInterrupt()
 	s.rt.ReleaseCallData()
 	if err != nil {
-		return nil, err
+		return nil, classifySessionError(err, metaCtx)
 	}
 	meta, ok := out.(map[string]any)
 	if !ok {

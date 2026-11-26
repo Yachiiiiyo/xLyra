@@ -83,24 +83,6 @@ func bytesToBase64URL(data []byte) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
-func bytesConcat(chunks [][]byte) ([]byte, error) {
-	total := 0
-	for _, chunk := range chunks {
-		if total+len(chunk) > maxBinaryInputBytes {
-			return nil, fmt.Errorf("concatenated bytes exceed %d bytes", maxBinaryInputBytes)
-		}
-		total += len(chunk)
-	}
-	if total == 0 {
-		return []byte{}, nil
-	}
-	out := make([]byte, 0, total)
-	for _, chunk := range chunks {
-		out = append(out, chunk...)
-	}
-	return out, nil
-}
-
 func bytesEqualConstantTime(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false

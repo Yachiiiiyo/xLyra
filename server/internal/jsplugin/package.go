@@ -646,9 +646,23 @@ func (p *Plugin) injectContextSettings(ctx context.Context, arg any) any {
 	case StreamTransformContext:
 		typed.Settings = ResolveSettings(p.Manifest.Settings, global, siteOverrides, typed.Settings)
 		return typed
+	case *StreamTransformContext:
+		if typed == nil {
+			return arg
+		}
+		cloned := *typed
+		cloned.Settings = ResolveSettings(p.Manifest.Settings, global, siteOverrides, cloned.Settings)
+		return &cloned
 	case InspectSegmentsContext:
 		typed.Settings = ResolveSettings(p.Manifest.Settings, global, siteOverrides, typed.Settings)
 		return typed
+	case *InspectSegmentsContext:
+		if typed == nil {
+			return arg
+		}
+		cloned := *typed
+		cloned.Settings = ResolveSettings(p.Manifest.Settings, global, siteOverrides, cloned.Settings)
+		return &cloned
 	case map[string]any:
 		if typed == nil {
 			return arg

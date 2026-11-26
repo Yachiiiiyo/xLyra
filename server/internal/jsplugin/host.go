@@ -15,13 +15,22 @@ import (
 )
 
 func base64Encode(value string) (string, error) {
+	if len(value) > maxBinaryInputBytes {
+		return "", fmt.Errorf("input exceeds %d bytes", maxBinaryInputBytes)
+	}
 	return base64.StdEncoding.EncodeToString([]byte(value)), nil
 }
 
 func base64Decode(value string) (string, error) {
+	if len(value) > base64.StdEncoding.EncodedLen(maxBinaryInputBytes) {
+		return "", fmt.Errorf("input exceeds %d bytes", maxBinaryInputBytes)
+	}
 	decoded, err := base64.StdEncoding.DecodeString(value)
 	if err != nil {
 		return "", err
+	}
+	if len(decoded) > maxBinaryInputBytes {
+		return "", fmt.Errorf("decoded bytes exceed %d bytes", maxBinaryInputBytes)
 	}
 	if !utf8.Valid(decoded) {
 		return "", errors.New("base64 payload is not utf-8")
@@ -30,13 +39,22 @@ func base64Decode(value string) (string, error) {
 }
 
 func base64URLEncode(value string) (string, error) {
+	if len(value) > maxBinaryInputBytes {
+		return "", fmt.Errorf("input exceeds %d bytes", maxBinaryInputBytes)
+	}
 	return base64.RawURLEncoding.EncodeToString([]byte(value)), nil
 }
 
 func base64URLDecode(value string) (string, error) {
+	if len(value) > base64.StdEncoding.EncodedLen(maxBinaryInputBytes) {
+		return "", fmt.Errorf("input exceeds %d bytes", maxBinaryInputBytes)
+	}
 	decoded, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
 		return "", err
+	}
+	if len(decoded) > maxBinaryInputBytes {
+		return "", fmt.Errorf("decoded bytes exceed %d bytes", maxBinaryInputBytes)
 	}
 	if !utf8.Valid(decoded) {
 		return "", errors.New("base64 payload is not utf-8")

@@ -2,7 +2,9 @@ package jsplugin
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +12,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"xlyra/server/internal/textmatch"
 )
 
 func TestBuiltinSelfTest(t *testing.T) {
@@ -342,6 +346,656 @@ export function transformStream(ctx, event) {
 	want3 := "model,protocol,siteType|data|openai|gpt-4o|openai_chat|none||plain"
 	if res3.Data == nil || *res3.Data != want3 {
 		t.Fatalf("res3.Data = %v, want %q", res3.Data, want3)
+	}
+
+	// Pointer forms for StreamTransformContext/Event work symmetrically without mutating caller structs.
+	ptrCtx := &StreamTransformContext{SiteType: "openai", Model: "gpt-4o", Protocol: "openai_chat"}
+	ptrEv := &StreamTransformEvent{Event: "msg", Data: "ptr"}
+	rawPtrOut, _, _, err := plugin.callHook(context.Background(), HookTransformStream, streamHookTimeout, 0, ptrCtx, ptrEv)
+	if err != nil {
+		t.Fatalf("callHook(ptr stream): %v", err)
+	}
+	if ptrCtx.Settings != nil {
+		t.Fatalf("injectContextSettings mutated caller *StreamTransformContext: %#v", ptrCtx.Settings)
+	}
+	ptrRes, err := decodeStreamTransformResult(rawPtrOut)
+	if err != nil {
+		t.Fatalf("decodeStreamTransformResult(ptr): %v", err)
+	}
+	wantPtr := "model,protocol,settings,siteType|data,event|openai|gpt-4o|openai_chat|2.0.0|msg|ptr"
+	if ptrRes.Data == nil || *ptrRes.Data != wantPtr {
+		t.Fatalf("ptrRes.Data = %v, want %q", ptrRes.Data, wantPtr)
+	}
+
+	// InspectSegmentsContext, InspectSegmentsBinding, InspectSegmentsInput, SegmentItem, and SegmentFinding shapes.
+	inspectSource := `export const meta = { apiVersion: 1, id: "acme.pipeline" };
+export function inspectSegments(ctx, input) {
+  const ctxKeys = Object.keys(ctx).join(",");
+  const bindKeys = Object.keys(ctx.binding).join(",");
+  const paramsKind = ctx.binding.params === null ? "null" : Object.keys(ctx.binding.params).join(",");
+  const settingsKind = !("settings" in ctx) ? "absent" : Object.keys(ctx.settings).join(",") + "=" + (ctx.settings.mode || "");
+  const inKeys = Object.keys(input).join(",");
+  const segs = input.segments.map(s => Object.keys(s).join(",") + ":" + s.id + ":" + s.field + ":" + (s.role || "") + ":" + s.text).join(";");
+  const finds = input.findings.map(f => Object.keys(f).join(",") + ":" + f.segment + ":" + f.start + ":" + f.end + ":" + f.type + ":" + (f.source || "") + ":" + (f.score ?? "")).join(";");
+  return {
+    reject: {
+      status: 400,
+      code: "shape_report",
+      message: [ctxKeys, bindKeys, paramsKind, settingsKind, inKeys, segs, finds].join("|")
+    }
+  };
+}`
+	inspectManifest := pipelineTestManifest(inspectSource, func(m *Manifest) {
+		m.Settings = []SettingSpec{{Key: "mode", Type: SettingTypeString, Default: "strict"}}
+	})
+	inspectWithSettings, err := NewPlugin(inspectManifest, inspectSource, nil, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin(inspect with settings): %v", err)
+	}
+	inspectNoSettingsManifest := pipelineTestManifest(inspectSource, nil)
+	inspectNoSettings, err := NewPlugin(inspectNoSettingsManifest, inspectSource, nil, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin(inspect no settings): %v", err)
+	}
+
+	fullInput := InspectSegmentsInput{
+		Segments: []SegmentItem{
+			{ID: "s0", Field: "message.text", Text: "alpha"},
+			{ID: "s1", Field: "message.text", Role: "user", Text: "beta"},
+		},
+		Findings: []SegmentFinding{
+			{Segment: "s0", Start: 0, End: 1, Type: "PII"},
+			{Segment: "s0", Start: 1, End: 2, Type: "PII", Source: "rule"},
+			{Segment: "s1", Start: 0, End: 2, Type: "PII", Score: 0.75},
+			{Segment: "s1", Start: 2, End: 4, Type: "PII", Source: "dictionary", Score: 0.9},
+		},
+	}
+	wantSegs := "field,id,text:s0:message.text::alpha;field,id,role,text:s1:message.text:user:beta"
+	wantFinds := strings.Join([]string{
+		"end,segment,start,type:s0:0:1:PII::",
+		"end,segment,source,start,type:s0:1:2:PII:rule:",
+		"end,score,segment,start,type:s1:0:2:PII::0.75",
+		"end,score,segment,source,start,type:s1:2:4:PII:dictionary:0.9",
+	}, ";")
+
+	// 1. With settings injected and Params == nil -> params is null, settings is present.
+	raw1, _, _, err := inspectWithSettings.callHook(context.Background(), HookInspectSegments, protocolHookTimeout, 0,
+		InspectSegmentsContext{Endpoint: "/v1/chat", Model: "m1", Binding: InspectSegmentsBinding{ID: "b1", Params: nil}},
+		fullInput,
+	)
+	if err != nil {
+		t.Fatalf("inspectWithSettings callHook: %v", err)
+	}
+	dec1, err := decodeInspectSegments(raw1)
+	if err != nil || dec1.Reject == nil {
+		t.Fatalf("dec1 = %#v, err = %v", dec1, err)
+	}
+	wantInspect1 := strings.Join([]string{
+		"binding,endpoint,model,settings", "id,params", "null", "mode=strict", "findings,segments", wantSegs, wantFinds,
+	}, "|")
+	if dec1.Reject.Message != wantInspect1 {
+		t.Fatalf("inspect(with settings, nil params) =\n %q\nwant:\n %q", dec1.Reject.Message, wantInspect1)
+	}
+
+	// 2. Without settings declared and Params == {} -> settings key absent, params is empty object.
+	raw2, _, _, err := inspectNoSettings.callHook(context.Background(), HookInspectSegments, protocolHookTimeout, 0,
+		InspectSegmentsContext{Endpoint: "/v1/chat", Model: "m1", Binding: InspectSegmentsBinding{ID: "b2", Params: map[string]any{}}},
+		fullInput,
+	)
+	if err != nil {
+		t.Fatalf("inspectNoSettings callHook: %v", err)
+	}
+	dec2, err := decodeInspectSegments(raw2)
+	if err != nil || dec2.Reject == nil {
+		t.Fatalf("dec2 = %#v, err = %v", dec2, err)
+	}
+	wantInspect2 := strings.Join([]string{
+		"binding,endpoint,model", "id,params", "", "absent", "findings,segments", wantSegs, wantFinds,
+	}, "|")
+	if dec2.Reject.Message != wantInspect2 {
+		t.Fatalf("inspect(no settings, empty params) =\n %q\nwant:\n %q", dec2.Reject.Message, wantInspect2)
+	}
+
+	// 3. Pointer forms (*InspectSegmentsContext, *InspectSegmentsInput) + *InspectSegmentsBinding symmetry.
+	ptrInspectCtx := &InspectSegmentsContext{Endpoint: "/v1/chat", Model: "m1", Binding: InspectSegmentsBinding{ID: "b3", Params: map[string]any{"k": "v"}}}
+	raw3, _, _, err := inspectWithSettings.callHook(context.Background(), HookInspectSegments, protocolHookTimeout, 0, ptrInspectCtx, &fullInput)
+	if err != nil {
+		t.Fatalf("inspectWithSettings ptr callHook: %v", err)
+	}
+	if ptrInspectCtx.Settings != nil {
+		t.Fatalf("injectContextSettings mutated caller *InspectSegmentsContext: %#v", ptrInspectCtx.Settings)
+	}
+	dec3, err := decodeInspectSegments(raw3)
+	if err != nil || dec3.Reject == nil {
+		t.Fatalf("dec3 = %#v, err = %v", dec3, err)
+	}
+	wantInspect3 := strings.Join([]string{
+		"binding,endpoint,model,settings", "id,params", "k", "mode=strict", "findings,segments", wantSegs, wantFinds,
+	}, "|")
+	if dec3.Reject.Message != wantInspect3 {
+		t.Fatalf("inspect(ptr ctx/input) =\n %q\nwant:\n %q", dec3.Reject.Message, wantInspect3)
+	}
+
+	// Verify *InspectSegmentsBinding converts symmetrically via argToValue.
+	bindSource := `export const meta = { apiVersion: 1, id: "xlyra.test.bindptr", kind: "quota_probe" };
+export function probe(b, nilB) {
+  if (nilB !== null) return { error: "expected null for nil binding pointer" };
+  if (Object.keys(b).join(",") !== "id,params" || b.id !== "bp1" || b.params.flag !== true) {
+    return { error: "bad binding: " + JSON.stringify(b) };
+  }
+  return { result: { kind: "balance", entries: [{ label: "ok", remaining: 1 }] } };
+}`
+	bindPlugin := mustTestPlugin(t, "xlyra.test.bindptr", bindSource)
+	sess, err := bindPlugin.pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nilBind *InspectSegmentsBinding
+	outBind, _, _, discard, err := sess.call(context.Background(), probeHookTimeout, bindPlugin.program.hooks["probe"], []any{
+		&InspectSegmentsBinding{ID: "bp1", Params: map[string]any{"flag": true}},
+		nilBind,
+	})
+	bindPlugin.pool.Release(sess, discard)
+	if err != nil {
+		t.Fatalf("binding ptr call: %v", err)
+	}
+	if decBind, err := decodeDecision(outBind); err != nil || decBind.Error != "" {
+		t.Fatalf("binding ptr decision = %#v, err = %v", decBind, err)
+	}
+}
+
+func TestToGoAndExportMetaTimeoutsAndLogs(t *testing.T) {
+	t.Run("togo_getter_timeout_and_logs", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.togogetter", kind: "quota_probe" };
+export function probe() {
+  return {
+    get x() {
+      log.info("inside-togo-getter");
+      for (;;) {}
+    }
+  };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.togogetter", source)
+		started := time.Now()
+		decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if time.Since(started) > 3*time.Second {
+			t.Fatalf("ToGo getter loop took too long: %s", time.Since(started))
+		}
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout {
+			t.Fatalf("error = %#v, want %s", err, KindTimeout)
+		}
+		if len(decision.Logs) != 1 || decision.Logs[0].Message != "inside-togo-getter" {
+			t.Fatalf("decision.Logs = %#v, want getter log captured", decision.Logs)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after ToGo getter timeout total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("togo_proxy_ownKeys_timeout", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.togoproxy", kind: "quota_probe" };
+export function probe() {
+  return new Proxy({}, { ownKeys() { for (;;) {} } });
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.togoproxy", source)
+		started := time.Now()
+		_, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if time.Since(started) > 3*time.Second {
+			t.Fatalf("ToGo Proxy ownKeys loop took too long: %s", time.Since(started))
+		}
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout {
+			t.Fatalf("error = %#v, want %s", err, KindTimeout)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after ToGo Proxy timeout total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("togo_microtask_timeout", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.togomicrotask", kind: "quota_probe" };
+export function probe() {
+  return {
+    get x() {
+      Promise.resolve().then(() => { for (;;) {} });
+      return 1;
+    }
+  };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.togomicrotask", source)
+		started := time.Now()
+		_, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if time.Since(started) > 3*time.Second {
+			t.Fatalf("ToGo microtask loop took too long: %s", time.Since(started))
+		}
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout {
+			t.Fatalf("error = %#v, want %s", err, KindTimeout)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after ToGo microtask timeout total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("togo_getter_logs_captured_on_success", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.togolog", kind: "quota_probe" };
+export function probe() {
+  return {
+    get result() {
+      log.info("getter-emitted", { phase: "togo" });
+      return { kind: "balance", entries: [{ label: "balance", remaining: 7 }] };
+    }
+  };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.togolog", source)
+		decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if err != nil {
+			t.Fatalf("CallProbe: %v", err)
+		}
+		if len(decision.Logs) != 1 || decision.Logs[0].Message != "getter-emitted" || decision.Logs[0].Fields["phase"] != "togo" {
+			t.Fatalf("decision.Logs = %#v, want getter-emitted", decision.Logs)
+		}
+	})
+
+	t.Run("exportMeta_getter_timeout", func(t *testing.T) {
+		source := `export const meta = { get id() { for (;;) {} } };
+export function probe() { return { result: { kind: "balance", entries: [] } }; }`
+		manifest := testManifest("xlyra.test.metaloop", source)
+		started := time.Now()
+		_, err := NewPlugin(manifest, source, []Fixture{{Name: "unused"}}, 1)
+		if time.Since(started) > 3*time.Second {
+			t.Fatalf("NewPlugin exportMeta loop took too long: %s", time.Since(started))
+		}
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout {
+			t.Fatalf("NewPlugin error = %#v, want %s", err, KindTimeout)
+		}
+		if errors.Unwrap(call) == nil {
+			t.Fatal("CallError.Unwrap() = nil, want underlying interrupt error preserved")
+		}
+	})
+
+	t.Run("load_live_limit_classified_as_heap_limit", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.loadlive", kind: "quota_probe" };
+const huge = new Uint8Array(20 * 1024 * 1024);
+export function probe() { return { result: { kind: "balance", entries: [{ label: "n", remaining: huge.length }] } }; }`
+		manifest := testManifest("xlyra.test.loadlive", source)
+		_, err := NewPlugin(manifest, source, []Fixture{{Name: "unused"}}, 1)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "live_limit" {
+			t.Fatalf("NewPlugin error = %#v, want %s (live_limit)", err, KindHeapLimit)
+		}
+		if errors.Unwrap(call) == nil {
+			t.Fatal("CallError.Unwrap() = nil, want underlying live limit error preserved")
+		}
+	})
+}
+
+func TestLiveDebtAndSingleCallAllocAuditRegressions(t *testing.T) {
+	t.Run("stream_event_data_cross_call_leak", func(t *testing.T) {
+		source := `const leak = [];
+export const meta = { apiVersion: 1, id: "acme.streamleak" };
+export function transformStream(ctx, event) {
+  leak.push(event.data);
+  return {};
+}`
+		manifest := Manifest{
+			ID: "acme.streamleak", Name: "streamleak", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", License: "AGPL-3.0",
+			SHA256: map[string]string{"plugin.js": HashSource(source)},
+		}
+		plugin, err := NewPlugin(manifest, source, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		payload := strings.Repeat("a", 1<<20)
+		var hitErr error
+		for i := 0; i < 24; i++ {
+			_, _, _, err := plugin.CallTransformStream(context.Background(), StreamTransformContext{
+				SiteType: "openai", Model: "gpt-4o", Protocol: "openai_chat",
+			}, StreamTransformEvent{Data: payload})
+			if err != nil {
+				hitErr = err
+				break
+			}
+		}
+		var call *CallError
+		if !errors.As(hitErr, &call) || call.Kind != KindHeapLimit || call.Interrupt != "live_limit" {
+			t.Fatalf("error = %#v, want %s (live_limit)", hitErr, KindHeapLimit)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after stream leak total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("inspect_segments_text_cross_call_leak_and_max_live_override", func(t *testing.T) {
+		source := pipelineTestSource(`const leak = [];
+export function inspectSegments(ctx, input) {
+  leak.push(input.segments[0].text);
+  return {};
+}`)
+		plugin, err := NewPlugin(pipelineTestManifest(source, nil), source, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		// Lower MaxLiveBytes on the warm runtime to verify checkLiveLimit respects rt.MaxLiveBytes().
+		targetPool := plugin.poolForHook(HookInspectSegments)
+		targetPool.mu.Lock()
+		if len(targetPool.idle) != 1 {
+			targetPool.mu.Unlock()
+			t.Fatalf("expected 1 warm session, got %d", len(targetPool.idle))
+		}
+		targetPool.idle[0].rt.SetMaxLiveBytes(1 << 20)
+		targetPool.mu.Unlock()
+
+		segText := strings.Repeat("x", 300<<10)
+		var hitErr error
+		for i := 0; i < 8; i++ {
+			_, err := plugin.InspectPipelineSegments(context.Background(), PipelineInspection{
+				Endpoint: "/v1/chat/completions",
+				Segments: []PipelineSegment{{ID: fmt.Sprintf("s%d", i), Field: "message.text", Text: segText}},
+				Findings: [][]textmatch.Span{nil},
+			})
+			if err != nil {
+				hitErr = err
+				break
+			}
+		}
+		var call *CallError
+		if !errors.As(hitErr, &call) || call.Kind != KindHeapLimit || call.Interrupt != "live_limit" {
+			t.Fatalf("error = %#v, want %s (live_limit)", hitErr, KindHeapLimit)
+		}
+		targetPool.mu.Lock()
+		total, idle := targetPool.total, len(targetPool.idle)
+		targetPool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after inspect leak total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("parse_response_unmaterialized_go_map_leak", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "acme.protoleak", kind: "protocol" };
+const leak = [];
+export function decodeRequest() { return { model: "m" }; }
+export function buildRequest() { return { path: "/v1", payload: {} }; }
+export function parseResponse(ctx, resp) {
+  leak.push(resp);
+  return { passthrough: true };
+}`
+		manifest := Manifest{
+			ID: "acme.protoleak", Name: "protoleak", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", Kind: KindProtocol, License: "AGPL-3.0",
+			Protocol: ProtocolSection{
+				Name: "protoleak", DownstreamPath: "/v1/protoleak", EndpointType: "openai_chat",
+				Method: "POST", Auth: "bearer",
+			},
+			SHA256: map[string]string{"plugin.js": HashSource(source)},
+		}
+		plugin, err := NewPlugin(manifest, source, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		var hitErr error
+		for i := 0; i < 8; i++ {
+			bigBody := strings.Repeat("b", 4<<20)
+			_, _, _, err := plugin.CallParseResponse(context.Background(), ProtocolBuildContext{}, ProtocolParseInput{
+				Status:  200,
+				Headers: map[string]string{"content-type": "application/json"},
+				Body:    bigBody,
+			})
+			if err != nil {
+				hitErr = err
+				break
+			}
+		}
+		var call *CallError
+		if !errors.As(hitErr, &call) || call.Kind != KindHeapLimit || call.Interrupt != "live_limit" {
+			t.Fatalf("error = %#v, want %s (live_limit)", hitErr, KindHeapLimit)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after parseResponse leak total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("bytes_toHex_loop_hits_alloc_limit_in_single_call", func(t *testing.T) {
+		source := wrapProbe(`
+const u = new Uint8Array(4 * 1024 * 1024);
+const leak = [];
+for (let i = 0; i < 40; i++) {
+  leak.push(bytes.toHex(u));
+}
+return { result: { kind: "balance", entries: [{ label: "n", remaining: leak.length }] } };`)
+		plugin := mustTestPlugin(t, "xlyra.test.bomb", source)
+		_, _, _, err := plugin.callHook(context.Background(), "probe", 5*time.Second, 0, ProbeContext{}.asMap(), []any{})
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+			t.Fatalf("error = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after bytes.toHex alloc limit total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("storage_get_loop_hits_alloc_limit_in_single_call", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "acme.storagealloc", kind: "quota_probe" };
+export function probe() {
+  const leak = [];
+  for (let i = 0; i < 2000; i++) {
+    leak.push(storage.get("big"));
+  }
+  return { result: { kind: "balance", entries: [{ label: "n", remaining: leak.length }] } };
+}`
+		manifest := testManifest("acme.storagealloc", source)
+		manifest.HostAPI = 2
+		manifest.Permissions = []string{PermissionStorage}
+		plugin, err := NewPlugin(manifest, source, []Fixture{{Name: "unused"}}, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		mem, err := NewMemoryStorage(map[string]any{
+			"big": map[string]any{"blob": strings.Repeat("s", 60000)},
+		})
+		if err != nil {
+			t.Fatalf("NewMemoryStorage: %v", err)
+		}
+		_, _, _, err = plugin.callHook(WithCallStorage(context.Background(), mem), "probe", 5*time.Second, 0, ProbeContext{}.asMap(), []any{})
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+			t.Fatalf("error = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after storage.get alloc limit total=%d idle=%d, want discarded", total, idle)
+		}
+	})
+
+	t.Run("codec_base64_rejects_oversized_inputs", func(t *testing.T) {
+		maxEnc := base64.StdEncoding.EncodedLen(maxBinaryInputBytes)
+		source := fmt.Sprintf(`export const meta = { apiVersion: 1, id: "xlyra.test.b64cap", kind: "quota_probe" };
+function expectThrow(fn, want) {
+  try { fn(); } catch (e) {
+    if (String(e).includes(want)) return null;
+    return "got " + String(e) + ", want " + want;
+  }
+  return "did not throw " + want;
+}
+export function probe() {
+  const over = "a".repeat(%d);
+  const overB64 = "A".repeat(%d);
+  const errs = [
+    expectThrow(() => codec.base64Encode(over), "input exceeds"),
+    expectThrow(() => codec.base64URLEncode(over), "input exceeds"),
+    expectThrow(() => codec.base64Decode(overB64), "input exceeds"),
+    expectThrow(() => codec.base64URLDecode(overB64), "input exceeds"),
+  ];
+  for (const msg of errs) {
+    if (msg) return { error: msg };
+  }
+  return { result: { kind: "balance", entries: [{ label: "ok", remaining: 1 }] } };
+}`, maxBinaryInputBytes+1, maxEnc+4)
+		plugin := mustTestPlugin(t, "xlyra.test.b64cap", source)
+		decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if err != nil {
+			t.Fatalf("CallProbe: %v", err)
+		}
+		if decision.Error != "" {
+			t.Fatalf("probe error: %s", decision.Error)
+		}
+	})
+
+	t.Run("compound_argToValue_enforces_alloc_budget", func(t *testing.T) {
+		source := pipelineTestSource(`export function inspectSegments(ctx, input) { return {}; }`)
+		plugin, err := NewPlugin(pipelineTestManifest(source, nil), source, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		// 400k empty SegmentItems exceed the 64 MiB single-call MaxAllocBytes budget when
+		// argToValue builds all items under one realm budget without wiping allocUsed.
+		many := make([]SegmentItem, 400000)
+		_, _, _, err = plugin.callHook(context.Background(), HookInspectSegments, protocolHookTimeout, 0,
+			InspectSegmentsContext{Endpoint: "/v1/chat", Model: "m", Binding: InspectSegmentsBinding{ID: "b"}},
+			InspectSegmentsInput{Segments: many},
+		)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+			t.Fatalf("error = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+		}
+	})
+}
+
+func TestBytesConcatHardeningAndDetachedTypeErrors(t *testing.T) {
+	source := `export const meta = { apiVersion: 1, id: "xlyra.test.concat", kind: "quota_probe" };
+function expectThrow(fn, want) {
+  try {
+    fn();
+  } catch (e) {
+    if (String(e).includes(want)) return null;
+    return "got " + String(e) + ", want " + want;
+  }
+  return "did not throw " + want;
+}
+export function probe() {
+  // 1. Sparse + Proxy prototype new Array(1e8) rejected immediately by maxConcatChunks.
+  const empty = new Uint8Array(0);
+  const sparse = new Array(1e8);
+  Object.setPrototypeOf(sparse, new Proxy({}, { get() { return empty; } }));
+  let msg = expectThrow(() => bytes.concat(sparse), "too many chunks");
+  if (msg) return { error: "sparse: " + msg };
+
+  // 2. Dense > maxConcatChunks empty-chunk array rejected immediately.
+  const dense = new Array(65537).fill(empty);
+  msg = expectThrow(() => bytes.concat(dense), "too many chunks");
+  if (msg) return { error: "dense: " + msg };
+
+  // 3. Getter detaching a[0] via transfer() during a[1] read preserves pre-detach snapshot.
+  const abTransfer = new ArrayBuffer(5);
+  new Uint8Array(abTransfer).set(bytes.fromUTF8("hello"));
+  const arrTransfer = [];
+  Object.defineProperty(arrTransfer, 0, { enumerable: true, get() { return new Uint8Array(abTransfer); } });
+  Object.defineProperty(arrTransfer, 1, {
+    enumerable: true,
+    get() {
+      abTransfer.transfer();
+      return bytes.fromUTF8("!");
+    }
+  });
+  const outTransfer = bytes.concat(arrTransfer);
+  if (!abTransfer.detached) return { error: "expected abTransfer detached" };
+  if (bytes.toUTF8(outTransfer) !== "hello!") {
+    return { error: "transfer snapshot got " + bytes.toUTF8(outTransfer) };
+  }
+
+  // 4. Getter shrinking resizable a[0] via resize(0) during a[1] read preserves pre-shrink snapshot.
+  const abResize = new ArrayBuffer(5, { maxByteLength: 16 });
+  new Uint8Array(abResize).set(bytes.fromUTF8("world"));
+  const arrResize = [];
+  Object.defineProperty(arrResize, 0, { enumerable: true, get() { return new Uint8Array(abResize); } });
+  Object.defineProperty(arrResize, 1, {
+    enumerable: true,
+    get() {
+      abResize.resize(0);
+      return bytes.fromUTF8("?");
+    }
+  });
+  const outResize = bytes.concat(arrResize);
+  if (abResize.byteLength !== 0) return { error: "expected abResize shrunk to 0" };
+  if (bytes.toUTF8(outResize) !== "world?") {
+    return { error: "resize snapshot got " + bytes.toUTF8(outResize) };
+  }
+
+  // 5. Detached non-Uint8Array views/buffers return type errors, NOT "detached byte buffer".
+  const abDet = new ArrayBuffer(8);
+  const detU8 = new Uint8Array(abDet);
+  const detU16 = new Uint16Array(abDet);
+  const detClamped = new Uint8ClampedArray(abDet);
+  const detDV = new DataView(abDet);
+  abDet.transfer();
+
+  // Also test out-of-bounds resizable Uint8Array -> "detached byte buffer".
+  const rabOOB = new ArrayBuffer(8, { maxByteLength: 16 });
+  const oobU8 = new Uint8Array(rabOOB, 4, 4);
+  rabOOB.resize(2);
+
+  const checks = [
+    expectThrow(() => bytes.toHex(detU8), "detached byte buffer"),
+    expectThrow(() => bytes.concat([detU8]), "chunks[0]: detached byte buffer"),
+    expectThrow(() => crypto.sha256(detU8), "detached byte buffer"),
+    expectThrow(() => bytes.toHex(oobU8), "detached byte buffer"),
+    expectThrow(() => bytes.concat([oobU8]), "chunks[0]: detached byte buffer"),
+    expectThrow(() => crypto.sha256(oobU8), "detached byte buffer"),
+
+    expectThrow(() => bytes.toHex(detU16), "expected Uint8Array"),
+    expectThrow(() => bytes.toHex(detClamped), "expected Uint8Array"),
+    expectThrow(() => bytes.toHex(abDet), "expected Uint8Array"),
+    expectThrow(() => bytes.toHex(detDV), "expected Uint8Array"),
+
+    expectThrow(() => bytes.concat([detU16]), "chunks[0]: expected Uint8Array"),
+    expectThrow(() => bytes.concat([detClamped]), "chunks[0]: expected Uint8Array"),
+    expectThrow(() => bytes.concat([abDet]), "chunks[0]: expected Uint8Array"),
+    expectThrow(() => bytes.concat([detDV]), "chunks[0]: expected Uint8Array"),
+
+    expectThrow(() => crypto.sha256(detU16), "expected string or Uint8Array"),
+    expectThrow(() => crypto.sha256(detClamped), "expected string or Uint8Array"),
+    expectThrow(() => crypto.sha256(abDet), "expected string or Uint8Array"),
+    expectThrow(() => crypto.sha256(detDV), "expected string or Uint8Array"),
+  ];
+  for (const errMsg of checks) {
+    if (errMsg) return { error: errMsg };
+  }
+  return { result: { kind: "balance", entries: [{ label: "ok", remaining: 1 }] } };
+}`
+	plugin := mustTestPlugin(t, "xlyra.test.concat", source)
+	started := time.Now()
+	decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+	if err != nil {
+		t.Fatalf("CallProbe: %v", err)
+	}
+	if decision.Error != "" {
+		t.Fatalf("probe error: %s", decision.Error)
+	}
+	if time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("bytes.concat hardening test took too long: %s", time.Since(started))
 	}
 }
 

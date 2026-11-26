@@ -6,6 +6,8 @@ const (
 	probePoolResident = 2
 	probePoolMax      = 8
 	probeHookTimeout  = 500 * time.Millisecond
+	// loadHookTimeout bounds module top-level evaluation and meta export reading.
+	loadHookTimeout = 500 * time.Millisecond
 	// poolWaitTimeout bounds how long a call queues for a runtime when the pool is at max.
 	poolWaitTimeout = time.Second
 
@@ -46,7 +48,10 @@ const (
 	MaxStorageKeysPerScope  = 64
 	MaxStorageBytesPerScope = 64 << 10
 	maxBinaryInputBytes     = 4 << 20
+	maxConcatChunks         = 65536
 	maxRandomBytes          = 64 << 10
+	// liveCheckCallInterval forces a live-heap check at least once every N calls even when liveDebt is small.
+	liveCheckCallInterval = 256
 )
 
 // HeapLimitAvailable reports whether NewRuntime is configured with an
