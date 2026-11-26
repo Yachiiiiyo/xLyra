@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.20.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.19.0...v1.20.0) (2026-11-26)
+
+
+### Features
+
+* ✨ 实现通用插件网关双向文本管线与管理控制台支持 ([c16ef8c](https://github.com/Yachiiiiyo/xLyra/commit/c16ef8c390ed3e2327f1441e868d4960270b6883))
+* ✨ 接入内置 Agent 的 xlyra 控制面（UDS 引擎、单次 Diff 审批、内置技能与 MCP 能力矩阵预留） ([8cd7fcb](https://github.com/Yachiiiiyo/xLyra/commit/8cd7fcbf388d20a99c4481f97683d3bff4bec9f9))
+* ✨ 支持 api_key 类型站点插件通过 credential.allowEmpty 声明允许空 API Key 凭据 ([1b314b5](https://github.com/Yachiiiiyo/xLyra/commit/1b314b507d819c9d063b1c6486520c337fc083c4))
+* ✨ 新增真实流量站点熔断、同优先级加权与会话粘滞选路 ([1b99b96](https://github.com/Yachiiiiyo/xLyra/commit/1b99b964e3699d9ed12ebad6e5c3e81a59d59a2c))
+
+
+### Bug Fixes
+
+* 🐛 修复上游路由 failover 与冷却的多处问题 ([c01c7c9](https://github.com/Yachiiiiyo/xLyra/commit/c01c7c90f30086028dcaec329d87fe4d90a4dbc2))
+* 🐛 修复标准模型别名解析 503、站点匹配分叉与空壳归档限制，新增模型合并接口 ([7dd8d63](https://github.com/Yachiiiiyo/xLyra/commit/7dd8d63380741975fd3bdd46de17f0cb92eb38c8))
+* 🐛 图像端点识别只补充 Seedream ([96d9d23](https://github.com/Yachiiiiyo/xLyra/commit/96d9d2320c0378d470905796e4c17245f47cbbd9))
+* 🐛 对齐 xlyra 控制面命令与 Schema 版本协商、修复站点模型过滤分页与统计口径，Dockerfile 改为自动拉取最新 CLI 产物 ([8c22f76](https://github.com/Yachiiiiyo/xLyra/commit/8c22f76f89045815f4bcd4c1a0c99e2ca2131d2b))
+* 🐛 将 Seedream 等图像模型识别为 openai-image ([d364e90](https://github.com/Yachiiiiyo/xLyra/commit/d364e90d966399c55b8c4f9a403f279a6b94c156))
+* 🐛 将 Seedream 识别为 openai-image ([b4f0a64](https://github.com/Yachiiiiyo/xLyra/commit/b4f0a645c672338c7ec737f1dd4d96c1d53c7c6d))
+* 🐛 用量分析保留无计费模型展示与按指标排序，修正缺价提示文案 ([bda09ea](https://github.com/Yachiiiiyo/xLyra/commit/bda09ea5c7b13aeaaefccf497636fa80d48ae020)), closes [#11](https://github.com/Yachiiiiyo/xLyra/issues/11)
+* 🐛 镜像构建自动拉取 xlyra CLI 发布产物并打入内置 agent-runtime skills ([d044276](https://github.com/Yachiiiiyo/xLyra/commit/d04427627eca5f078a7170731685cbbe9860b338))
+* 🐛 首个输出超时为最后一个候选站点增加 120 秒兜底默认值 ([0ada2e4](https://github.com/Yachiiiiyo/xLyra/commit/0ada2e4793f62be44374e5cfdf2b5bfcd3a32c14))
+
 ## [1.19.0](https://github.com/Yachiiiiyo/xLyra/compare/v1.18.0...v1.19.0) (2026-11-19)
 
 本版本重点升级插件基座并补齐移动端配对与推送能力：支持设备扫码配对、独立设备管理页与经 xLyra Cloud 转发的手机推送通知；插件基座支持去 `kind` 清单、多插件有序组合、私有存储与配置覆盖、全站点请求改写/签名、流转换与周期计划；同时新增 OpenCode Zen 免费车道 Bun 传输伪装，并增强了网关 DSML 清洗与 OAuth 临时错误保活。
