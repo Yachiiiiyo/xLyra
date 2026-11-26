@@ -125,17 +125,23 @@ func TestInferCategory(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"text-embedding-3-large": "embedding",
-		"bge-reranker-v2":        "rerank",
-		"whisper-1":              "audio",
-		"dall-e-3":               "image",
-		"flux-kontext-pro":       "image",
-		"nano_banana_2":          "image",
-		"nano-banana-pro":        "image",
-		"sora-2":                 "video",
-		"veo-3.1":                "video",
-		"vendor-video-model":     "video",
-		"gpt-4o-mini":            "chat",
+		"text-embedding-3-large":  "embedding",
+		"bge-reranker-v2":         "rerank",
+		"whisper-1":               "audio",
+		"dall-e-3":                "image",
+		"flux-kontext-pro":        "image",
+		"seedream-4.0":            "image",
+		"seedream-5.5":            "image",
+		"seedream-5.5-uncensored": "image",
+		"doubao-seedream-4-0":     "image",
+		"nano_banana_2":           "image",
+		"nano-banana-pro":         "image",
+		"doubao-seed-1.6":         "chat",
+		"seedance-1.0-pro":        "chat",
+		"sora-2":                  "video",
+		"veo-3.1":                 "video",
+		"vendor-video-model":      "video",
+		"gpt-4o-mini":             "chat",
 	}
 
 	for input, want := range cases {

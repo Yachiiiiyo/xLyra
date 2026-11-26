@@ -8,7 +8,7 @@ import type {
   AnalyticsUsageFact,
 } from '@/features/analytics/api/analytics'
 import type { AnalyticsFiltersState } from '@/features/analytics/components/analytics-filter-bar'
-import type { AnalyticsTrendDimension } from '@/features/analytics/lib/analytics-utils'
+import type { AnalyticsTrendDimension, AnalyticsTrendMetric } from '@/features/analytics/lib/analytics-utils'
 
 type Metrics = {
   requests: number
@@ -142,6 +142,7 @@ function dimensionRef(fact: AnalyticsUsageFact, dimension: 'site' | 'model' | 'a
 function orderedAggregates(aggregates: Map<string, Aggregate>) {
   return [...aggregates.values()].sort((a, b) => (
     b.metrics.cost - a.metrics.cost
+    || b.metrics.totalTokens - a.metrics.totalTokens
     || b.metrics.requests - a.metrics.requests
     || a.ref.label.localeCompare(b.ref.label)
   ))
@@ -177,14 +178,24 @@ function buildBreakdown(facts: AnalyticsUsageFact[], dimension: 'site' | 'model'
 }
 
 function topKeys(facts: AnalyticsUsageFact[], dimension: 'site' | 'model') {
-  const costs = new Map<string, { cost: number; label: string }>()
+  const ranks = new Map<string, { cost: number; totalTokens: number; requests: number; label: string }>()
   for (const fact of facts) {
     const ref = dimensionRef(fact, dimension)
-    const current = costs.get(ref.key)
-    costs.set(ref.key, { cost: (current?.cost ?? 0) + fact.cost, label: current?.label ?? ref.label })
+    const current = ranks.get(ref.key)
+    ranks.set(ref.key, {
+      cost: (current?.cost ?? 0) + fact.cost,
+      totalTokens: (current?.totalTokens ?? 0) + fact.total_tokens,
+      requests: (current?.requests ?? 0) + fact.requests,
+      label: current?.label ?? ref.label,
+    })
   }
-  return new Set([...costs.entries()]
-    .sort((a, b) => b[1].cost - a[1].cost || a[1].label.localeCompare(b[1].label))
+  return new Set([...ranks.entries()]
+    .sort((a, b) => (
+      b[1].cost - a[1].cost
+      || b[1].totalTokens - a[1].totalTokens
+      || b[1].requests - a[1].requests
+      || a[1].label.localeCompare(b[1].label)
+    ))
     .slice(0, 10)
     .map(([key]) => key))
 }
@@ -213,6 +224,7 @@ function buildMatrix(facts: AnalyticsUsageFact[]) {
   }
   return [...cells.values()].sort((a, b) => (
     b.cost - a.cost
+    || b.total_tokens - a.total_tokens
     || b.requests - a.requests
     || a.site.label.localeCompare(b.site.label)
     || a.model.label.localeCompare(b.model.label)
@@ -235,7 +247,40 @@ function seriesPoint(date: string, metrics: Metrics): AnalyticsSeriesPoint {
   }
 }
 
-function buildSeries(facts: AnalyticsUsageFact[], dimension: AnalyticsTrendDimension) {
+function compareSeriesMembers(
+  a: Aggregate,
+  b: Aggregate,
+  metric: AnalyticsTrendMetric,
+) {
+  if (metric === 'tokens') {
+    return (
+      b.metrics.totalTokens - a.metrics.totalTokens
+      || b.metrics.requests - a.metrics.requests
+      || b.metrics.cost - a.metrics.cost
+      || a.ref.label.localeCompare(b.ref.label)
+    )
+  }
+  if (metric === 'requests') {
+    return (
+      b.metrics.requests - a.metrics.requests
+      || b.metrics.totalTokens - a.metrics.totalTokens
+      || b.metrics.cost - a.metrics.cost
+      || a.ref.label.localeCompare(b.ref.label)
+    )
+  }
+  return (
+    b.metrics.cost - a.metrics.cost
+    || b.metrics.totalTokens - a.metrics.totalTokens
+    || b.metrics.requests - a.metrics.requests
+    || a.ref.label.localeCompare(b.ref.label)
+  )
+}
+
+function buildSeries(
+  facts: AnalyticsUsageFact[],
+  dimension: AnalyticsTrendDimension,
+  metric: AnalyticsTrendMetric = 'cost',
+) {
   const members = new Map<string, Aggregate & { points: Map<string, Metrics> }>()
   for (const fact of facts) {
     const ref = dimensionRef(fact, dimension)
@@ -252,11 +297,7 @@ function buildSeries(facts: AnalyticsUsageFact[], dimension: AnalyticsTrendDimen
     }
     addFact(point, fact)
   }
-  const ordered = [...members.values()].sort((a, b) => (
-    b.metrics.cost - a.metrics.cost
-    || b.metrics.requests - a.metrics.requests
-    || a.ref.label.localeCompare(b.ref.label)
-  ))
+  const ordered = [...members.values()].sort((a, b) => compareSeriesMembers(a, b, metric))
   const series: AnalyticsSeries[] = ordered.slice(0, 9).map((member) => ({
     key: member.ref.key,
     id: member.ref.id,
@@ -292,6 +333,7 @@ export function buildAnalyticsUsage(
   dataset: AnalyticsDataset,
   filters: AnalyticsFiltersState,
   trendDimension: AnalyticsTrendDimension,
+  trendMetric: AnalyticsTrendMetric = 'cost',
 ): AnalyticsUsage {
   const currentByDimension = dataset.current.filter((fact) => matchesDimensions(fact, filters))
   const previousByDimension = dataset.previous.filter((fact) => matchesDimensions(fact, filters))
@@ -353,7 +395,7 @@ export function buildAnalyticsUsage(
       api_key: buildBreakdown(current, 'api_key'),
       matrix: buildMatrix(current),
     },
-    series: buildSeries(current, trendDimension),
+    series: buildSeries(current, trendDimension, trendMetric),
     api_key_contributions: [],
   }
 }

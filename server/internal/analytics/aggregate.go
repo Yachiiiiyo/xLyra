@@ -320,6 +320,9 @@ func breakdownItems(aggregates map[string]*breakdownAggregate) []BreakdownItem {
 		if rows[i].metrics.cost != rows[j].metrics.cost {
 			return rows[i].metrics.cost > rows[j].metrics.cost
 		}
+		if rows[i].metrics.totalTokens != rows[j].metrics.totalTokens {
+			return rows[i].metrics.totalTokens > rows[j].metrics.totalTokens
+		}
 		if rows[i].metrics.requests != rows[j].metrics.requests {
 			return rows[i].metrics.requests > rows[j].metrics.requests
 		}
@@ -358,21 +361,33 @@ type matrixAggregate struct {
 	cost        float64
 }
 
-func topDimensionKeys(costByKey map[string]float64, labelByKey map[string]string, limit int) map[string]bool {
+type dimensionRank struct {
+	cost        float64
+	totalTokens int64
+	requests    int64
+	label       string
+}
+
+func topDimensionKeys(ranksByKey map[string]dimensionRank, limit int) map[string]bool {
 	type entry struct {
-		key   string
-		cost  float64
-		label string
+		key  string
+		rank dimensionRank
 	}
-	entries := make([]entry, 0, len(costByKey))
-	for key, cost := range costByKey {
-		entries = append(entries, entry{key: key, cost: cost, label: labelByKey[key]})
+	entries := make([]entry, 0, len(ranksByKey))
+	for key, rank := range ranksByKey {
+		entries = append(entries, entry{key: key, rank: rank})
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		if entries[i].cost != entries[j].cost {
-			return entries[i].cost > entries[j].cost
+		if entries[i].rank.cost != entries[j].rank.cost {
+			return entries[i].rank.cost > entries[j].rank.cost
 		}
-		return entries[i].label < entries[j].label
+		if entries[i].rank.totalTokens != entries[j].rank.totalTokens {
+			return entries[i].rank.totalTokens > entries[j].rank.totalTokens
+		}
+		if entries[i].rank.requests != entries[j].rank.requests {
+			return entries[i].rank.requests > entries[j].rank.requests
+		}
+		return entries[i].rank.label < entries[j].rank.label
 	})
 	if len(entries) > limit {
 		entries = entries[:limit]
@@ -389,10 +404,8 @@ func buildBreakdowns(rows []store.RequestUsageDailySummary, apiKeys map[uuid.UUI
 	byModel := map[string]*breakdownAggregate{}
 	byAPIKey := map[string]*breakdownAggregate{}
 	matrixCells := map[string]*matrixAggregate{}
-	siteCost := map[string]float64{}
-	modelCost := map[string]float64{}
-	siteLabel := map[string]string{}
-	modelLabel := map[string]string{}
+	siteRank := map[string]dimensionRank{}
+	modelRank := map[string]dimensionRank{}
 
 	for _, row := range rows {
 		site := siteDimension(row)
@@ -400,14 +413,24 @@ func buildBreakdowns(rows []store.RequestUsageDailySummary, apiKeys map[uuid.UUI
 		addBreakdownAggregate(bySite, site, row)
 		addBreakdownAggregate(byModel, model, row)
 		addBreakdownAggregate(byAPIKey, apiKeyDimension(row, apiKeys), row)
-		siteCost[site.key] += row.EstimatedCost
-		modelCost[model.key] += row.EstimatedCost
-		if _, ok := siteLabel[site.key]; !ok {
-			siteLabel[site.key] = site.label
+		sr := siteRank[site.key]
+		if sr.label == "" {
+			sr.label = site.label
 		}
-		if _, ok := modelLabel[model.key]; !ok {
-			modelLabel[model.key] = model.label
+		sr.cost += row.EstimatedCost
+		sr.totalTokens += row.TotalTokens
+		sr.requests += row.RequestCount
+		siteRank[site.key] = sr
+
+		mr := modelRank[model.key]
+		if mr.label == "" {
+			mr.label = model.label
 		}
+		mr.cost += row.EstimatedCost
+		mr.totalTokens += row.TotalTokens
+		mr.requests += row.RequestCount
+		modelRank[model.key] = mr
+
 		cellKey := site.key + "\x00" + model.key
 		cell := matrixCells[cellKey]
 		if cell == nil {
@@ -419,8 +442,8 @@ func buildBreakdowns(rows []store.RequestUsageDailySummary, apiKeys map[uuid.UUI
 		cell.cost += row.EstimatedCost
 	}
 
-	topSites := topDimensionKeys(siteCost, siteLabel, matrixTopN)
-	topModels := topDimensionKeys(modelCost, modelLabel, matrixTopN)
+	topSites := topDimensionKeys(siteRank, matrixTopN)
+	topModels := topDimensionKeys(modelRank, matrixTopN)
 	cells := make([]matrixAggregate, 0, len(matrixCells))
 	for _, cell := range matrixCells {
 		if !topSites[cell.site.key] || !topModels[cell.model.key] {
@@ -431,6 +454,9 @@ func buildBreakdowns(rows []store.RequestUsageDailySummary, apiKeys map[uuid.UUI
 	sort.SliceStable(cells, func(i, j int) bool {
 		if cells[i].cost != cells[j].cost {
 			return cells[i].cost > cells[j].cost
+		}
+		if cells[i].totalTokens != cells[j].totalTokens {
+			return cells[i].totalTokens > cells[j].totalTokens
 		}
 		if cells[i].requests != cells[j].requests {
 			return cells[i].requests > cells[j].requests
@@ -460,10 +486,11 @@ func buildBreakdowns(rows []store.RequestUsageDailySummary, apiKeys map[uuid.UUI
 }
 
 type seriesAggregate struct {
-	ref      dimensionRef
-	cost     float64
-	requests int64
-	points   map[string]*usageMetrics
+	ref         dimensionRef
+	cost        float64
+	totalTokens int64
+	requests    int64
+	points      map[string]*usageMetrics
 }
 
 func seriesDimensionFunc(groupBy string, apiKeys map[uuid.UUID]store.APIKey) func(store.RequestUsageDailySummary) dimensionRef {
@@ -513,6 +540,7 @@ func buildSeries(rows []store.RequestUsageDailySummary, groupBy string, apiKeys 
 			member.ref.label = ref.label
 		}
 		member.cost += row.EstimatedCost
+		member.totalTokens += row.TotalTokens
 		member.requests += row.RequestCount
 		addSeriesPoint(member.points, timeZone, row, dateFormat)
 	}
@@ -524,6 +552,9 @@ func buildSeries(rows []store.RequestUsageDailySummary, groupBy string, apiKeys 
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if ordered[i].cost != ordered[j].cost {
 			return ordered[i].cost > ordered[j].cost
+		}
+		if ordered[i].totalTokens != ordered[j].totalTokens {
+			return ordered[i].totalTokens > ordered[j].totalTokens
 		}
 		if ordered[i].requests != ordered[j].requests {
 			return ordered[i].requests > ordered[j].requests

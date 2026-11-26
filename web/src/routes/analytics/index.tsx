@@ -106,9 +106,9 @@ export function AnalyticsPage() {
 
   const usage = useMemo(() => {
     if (datasetTooLarge) return legacyQuery.data
-    if (datasetQuery.data) return buildAnalyticsUsage(datasetQuery.data, filters, trendDimension)
+    if (datasetQuery.data) return buildAnalyticsUsage(datasetQuery.data, filters, trendDimension, trendMetric)
     return undefined
-  }, [datasetQuery.data, datasetTooLarge, filters, legacyQuery.data, trendDimension])
+  }, [datasetQuery.data, datasetTooLarge, filters, legacyQuery.data, trendDimension, trendMetric])
   const availableCurrencies = usage?.meta.available_currencies ?? []
 
   const siteOptions = useMemo<MultiSelectOption[]>(() => (

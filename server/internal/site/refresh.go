@@ -175,7 +175,7 @@ func (s *Service) matchAndPriceSiteModels(ctx context.Context, site store.Site, 
 		models = availableSiteModels(matchedModels)
 	}
 	if unpriced := s.syncCanonicalPricingFallback(ctx, site.ID, models); len(unpriced) > 0 {
-		message := fmt.Sprintf("%d models have no pricing and will record zero cost: %s", len(unpriced), strings.Join(unpriced, ", "))
+		message := fmt.Sprintf("%d models have no pricing and will omit estimated cost: %s", len(unpriced), strings.Join(unpriced, ", "))
 		if next, err := store.NewSiteStateRepository(s.db.DB()).MarkPricingGap(ctx, site.ID, message); err == nil {
 			state = next
 		}
