@@ -58,6 +58,7 @@ import {
 } from '@/features/dashboard/components/chart-style'
 import type { ApiKeyContributions } from '@/features/dashboard/lib/dashboard-utils'
 import {
+  formatCompactNumber,
   formatDashboardCurrency,
   formatDashboardRefreshTime,
   formatDashboardTokens,
@@ -693,28 +694,91 @@ function MobileCostBreakdown({
     return () => document.removeEventListener('pointerdown', closeRoseTooltip)
   }, [])
 
-  const rows = useMemo(() => {
-    return [...usage.breakdowns[dimension]]
-      .sort((a, b) => b.cost - a.cost)
-      .filter((item) => item.cost > 0)
+  const { mode, roseSlices, unpricedRows } = useMemo(() => {
+    const activeItems = [...usage.breakdowns[dimension]]
+      .filter((item) => item.cost > 0 || item.total_tokens > 0 || item.requests > 0)
+      .sort((a, b) => (
+        b.cost - a.cost
+        || b.total_tokens - a.total_tokens
+        || b.requests - a.requests
+        || a.label.localeCompare(b.label)
+      ))
+    if (!activeItems.length) {
+      return {
+        mode: 'cost' as const,
+        roseSlices: [] as Array<MobileRoseSlice & { cost: number; requests: number; unpriced: boolean }>,
+        unpricedRows: [] as Array<MobileRoseSlice & { cost: number; requests: number; unpriced: boolean }>,
+      }
+    }
+
+    const priced = activeItems.filter((item) => item.cost > 0)
+    const unpriced = activeItems.filter((item) => item.cost <= 0)
+    if (priced.length > 0) {
+      const maxVal = priced[0].cost
+      const minVal = priced[priced.length - 1].cost
+      return {
+        mode: 'cost' as const,
+        roseSlices: priced.map((item, index) => ({
+          key: item.key,
+          id: item.id,
+          name: item.label,
+          value: item.cost,
+          cost: item.cost,
+          tokens: item.total_tokens,
+          requests: item.requests,
+          color: dashboardChartColors[index % dashboardChartColors.length],
+          outerRadius: mobileRoseOuterRadius(item.cost, minVal, maxVal),
+          unpriced: false,
+        })),
+        unpricedRows: unpriced.map((item) => ({
+          key: item.key,
+          id: item.id,
+          name: item.label,
+          value: 0,
+          cost: 0,
+          tokens: item.total_tokens,
+          requests: item.requests,
+          color: '',
+          outerRadius: 0,
+          unpriced: true,
+        })),
+      }
+    }
+
+    const useTokens = activeItems.some((item) => item.total_tokens > 0)
+    const fallbackItems = activeItems
+      .filter((item) => (useTokens ? item.total_tokens > 0 : item.requests > 0))
+      .sort((a, b) => (
+        useTokens
+          ? b.total_tokens - a.total_tokens || b.requests - a.requests || a.label.localeCompare(b.label)
+          : b.requests - a.requests || b.total_tokens - a.total_tokens || a.label.localeCompare(b.label)
+      ))
+    const fallbackValue = (item: (typeof fallbackItems)[number]) => (useTokens ? item.total_tokens : item.requests)
+    const maxVal = fallbackValue(fallbackItems[0])
+    const minVal = fallbackValue(fallbackItems[fallbackItems.length - 1])
+    return {
+      mode: (useTokens ? 'tokens' : 'requests') as 'tokens' | 'requests',
+      roseSlices: fallbackItems.map((item, index) => {
+        const value = fallbackValue(item)
+        return {
+          key: item.key,
+          id: item.id,
+          name: item.label,
+          value,
+          cost: item.cost,
+          tokens: item.total_tokens,
+          requests: item.requests,
+          color: dashboardChartColors[index % dashboardChartColors.length],
+          outerRadius: mobileRoseOuterRadius(value, minVal, maxVal),
+          unpriced: true,
+        }
+      }),
+      unpricedRows: [],
+    }
   }, [dimension, usage.breakdowns])
 
-  const roseSlices = useMemo<MobileRoseSlice[]>(() => {
-    if (!rows.length) return []
-    const maxVal = rows[0].cost
-    const minVal = rows[rows.length - 1].cost
-    return rows.map((item, index) => ({
-      key: item.key,
-      id: item.id,
-      name: item.label,
-      value: item.cost,
-      tokens: item.total_tokens,
-      color: dashboardChartColors[index % dashboardChartColors.length],
-      outerRadius: mobileRoseOuterRadius(item.cost, minVal, maxVal),
-    }))
-  }, [rows])
-
-  const total = rows.reduce((sum, item) => sum + item.cost, 0)
+  const total = roseSlices.reduce((sum, item) => sum + item.value, 0)
+  const listItems = useMemo(() => [...roseSlices, ...unpricedRows], [roseSlices, unpricedRows])
 
   const activeKeys = dimension === 'site'
     ? activeSiteIds
@@ -723,13 +787,33 @@ function MobileCostBreakdown({
       : activeApiKeyIds
   const hasActive = activeKeys.length > 0
 
+  const subtitle = mode === 'tokens'
+    ? t('donut.fallbackTokensDesc')
+    : mode === 'requests'
+      ? t('donut.fallbackRequestsDesc')
+      : unpricedRows.length > 0
+        ? t('donut.unpricedHint', { count: unpricedRows.length })
+        : t('donut.description')
+
+  const centerLabel = mode === 'cost'
+    ? t('donut.total')
+    : mode === 'tokens'
+      ? t('donut.totalTokens')
+      : t('donut.totalRequests')
+
+  const centerValue = mode === 'cost'
+    ? formatDashboardCurrency(total, currency)
+    : mode === 'tokens'
+      ? formatDashboardTokens(total)
+      : formatCompactNumber(total)
+
   return (
     <Card className="p-4">
       <div className="mb-3 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="min-w-0">
             <h3 className="text-headline text-label">{t('donut.title')}</h3>
-            <p className="text-footnote text-label-2">{t('donut.description')}</p>
+            <p className="text-footnote text-label-2">{subtitle}</p>
           </div>
           <div className="flex items-center gap-2">
             {hasActive ? (
@@ -756,9 +840,9 @@ function MobileCostBreakdown({
         </div>
       </div>
 
-      {rows.length ? (
+      {roseSlices.length ? (
         <div className="flex flex-col gap-3">
-          {/* 玫瑰图：固定 150px，圆心居中显示总费用 */}
+          {/* 玫瑰图：固定 150px，圆心居中显示总费用或回退总量 */}
           <div
             ref={roseChartRef}
             className="relative mx-auto"
@@ -786,6 +870,7 @@ function MobileCostBreakdown({
                   animationEasing="ease-out"
                   onClick={(entry) => {
                     const slice = entry as unknown as MobileRoseSlice
+                    if (slice.key === 'unknown') return
                     onDrillDown(dimension, { key: slice.key, id: slice.id })
                   }}
                 >
@@ -793,7 +878,7 @@ function MobileCostBreakdown({
                     <Cell
                       key={slice.key}
                       fill={slice.color}
-                      className="cursor-pointer"
+                      className={slice.key === 'unknown' ? 'opacity-40' : 'cursor-pointer'}
                     />
                   ))}
                 </Pie>
@@ -802,7 +887,14 @@ function MobileCostBreakdown({
                   isAnimationActive={false}
                   wrapperStyle={{ zIndex: 10 }}
                   content={(props) => (
-                    <MobileRoseTooltip {...props} currency={currency} total={total} />
+                    <MobileRoseTooltip
+                      {...props}
+                      mode={mode}
+                      currency={currency}
+                      total={total}
+                      unpricedLabel={t('donut.unpriced')}
+                      formatRequests={(count) => t('donut.requestsCount', { count: formatCompactNumber(count) })}
+                    />
                   )}
                 />
               </PieChart>
@@ -812,39 +904,56 @@ function MobileCostBreakdown({
                 className="leading-tight text-label-2"
                 style={{ fontSize: Math.round(MOBILE_ROSE_SIZE * 0.065) }}
               >
-                {t('donut.total')}
+                {centerLabel}
               </span>
               <span
                 className="font-semibold tabular-nums leading-tight text-label"
                 style={{ fontSize: Math.round(MOBILE_ROSE_SIZE * 0.08) }}
               >
-                {formatDashboardCurrency(total, currency)}
+                {centerValue}
               </span>
             </div>
           </div>
 
           {/* 占比列表：限高内部滚动 */}
           <div className="scrollbar-hidden flex max-h-[180px] flex-col divide-y divide-separator overflow-y-auto">
-            {rows.map((item, index) => {
-            const pct = total > 0 ? item.cost / total : 0
-            const color = dashboardChartColors[index % dashboardChartColors.length]
-            return (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => onDrillDown(dimension, { key: item.key, id: item.id })}
-                className="flex min-w-0 items-center gap-1.5 py-2 text-left first:pt-0 last:pb-0"
-              >
-                <span className="size-2 shrink-0 rounded-[2px]" style={{ backgroundColor: color }} />
-                <span className="min-w-0 flex-1 truncate text-body text-label" title={item.label}>
-                  {item.label}
-                </span>
-                <span className="shrink-0 text-footnote tabular-nums text-label-2">
-                  {`${formatDashboardCurrency(item.cost, currency, 2)} · ${formatDashboardTokens(item.total_tokens)} · ${formatPercent(pct, 1)}`}
-                </span>
-              </button>
-            )
-          })}
+            {listItems.map((item) => {
+              const isUnpricedRow = mode === 'cost' && item.unpriced
+              const pct = total > 0 ? item.value / total : 0
+              const primaryMetric = item.unpriced
+                ? t('donut.unpriced')
+                : formatDashboardCurrency(item.cost, currency, 2)
+              const detailText = isUnpricedRow
+                ? `${primaryMetric} · ${formatDashboardTokens(item.tokens)} · ${t('donut.requestsCount', { count: formatCompactNumber(item.requests) })}`
+                : mode === 'requests'
+                  ? `${primaryMetric} · ${t('donut.requestsCount', { count: formatCompactNumber(item.requests) })} · ${formatPercent(pct, 1)}`
+                  : `${primaryMetric} · ${formatDashboardTokens(item.tokens)} · ${formatPercent(pct, 1)}`
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    if (item.key === 'unknown') return
+                    onDrillDown(dimension, { key: item.key, id: item.id })
+                  }}
+                  disabled={item.key === 'unknown'}
+                  className="flex min-w-0 items-center gap-1.5 py-2 text-left first:pt-0 last:pb-0 disabled:cursor-default"
+                >
+                  <span
+                    className={isUnpricedRow
+                      ? 'size-2 shrink-0 rounded-[2px] border border-label-3 bg-transparent'
+                      : 'size-2 shrink-0 rounded-[2px]'}
+                    style={isUnpricedRow ? undefined : { backgroundColor: item.color }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-body text-label" title={item.name}>
+                    {item.name}
+                  </span>
+                  <span className="shrink-0 text-footnote tabular-nums text-label-2">
+                    {detailText}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
       ) : (
@@ -856,11 +965,33 @@ function MobileCostBreakdown({
   )
 }
 
-function MobileRoseTooltip({ active, payload, currency, total }: TooltipContentProps & { currency: string; total: number }) {
+function MobileRoseTooltip({
+  active,
+  payload,
+  mode,
+  currency,
+  total,
+  unpricedLabel,
+  formatRequests,
+}: TooltipContentProps & {
+  mode: 'cost' | 'tokens' | 'requests'
+  currency: string
+  total: number
+  unpricedLabel: string
+  formatRequests: (count: number) => string
+}) {
   if (!active || !payload?.length) return null
   const item = payload[0]
+  const slice = item.payload as (MobileRoseSlice & { requests?: number }) | undefined
   const value = Number(item.value ?? 0)
-  const tokens = Number((item.payload as MobileRoseSlice | undefined)?.tokens ?? 0)
+  const tokens = Number(slice?.tokens ?? 0)
+  const requests = Number(slice?.requests ?? 0)
+  const pct = total > 0 ? ` · ${((value / total) * 100).toFixed(1)}%` : ''
+  const detail = mode === 'cost'
+    ? `${formatDashboardCurrency(value, currency, 4)} · ${formatDashboardTokens(tokens)}${pct}`
+    : mode === 'tokens'
+      ? `${unpricedLabel} · ${formatDashboardTokens(tokens)} · ${formatRequests(requests)}${pct}`
+      : `${unpricedLabel} · ${formatRequests(requests)}${pct}`
   return (
     <div style={dashboardTooltipStyle} className="min-w-[150px] text-footnote">
       <div className="mb-1 flex items-center gap-1.5 text-label">
@@ -868,9 +999,7 @@ function MobileRoseTooltip({ active, payload, currency, total }: TooltipContentP
         <span className="truncate font-medium">{item.name}</span>
       </div>
       <div className="tabular-nums text-label-2">
-        {formatDashboardCurrency(value, currency, 4)}
-        {` · ${formatDashboardTokens(tokens)}`}
-        {total > 0 ? ` · ${((value / total) * 100).toFixed(1)}%` : ''}
+        {detail}
       </div>
     </div>
   )

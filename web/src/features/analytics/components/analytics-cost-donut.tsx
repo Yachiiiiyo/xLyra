@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import type { AnalyticsUsage } from '@/features/analytics/api/analytics'
 import type { AnalyticsBreakdownDimension } from '@/features/analytics/lib/analytics-utils'
 import { dashboardChartColors, dashboardTooltipStyle } from '@/features/dashboard/components/chart-style'
-import { formatDashboardCurrency, formatDashboardTokens } from '@/features/dashboard/lib/dashboard-utils'
+import { formatCompactNumber, formatDashboardCurrency, formatDashboardTokens } from '@/features/dashboard/lib/dashboard-utils'
 import { AnalyticsPanel, AnalyticsSlashTabs } from './analytics-panel'
 
 // 玫瑰图参数
@@ -26,14 +26,19 @@ function roseOuterRadius(value: number, minVal: number, maxVal: number, outerMax
   return Math.round(outerMin + (outerMax - outerMin) * scale)
 }
 
+type DonutMode = 'cost' | 'tokens' | 'requests'
+
 type DonutSlice = {
   key: string
   id?: string | null
   name: string
   value: number
+  cost: number
   tokens: number
+  requests: number
   color: string
   outerRadius: number
+  unpriced: boolean
 }
 
 type AnalyticsCostDonutProps = {
@@ -76,30 +81,93 @@ export function AnalyticsCostDonut({
     return () => observer.disconnect()
   }, [])
 
-  const slices = useMemo<DonutSlice[]>(() => {
-    const items = [...usage.breakdowns[dimension]].sort((a, b) => b.cost - a.cost)
-    const all = items.map((item, index) => ({
-      key: item.key,
-      id: item.id,
-      name: item.label,
-      value: item.cost,
-      tokens: item.total_tokens,
-      color: dashboardChartColors[index % dashboardChartColors.length],
-      outerRadius: 0,
-    }))
-    const validSlices = all.filter((s) => s.value > 0)
-    if (validSlices.length === 0) return []
+  const { mode, slices, unpricedRows } = useMemo<{
+    mode: DonutMode
+    slices: DonutSlice[]
+    unpricedRows: DonutSlice[]
+  }>(() => {
+    const activeItems = [...usage.breakdowns[dimension]]
+      .filter((item) => item.cost > 0 || item.total_tokens > 0 || item.requests > 0)
+      .sort((a, b) => (
+        b.cost - a.cost
+        || b.total_tokens - a.total_tokens
+        || b.requests - a.requests
+        || a.label.localeCompare(b.label)
+      ))
+    if (activeItems.length === 0) {
+      return { mode: 'cost', slices: [], unpricedRows: [] }
+    }
 
-    // 对数刻度计算外径，极端分布下小扇形仍可见
-    const maxVal = validSlices[0].value
-    const minVal = validSlices[validSlices.length - 1].value
-    return validSlices.map((s) => ({
-      ...s,
-      outerRadius: roseOuterRadius(s.value, minVal, maxVal, roseOuterMax),
-    }))
+    const priced = activeItems.filter((item) => item.cost > 0)
+    const unpriced = activeItems.filter((item) => item.cost <= 0)
+
+    if (priced.length > 0) {
+      const maxVal = priced[0].cost
+      const minVal = priced[priced.length - 1].cost
+      return {
+        mode: 'cost',
+        slices: priced.map((item, index) => ({
+          key: item.key,
+          id: item.id,
+          name: item.label,
+          value: item.cost,
+          cost: item.cost,
+          tokens: item.total_tokens,
+          requests: item.requests,
+          color: dashboardChartColors[index % dashboardChartColors.length],
+          outerRadius: roseOuterRadius(item.cost, minVal, maxVal, roseOuterMax),
+          unpriced: false,
+        })),
+        unpricedRows: unpriced.map((item) => ({
+          key: item.key,
+          id: item.id,
+          name: item.label,
+          value: 0,
+          cost: 0,
+          tokens: item.total_tokens,
+          requests: item.requests,
+          color: '',
+          outerRadius: 0,
+          unpriced: true,
+        })),
+      }
+    }
+
+    const useTokens = activeItems.some((item) => item.total_tokens > 0)
+    const fallbackMode: DonutMode = useTokens ? 'tokens' : 'requests'
+    const fallbackItems = activeItems
+      .filter((item) => (useTokens ? item.total_tokens > 0 : item.requests > 0))
+      .sort((a, b) => (
+        useTokens
+          ? b.total_tokens - a.total_tokens || b.requests - a.requests || a.label.localeCompare(b.label)
+          : b.requests - a.requests || b.total_tokens - a.total_tokens || a.label.localeCompare(b.label)
+      ))
+    const fallbackValue = (item: (typeof fallbackItems)[number]) => (useTokens ? item.total_tokens : item.requests)
+    const maxVal = fallbackValue(fallbackItems[0])
+    const minVal = fallbackValue(fallbackItems[fallbackItems.length - 1])
+    return {
+      mode: fallbackMode,
+      slices: fallbackItems.map((item, index) => {
+        const value = fallbackValue(item)
+        return {
+          key: item.key,
+          id: item.id,
+          name: item.label,
+          value,
+          cost: item.cost,
+          tokens: item.total_tokens,
+          requests: item.requests,
+          color: dashboardChartColors[index % dashboardChartColors.length],
+          outerRadius: roseOuterRadius(value, minVal, maxVal, roseOuterMax),
+          unpriced: true,
+        }
+      }),
+      unpricedRows: [],
+    }
   }, [dimension, roseOuterMax, usage.breakdowns])
 
   const total = slices.reduce((sum, slice) => sum + slice.value, 0)
+  const listItems = useMemo(() => [...slices, ...unpricedRows], [slices, unpricedRows])
 
   const activeKeys = dimension === 'site'
     ? activeSiteIds
@@ -111,16 +179,38 @@ export function AnalyticsCostDonut({
   const activeLabels = useMemo(() => {
     if (!hasActive) return []
     return activeKeys.map((key) => {
-      const found = slices.find((s) => s.id === key || s.key === key)
+      const found = listItems.find((s) => s.id === key || s.key === key)
       return found?.name ?? key
     })
-  }, [activeKeys, hasActive, slices])
+  }, [activeKeys, hasActive, listItems])
+
+  const panelDescription = hasActive
+    ? undefined
+    : mode === 'tokens'
+      ? t('donut.fallbackTokensDesc')
+      : mode === 'requests'
+        ? t('donut.fallbackRequestsDesc')
+        : unpricedRows.length > 0
+          ? t('donut.unpricedHint', { count: unpricedRows.length })
+          : t('donut.description')
+
+  const centerLabel = mode === 'cost'
+    ? t('donut.total')
+    : mode === 'tokens'
+      ? t('donut.totalTokens')
+      : t('donut.totalRequests')
+
+  const centerValue = mode === 'cost'
+    ? formatDashboardCurrency(total, currency)
+    : mode === 'tokens'
+      ? formatDashboardTokens(total)
+      : formatCompactNumber(total)
 
   return (
     <AnalyticsPanel
       className={className}
       title={t('donut.title')}
-      description={hasActive ? undefined : t('donut.description')}
+      description={panelDescription}
       bodyClassName="flex min-h-0 flex-col"
       action={(
         <div className="flex flex-wrap items-center gap-3">
@@ -204,56 +294,76 @@ export function AnalyticsCostDonut({
                   isAnimationActive={false}
                   wrapperStyle={{ zIndex: 10 }}
                   content={(props) => (
-                    <DonutTooltip {...props} currency={currency} total={total} />
+                    <DonutTooltip
+                      {...props}
+                      mode={mode}
+                      currency={currency}
+                      total={total}
+                      unpricedLabel={t('donut.unpriced')}
+                      formatRequests={(count) => t('donut.requestsCount', { count: formatCompactNumber(count) })}
+                    />
                   )}
                 />
               </PieChart>
             </ResponsiveContainer>
-            {/* 中心总费用：pointer-events-none + z-0，Tooltip 在其上方 */}
+            {/* 中心总计：pointer-events-none + z-0，Tooltip 在其上方 */}
             <div className="pointer-events-none absolute inset-0 z-0 flex flex-col items-center justify-center">
               <span className="leading-tight text-label-2" style={{ fontSize: roseCenterLabelSize }}>
-                {t('donut.total')}
+                {centerLabel}
               </span>
               <span
                 className="font-semibold tabular-nums leading-tight text-label"
                 style={{ fontSize: roseCenterValueSize }}
               >
-                {formatDashboardCurrency(total, currency)}
+                {centerValue}
               </span>
             </div>
           </div>
 
           <div className="min-h-0 min-w-0 flex-1 self-center overflow-y-auto pr-2" style={{ maxHeight: roseSize }}>
             <div className="grid grid-cols-1 divide-y divide-separator">
-              {slices.map((slice) => (
-                <button
-                  key={slice.key}
-                  type="button"
-                  onClick={() => {
-                    if (slice.key === 'unknown') return
-                    onDrillDown(dimension, { key: slice.key, id: slice.id })
-                  }}
-                  className="flex min-w-0 items-start gap-2 py-2 text-left first:pt-0 last:pb-0 disabled:cursor-default"
-                  disabled={slice.key === 'unknown'}
-                >
-                  <span
-                    className="mt-1.5 size-2 shrink-0 rounded-[2px]"
-                    style={{
-                      backgroundColor: slice.color,
-                      opacity: slice.key === 'unknown' ? 0.5 : 1,
+              {listItems.map((slice) => {
+                const isUnpricedRow = mode === 'cost' && slice.unpriced
+                const primaryMetric = slice.unpriced
+                  ? t('donut.unpriced')
+                  : formatDashboardCurrency(slice.cost, currency, 2)
+                const secondaryMetric = isUnpricedRow
+                  ? `${formatDashboardTokens(slice.tokens)} · ${t('donut.requestsCount', { count: formatCompactNumber(slice.requests) })}`
+                  : mode === 'requests'
+                    ? `${t('donut.requestsCount', { count: formatCompactNumber(slice.requests) })}${total > 0 ? ` · ${((slice.value / total) * 100).toFixed(1)}%` : ''}`
+                    : `${formatDashboardTokens(slice.tokens)}${total > 0 ? ` · ${((slice.value / total) * 100).toFixed(1)}%` : ''}`
+                return (
+                  <button
+                    key={slice.key}
+                    type="button"
+                    onClick={() => {
+                      if (slice.key === 'unknown') return
+                      onDrillDown(dimension, { key: slice.key, id: slice.id })
                     }}
-                  />
-                  {/* 名称完整显示（可换行），金额 · Token · 占比放在第二行，窄卡片里不再被截成「gpt…」 */}
-                  <span className="min-w-0 flex-1">
-                    <span className="block break-all text-body text-label">{slice.name}</span>
-                    <span className="mt-0.5 block font-mono text-caption-1 tabular-nums text-label-3">
-                      {formatDashboardCurrency(slice.value, currency, 2)}
-                      {` · ${formatDashboardTokens(slice.tokens)}`}
-                      {total > 0 ? ` · ${((slice.value / total) * 100).toFixed(1)}%` : ''}
+                    className="flex min-w-0 items-start gap-2 py-2 text-left first:pt-0 last:pb-0 disabled:cursor-default"
+                    disabled={slice.key === 'unknown'}
+                  >
+                    <span
+                      className={isUnpricedRow
+                        ? 'mt-1.5 size-2 shrink-0 rounded-[2px] border border-label-3 bg-transparent'
+                        : 'mt-1.5 size-2 shrink-0 rounded-[2px]'}
+                      style={isUnpricedRow
+                        ? undefined
+                        : {
+                            backgroundColor: slice.color,
+                            opacity: slice.key === 'unknown' ? 0.5 : 1,
+                          }}
+                    />
+                    {/* 名称完整显示（可换行），金额/无计费 · Token · 占比放在第二行，窄卡片里不再被截成「gpt…」 */}
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-all text-body text-label">{slice.name}</span>
+                      <span className="mt-0.5 block font-mono text-caption-1 tabular-nums text-label-3">
+                        {`${primaryMetric} · ${secondaryMetric}`}
+                      </span>
                     </span>
-                  </span>
-                </button>
-              ))}
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -266,11 +376,33 @@ export function AnalyticsCostDonut({
   )
 }
 
-function DonutTooltip({ active, payload, currency, total }: TooltipContentProps & { currency: string; total: number }) {
+function DonutTooltip({
+  active,
+  payload,
+  mode,
+  currency,
+  total,
+  unpricedLabel,
+  formatRequests,
+}: TooltipContentProps & {
+  mode: DonutMode
+  currency: string
+  total: number
+  unpricedLabel: string
+  formatRequests: (count: number) => string
+}) {
   if (!active || !payload?.length) return null
   const item = payload[0]
+  const slice = item.payload as DonutSlice | undefined
   const value = Number(item.value ?? 0)
-  const tokens = Number((item.payload as DonutSlice | undefined)?.tokens ?? 0)
+  const tokens = Number(slice?.tokens ?? 0)
+  const requests = Number(slice?.requests ?? 0)
+  const pct = total > 0 ? ` · ${((value / total) * 100).toFixed(1)}%` : ''
+  const detail = mode === 'cost'
+    ? `${formatDashboardCurrency(value, currency, 4)} · ${formatDashboardTokens(tokens)}${pct}`
+    : mode === 'tokens'
+      ? `${unpricedLabel} · ${formatDashboardTokens(tokens)} · ${formatRequests(requests)}${pct}`
+      : `${unpricedLabel} · ${formatRequests(requests)}${pct}`
   return (
     <div style={dashboardTooltipStyle} className="min-w-[160px] text-footnote">
       <div className="mb-1 flex items-center gap-1.5 text-label">
@@ -278,9 +410,7 @@ function DonutTooltip({ active, payload, currency, total }: TooltipContentProps 
         <span className="truncate font-medium">{item.name}</span>
       </div>
       <div className="tabular-nums text-label-2">
-        {formatDashboardCurrency(value, currency, 4)}
-        {` · ${formatDashboardTokens(tokens)}`}
-        {total > 0 ? ` · ${((value / total) * 100).toFixed(1)}%` : ''}
+        {detail}
       </div>
     </div>
   )

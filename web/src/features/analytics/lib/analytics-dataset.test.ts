@@ -96,4 +96,57 @@ describe('analytics dataset', () => {
       currency: 'USD',
     })).toEqual(['model-z'])
   })
+
+  it('ranks high-volume unpriced models in top series for tokens and requests metrics', () => {
+    const paidModels = Array.from({ length: 10 }, (_, index) => ({
+      ...fact('user-a', 1, 1 + index * 0.1),
+      model_key: `paid-${String(index).padStart(2, '0')}`,
+      model_id: `paid-${index}`,
+      model_label: `paid-${String(index).padStart(2, '0')}`,
+      total_tokens: 100,
+    }))
+    const unpricedHeavy: AnalyticsUsageFact = {
+      ...fact('user-a', 500, 0),
+      model_key: 'k3.1-pro',
+      model_id: 'k3.1-pro',
+      model_label: 'k3.1-pro',
+      total_tokens: 5_000_000,
+    }
+    const mixedDataset: AnalyticsDataset = {
+      ...dataset,
+      current: [...paidModels, unpricedHeavy],
+      previous: [],
+    }
+
+    const byTokens = buildAnalyticsUsage(mixedDataset, filters([]), 'model', 'tokens')
+    expect(byTokens.series[0]?.key).toBe('k3.1-pro')
+
+    const byRequests = buildAnalyticsUsage(mixedDataset, filters([]), 'model', 'requests')
+    expect(byRequests.series[0]?.key).toBe('k3.1-pro')
+
+    const byCost = buildAnalyticsUsage(mixedDataset, filters([]), 'model', 'cost')
+    expect(byCost.series[0]?.key).toBe('paid-09')
+    expect(byCost.breakdowns.model.some((item) => item.key === 'k3.1-pro')).toBe(true)
+  })
+
+  it('orders zero-cost breakdown and matrix entries by token volume instead of alphabetically', () => {
+    const zeroCostModels = Array.from({ length: 12 }, (_, index) => ({
+      ...fact('user-a', index + 1, 0),
+      model_key: `model-${String.fromCharCode(97 + index)}`,
+      model_id: `model-${index}`,
+      model_label: `model-${String.fromCharCode(97 + index)}`,
+      total_tokens: (index + 1) * 1000,
+    }))
+    const zeroCostDataset: AnalyticsDataset = {
+      ...dataset,
+      current: zeroCostModels,
+      previous: [],
+    }
+
+    const usage = buildAnalyticsUsage(zeroCostDataset, filters([]), 'model', 'cost')
+    expect(usage.breakdowns.model[0]?.key).toBe('model-l')
+    const matrixModels = new Set(usage.breakdowns.matrix.map((cell) => cell.model.key))
+    expect(matrixModels.has('model-l')).toBe(true)
+    expect(matrixModels.has('model-a')).toBe(false)
+  })
 })

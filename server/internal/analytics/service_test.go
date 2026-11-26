@@ -625,3 +625,48 @@ func TestHourlyDetailsComplete(t *testing.T) {
 		t.Fatal("missing or incomplete details should keep daily granularity")
 	}
 }
+
+func TestZeroCostModelsRankByTokensAndRequests(t *testing.T) {
+	t.Parallel()
+
+	timeZone := testTimeZone()
+	siteID := uuid.New()
+	rows := make([]store.RequestUsageDailySummary, 0, 12)
+	// 11 zero-cost models whose alphabetical order is opposite to token volume.
+	for index := 0; index < 11; index++ {
+		rows = append(rows, store.RequestUsageDailySummary{
+			BucketStart:       testDay(timeZone, 2026, 8, 1),
+			SiteID:            uuid.NullUUID{UUID: siteID, Valid: true},
+			SiteName:          "kimi-code",
+			CanonicalModelKey: "model-" + string(rune('a'+index)),
+			RequestCount:      int64(index + 1),
+			SuccessCount:      int64(index + 1),
+			TotalTokens:       int64((index + 1) * 1000),
+			EstimatedCost:     0,
+		})
+	}
+
+	breakdowns := buildBreakdowns(rows, map[uuid.UUID]store.APIKey{})
+	if len(breakdowns.Model) != 11 {
+		t.Fatalf("expected 11 zero-cost models in breakdown, got %d", len(breakdowns.Model))
+	}
+	if breakdowns.Model[0].Key != "model-k" {
+		t.Fatalf("expected highest-token zero-cost model first, got %q", breakdowns.Model[0].Key)
+	}
+
+	seenMatrixModels := map[string]bool{}
+	for _, cell := range breakdowns.Matrix {
+		seenMatrixModels[cell.Model.Key] = true
+	}
+	if !seenMatrixModels["model-k"] || seenMatrixModels["model-a"] {
+		t.Fatalf("matrix topDimensionKeys should retain highest-token zero-cost model and drop lowest, got %#v", seenMatrixModels)
+	}
+
+	series := buildSeries(rows, GroupByModel, map[uuid.UUID]store.APIKey{}, timeZone, "day")
+	if len(series) != seriesTopN+1 {
+		t.Fatalf("expected %d series, got %d", seriesTopN+1, len(series))
+	}
+	if series[0].Key != "model-k" {
+		t.Fatalf("expected highest-token zero-cost model first in series, got %q", series[0].Key)
+	}
+}
