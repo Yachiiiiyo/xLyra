@@ -1,8 +1,8 @@
 # xLyra 插件开发文档
 
-xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能用的结构，或把下游请求翻译成上游请求。插件的类型（kind）由 xLyra 定义，开发者从[现有类型](./kinds.md)里选择；十种类型都已接入 xLyra。HTTP 请求、密钥、冷却、计费都留在 xLyra 的 Go 代码里，插件拿不到密钥，也不能自己发请求。
+xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能用的结构，或把下游请求与事件翻译成宿主可执行的描述。插件可以通过[现有类型（kind）](./kinds.md)起步，也可以省略 `kind` 按清单能力段（如 `siteProvider`、`gatewayPipeline`、`schedule`）与导出钩子组合接入；十种 `kind` 均已接入 xLyra。HTTP 请求、密钥、冷却、计费都留在 xLyra 的 Go 代码里，插件拿不到密钥，也不能自己发请求。
 
-当前版本：`apiVersion 1`，`hostApi 1`。
+当前版本：`apiVersion 1`，`hostApi 2`（向下兼容 `hostApi 1`）。
 
 ## 阅读顺序
 
@@ -43,19 +43,19 @@ xLyra 的 JS 插件只做**纯计算**：把上游的响应翻译成 xLyra 能�
 
 ## 不支持的事
 
-- 流式响应：协议插件只处理非流式请求。
-- 由插件决定选路、价格、计费或冷却。`automation` 只能返回 xLyra 开放的几种动作，且需要管理员授予权限、绑定对象。
+- 完整自定义流式协议：`protocol` 插件的 `decodeRequest` / `buildRequest` / `parseResponse` 只处理非流式请求。若需改写上游 SSE 事件流，请使用声明式 `protocol.stream` / `siteProvider.protocol.stream` 或 `transformStream` 钩子（带状态的 `createStreamFilter` 目前仅开放 Go 宿主 API 与 fixtures 测试，尚未接入网关转发）。
+- 由插件决定选路、价格、计费或冷却。`automation` 只能返回 xLyra 开放的几种动作，且需要管理员授予权限、绑定对象；`gatewayPipeline` 的 `inspectSegments` 只能增删匹配发现项或返回标准化拒绝响应，且受 `payload.inspect_raw` 签名与静态互斥约束。
 - 访问环境变量、文件系统或任意主机。
 - 租户上传插件，插件只能由管理员上传或从市场安装。
 
 ## 开发流程一览
 
 ```text
-init → 写 src 与 fixtures → test → (run 试真实站点) → keygen（一次）→ pack --sign → verify
+init → 写 src 与 fixtures → test → (run 试真实站点 / dry-run 预览管线) → keygen（一次）→ pack --sign → verify
   → 市场上架：登记公钥与命名空间 → publish → xLyra Cloud 审核 → 管理员在「市场」安装
   → 私下分发：把 .xlp 交给管理员，在「已安装」手动上传
 ```
 
 各步骤见[快速开始](./quickstart.md)，市场上架的前置条件（开发者身份、命名空间、API 令牌）见[发布、签名与安装](./publishing.md#上架市场的前置条件一次性)。
 
-官方维护的实际插件（额度自动重置、站点余额告警、账号池站点）在独立仓库 `xlyra-plugins`，可以当作 `automation` 与 `site_provider` 的完整示例。
+官方维护的实际插件（如 `pii-redact` 网关双向脱敏管线、`qoder` / `workbuddy` 账号池站点、`quota-auto-reset` 额度自动重置、`site-balance-alert` 站点余额告警）在独立仓库 `xlyra-plugins`，可以当作 `gatewayPipeline`、`site_provider` 与 `automation` 的完整示例。

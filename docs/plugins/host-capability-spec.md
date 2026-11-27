@@ -8,7 +8,7 @@
 
 ## 1. 定位与演进方向
 
-xLyra 插件运行在受限的 `moejs` ES2023 沙箱中（无外部依赖、无网络访问、无文件系统、单次调用受严格超时与内存配额限制）。随着业务场景从“站点探测与协议适配”扩展到“请求/响应内容治理、双向脱敏、合规审核、术语映射、外挂推理服务联动”等场景，主程序必须在保持安全边界的同时提供更强的能力支撑。
+xLyra 插件运行在受限的 `moejs` 沙箱中（支持 ES2023–ES2025 与 WHATWG 常用内建，包括原生 `Uint8Array` 及 base64/hex 方法、`TextEncoder`/`TextDecoder`、`structuredClone`、`Set` 集合论、`Iterator` 辅助方法、线性时间 ReDoS 防护 `RegExp` 等；深度冻结共享内建、48 字节精简 `Object`/`String` 布局并经 PGO 优化；编译期强制执行 `bytecode.Verify` 静态字节码校验与 `bytecode.Analyze` 安全分析；无外部依赖、无网络访问、无文件系统，单次调用受严格超时、64 MiB 累计分配预算、`MaxLiveBytes` 16 MiB 常驻活跃堆上限、16 MiB / 1M 节点返回值上限及可选 `MaxSteps` 步数预算限制）。随着业务场景从“站点探测与协议适配”扩展到“请求/响应内容治理、双向脱敏、合规审核、术语映射、外挂推理服务联动”等场景，主程序必须在保持安全边界的同时提供更强的能力支撑。
 
 演进的核心路径是：**主程序不针对某一个具体业务插件编写专用逻辑，而是将需求抽象为可复用的通用类、通用引擎和通用管线接口，让多类插件通过组合清单声明与标准钩子即可复用。**
 
@@ -107,7 +107,7 @@ xLyra 插件运行在受限的 `moejs` ES2023 沙箱中（无外部依赖、无�
 ### 5.1 仓库架构红线（由自动化测试守护）
 
 1. **`moejs` 导入隔离**：除 `server/internal/jsplugin/engine.go` 外，任何文件不得导入 `github.com/Yachiiiiyo/moejs`（`runtime_test.go` 源审计测试会直接失败）。所有数据校验、匹配与解码算法写在纯 Go 文件中，仅在 `engine.go` 中完成 `moejs.Value` 编解码。
-2. **热路径双池隔离与熔断**：在网关请求等待期间执行的钩子（如 `inspectSegments`）必须注册进 `isHotHookName`，自动路由至 `hotPool`（4/16 会话），并接入 `Breaker.RecordProtocolCall` 统计错误率与中断次数。
+2. **热路径双池隔离与熔断**：在网关请求等待期间执行的钩子（如 `inspectSegments`、`transformStream`、`createStreamFilter` 等）必须注册进 `isHotHookName`，自动路由至 `hotPool`（4/16 会话），并接入 `Breaker.RecordProtocolCall` 统计错误率与中断次数。
 3. **存储与备份一致性**：新增数据库表或备份关键字段时，必须同步更新 `server/internal/backup/database.go`、`server/internal/backup/sections.go` 及迁移测试，确保导入/导出闭环完整。
 4. **SDK 类型单一来源**：所有插件契约结构体与 manifest 新增结构必须标注 `ts` tag 并注册到 `server/internal/jsplugin/tsgen.go`，通过 `gentypes` 生成 `sdk/js/index.d.ts`，禁止手改生成段。
 5. **只增不破的接口兼容**：旧 `kind` 清单、旧钩子别名与 `hostApi: 1` 插件必须持续兼容；未绑定新能力的请求路径只能引入一次常量级内存查询，不得增加明显延迟或内存分配。

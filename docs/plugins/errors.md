@@ -4,13 +4,13 @@
 
 | 类型 | 含义 | 常见原因 |
 | --- | --- | --- |
-| `js_timeout` | 钩子超过时限被中断 | 死循环、重计算；额度探测 500 ms，协议 150 ms |
-| `js_heap_limit` | 超过内存上限被中断 | 构造了巨大的字符串或数组 |
-| `js_shape_error` | 返回值结构不对 | 多了不认识的字段；`probe` 同时返回了 `request` 和 `result`；必填字段缺失或类型错误；`entries` 项没有 `label` |
-| `js_exception` | 插件抛出了未捕获的异常 | 访问了 `undefined` 的属性；宿主函数参数错误且没接住 |
+| `js_timeout` | 钩子超过时限或步数预算被中断 | 死循环、重计算；分步/模块加载 500 ms，协议/`inspectSegments` 150 ms，`signRequest` 200 ms，`transformStream`/`createStreamFilter` 5 ms（中断原因 `timeout`）；若宿主配置了 `MaxSteps` 且超限，中断原因为 `step_limit` |
+| `js_heap_limit` | 超过内存上限被中断 | 单次调用累计分配超过 64 MiB（`alloc_limit`，含参数编码、执行与返回值 `ToGo`），或池化会话常驻活跃堆超过 16 MiB（`live_limit`，含 `createStreamFilter` 闭包持有对象） |
+| `js_shape_error` | 返回值结构不对 | 多了不认识的字段；钩子返回了 `Promise`（`hook returned a promise`）；`probe` 同时返回了 `request` 和 `result`；`createStreamFilter` 未返回含 `onEvent` 函数的对象或 `onFlush` 非函数；必填字段缺失或类型错误；`entries` 项没有 `label` |
+| `js_exception` | 插件抛出了未捕获的异常 | 访问了 `undefined` 的属性；宿主函数参数错误或未声明权限且没接住。详情附带按行定位的 JS/TS 调用栈（含模块顶层加载与 `meta` 读取阶段），按 UTF-8 安全截断至 4 KiB |
 | `js_pool_exhausted` | 运行时池里没有可用实例 | 并发太高而单次调用太慢 |
 | `js_url_rejected` | 请求被判定为越界 | `path` 不合法或指向站点之外 |
-| `js_plugin_response_too_large` | 上游响应过大 | 超过 1 MiB（探测）或 4 MiB（协议） |
+| `js_plugin_response_too_large` | 上游响应或钩子返回值过大 | 上游响应超过 1 MiB（探测）或 4 MiB（协议）；或钩子返回值超过 16 MiB（`MaxResultBytes`）/ 1,048,576 个节点（`MaxResultNodes`） |
 | `js_internal` | xLyra 内部错误 | 不是插件的问题，请反馈 |
 
 ## 报错信息的读法
@@ -20,11 +20,16 @@
 ```text
 js_shape_error: result.entries[0].label: expected string
 js_shape_error: request: unknown field "url"
-js_exception: boom
+js_shape_error: hook returned a promise
+js_exception: TypeError: cannot read properties of undefined
+    at probe (my-plugin.js:18:12)
 js_timeout: interrupted: timeout
+js_timeout: step limit exceeded ...
+js_heap_limit: allocation limit exceeded ...
+js_heap_limit: live heap limit exceeded ...
 ```
 
-详情里的路径（`result.entries[0].label`）指向返回值里出问题的位置。
+详情里的路径（`result.entries[0].label`）指向返回值里出问题的位置；`js_exception` 及带栈的限额错误会附带 JS/TS 栈帧（最长安全截断至 4 KiB），便于直接定位源码行号。
 
 ## 上传和校验时的错误
 
@@ -35,9 +40,11 @@ js_timeout: interrupted: timeout
 | `invalid plugin id` | id 不符合规则 |
 | `uploaded plugins cannot use the xlyra. prefix` | id 以 `xlyra.` 开头 |
 | `plugin.js sha256 does not match the manifest` | 手动改过 `plugin.js` 而没有重新 `build` |
+| `plugin.ts sha256 does not match the manifest` | 使用 Go 宿主 `NewPluginTS` 直编单文件 TS 时，`sha256["plugin.ts"]` 与源码不匹配 |
+| `bytecode verify: ...` | 编译后 `moejs` 静态字节码校验未通过，模块拒绝加载 |
 | `meta.id ... does not match manifest` | `meta` 与清单不一致 |
-| `at least one fixtures/*.json is required` | 没有测试样本 |
-| `apiVersion N is not supported` / `hostApi N is not supported` | 声明的版本比 xLyra 支持的高 |
+| `at least one fixtures/*.json is required` | 没有测试样本（`site_provider` 及未导出 `inspectSegments` 的纯声明式 `gatewayPipeline` 除外） |
+| `apiVersion N is not supported` / `hostApi N is not supported` | 声明的版本比 xLyra 支持的高（当前最高 `apiVersion 1`、`hostApi 2`） |
 | `kind "..." is not supported in this build (supported: ...)` | `kind` 不是支持的十种之一，错误信息里会列出所有支持的类型 |
 | `result.xxx: ... is not one of ...` | 返回的值不在允许的取值里（如 `status`、`class`） |
 | `result.models[N].id: "..." was not in the input` | `model_metadata` 返回了输入里没有的模型 |
@@ -74,6 +81,8 @@ js_timeout: interrupted: timeout
 | `plugin_rewrite_failed` | 站点类型的 `rewritePayload` 失败（抛错、超时、形状不对、改了 `model` 或 `stream`、正文超过 16 MiB）。错误信息里带插件 id |
 | `upstream_host_not_allowed` | 插件站点类型的上游主机不在启用时确认的列表里，或该类型已停用 |
 | `plugin_header_template_failed` | 插件站点的请求头模板渲染失败（变量不存在，或结果含 CR、LF、其它控制字符）。错误信息里有头名，不含密钥的值 |
+
+`gatewayPipeline` 网关管线相关的失败策略与错误码（`plugin_pipeline_failed`、`plugin_pipeline_unavailable`、`plugin_unsupported_endpoint`、`plugin_payload_too_large`、`plugin_payload_rejected`）见[宿主能力支持规范](./host-capability-spec.md#43-通用失败策略与错误码)。
 
 ## 账号池凭据
 

@@ -1,7 +1,9 @@
 # @yachiyo-5i/xlyra-plugin-sdk
 
-TypeScript types for xLyra JS plugins. Types only: there is no runtime code, and
-`import type` is erased when the plugin is bundled.
+TypeScript types for xLyra JS plugins (`apiVersion 1`, `hostApi 2`, backward
+compatible with `hostApi 1`). Types only: there is no runtime code, and
+`import type` is erased when bundled by `xlyra-plugin build` (esbuild) or
+stripped directly by `moejs` (`jsplugin.NewPluginTS`).
 
 ```ts
 import type { ProbeContext, ProbeDecision, ProbeStep } from "@yachiyo-5i/xlyra-plugin-sdk";

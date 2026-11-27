@@ -1,22 +1,22 @@
 # 命令行工具 xlyra-plugin
 
-开发者本地测试和线上运行用的是**同一份运行时代码和同一个引擎版本**，所以本地通过的样本，上传后也会通过。打包用内置的 esbuild，不需要安装 Node。
+开发者本地测试和线上运行用的是**同一份运行时代码和同一个 `moejs` 引擎版本**，所以本地通过的样本，上传后也会通过。打包使用内置的 esbuild 将多文件 TS/JS 打成单文件 `plugin.js`，不需要安装 Node。（注：Go 宿主运行时另提供 `jsplugin.NewPluginTS` 支持单文件 TypeScript 直编，但 CLI 与 `.xlp` 归档仍统一构建和校验 `plugin.js`。）
 
 ```bash
 xlyra-plugin --version
 ```
 
-打印 CLI 版本、`apiVersion`、`hostApi` 和引擎版本。
+打印 CLI 版本、`apiVersion`、`hostApi` 和 `moejs` 引擎版本。
 
 所有带 `[dir]` 的命令，目录默认是当前目录。
 
 ## init
 
 ```bash
-xlyra-plugin init [--kind KIND] [--id ID] [--name NAME] <dir>
+xlyra-plugin init [--template NAME] [--id ID] [--name NAME] <dir>
 ```
 
-在 `dir` 里创建新工程（目录必须不存在或为空）。`--kind` 默认 `quota_probe`，可以是 `xlyra-plugin kinds` 列出的任意一种，包括 `site_provider`。除 `site_provider` 外，每种类型的模板都带有可直接通过的示例样本。`site_provider` 的模板没有样本，空样本的包也可以 `test` 通过。`--id` 默认由目录名推导，不合规会报错并提示用 `--id`。`--name` 不写则用 id。生成的工程可以直接 `test` 通过。
+在 `dir` 里创建新工程（目录必须不存在或为空）。`--template`（`--kind` 是同一选项的别名）默认 `quota_probe`，可以是 `xlyra-plugin kinds` 列出的任意一种（包括 `site_provider`），也可以指定 `gateway_pipeline`（或 `gateway-pipeline`）创建网关文本管线起步工程。除 `site_provider` 外，每种模板都带有可直接通过的示例样本。`site_provider` 的模板没有样本，空样本的包也可以 `test` 通过。`--id` 默认由目录名推导，不合规会报错并提示用 `--id`。`--name` 不写则用 id。生成的工程可以直接 `test` 通过。
 
 ## kinds
 
@@ -32,15 +32,15 @@ xlyra-plugin kinds
 xlyra-plugin build [--out dist] [dir]
 ```
 
-把 `src/index.ts`（或 `src/index.js`）用 esbuild 打成单文件 ES2023 模块，写出：
+把 `src/index.ts`（或 `src/index.js`）用内置 esbuild 打成单文件 ES2023 模块 `plugin.js`，并自动将实际导出的已知钩子名写入 `exports`、将源码摘要写入 `sha256["plugin.js"]`，写出：
 
 ```text
-dist/manifest.json     已填好 sha256
+dist/manifest.json     已填好 exports 与 sha256
 dist/plugin.js
 dist/fixtures/*.json
 ```
 
-构建后还会像服务端那样加载一遍，所以清单错误、`meta` 不匹配等问题在这里就能发现。清单里的顶层 `icon` 和 `siteProvider.display.icon` 会从工程目录复制进输出；顶层 `icon` 会做[图标检查](./manifest.md#图标)，不合格就失败，错误信息会写明实测值和改法。外部依赖和动态 `import()` 会被拒绝，见[限制](./limits-and-security.md)。`build` 不会删除 `dist/` 里已有的 `.xlp`。
+构建后还会像服务端那样执行编译、静态字节码校验（`bytecode.Verify`）与模块加载，所以清单错误、`meta` 不匹配、语法/字节码问题在这里就能发现。清单里的顶层 `icon` 和 `siteProvider.display.icon` 会从工程目录复制进输出；顶层 `icon` 会做[图标检查](./manifest.md#图标)，不合格就失败，错误信息会写明实测值和改法。外部依赖和动态 `import()` 会被拒绝，见[限制](./limits-and-security.md)。`build` 不会删除 `dist/` 里已有的 `.xlp`。
 
 ## test
 
@@ -49,6 +49,23 @@ xlyra-plugin test [--watch] [dir]
 ```
 
 构建后逐个运行 `fixtures/*.json`，打印每个样本的结果；有失败则退出码为 1。`--watch` 监听 `manifest.json`、`src/`、`fixtures/` 和 `tsconfig.json` 的变化并自动重跑。
+
+## dry-run
+
+```bash
+xlyra-plugin dry-run [--params params.json] [--host-options opts.json] [--endpoint PATH] [--model MODEL] [--dir DIR] <file | ->
+```
+
+对声明了 `gatewayPipeline` 段的插件做离线管线预览，不发任何网络请求、也不使用片段缓存：
+
+- `--params`：JSON 文件路径，覆盖 `gatewayPipeline.inputs` 中的绑定参数（未指定的非实体参数自动采用清单 `default`）。
+- `--host-options`：JSON 文件路径，传入管线宿主选项。
+- `--endpoint`：下游端点路径，默认 `/v1/chat/completions`。
+- `--model`：传给 `inspectSegments` 的模型名，默认 `dry-run`。
+- `--dir`：插件工程目录，默认当前目录 `.`。
+- `<file | ->`：必填，输入文件路径；传 `-` 表示从标准输入读取。内容为 JSON 对象时直接作为请求体运行；为纯文本时自动包装成单条 `user` 消息的 `/v1/chat/completions` 请求，并在结果 JSON 中额外输出 `transformed_text`。
+
+标准输出为缩进 JSON，包含 `outcome`、`changed`、`metrics`、`findings`（每条含 `segment_id`、`role`、`field`、`start`、`end`、`type`、`source`、`score`、`placeholder`、`applied`）、`transformed_payload`，以及失败时的 `failure`（`status`、`code`、`message`）。
 
 ## run
 
@@ -62,10 +79,10 @@ xlyra-plugin run --key-env VAR [--base-url URL] [--site-type T] [--credential-ty
 - `--base-url`：站点地址，会按清单的 `baseURLMode` 整理；省略则使用 `defaultBaseURL`。`site_provider` 没有 `baseURLMode`，按 `as_is` 整理，省略时用 `officialBaseURL`。
 - `--site-type`：传给插件的 `ctx.siteType`，默认 `custom`。
 - `--credential-type`：传给插件的 `ctx.credentialType`，默认 `api_key`。
-- `--hook`：只用于 `site_provider`，必填，取值 `probe`、`listModels` 或 `check`。`classify` 和 `rewritePayload` 不支持 `run`，用 `test`。账号池的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 既不能 `run`，也不能放进样本。其它 kind 写了 `--hook` 会报错。
+- `--hook`：用于 `site_provider` 或无 `kind` 插件，必填。`site_provider` 取值 `probe`、`listModels` 或 `check`（无 `kind` 插件额外支持 `detect`）。`classify`、`rewritePayload`、`transformStream`、`createStreamFilter`、`signRequest`、`onSchedule`、`inspectSegments` 以及账号池的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 不支持 `run`，但均可以写进 `fixtures/*.json` 用 `xlyra-plugin test` 验证（`gatewayPipeline` 还可配合 `dry-run` 预览）。其它带 `kind` 的插件写了 `--hook` 会报错。
 - 实际发出的每个请求会打印到标准错误，插件的日志也会打印，最终结果以 JSON 输出到标准输出。
 
-支持会向站点取数据的类型：`quota_probe`、`model_list`、`credential_check`、`site_detect`，以及 `site_provider` 的三个分步钩子。`site_detect` 不带凭据，不需要 `--key-env`，请求也不会有 `Authorization` 头。`protocol`、一次性函数，以及 `site_provider` 的 `classify` / `rewritePayload` 请用 `test` 验证。本地 `run` 只做同源限制，不套用 `site_provider` 的主机白名单。
+支持会向站点取数据的类型：`quota_probe`、`model_list`、`credential_check`、`site_detect`，以及 `site_provider` 与无 `kind` 插件的上述分步钩子。`site_detect` 不带凭据，不需要 `--key-env`，请求也不会有 `Authorization` 头。`protocol`、一次性函数、流式钩子、账号池钩子和 `gatewayPipeline` 请用 `test`（或 `dry-run`）验证。本地 `run` 只做同源限制，不套用 `site_provider` 的主机白名单。
 
 ## pack
 
@@ -73,7 +90,7 @@ xlyra-plugin run --key-env VAR [--base-url URL] [--site-type T] [--credential-ty
 xlyra-plugin pack [--sign key.pem] [--out file.xlp] [dir]
 ```
 
-构建并生成 `.xlp`，默认写到 `dist/<id>-<version>.xlp`。写文件前会做和 `verify` 相同的检查，包括图标，不合格就不生成，并带上图标检查的完整错误。`--sign` 用私钥签名。
+构建并生成 `.xlp`，默认写到 `dist/<id>-<version>.xlp`。写文件前会做和 `verify` 相同的全部检查（包括字节码校验、静态分析输出、样本自检和图标检查），不合格就不生成，并打印完整错误。`--sign` 用私钥签名。
 
 ## verify
 
@@ -81,7 +98,16 @@ xlyra-plugin pack [--sign key.pem] [--out file.xlp] [dir]
 xlyra-plugin verify <package.xlp>
 ```
 
-对已有的包做服务端上传时的全部检查：结构、清单、sha256、签名、加载、运行全部样本，以及顶层 `icon` 的图标检查。通过时打印 id、版本、kind、样本数、签名者指纹和包摘要。声明了顶层 `icon` 时再打印一行，例如 `icon assets/icon.png 256x256 不透明 100% 亮度 0.62`。
+对已有的 `.xlp` 包做服务端上传时的全部检查：结构、清单、`sha256["plugin.js"]`、签名、编译与静态字节码校验（`bytecode.Verify`）、静态分析（`bytecode.Analyze`）、加载、运行全部样本，以及顶层 `icon` 的图标检查。通过时打印摘要、包 SHA256 与静态分析行，例如：
+
+```text
+ok  example.minimal@1.0.0 (site_provider), 4 fixtures, signed by <fingerprint>
+sha256 <package-sha256>
+analysis functions=6 instructions=142 regexps=2 globals=JSON,Math
+icon assets/icon.png 256x256 不透明 100% 亮度 0.62
+```
+
+`analysis` 行汇报模块的函数数（`functions`）、指令数（`instructions`）、正则字面量数（`regexps`）与引用的全局变量列表（`globals`，无引用时为 `none`）。若字节码中检测到受限或需注意的语法结构，会在行尾追加 `flags=...`（可能包含 `eval`、`Function`、`import()`、`with`、`async` 的组合；其中 `async` 用于提示异步钩子会返回 `Promise` 并在运行时报 `js_shape_error`）。声明了顶层 `icon` 时会再打印一行实测尺寸、不透明占比与亮度。
 
 ## keygen / sign
 

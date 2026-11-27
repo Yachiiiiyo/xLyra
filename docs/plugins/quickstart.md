@@ -20,7 +20,7 @@
 xlyra-plugin --version
 ```
 
-会打印 `apiVersion`、`hostApi` 和引擎版本。
+会打印 CLI 版本、`apiVersion`、`hostApi`（当前 `2`，兼容 `1`）和 `moejs` 引擎版本。
 
 ## 2. 创建工程
 
@@ -92,7 +92,7 @@ export RELAY_KEY=sk-...
 xlyra-plugin run --key-env RELAY_KEY --base-url https://relay.example
 ```
 
-密钥从环境变量读取，只写进请求头，插件看不到。输出会列出实际发出的请求和最终结果。`run` 支持会向站点取数据的类型：`quota_probe`、`model_list`、`credential_check`、`site_detect`。`site_provider` 要加 `--hook probe`、`--hook listModels` 或 `--hook check`。`classify` 和 `rewritePayload` 用 `test`。账号池的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 既不能 `run`，也不能放进样本。详见[命令行工具](./cli.md#run)。
+密钥从环境变量读取，只写进请求头，插件看不到。输出会列出实际发出的请求和最终结果。`run` 支持会向站点取数据的类型：`quota_probe`、`model_list`、`credential_check`、`site_detect`。`site_provider` 要加 `--hook probe`、`--hook listModels` 或 `--hook check`（无 `kind` 插件还支持 `--hook detect`）。`classify`、`rewritePayload`、`transformStream`、`createStreamFilter`、`signRequest`、`onSchedule`、`inspectSegments` 以及账号池的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 不支持 `run`，但均可以写进 fixtures 用 `test` 验证（`gatewayPipeline` 还可配合 `dry-run` 预览）。详见[命令行工具](./cli.md#run)。
 
 ## 6. 打包与签名
 

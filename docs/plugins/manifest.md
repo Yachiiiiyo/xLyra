@@ -5,7 +5,7 @@
 ```json
 {
   "apiVersion": 1,
-  "hostApi": 1,
+  "hostApi": 2,
   "id": "my-relay-probe",
   "kind": "quota_probe",
   "name": "My Relay probe",
@@ -22,27 +22,28 @@
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `id` | 是 | 3–64 位，只能含小写字母、数字、`.`、`-`，首尾必须是字母或数字。**不能以 `xlyra.` 开头**（保留给内置插件），不能是 `builtins`。上架市场的插件必须写成 `<命名空间>.<名字>`，命名空间是你在 xLyra Cloud 申请批准的那个，见[发布](./publishing.md#上架市场的前置条件一次性) |
-| `kind` | 旧清单必填 | 十种之一：`quota_probe`、`protocol`、`model_list`、`credential_check`、`site_detect`、`error_classifier`、`model_metadata`、`pricing_parse`、`automation`、`site_provider`，详见[选择类型](./kinds.md)。不支持自定义类型 |
+| `kind` | 旧清单必填 | 十种之一：`quota_probe`、`protocol`、`model_list`、`credential_check`、`site_detect`、`error_classifier`、`model_metadata`、`pricing_parse`、`automation`、`site_provider`，详见[选择类型](./kinds.md)。不支持自定义类型；使用 `gatewayPipeline` 或组合多钩子时请省略 `kind` |
 | `version` | 是 | 语义化版本，如 `0.1.0`。同一个 id 的同一个版本号不能用不同内容重复上传 |
 | `apiVersion` | 是 | 钩子契约版本，目前只能是 `1` |
-| `hostApi` | 是 | 你用到的宿主 API 最低版本，目前是 `1`。高于当前 xLyra 支持的版本会被拒绝 |
+| `hostApi` | 是 | 你用到的宿主 API 最低版本，当前最高 `2`（向下兼容 `1`）。高于当前 xLyra 支持的版本会被拒绝 |
 | `name`、`description` | 否 | 管理端展示 |
 | `license` | 否 | 你为插件选的许可证，管理端展示，xLyra 不做判断 |
 | `xlyra` | 否 | 兼容的 xLyra 版本。只支持 `>=x.y.z`，可用空格写多个条件。当前 xLyra 版本低于要求时，插件会被拒绝上传或加载（本地开发版本不检查） |
 | `icon` | 否 | 包内 PNG 的相对路径，可选。规则见[图标](#图标) |
-| `sha256` | 自动 | `{"plugin.js": "<hex>"}`，必须与包内 `plugin.js` 一致，否则拒绝 |
+| `sha256` | 自动 | `.xlp` 包内为 `{"plugin.js": "<hex>"}`，必须与包内 `plugin.js` 一致，否则拒绝。通过 Go 宿主 `jsplugin.NewPluginTS` 直接编译单文件 TypeScript 时，支持在 `sha256["plugin.ts"]` 中声明源码摘要并优先校验 |
 
 ## 省略 kind
 
-新插件可以不写 `kind`。导出哪些已知钩子，就接入哪些位置，例如同时导出 `probe` 和 `classifyError`。`xlyra-plugin build` 会把实际导出的钩子名写进 `exports`。
+新插件可以不写 `kind`。导出哪些已知钩子，就接入哪些位置，例如同时导出 `probe` 和 `classifyError`，或挂载 `transformStream`、`signRequest`、`onSchedule` 等可选钩子。`xlyra-plugin build` 会把实际导出的已知钩子名写进 `exports`。
 
 - `classify` 与 `classifyError`、`handle` 与 `onEvent` 互为别名：只导出其中一个时，另一个名字也能被调用。
 - `export const meta` 的 `kind` 只在清单写了 `kind` 时才要一致；无 kind 时 meta 里不能再写 kind。
 - 清单写了 `exports` 时，必须和模块实际导出的已知钩子一致（别名展开之前）。
-- 无 `kind` 清单如果包含 `protocol` 段或 `automation` 段，自动按协议插件或自动化插件处理（不可在同一插件内混写 `siteProvider`、`protocol`、`automation` 多段）。
+- 无 `kind` 清单如果包含 `protocol`、`automation` 或 `gatewayPipeline` 段，自动按对应能力装配。`siteProvider`、`protocol`、`automation`、`gatewayPipeline` 四段互斥，不能在同一插件内混写；其中 `gatewayPipeline` **必须省略 `kind`**，导出 `inspectSegments` 也必须同时声明 `gatewayPipeline` 段。
+- 可选流式钩子 `transformStream`（网关已启用）和 `createStreamFilter`（当前开放 Go 宿主 API 与 fixtures，尚未接入网关转发）均可在无 `kind` 叠加插件、`site_provider` 或 `protocol` 插件中导出。
 - 声明站点类型可用 `siteProvider` 段，也可用包含 `siteType` 的 `site` 段（二者不能同时声明站点类型）；仅包含 `baseURLMode`、`pricingPath` 的 `site` 段仍表示地址整理。
 - 顶层 `request` 与 `siteProvider.request` 结构相同，任何插件都可以写。叠加插件可以使用 `headers` 与 `stripDownstreamHeaders`（保留网关认证头、`Content-Type`、`Accept` 及前序插件头，不能写 `upstreamStreamOnly`、`baseURLFrom`，也不能用 `{{cred.*}}`）。声明站点类型的插件二者只能写一处；只写顶层时，作为该站点类型的底座头模板。`{{region.*}}` 仅允许声明站点类型的插件。
-- 清单 `permissions` 非空时，启用必须一次授予全部权限（含 automation 权限）。声明了 `secret.use`，或声明了站点类型，必须有受信签名或市场证明，`confirmUntrusted` 不能跳过。
+- 清单 `permissions` 非空时，启用必须一次授予全部权限（含 automation 权限）。声明了 `secret.use`、`payload.inspect_raw`，或声明了站点类型，必须有受信签名或市场证明，`confirmUntrusted` 不能跳过。
 
 ## transport 部分
 
@@ -111,6 +112,29 @@
 ## automation 部分
 
 `automation` 使用 `automation` 部分，声明订阅的事件、需要的权限，以及绑定表单：每个输入的数据类型、控件（`select`、`multi_select`、`radio`、`input`、`switch` 等）和文案。xLyra 按这份声明渲染表单，插件不写界面代码。详见[自动化插件](./automation.md#输入inputs)。
+
+## gatewayPipeline 部分
+
+`gatewayPipeline` 声明网关双向文本拦截管线（用于敏感信息脱敏、内容合规审核、术语双向替换等），必须**省略 `kind`**，并在 `permissions` 中声明 `"payload.inspect_raw"`。宿主负责跨协议正文抽取与原地回写、Go RE2 规则与 Aho-Corasick 词典匹配以及响应/SSE 占位符还原；插件也可选择导出 `inspectSegments(ctx, input)` 做上下文复核或自定义拦截（热池运行，单次调用 150 ms）。
+
+```json
+"permissions": ["payload.inspect_raw"],
+"gatewayPipeline": {
+  "scope": "api_key",
+  "exclusive": true,
+  "failurePolicy": "fail_closed",
+  "unsupportedEndpoint": "reject",
+  "transform": { "mode": "token_placeholder", "reversible": true },
+  "types": [{ "type": "TOKEN", "enabledBy": "token" }],
+  "rules": [{ "type": "TOKEN", "pattern": "tok_[A-Za-z0-9]{12,}", "boundary": "alnum" }],
+  "inputs": [
+    { "name": "keys", "type": "api_key", "multiple": true },
+    { "name": "token", "type": "boolean", "default": true }
+  ]
+}
+```
+
+主要字段：`scope`（目前为 `"api_key"`）、`exclusive`（每把密钥互斥绑定）、`failurePolicy`（`fail_open` 默认 / `fail_closed`）、`unsupportedEndpoint`（`pass` 默认 / `reject`）、`maxInspectBytes`（默认 8 MiB，上限 16 MiB）、`totalTimeoutMs`（单次请求调用 `inspectSegments` 的总预算，默认 1000 ms，上限 10000 ms）、`transform`（`mode`、`reversible`、`propagateMinLength`、`systemHint`）、`types`（最多 32 项）、`rules`（Go RE2 线性时间规则，最多 64 条，支持 `boundary`、`validate`、`minEntropy`、`contextAny`）、`dictionaries`（最多 8 项）、`allowlist`、`inputs`（写法同 `automation.inputs`，须含且仅含一项 `api_key` 实体输入）与 `form`。声明 `payload.inspect_raw` 的插件强制受信签名且禁止同时声明 `http`、`net:*`、`storage`、`schedule`，详见[宿主能力支持规范](./host-capability-spec.md#4-权限分级静态互斥与通用错误码标准)。可用 `xlyra-plugin init --template gateway_pipeline` 生成起步工程，并用 `xlyra-plugin dry-run` 与 `fixtures` 回归测试。
 
 ## protocol 部分
 
@@ -206,7 +230,7 @@
 | `selection` | 否 | `ordered`（默认）或 `quota_weighted` |
 | `ui` | 否 | `rowPills` 最多 4，字段必须非密钥。`operations` 为 `add`、`reauth`、`refresh`、`delete`、`toggle`、`models`、`import`。`texts` 的键见[账号池站点](./site-provider.md#ui) |
 
-`probe`、`listModels`、`check`、`classify`、`rewritePayload` 都是可选导出。账号池还要导出 `summarizeAccount`；`login.kind` 为 `custom_poll` 时再导出 `startLogin`、`pollLogin`；`refresh.kind` 为 `custom_steps` 时再导出 `refreshTokens`；`models.perAccount` 为 true 时再导出 `listModels`。调用时机和返回值见[站点类型](./site-provider.md)。
+`probe`、`listModels`、`check`、`classify`、`rewritePayload`、`signRequest`、`transformStream`、`onSchedule`（以及宿主 API / fixtures 支持的 `createStreamFilter`）都是可选导出。账号池还要导出 `summarizeAccount`；`login.kind` 为 `custom_poll` 时再导出 `startLogin`、`pollLogin`；`refresh.kind` 为 `custom_steps` 时再导出 `refreshTokens`；`models.perAccount` 为 true 时再导出 `listModels`。调用时机和返回值见[站点类型](./site-provider.md)与[宿主 API](./host-api.md)。
 
 启用这个类型时，包必须由受信密钥签名，并且每次启用都要再次确认完整的 `hosts`。确认结果记成 `host:<主机名>`。确认之后，站点 `base_url`、通用适配器发出的请求和网关转发的上游地址，主机都必须命中这份列表：普通项按主机名精确匹配（不含端口），`*.example.com` 只匹配一个标签的子域、不匹配裸域和更深的子域。重定向也不得离开列表。分步钩子在同源限制之外再做一次同样的主机检查。
 
@@ -250,9 +274,9 @@ xLyra 只有深色主题，图标底板是 `#181b22`。两种做法都合格：
 ```text
 manifest.json
 plugin.js              打包后的单文件 ES 模块
-fixtures/*.json        除 site_provider 外至少一个
+fixtures/*.json        除 site_provider 及纯声明式 gatewayPipeline 外至少一个
 assets/icon.png        可选，见上面的图标
 signature.json         可选，签名后才有
 ```
 
-整个包不能超过 2 MiB，文件数不能超过 64 个。除 `site_provider` 外，至少要有一个 `fixtures/*.json`。`site_provider` 可以没有样本；有样本时每个文件都要带 `hook`，见 [fixtures](./fixtures.md#site_provider-样本)。
+整个包不能超过 2 MiB，文件数不能超过 64 个。除 `site_provider` 及未导出 `inspectSegments` 的纯声明式 `gatewayPipeline` 外，至少要有一个 `fixtures/*.json`。`site_provider` 与纯声明式 `gatewayPipeline` 可以没有样本；一旦提供样本，每个文件都要带 `hook`，见 [fixtures](./fixtures.md#site_provider-与多钩子样本)。

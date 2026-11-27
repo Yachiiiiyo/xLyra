@@ -13,7 +13,7 @@ xlyra-plugin kinds
 | kind | 解决什么问题 | 导出的函数 | 凭据 | 作用域与生效方式 |
 | --- | --- | --- | --- | --- |
 | [`quota_probe`](./quota-probe.md) | 查余额、额度、套餐 | `probe` | 站点 API Key | 站点：启用后绑定到站点 |
-| [`protocol`](./protocol.md) | 接入接口格式非标准的上游（仅非流式） | `decodeRequest`、`buildRequest`、`parseResponse`；可选 `signRequest`、`parseError` | 站点 API Key | 下游路径：启用后分配 `/v1/plugins/<slug>` |
+| [`protocol`](./protocol.md) | 接入接口格式非标准的上游（请求/响应转换仅非流式；SSE 流改写见 `protocol.stream` 与 `transformStream`） | `decodeRequest`、`buildRequest`、`parseResponse`；可选 `signRequest`、`parseError`、`transformStream`（以及宿主 API / fixtures 支持的 `createStreamFilter`） | 站点 API Key | 下游路径：启用后分配 `/v1/plugins/<slug>` |
 | [`model_list`](./model-list.md) | 站点拉模型列表的接口格式特殊 | `listModels` | 站点 API Key | 站点：启用后绑定到站点 |
 | [`credential_check`](./credential-check.md) | 判断密钥是否有效、站点是否可用 | `check` | 站点 API Key | 站点：启用后绑定到站点 |
 | [`site_detect`](./site-detect.md) | 根据地址识别是不是某类站点 | `detect` | 无 | 全局：启用即对所有站点的识别生效 |
@@ -21,7 +21,7 @@ xlyra-plugin kinds
 | [`model_metadata`](./model-metadata.md) | 上游模型名对应的名称与能力 xLyra 不认识 | `describeModels` | 无 | 全局：启用即对所有站点生效 |
 | [`pricing_parse`](./pricing-parse.md) | 站点公布的价格表格式特殊 | `parsePricing` | 站点 API Key（由 xLyra 取价格表） | 站点：启用后预览核对，再绑定到站点 |
 | [`automation`](./automation.md) | xLyra 里发生某件事时自动做点什么，比如额度重置后清零密钥用量 | `handle` | 无 | 对象：启用时授予权限，再按插件声明的表单绑定到 OAuth 账号、API 密钥或站点 |
-| [`site_provider`](./site-provider.md) | 声明一个新的站点类型：API Key，或账号池 | 可选 `probe`、`listModels`、`check`、`classify`、`rewritePayload`。账号池另有 `summarizeAccount`，以及按清单必填的 `startLogin`、`pollLogin`、`refreshTokens`。`models.perAccount` 时 `listModels` 按账号调用 | `api_key` 用站点 API Key。`account_pool` 用 `account:<siteType>:<uuid>`，密钥不进 JS | 站点类型：启用需要受信签名并确认主机；按站点类型自动生效 |
+| [`site_provider`](./site-provider.md) | 声明一个新的站点类型：API Key，或账号池 | 可选 `probe`、`listModels`、`check`、`classify`、`rewritePayload`、`signRequest`、`transformStream`、`onSchedule`（及宿主 API / fixtures 支持的 `createStreamFilter`）。账号池另有 `summarizeAccount`，以及按清单必填的 `startLogin`、`pollLogin`、`refreshTokens`。`models.perAccount` 时 `listModels` 按账号调用 | `api_key` 用站点 API Key。`account_pool` 用 `account:<siteType>:<uuid>`，密钥不进 JS | 站点类型：启用需要受信签名并确认主机；按站点类型自动生效 |
 
 ### 作用域是什么意思
 
@@ -46,7 +46,8 @@ xlyra-plugin kinds
 | 上游报错的格式特殊，限流错误被当成了普通错误 | `error_classifier` |
 | 上游的模型名或能力 xLyra 不认识 | `model_metadata` |
 | 站点公布的价格表是特殊格式 | `pricing_parse` |
-| 上游需要特殊请求头、请求签名、请求改写 | 暂时没有对应类型，计划作为 `protocol` 的可选钩子 |
+| 上游需要特殊请求头、请求签名、请求改写或 SSE 事件改写 | `protocol`、`site_provider` 或无 `kind` 叠加插件均可组合 `request.headers`、`signRequest`、`rewritePayload`、`transformStream`（详见[宿主 API](./host-api.md)） |
+| 按下游 API Key 对请求/响应正文做脱敏、合规审核拦截或双向术语替换 | 省略 `kind`，使用 `gatewayPipeline` 段与可选 `inspectSegments` 钩子（`xlyra-plugin init --template gateway_pipeline`，见[清单](./manifest.md#gatewaypipeline-部分)） |
 | 账号额度重置后自动清零密钥用量、站点余额不足时推送通知（Bark、Webhook 等，由插件自己发请求） | `automation` |
 | 我要声明一种新的 API Key 站点类型，或一种带登录、刷新、多账号的站点类型 | `site_provider`（`credential.model` 为 `api_key` 或 `account_pool`） |
 | 我想加新功能、计费规则、选路策略 | 插件做不到，请向 xLyra 提需求 |
@@ -69,7 +70,7 @@ xlyra-plugin kinds
 
 ### 请求转换：`protocol`
 
-每次客户端请求都会调用，时限 150 ms，只处理非流式请求。详见[协议插件](./protocol.md)。
+每次客户端请求都会调用，时限 150 ms；`decodeRequest` / `buildRequest` / `parseResponse` 只处理非流式请求，SSE 流改写可使用 `protocol.stream` 或 `transformStream`（单事件 5 ms）。详见[协议插件](./protocol.md)。
 
 ### 一次性函数：`error_classifier`、`model_metadata`、`pricing_parse`
 
@@ -91,9 +92,11 @@ xLyra 在某件事发生后把事件放进队列，后台依次交给插件，�
 
 ## 不写 kind
 
-kind 只是起步模板。清单可以省略 `kind`，导出哪些钩子就接入哪些位置；`xlyra-plugin init --template <name>` 仍按上表生成起步项目（`--kind` 是同一选项的别名）。
+kind 只是起步模板。清单可以省略 `kind`，导出哪些已知钩子、声明哪些能力段（`siteProvider`、`protocol`、`automation`、`gatewayPipeline` 四者互斥），就接入哪些位置；`xlyra-plugin init --template <name>` 按上表或 `gateway_pipeline` 生成起步项目（`--kind` 是同一选项的别名）。
 
-旧导出名继续可用：只导出 `classify` 时按 `classifyError` 调用也能命中，只导出 `handle` 时按 `onEvent` 也能命中，反过来一样。`protocol` 和 `automation` 这一阶段仍要写 kind。权限与钩子无关，启用时按清单 `permissions` 授予；`secret.use` 或站点类型（`siteProvider` 段）必须有受信签名。
+- 旧导出名继续可用：只导出 `classify` 时按 `classifyError` 调用也能命中，只导出 `handle` 时按 `onEvent` 也能命中，反过来一样。
+- 可按需组合可选钩子：`transformStream`（网关已启用，逐 SSE 事件改写）、`createStreamFilter`（有状态流过滤器，当前开放 Go 宿主 API 与 fixtures）、`signRequest`、`onSchedule`，以及配合 `gatewayPipeline` 使用的 `inspectSegments`（必须省略 `kind`）。
+- 权限与钩子无关，启用时按清单 `permissions` 一次性授予；声明 `secret.use`、`payload.inspect_raw` 或站点类型（`siteProvider` 段）必须有受信签名或市场证明。
 
 ## 需要的类型不在表里
 

@@ -1,6 +1,6 @@
 # 协议插件（protocol）
 
-协议插件让 xLyra 能对接一种非标准的上游：把下游请求翻译成上游请求，再从上游响应里取出用量。**仅支持非流式请求。**
+协议插件让 xLyra 能对接一种非标准的上游：把下游请求翻译成上游请求，再从上游响应里取出用量。**`decodeRequest` / `buildRequest` / `parseResponse` 仅处理非流式请求**；若需改写上游 SSE 事件流，可配合[声明式流转换](#声明式流转换)或可选的 `transformStream` 钩子。
 
 下游路径固定为 `/v1/plugins/<slug>`，`slug` 由管理员在启用时分配，插件不能自选路径、也不能映射成 `/v1/chat/completions` 之类的标准路径。
 
@@ -13,7 +13,7 @@ export function buildRequest(ctx, payload) { ... }
 export function parseResponse(ctx, resp) { ... }
 ```
 
-前三个钩子必须导出。另有两个可选钩子 `signRequest`、`parseError`，不导出就按默认行为处理，见后文。
+前三个钩子必须导出。另有可选钩子 `signRequest`、`parseError`、`transformStream`（网关 SSE 事件改写，单事件 5 ms，见[宿主 API](./host-api.md#transformstreamctx-event)）以及当前开放 Go 宿主 API 与 fixtures 的 `createStreamFilter`（见[宿主 API](./host-api.md#createstreamfilterctx)），不导出就按默认行为处理。
 
 ## decodeRequest(ctx, payload)
 

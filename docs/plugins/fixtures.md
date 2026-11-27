@@ -122,13 +122,17 @@ fixtures 是放在 `fixtures/*.json` 里的录制样本：给定上游的响应�
 
 所以请自己在样本里多写几组输入，覆盖边界情况。
 
+如果协议插件（无论是显式声明 `"kind": "protocol"` 还是省略 `kind` 仅写 `protocol` 段）导出了 `transformStream` 或 `createStreamFilter`，也可以在 `fixtures/` 里单独添加带 `"hook": "transformStream"` 或 `"hook": "createStreamFilter"` 的流式样本，格式见下文。
+
 ## site_provider 与多钩子样本
 
-`site_provider` 可以没有样本，没有样本的包仍能上传和启用。一旦有 `fixtures/*.json`，每个文件都必须带 `hook`，而且源码要导出同名函数。支持的 `hook` 包括：
+`site_provider` 可以没有样本，没有样本的包仍能上传和启用。一旦有 `fixtures/*.json`，每个文件都必须带 `hook`，而且源码要导出同名函数（`gatewayPipeline` 端到端样本除外）。支持的 `hook` 包括：
 
-- 站点分步钩子：`probe`、`listModels`、`check`
+- 站点分步钩子：`probe`、`listModels`、`check`（无 `kind` 插件还支持 `detect`）
 - 账号池分步钩子：`startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount`（`ctx` 可传 `params` 或 `fields`，`expect.result` 比对解码后的 `account_login` / `account_refresh` / `account_summary` 结构）
 - 请求与响应链钩子：`rewritePayload`、`classify` / `classifyError`、`signRequest`、`parseError`
+- 流式改写钩子：`transformStream`、`createStreamFilter`（同样适用于导出对应钩子的 `protocol` 插件和无 `kind` 插件）
+- 网关文本管线：`inspectSegments`（单钩子样本）与 `gatewayPipeline`（端到端管线样本）
 - 价格与元数据钩子：`parsePricing`、`describeModels`
 - 事件与定时钩子：`onEvent` / `handle`、`onSchedule`
 
@@ -173,11 +177,173 @@ fixtures 是放在 `fixtures/*.json` 里的录制样本：给定上游的响应�
 
 `expect.result` 里写 `null` 和“这个键不存在”比较结果相同。示例包用 `"user": null` 表示 `user` 已被删掉，见 [`examples/site-provider-minimal/fixtures/rewrite-payload.json`](./examples/site-provider-minimal/fixtures/rewrite-payload.json)。
 
+### transformStream 样本
+
+用于测试单个 SSE 事件的无状态改写（适用于 `site_provider`、`protocol` 与无 `kind` 插件）：
+
+```json
+{
+  "name": "rewrite sse delta",
+  "hook": "transformStream",
+  "ctx": {
+    "siteType": "example.minimal/chat",
+    "model": "m1",
+    "protocol": "openai_chat"
+  },
+  "input": {
+    "event": "message",
+    "data": "{\"delta\":\"hello\"}"
+  },
+  "expect": {
+    "result": {
+      "data": "{\"delta\":\"hello!\"}"
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `hook` | 必填，`transformStream` |
+| `ctx` | 可选：`siteType`、`model`、`protocol`、`settings` |
+| `input` | 必填，对象 `{ "event"?, "data" }`。`data` 必须为字符串，允许空串或空白字符串，最大 **1 MiB**（`MaxStreamEventBytes`）；`event` 可选，不能含 CR/LF（最长 8 KiB）；不允许未知字段 |
+| `expect.result` | 期望的 `{ event?, data?, drop?, done? }`（只检查写出的字段）；钩子返回 `null` / `undefined` 透传时结果为 `{}` |
+| `expect.error` | 期望调用失败，值是错误信息里应包含的文字（与 `result` 二选一） |
+
+### createStreamFilter 样本
+
+用于测试有状态流过滤器跨事件与 `onFlush()` 的完整会话（同样适用于导出 `createStreamFilter` 的 `site_provider`、`protocol` 与无 `kind` 插件）：
+
+```json
+{
+  "name": "buffer and flush",
+  "hook": "createStreamFilter",
+  "ctx": {
+    "siteType": "example.minimal/chat",
+    "model": "m1",
+    "protocol": "openai_chat"
+  },
+  "input": {
+    "events": [
+      { "data": "hel" },
+      { "data": "lo" }
+    ],
+    "flush": true
+  },
+  "expect": {
+    "result": {
+      "events": [
+        { "drop": true },
+        { "drop": true }
+      ],
+      "flush": { "data": "hello" }
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `hook` | 必填，`createStreamFilter` |
+| `ctx` | 可选：`siteType`、`model`、`protocol`、`settings` |
+| `input` | 必填。可写对象 `{ "events": [...], "flush"?: boolean }`（不允许未知顶层字段），也可直接简写为事件数组 `[ { "event"?, "data" }, ... ]`（等价于省略 `flush`）。每个事件项规则同 `transformStream`（支持空串/空白 `data` 与最高 1 MiB 载荷） |
+| `input.flush` | 可选布尔值。未因事件返回 `done: true` 提前结束时，省略或 `true` 且过滤器定义了 `onFlush` 会调用 `onFlush()`；已返回 `done: true` 时仅显式写 `true` 且定义了 `onFlush` 才调用。若过滤器未定义 `onFlush`，结果中省略 `flush`（可在 `expect.result` 中写 `"flush": null` 断言其不存在） |
+| `expect.result` | `{ "events": [...], "flush"?: ... }`，逐项比对每个 `onEvent` 及可选 `onFlush` 的返回值 |
+| `expect.error` | 期望在打开过滤器、`onEvent` 或 `onFlush` 阶段失败（与 `result` 二选一） |
+
+## 网关管线样本（inspectSegments 与 gatewayPipeline）
+
+声明了 `gatewayPipeline` 段的插件支持两种样本：只测 JS 钩子的 `inspectSegments` 样本，以及覆盖完整编解码与流还原的 `gatewayPipeline` 端到端样本。
+
+### inspectSegments 单钩子样本
+
+```json
+{
+  "name": "drop false positive",
+  "hook": "inspectSegments",
+  "ctx": {
+    "endpoint": "/v1/chat/completions",
+    "model": "gpt-4o",
+    "bindingId": "b1",
+    "inputs": { "strict": true }
+  },
+  "input": {
+    "segments": [
+      { "id": "s0", "role": "user", "field": "message.text", "text": "联系张三" }
+    ],
+    "findings": [
+      { "segment": "s0", "start": 2, "end": 4, "type": "PERSON", "source": "dictionary" }
+    ]
+  },
+  "expect": {
+    "result": {
+      "drop": [0]
+    }
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `hook` | 必填，`inspectSegments` |
+| `ctx` | `endpoint`、`model`、`bindingId`、`inputs`（作为 `ctx.binding.params` 传入）、`settings` |
+| `input` | 必填，`{ segments, findings }`，其中 `start` / `end` 为 UTF-16 码元下标 |
+| `expect.result` | 期望的 `{ add?, drop?, reject? }`；自检会执行与线上相同的类型声明、索引范围及 UTF-16 字符边界校验 |
+| `expect.error` | 期望调用失败（与 `result` 二选一） |
+
+### gatewayPipeline 端到端样本
+
+走与生产网关一致的 Go 编解码器、原生 RE2 规则与词典匹配、`inspectSegments` 钩子、占位符变换以及缓冲/SSE 响应还原：
+
+```json
+{
+  "name": "basic-roundtrip",
+  "hook": "gatewayPipeline",
+  "endpoint": "/v1/chat/completions",
+  "binding": {
+    "params": { "token": true, "dictionary": "AcmeSecret" }
+  },
+  "payload": {
+    "model": "gpt-4o",
+    "messages": [{ "role": "user", "content": "Use tok_1234567890ab for AcmeSecret" }]
+  },
+  "upstream": {
+    "sseChunks": [
+      "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Got [[TOK\"}}]}\n\n",
+      "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"EN_1]]\"}}]}\n\n",
+      "data: [DONE]\n\n"
+    ]
+  },
+  "expect": {
+    "upstreamPayload": {
+      "model": "gpt-4o",
+      "messages": [{ "role": "user", "content": "Use [[TOKEN_1]] for [[CUSTOM_1]]" }]
+    },
+    "downstreamResponse": [
+      { "choices": [{ "index": 0, "delta": { "content": "Got " } }] },
+      { "choices": [{ "index": 0, "delta": { "content": "tok_1234567890ab" } }] }
+    ]
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `hook` | 必填，`gatewayPipeline` |
+| `endpoint` | 下游端点路径，省略时默认 `/v1/chat/completions`（也可写在 `ctx.endpoint`） |
+| `binding` | 可选，`{ params?, hostOptions? }`；未指定的非实体参数使用 `gatewayPipeline.inputs` 中的 `default` |
+| `payload` | 客户端请求体 JSON 对象 |
+| `upstream` | 可选，模拟上游响应：`status`、`contentType`、`body` / `json`（非流式）或 `sseChunks`（SSE 分片数组，用于验证跨分片占位符还原） |
+| `expect.upstreamPayload` | 期望送往上游的请求体（按 JSON 语义深比较） |
+| `expect.downstreamResponse` | 期望还原后的下游响应（非流式为字符串或 JSON 对象；`sseChunks` 模式下为解析出的非 `[DONE]` SSE JSON 事件数组） |
+| `expect.downstreamSSE` | `sseChunks` 模式下，精确比对还原后的完整原始 SSE 文本 |
+| `expect.status` / `expect.errorCode` / `expect.error` | 期望管线拒绝或失败时的 HTTP 状态码、错误码与错误信息/错误类型包含文本 |
+
 ## 提示
 
 - 每个样本文件一个场景，文件名要能说明场景，如 `weekly-only.json`、`error-code.json`。
 - 把线上真实的响应脱敏后录成样本，是最可靠的回归手段。
-- 除 `site_provider` 外，至少要有一个样本，否则不能打包。`site_provider` 没有样本也可以打包。
+- 除 `site_provider` 以及未导出 `inspectSegments` 的纯声明式 `gatewayPipeline` 外，至少要有一个样本，否则不能打包。
 
 ## 自动化样本
 

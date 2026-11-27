@@ -70,7 +70,7 @@ xlyra-plugin run --hook listModels --key-env RELAY_KEY --base-url https://api.ex
 ```json
 {
   "apiVersion": 1,
-  "hostApi": 1,
+  "hostApi": 2,
   "id": "example.minimal",
   "kind": "site_provider",
   "name": "最小站点示例",
@@ -421,7 +421,7 @@ xlyra-plugin run --hook listModels --key-env RELAY_KEY --base-url https://api.ex
 
 `pollLogin` 每次从 `startLogin` 结束时的步骤基线重放。上一次轮询的响应不会留在 `steps` 里。Cookie 罐和秘密袋保留。
 
-这些钩子不进 `xlyra-plugin test` 的样本，也不进 `xlyra-plugin run`。样本的 `hook` 仍然只能是 `probe`、`listModels`、`check`、`classify`、`rewritePayload`。
+这些钩子不支持 `xlyra-plugin run`，但可以写进 `xlyra-plugin test` 的 `fixtures/*.json` 样本（`hook` 设为 `startLogin`、`pollLogin`、`refreshTokens` 或 `summarizeAccount`，`ctx` 传入 `params` 或 `fields`，详见 [fixtures](./fixtures.md#site_provider-与多钩子样本)）。
 
 ### 密钥不进 JS
 
@@ -489,15 +489,18 @@ account:<siteType>:<uuid>
 
 ## 钩子
 
-下面五个是 `api_key` 和 `account_pool` 都可以导出的可选钩子。没导出就当没有这个钩子。账号池另外的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 见[账号池站点](#账号池站点credentialmodelaccount_pool)，按 `login.kind` / `refresh.kind` 决定哪些必填。`meta.id`、`meta.kind`、`meta.apiVersion` 必须和清单一致。
+下面五个是 `api_key` 和 `account_pool` 都可以导出的核心可选钩子；除此之外，站点底座还可导出 `signRequest`、`transformStream`、`onSchedule`（以及当前开放 Go 宿主 API 与 fixtures、尚未接入网关的 `createStreamFilter`），详见[宿主 API](./host-api.md)。没导出就当没有这个钩子。账号池另外的 `startLogin`、`pollLogin`、`refreshTokens`、`summarizeAccount` 见[账号池站点](#账号池站点credentialmodelaccount_pool)，按 `login.kind` / `refresh.kind` 决定哪些必填。`meta.id`、`meta.kind`、`meta.apiVersion` 必须和清单一致。
 
 时限和大小与同类钩子相同：
 
 | 钩子 | 每次调用 | 说明 |
 | --- | --- | --- |
 | `probe`、`listModels`、`check` | 500 ms | 最多调用 6 次（最多 5 个 HTTP 请求）。单个请求体 64 KiB，交给插件的响应体 1 MiB，单次 HTTP 20 秒 |
-| `classify`、`rewritePayload` | 150 ms | 在请求路径上。等待运行时的上限是 1 s，钩子本身仍是 150 ms |
-| 所有钩子 | 内存 64 MiB，返回值 16 MiB | 日志每次调用最多 50 条，每条 2048 字节 |
+| `classify`、`rewritePayload` | 150 ms | 在请求路径上（热池）。等待运行时的上限是 1 s，钩子本身仍是 150 ms |
+| `signRequest` | 200 ms | 在请求路径上（热池），详见[宿主 API](./host-api.md#signrequestctx-req) |
+| `transformStream` / `createStreamFilter` | 5 ms | 热池运行，单帧 `data` 上限 1 MiB；详见[宿主 API](./host-api.md#transformstreamctx-event) |
+| `onSchedule` | 1 s | 需声明 `"schedule"` 权限，最多 4 步请求 |
+| 所有钩子 | 分配 64 MiB，常驻活跃堆 16 MiB，返回值 16 MiB / 1,048,576 节点 | 日志每次调用最多 50 条，每条 2048 字节；模块加载与 `meta` 读取 500 ms |
 
 分步钩子的 `ctx` 是 `siteType`、`baseURL`、`credentialType`、`now`（毫秒）。没有密钥。`models.perAccount` 的 `listModels` 另外带 `account`，见 [按账号列模型](#按账号列模型)。`site_provider` 没有 `baseURLMode`，地址按 `as_is` 整理（去掉尾部 `/`）；没传地址时用 `officialBaseURL`。API Key 站点的 `listModels` 仍不带 `account`。
 

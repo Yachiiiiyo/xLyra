@@ -8,7 +8,7 @@
 
 ## bytes（hostApi 2）
 
-所有返回字节的函数均返回当前运行时原生的 `Uint8Array`。
+所有返回字节的函数均直接返回 `moejs` 引擎原生的 `Uint8Array`，`bytes.*`、`encoding.*`、`crypto.*` 均通过零转换桥接直接接受和返回原生 `Uint8Array`（与语言内置的 `Uint8Array` / `TextEncoder` / `TextDecoder` 及 ES2025 `fromBase64` / `toBase64` / `fromHex` / `toHex` 完全互通）。单次二进制输入与拼接上限为 **4 MiB**（`bytes.concat` 最多 65,536 段）。
 
 | 函数 | 说明 |
 | --- | --- |
@@ -80,7 +80,7 @@
 | `storage.delete(key)` | 删除键，返回布尔值表示原先是否存在 |
 | `storage.keys()` | 返回当前作用域下按字典序排列的键名数组 |
 
-每个作用域最多存储 **64** 个键、合计 **64 KiB**。
+每个作用域最多存储 **64** 个键、合计 **64 KiB**。当前钩子的超时预算会通过 `callCtx` 一并传播到 `storage.*` 调用，存储读写不会超过本次钩子的剩余时限。
 
 ## settings（`ctx.settings`）
 
@@ -101,11 +101,56 @@
 
 ## transformStream(ctx, event)
 
-当声明式 `stream` 配置不足以覆盖自定义流协议时，底座插件、协议插件或挂载的叠加插件可以导出 `transformStream(ctx, event)`（热池运行，单事件时限 **5 毫秒**），按「协议插件 / 站点底座 → 挂载顺序」逐个 SSE 事件链式改写：
+当声明式 `stream` 配置不足以覆盖自定义流协议时，协议插件、`site_provider` 底座插件或挂载到站点的叠加插件可以导出 `transformStream(ctx, event)`。该钩子**已接入网关流式转发**（热池运行，单事件时限 **5 毫秒**，单帧 `data` 上限 **1 MiB**），按「协议插件 / 站点底座 → 挂载顺序」逐个 SSE 事件链式改写，并受熔断器统计：
 
 - `ctx` 包含只读的 `siteType`、`model`、`protocol` 与合并后的 `settings`。
-- `event` 为 `{ event?: string, data: string }`。
-- 返回 `{ data?: string, event?: string, drop?: boolean, done?: boolean }`：`drop: true` 会丢弃当前事件不向下游写出；`done: true` 标记流在当前事件后结束。
+- `event` 为 `{ event?: string, data: string }`（允许空串或空白 `data`）。
+- 返回 `{ data?: string, event?: string, drop?: boolean, done?: boolean }`，或返回 `null` / `undefined`（及不返回值）表示**原样透传**当前事件：
+  - `event`：可选，改写 SSE `event:` 名（不能含 CR/LF）；
+  - `data`：可选，改写 `data:` 载荷（最大 **1 MiB**）；
+  - `drop: true`：丢弃当前事件，不向下游写出；
+  - `done: true`：标记流在当前事件后结束。
+- 可通过 `xlyra-plugin test` 编写 `hook: "transformStream"` 的本地样本进行回归测试，详见 [fixtures](./fixtures.md#transformstream-样本)。
+
+## createStreamFilter(ctx)
+
+需要跨多个 SSE 事件保留流内状态（如分片拼接、跨帧缓冲、状态机解析）时，可以导出有状态流过滤器工厂 `createStreamFilter(ctx)`，返回包含 `onEvent(event)` 与可选 `onFlush()` 的过滤器对象：
+
+```ts
+import type { StreamFilter, StreamTransformContext, StreamTransformEvent, StreamTransformResult } from "../types/xlyra";
+
+export function createStreamFilter(_ctx: StreamTransformContext): StreamFilter {
+  let pending = "";
+  return {
+    onEvent(event: StreamTransformEvent): StreamTransformResult | undefined {
+      if (event.data === "[DONE]") {
+        return { done: true };
+      }
+      pending += event.data;
+      if (pending.length < 16) {
+        return { drop: true };
+      }
+      const out = pending;
+      pending = "";
+      return { data: out };
+    },
+    onFlush(): StreamTransformResult | undefined {
+      if (pending === "") return undefined;
+      const out = pending;
+      pending = "";
+      return { data: out };
+    },
+  };
+}
+```
+
+生命周期与资源约束：
+
+- `createStreamFilter(ctx)`、`onEvent(event)`、`onFlush()` 均在热池中运行，单次调用时限 **5 毫秒**，单帧 `data` 上限 **1 MiB**；返回值规则与 `transformStream` 相同（返回 `null` / `undefined` 表示透传或无输出）。
+- 打开过滤器后会借用一个热池运行时并在整个流会话期间保留闭包状态；宿主会持续检查该会话（含过滤器闭包持有对象）的常驻活跃堆，超过 **16 MiB**（`MaxLiveBytes`）时触发 `js_heap_limit`（`live_limit`）并丢弃该运行时。
+- 钩子必须同步返回对象，且 `onEvent` 必须为函数、`onFlush` 若提供也必须为函数，否则报 `js_shape_error`。
+
+> **当前接入状态**：`createStreamFilter` 已接入 Go 宿主 API（`Plugin.OpenStreamFilter` / `StreamFilterSession`）、自检与本地测试（`SelfTest` / `xlyra-plugin test`，`hook: "createStreamFilter"`）以及 SDK 类型定义（`StreamFilter` / `SiteProviderCreateStreamFilter`）；**网关流式转发（`stream_unwrap.go`）尚未启用该钩子**（计划后续接入）。当前线上网关的 SSE 改写请使用无状态的 `transformStream` 或声明式 `protocol.stream` / `siteProvider.protocol.stream`。
 
 ## onSchedule(ctx, steps)
 
@@ -122,6 +167,11 @@
 
 ## 语言环境
 
-- 引擎是 moejs，ES 模块，支持 ES2023 的常用特性，时区固定为 UTC。
-- 可用的内置对象：`Date`、`Math`、`JSON`、`Uint8Array`、`TextEncoder`、`structuredClone`、`globalThis` 等标准对象。
-- `eval`、`new Function` 和动态 `import()` 被禁用；每次调用在独立或复用的运行时会话中执行，跨调用状态请使用 `storage`，不要依赖模块级全局变量。
+- **引擎与运行时特性**：引擎是升级后的 `moejs`（ES 模块，时区固定为 UTC，共享内建原型与对象深度冻结不可篡改，采用 48 字节精简 `Object` / `String` 布局并经过 PGO 优化）。
+- **支持的 ES2023–ES2025 与 WHATWG 内建对象**：
+  - 二进制与编解码：原生 `Uint8Array`（及全部 TypedArray、`ArrayBuffer`、`DataView`），支持 ES2025 `Uint8Array.fromBase64` / `toBase64` / `setFromBase64` / `fromHex` / `toHex` / `setFromHex`、`TextEncoder` / `TextDecoder`（UTF-8）、`atob` / `btoa`；宿主 `bytes.*` / `encoding.*` / `crypto.*` 直接与原生 `Uint8Array` 零转换桥接。
+  - 集合与数组/对象辅助：`Set` 集合论方法（`union`、`intersection`、`difference`、`symmetricDifference`、`isSubsetOf`、`isSupersetOf`、`isDisjointFrom`）、`Iterator` 辅助方法、`Object.groupBy` / `Map.groupBy`、`Array.prototype.toSorted` / `toReversed` / `toSpliced` / `with` / `findLast` / `at`、`structuredClone`。
+  - 正则与基础内建：`RegExp`（线性时间 NFA 引擎并带 ReDoS 防护，支持 Unicode 属性转义 `\p{...}`、`v` 标志、`d` 索引、后行断言、具名捕获组与 `RegExp.escape`）、`BigInt`、`Map`、`Set`、`WeakMap`、`WeakSet`、`Proxy`、`Reflect`、`JSON`、`Date`（UTC）、`Math`、`globalThis`。
+- **同步钩子限制**：语言环境中存在 `Promise`，但**所有钩子必须同步返回**；导出 `async function` 或返回 `Promise` 会在运行时报错 `js_shape_error`（`hook returned a promise`）。
+- **禁用动态代码与静态校验**：`eval`、`new Function` 和动态 `import()` 在运行时被禁用（`DisableDynamicCode`）；每次编译模块都会执行静态字节码校验（`bytecode.Verify`）与静态安全/复杂度分析（`bytecode.Analyze`），并在 `xlyra-plugin verify` / `pack` 输出中报告相关标记。
+- **状态与编译方式**：每次调用在独立或复用的运行时会话中执行，跨调用持久化状态请使用 `storage`（流内会话状态见 `createStreamFilter`），不要依赖模块级全局变量。`xlyra-plugin build` / `pack` / `test` 继续通过内置 esbuild 将多文件 TypeScript 打包为 `.xlp` 内的单文件 `plugin.js`；Go 宿主运行时另提供 `jsplugin.NewPluginTS`，可通过 `moejs` 解析器内建类型剥离直接编译单文件 TypeScript。

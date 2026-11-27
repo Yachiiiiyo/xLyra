@@ -31,14 +31,20 @@
 
 | 项 | 上限 |
 | --- | --- |
+| 模块顶层加载与 `meta` 读取（`loadHookTimeout`） | 500 ms |
 | 分步类型及站点/账号分步钩子每次调用 | 500 ms |
 | `automation` / `onEvent` 每次调用（不在请求路径上） | 500 ms |
-| 协议、`rewritePayload` 和 `error_classifier`（`classifyError`）每次调用（在请求路径上） | 150 ms |
+| 协议、`rewritePayload`、`error_classifier`（`classifyError`）每次调用（在请求路径上，热池 4/16 会话） | 150 ms |
+| `inspectSegments`（`gatewayPipeline`）每次调用（在请求路径上，热池 4/16 会话） | 150 ms（整次请求总预算默认 1 s，清单 `totalTimeoutMs` 上限 10 s；单批文本上限 256 KiB） |
 | `signRequest` 每次调用（在请求路径上） | 200 ms |
+| `transformStream` / `createStreamFilter`（`onEvent` / `onFlush`）每次调用（热池） | 5 ms；单帧 `data` 上限 1 MiB（`MaxStreamEventBytes`） |
 | `onSchedule` 每次调用 | 1 s |
 | `model_metadata`、`pricing_parse` 每次调用 | 500 ms |
-| 每次调用的内存分配 | 64 MiB |
-| 钩子返回值大小 | 16 MiB |
+| 单次调用累计内存分配（`MaxAllocBytes`） | 64 MiB（跨参数编码、钩子执行、getter 与返回值 `ToGo` 累计计费；超限报 `js_heap_limit` / `alloc_limit`） |
+| 池化会话常驻活跃堆（`MaxLiveBytes`） | 16 MiB（归还运行时池前及 `createStreamFilter` 会话期间检查；超限报 `js_heap_limit` / `live_limit` 并丢弃会话） |
+| 钩子返回值大小与节点数（`MaxResultBytes` / `MaxResultNodes`） | 16 MiB 且最多 1,048,576 个节点（超限报 `js_plugin_response_too_large`） |
+| 确定性执行步数预算（`MaxSteps`，可选） | 默认 `0`（不启用）；宿主可通过 Go API `Plugin.SetMaxSteps` 按插件配置，超限报 `js_timeout`（`step_limit`）并丢弃会话；运行统计可通过 Go API `Plugin.Stats()`（`RuntimeStats`）读取 |
+| 二进制辅助函数输入与拼接（`bytes.*` / `encoding.*` / `crypto.*`） | 单次输入与 `bytes.concat` 输出上限 4 MiB（最多 65,536 段）；`crypto.randomBytes` 上限 64 KiB |
 | 分步类型的钩子调用次数 | 6 次（最多发 5 个 HTTP 请求） |
 | 额度探测单个请求体 | 64 KiB |
 | 额度探测发给插件的响应体 | 1 MiB |
@@ -65,17 +71,25 @@
 | 账号池额度耗尽冷却 | 到 `resetAt`，最长 7 天，原因 `quota_exhausted` |
 | 秘密擦除 | 短于 4 个 Unicode 码位的值不从日志和错误字符串里擦掉 |
 
-超时或内存超限时，运行时会被**立即中断**并丢弃，不会影响其他请求。
+超时、步数超限或内存超限时，运行时会被**立即中断**并丢弃，不会影响其他请求。钩子超时通过 `callCtx` 一并传播到 `storage.*` 调用，存储操作不会突破该次钩子的剩余时限。
+
+## 字节码校验与静态安全分析
+
+- **静态字节码校验（`bytecode.Verify`）**：每次编译插件模块（含 `xlyra-plugin build` / `test` / `pack` / `verify` 以及服务端上传与启动加载）都会在执行任何代码之前校验字节码完整性，异常字节码直接拒绝加载。
+- **静态安全与复杂度分析（`bytecode.Analyze`）**：编译时同步计算 `ModuleAnalysis`（Go API 可通过 `Plugin.Analysis()` 读取），统计函数数、指令数、正则数、引用的全局变量，并静态标记 `eval`、`Function`、`import()`、`with`、`async` 等结构。`xlyra-plugin verify` 与 `pack` 会打印 `analysis ...` 摘要行（管理端上传接口暂未单独透出该结构体）。
+- **运行时隔离加固**：`eval`、`new Function` 与动态 `import()` 在运行时被强制禁用（`DisableDynamicCode`），共享内建对象深度冻结不可篡改（`MutableIntrinsics: false`），内置正则引擎采用线性时间 NFA 防止 ReDoS。
 
 ## 打包限制
 
-`xlyra-plugin build` 会拒绝：
+`xlyra-plugin build` / `pack` / `test` 使用内置 esbuild 将多文件 TypeScript/JavaScript 打包成 `.xlp` 内的单文件 `plugin.js`，并会拒绝：
 
 - 外部依赖（`import x from "lodash"` 这类裸导入）；
 - 动态 `import()`；
 - 找不到入口（`src/index.ts` 或 `src/index.js`）。
 
 只能 `import type`，以及相对路径的本地文件。需要的工具函数直接写进自己的源码里。
+
+> 注：Go 宿主运行时另提供 `jsplugin.NewPluginTS`，可通过 `moejs` 解析器内建类型剥离直接编译单文件 TypeScript（优先校验 `manifest.sha256["plugin.ts"]`），但 `.xlp` 归档与 `xlyra-plugin` CLI 仍统一产出和校验 `plugin.js`。
 
 ## 自动化插件的权限
 
