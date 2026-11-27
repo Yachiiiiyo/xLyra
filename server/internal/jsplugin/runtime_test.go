@@ -872,9 +872,10 @@ export function probe() {
 		if err != nil {
 			t.Fatalf("NewPlugin: %v", err)
 		}
-		// 400k empty SegmentItems exceed the 64 MiB single-call MaxAllocBytes budget when
-		// argToValue builds all items under one realm budget without wiping allocUsed.
-		many := make([]SegmentItem, 400000)
+		// 600k empty SegmentItems (~73.2 MiB under 48B Object layout) exceed the 64 MiB
+		// single-call MaxAllocBytes budget when argToValue builds all items under one
+		// realm budget without wiping allocUsed.
+		many := make([]SegmentItem, 600000)
 		_, _, _, err = plugin.callHook(context.Background(), HookInspectSegments, protocolHookTimeout, 0,
 			InspectSegmentsContext{Endpoint: "/v1/chat", Model: "m", Binding: InspectSegmentsBinding{ID: "b"}},
 			InspectSegmentsInput{Segments: many},
@@ -1090,7 +1091,7 @@ func heldPool(t *testing.T) (*pool, *session) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := newPool(0, 1, func() (*session, error) { return newSession(program) })
+	pool, err := newPool(0, 1, func() (*session, error) { return newSession(program, MaxSteps) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1110,11 +1111,11 @@ export function probe() {
 }`
 	plugin := mustTestPlugin(t, "xlyra.test.state", source)
 	program := plugin.program
-	first, err := newSession(program)
+	first, err := newSession(program, MaxSteps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := newSession(program)
+	second, err := newSession(program, MaxSteps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1991,4 +1992,818 @@ export function probe() { return { result: { kind: "balance", entries: [{ label:
 	if _, err := NewPluginTS(testManifest("acme.tsenum", enumSource), enumSource, []Fixture{{Name: "unused"}}, 1); err == nil {
 		t.Fatal("NewPluginTS accepted unsupported enum syntax")
 	}
+}
+
+type blockingStorage struct {
+	mu          sync.Mutex
+	sawDeadline bool
+}
+
+func (b *blockingStorage) Get(ctx context.Context, _ string) (any, error) {
+	_, ok := ctx.Deadline()
+	b.mu.Lock()
+	b.sawDeadline = ok
+	b.mu.Unlock()
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (b *blockingStorage) Set(ctx context.Context, _ string, _ any) error {
+	_, ok := ctx.Deadline()
+	b.mu.Lock()
+	b.sawDeadline = ok
+	b.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (b *blockingStorage) Delete(ctx context.Context, _ string) (bool, error) {
+	_, ok := ctx.Deadline()
+	b.mu.Lock()
+	b.sawDeadline = ok
+	b.mu.Unlock()
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
+func (b *blockingStorage) Keys(ctx context.Context) ([]string, error) {
+	_, ok := ctx.Deadline()
+	b.mu.Lock()
+	b.sawDeadline = ok
+	b.mu.Unlock()
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestPhase3AuditRegressions(t *testing.T) {
+	newStreamPlugin := func(t *testing.T, id, source string, fixtures []Fixture) *Plugin {
+		t.Helper()
+		manifest := Manifest{
+			ID: id, Name: id, Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", License: "AGPL-3.0",
+			SHA256: map[string]string{"plugin.js": HashSource(source)},
+		}
+		plugin, err := NewPlugin(manifest, source, fixtures, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin(%s): %v", id, err)
+		}
+		return plugin
+	}
+
+	// [P1-1] Unified live-heap walk catches disjoint module + native-callback filter heaps
+	// and preserves combined LiveBytes in Plugin.Stats().
+	t.Run("p1_1_split_heap_max_live_and_stats_live_bytes", func(t *testing.T) {
+		splitSrc := `export const meta = { apiVersion: 1, id: "acme.splitlive" };
+const modLeak = [];
+export function createStreamFilter() {
+  modLeak.push(new Uint8Array(10 * 1024 * 1024));
+  return {
+    stash: new Uint8Array(10 * 1024 * 1024),
+    onEvent: Object,
+  };
+}`
+		p := newStreamPlugin(t, "acme.splitlive", splitSrc, nil)
+		p.streamTimeout = time.Second
+		_, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "live_limit" {
+			t.Fatalf("OpenStreamFilter(split heap) err = %#v, want %s (live_limit)", err, KindHeapLimit)
+		}
+		targetPool := p.poolForHook(HookCreateStreamFilter)
+		targetPool.mu.Lock()
+		total, idle := targetPool.total, len(targetPool.idle)
+		targetPool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after split-heap live limit total=%d idle=%d, want discarded", total, idle)
+		}
+
+		// Filter holding 10 MiB while module holds negligible state must report >= 10 MiB in
+		// Plugin.Stats().LiveBytes after checkLiveLimitFilter runs (not clobbered by a second walk).
+		liveStatsSrc := `export const meta = { apiVersion: 1, id: "acme.filterstats" };
+export function createStreamFilter() {
+  const retained = new Uint8Array(10 * 1024 * 1024);
+  return {
+    onEvent() {
+      const scratch = new Uint8Array(8 * 1024 * 1024);
+      return { data: String(retained.length + scratch.length) };
+    },
+  };
+}`
+		pStats := newStreamPlugin(t, "acme.filterstats", liveStatsSrc, nil)
+		pStats.streamTimeout = time.Second
+		sess, err := pStats.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(stats): %v", err)
+		}
+		defer sess.Close()
+		if _, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: "tick"}); err != nil {
+			t.Fatalf("OnEvent(stats): %v", err)
+		}
+		if got := pStats.Stats().LiveBytes; got < 10<<20 {
+			t.Fatalf("Plugin.Stats().LiveBytes = %d, want >= %d (active filter memory must not be clobbered)", got, 10<<20)
+		}
+	})
+
+	// [P1-2] MaxAllocBytes is carried across sub-calls (argToValue, Call/CallFunction, Get, ToGo)
+	// and normalized to MaxAllocBytes in error details.
+	t.Run("p1_2_alloc_budget_carried_across_subcalls", func(t *testing.T) {
+		wantLimitText := fmt.Sprintf("limit %d", MaxAllocBytes)
+
+		t.Run("openStreamFilter_call_plus_onEvent_getter", func(t *testing.T) {
+			src := `export const meta = { apiVersion: 1, id: "acme.allocopen1" };
+export function createStreamFilter() {
+  const a = new Uint8Array(40 * 1024 * 1024);
+  return {
+    get onEvent() {
+      const b = new Uint8Array(30 * 1024 * 1024);
+      return () => ({ data: String(a.length + b.length) });
+    },
+  };
+}`
+			p := newStreamPlugin(t, "acme.allocopen1", src, nil)
+			p.streamTimeout = time.Second
+			_, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+				t.Fatalf("err = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+			}
+			if !strings.Contains(call.Detail, wantLimitText) {
+				t.Fatalf("CallError.Detail = %q, want normalized %q", call.Detail, wantLimitText)
+			}
+			if st := p.Stats(); st.AllocLimitHits != 1 || st.AllocatedBytes <= MaxAllocBytes {
+				t.Fatalf("Stats() = %+v, want AllocLimitHits=1 and AllocatedBytes > %d", st, MaxAllocBytes)
+			}
+		})
+
+		t.Run("openStreamFilter_call_plus_onEvent_plus_onFlush_getters", func(t *testing.T) {
+			src := `export const meta = { apiVersion: 1, id: "acme.allocopen2" };
+export function createStreamFilter() {
+  const a = new Uint8Array(25 * 1024 * 1024);
+  return {
+    get onEvent() {
+      const b = new Uint8Array(25 * 1024 * 1024);
+      return () => ({ data: String(a.length + b.length) });
+    },
+    get onFlush() {
+      const c = new Uint8Array(25 * 1024 * 1024);
+      return () => ({ data: String(c.length) });
+    },
+  };
+}`
+			p := newStreamPlugin(t, "acme.allocopen2", src, nil)
+			p.streamTimeout = time.Second
+			_, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+				t.Fatalf("err = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+			}
+			if !strings.Contains(call.Detail, wantLimitText) {
+				t.Fatalf("CallError.Detail = %q, want normalized %q", call.Detail, wantLimitText)
+			}
+		})
+
+		t.Run("callWithEnv_call_plus_togo_getter", func(t *testing.T) {
+			src := wrapProbe(`
+const a = new Uint8Array(40 * 1024 * 1024);
+return {
+  get result() {
+    const b = new Uint8Array(30 * 1024 * 1024);
+    return { kind: "balance", entries: [{ label: "n", remaining: a.length + b.length }] };
+  },
+};`)
+			p := mustTestPlugin(t, "xlyra.test.bomb", src)
+			_, err := p.CallProbe(context.Background(), ProbeContext{}, nil)
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+				t.Fatalf("err = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+			}
+			if !strings.Contains(call.Detail, wantLimitText) {
+				t.Fatalf("CallError.Detail = %q, want normalized %q", call.Detail, wantLimitText)
+			}
+		})
+
+		t.Run("callStreamFilter_onEvent_plus_togo_getter", func(t *testing.T) {
+			src := `export const meta = { apiVersion: 1, id: "acme.allocsf" };
+export function createStreamFilter() {
+  return {
+    onEvent() {
+      const a = new Uint8Array(40 * 1024 * 1024);
+      return {
+        get data() {
+          const b = new Uint8Array(30 * 1024 * 1024);
+          return String(a.length + b.length);
+        },
+      };
+    },
+  };
+}`
+			p := newStreamPlugin(t, "acme.allocsf", src, nil)
+			p.streamTimeout = time.Second
+			sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+			if err != nil {
+				t.Fatalf("OpenStreamFilter: %v", err)
+			}
+			_, _, _, err = sess.OnEvent(context.Background(), StreamTransformEvent{Data: "x"})
+			sess.Close()
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+				t.Fatalf("OnEvent err = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+			}
+			if !strings.Contains(call.Detail, wantLimitText) {
+				t.Fatalf("CallError.Detail = %q, want normalized %q", call.Detail, wantLimitText)
+			}
+		})
+
+		t.Run("argToValue_plus_call_combined_alloc_budget", func(t *testing.T) {
+			src := pipelineTestSource(`export function inspectSegments(ctx, input) {
+  const b = new Uint8Array(30 * 1024 * 1024);
+  return { reject: { status: 400, code: "ok", message: String(input.segments.length + b.length) } };
+}`)
+			p, err := NewPlugin(pipelineTestManifest(src, nil), src, nil, 1)
+			if err != nil {
+				t.Fatalf("NewPlugin: %v", err)
+			}
+			// 350k SegmentItems (~42.7 MiB) + 30 MiB Uint8Array > 64 MiB combined budget.
+			many := make([]SegmentItem, 350000)
+			_, _, _, err = p.callHook(context.Background(), HookInspectSegments, protocolHookTimeout, 0,
+				InspectSegmentsContext{Endpoint: "/v1/chat", Model: "m", Binding: InspectSegmentsBinding{ID: "b"}},
+				InspectSegmentsInput{Segments: many},
+			)
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindHeapLimit || call.Interrupt != "alloc_limit" {
+				t.Fatalf("err = %#v, want %s (alloc_limit)", err, KindHeapLimit)
+			}
+			if !strings.Contains(call.Detail, wantLimitText) {
+				t.Fatalf("CallError.Detail = %q, want normalized %q", call.Detail, wantLimitText)
+			}
+		})
+	})
+
+	// [P1-3] NewPluginTS prioritizes "plugin.ts" SHA-256 whenever present.
+	t.Run("p1_3_new_plugin_ts_dual_manifest_sha256", func(t *testing.T) {
+		goodTS := `export const meta = { apiVersion: 1, id: "acme.tsdual", kind: "quota_probe" } as const;
+export function probe(): { result: { kind: string; entries: Array<{ label: string; remaining: number }> } } {
+  return { result: { kind: "balance", entries: [{ label: "ok", remaining: 1 }] } };
+}`
+		evilTS := `export const meta = { apiVersion: 1, id: "acme.tsdual", kind: "quota_probe" } as const;
+export function probe(): { result: { kind: string; entries: Array<{ label: string; remaining: number }> } } {
+  return { result: { kind: "balance", entries: [{ label: "evil", remaining: 999 }] } };
+}`
+		compiledJS := `export const meta = { apiVersion: 1, id: "acme.tsdual", kind: "quota_probe" };
+export function probe() { return { result: { kind: "balance", entries: [{ label: "ok", remaining: 1 }] } }; }`
+
+		// Security bypass attempt: plugin.js matches evilTS, plugin.ts has goodTS hash -> must reject!
+		bypassManifest := testManifest("acme.tsdual", evilTS)
+		bypassManifest.SHA256 = map[string]string{
+			"plugin.js": HashSource(evilTS),
+			"plugin.ts": HashSource(goodTS),
+		}
+		if _, err := NewPluginTS(bypassManifest, evilTS, []Fixture{{Name: "unused"}}, 1); err == nil || !strings.Contains(err.Error(), "plugin.ts sha256") {
+			t.Fatalf("NewPluginTS(bypass dual manifest) err = %v, want plugin.ts sha256 mismatch", err)
+		}
+
+		// Legitimate dual-entry manifest: plugin.js has compiledJS hash, plugin.ts has goodTS hash -> must succeed!
+		dualManifest := testManifest("acme.tsdual", compiledJS)
+		dualManifest.SHA256 = map[string]string{
+			"plugin.js": HashSource(compiledJS),
+			"plugin.ts": HashSource(goodTS),
+		}
+		plugin, err := NewPluginTS(dualManifest, goodTS, []Fixture{{Name: "unused"}}, 1)
+		if err != nil {
+			t.Fatalf("NewPluginTS(valid dual manifest): %v", err)
+		}
+		if plugin.Manifest.SHA256["plugin.js"] != HashSource(compiledJS) || plugin.Manifest.SHA256["plugin.ts"] != HashSource(goodTS) {
+			t.Fatalf("manifest SHA256 mutated: %#v", plugin.Manifest.SHA256)
+		}
+	})
+
+	// [P1-4] SelfTest / RunFixture supports createStreamFilter for both kindless and site_provider plugins.
+	t.Run("p1_4_selftest_createStreamFilter_fixtures", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "acme.sffixture" };
+export function createStreamFilter(ctx) {
+  let buf = "";
+  const tag = (ctx.settings && ctx.settings.tag) || "def";
+  return {
+    onEvent(ev) {
+      if (ev.data === "BOOM") throw new Error("filter-event-boom");
+      if (ev.data === "STOP") return { data: "stopped", done: true };
+      buf += ev.data;
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return { drop: true };
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      storage.set("lastLine", line);
+      return { event: "line", data: tag + ":" + ctx.model + ":" + line };
+    },
+    onFlush() {
+      if (!buf) return {};
+      const rest = buf;
+      buf = "";
+      return { event: "flush", data: "tail:" + rest, done: true };
+    },
+  };
+}`
+		manifest := Manifest{
+			ID: "acme.sffixture", Name: "sffixture", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", License: "AGPL-3.0",
+			Permissions: []string{PermissionStorage},
+			Settings:    []SettingSpec{{Key: "tag", Type: SettingTypeString, Default: "v1"}},
+			SHA256:      map[string]string{"plugin.js": HashSource(source)},
+		}
+		fixtures := []Fixture{
+			{
+				Name: "object_input_with_flush_and_storage",
+				File: "fixtures/reassemble.json",
+				Hook: HookCreateStreamFilter,
+				Ctx:  fixtureContext{SiteType: "openai", Model: "gpt-4o", Protocol: "openai_chat", Settings: map[string]any{"tag": "v2"}},
+				Input: map[string]any{
+					"events": []any{
+						map[string]any{"data": "hel"},
+						map[string]any{"data": "lo\nrem"},
+					},
+				},
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{
+							map[string]any{"drop": true},
+							map[string]any{"event": "line", "data": "v2:gpt-4o:hello"},
+						},
+						"flush": map[string]any{"event": "flush", "data": "tail:rem", "done": true},
+					},
+					Storage: map[string]any{"lastLine": "hello"},
+				},
+			},
+			{
+				Name: "array_input_shorthand",
+				File: "fixtures/array.json",
+				Hook: HookCreateStreamFilter,
+				Ctx:  fixtureContext{Model: "m1"},
+				Input: []any{
+					map[string]any{"data": "abc\n"},
+				},
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{map[string]any{"event": "line", "data": "v1:m1:abc"}},
+					},
+				},
+			},
+			{
+				Name: "error_expectation",
+				File: "fixtures/err.json",
+				Hook: HookCreateStreamFilter,
+				Input: map[string]any{
+					"events": []any{map[string]any{"data": "BOOM"}},
+				},
+				Expect: fixtureExpectation{Error: "filter-event-boom"},
+			},
+			{
+				Name: "early_done_stops_remaining_events",
+				File: "fixtures/done.json",
+				Hook: HookCreateStreamFilter,
+				Input: map[string]any{
+					"events": []any{
+						map[string]any{"data": "STOP"},
+						map[string]any{"data": "BOOM"},
+					},
+				},
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{map[string]any{"data": "stopped", "done": true}},
+					},
+				},
+			},
+		}
+		plugin, err := NewPlugin(manifest, source, fixtures, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		if err := plugin.SelfTest(context.Background()); err != nil {
+			t.Fatalf("SelfTest(kindless createStreamFilter): %v", err)
+		}
+		// Verify mismatch fails RunFixture.
+		badFixture := fixtures[0]
+		badFixture.Expect.Result = map[string]any{
+			"flush": map[string]any{"data": "wrong"},
+		}
+		if err := plugin.RunFixture(context.Background(), badFixture); err == nil {
+			t.Fatal("RunFixture accepted mismatched flush expectation")
+		}
+
+		// Verify site_provider plugin accepts createStreamFilter fixture too.
+		spSrc := `export const meta = { apiVersion: 1, id: "acme.spfilter", kind: "site_provider" };
+export function createStreamFilter() {
+  return { onEvent(ev) { return { data: "sp:" + ev.data }; } };
+}`
+		spManifest := siteProviderManifest(spSrc)
+		spManifest.ID = "acme.spfilter"
+		spManifest.Name = "acme.spfilter"
+		spManifest.SiteProvider.SiteType = "acme.spfilter/demo"
+		spPlugin, err := NewPlugin(spManifest, spSrc, []Fixture{{
+			Name:  "sp_filter",
+			File:  "fixtures/sp-filter.json",
+			Hook:  HookCreateStreamFilter,
+			Input: map[string]any{"events": []any{map[string]any{"data": "hi"}}},
+			Expect: fixtureExpectation{
+				Result: map[string]any{
+					"events": []any{map[string]any{"data": "sp:hi"}},
+				},
+			},
+		}}, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin(site_provider createStreamFilter): %v", err)
+		}
+		if err := spPlugin.SelfTest(context.Background()); err != nil {
+			t.Fatalf("SelfTest(site_provider createStreamFilter): %v", err)
+		}
+	})
+
+	// [P1-5] Plugin.SetMaxSteps propagates to pool-created newSession (Load) runtimes
+	// in both primary pool and dedicated hotPool.
+	t.Run("p1_5_set_max_steps_propagates_to_pool_load", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "acme.loadsteps" };
+let initSum = 0;
+for (let i = 0; i < 400; i++) initSum += i;
+export function probe() {
+  for (;;) {}
+}
+export function createStreamFilter() {
+  return { onEvent() { for (;;) {} } };
+}`
+		manifest := Manifest{
+			ID: "acme.loadsteps", Name: "loadsteps", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", License: "AGPL-3.0",
+			SHA256: map[string]string{"plugin.js": HashSource(src)},
+		}
+		p, err := NewPlugin(manifest, src, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+		if !p.HasSeparateHotPool() {
+			t.Fatal("expected separate hotPool")
+		}
+		// Set step budget lower than the 400-iteration top-level module init loop.
+		p.SetMaxSteps(50)
+
+		// 1. Discard the pre-warmed primary pool session via step_limit, then verify
+		//    the replacement session spawned by pool fails Load with step_limit.
+		_, err = p.CallProbe(context.Background(), ProbeContext{}, nil)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("initial probe err = %#v, want step_limit", err)
+		}
+		_, err = p.CallProbe(context.Background(), ProbeContext{}, nil)
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("pool-recreated Load err = %#v, want step_limit", err)
+		}
+
+		// 2. Discard the pre-warmed hotPool session via step_limit, then verify
+		//    the replacement hotPool session fails Load with step_limit.
+		sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("initial OpenStreamFilter: %v", err)
+		}
+		_, _, _, err = sess.OnEvent(context.Background(), StreamTransformEvent{Data: "x"})
+		sess.Close()
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("initial OnEvent err = %#v, want step_limit", err)
+		}
+		_, err = p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("hotPool-recreated Load err = %#v, want step_limit", err)
+		}
+	})
+
+	// [P1-6] Plugin.Stats().AllocatedBytes is preserved across ToGo/Get on successful calls.
+	t.Run("p1_6_stats_allocated_bytes_preserved", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "xlyra.test.allocstats", kind: "quota_probe" };
+export function probe(ctx) {
+  if (ctx.baseURL === "big") {
+    const buf = new Uint8Array(8 * 1024 * 1024);
+    return { result: { kind: "balance", entries: [{ label: "n", remaining: buf.length }] } };
+  }
+  return { result: { kind: "balance", entries: [{ label: "n", remaining: 1 }] } };
+}`
+		p := mustTestPlugin(t, "xlyra.test.allocstats", src)
+		if _, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: "big"}, nil); err != nil {
+			t.Fatalf("CallProbe(big): %v", err)
+		}
+		bigAlloc := p.Stats().AllocatedBytes
+		if bigAlloc < 8<<20 {
+			t.Fatalf("Stats().AllocatedBytes after 8 MiB call = %d, want >= %d", bigAlloc, 8<<20)
+		}
+		// Follow-up small call updates AllocatedBytes down to the smaller allocation (not stuck at 8 MiB).
+		if _, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: "small"}, nil); err != nil {
+			t.Fatalf("CallProbe(small): %v", err)
+		}
+		smallAlloc := p.Stats().AllocatedBytes
+		if smallAlloc <= 0 || smallAlloc >= 1<<20 {
+			t.Fatalf("Stats().AllocatedBytes after small call = %d, want in (0, 1 MiB)", smallAlloc)
+		}
+
+		// Pre-cancelled context entering an already-acquired session resets
+		// lastAllocatedBytes/lastStepsUsed to 0 (instead of reporting stale values).
+		sess, err := p.pool.Acquire(context.Background())
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, _, _, discard, err := sess.call(cancelled, probeHookTimeout, p.program.hooks["probe"], []any{ProbeContext{}.asMap(), []any{}})
+		p.recordSessionStats(sess)
+		p.pool.Release(sess, discard)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("sess.call(cancelled) err = %v, want context.Canceled", err)
+		}
+		if st := p.Stats(); st.AllocatedBytes != 0 || st.StepsUsed != 0 {
+			t.Fatalf("Stats() after cancelled session call = %+v, want AllocatedBytes=0 StepsUsed=0", st)
+		}
+
+		// StreamFilterSession OnEvent / OnFlush also preserve AllocatedBytes and reset on cancelled ctx.
+		sfSrc := `export const meta = { apiVersion: 1, id: "acme.sfallocstats" };
+export function createStreamFilter() {
+  return {
+    onEvent() {
+      const buf = new Uint8Array(4 * 1024 * 1024);
+      return { data: String(buf.length) };
+    },
+  };
+}`
+		sfPlugin := newStreamPlugin(t, "acme.sfallocstats", sfSrc, nil)
+		sfPlugin.SetMaxSteps(500)
+		sfSess, err := sfPlugin.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter: %v", err)
+		}
+		defer sfSess.Close()
+		if _, _, _, err := sfSess.OnEvent(context.Background(), StreamTransformEvent{Data: "x"}); err != nil {
+			t.Fatalf("OnEvent: %v", err)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes < 4<<20 || st.StepsUsed <= 0 {
+			t.Fatalf("sfPlugin.Stats() after 4 MiB OnEvent = %+v, want AllocatedBytes >= 4 MiB and StepsUsed > 0", st)
+		}
+		if _, _, _, err := sfSess.OnEvent(cancelled, StreamTransformEvent{Data: "x"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("OnEvent(cancelled) err = %v, want context.Canceled", err)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes != 0 || st.StepsUsed != 0 {
+			t.Fatalf("sfPlugin.Stats() after cancelled OnEvent = %+v, want AllocatedBytes=0 StepsUsed=0", st)
+		}
+	})
+
+	// [P2-1] runWithBudgets enforces exact MaxSteps with zero overshoot across Call + ToGo/Get
+	// and normalizes StepLimitError limit/used.
+	t.Run("p2_1_zero_step_overshoot_and_normalized_error", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "xlyra.test.exactstep", kind: "quota_probe" };
+export function probe(ctx) {
+  let sum = 0;
+  for (let i = 0; i < 10; i++) sum += i;
+  if (ctx.baseURL === "plain") {
+    return { result: { kind: "balance", entries: [{ label: "ok", remaining: sum }] } };
+  }
+  if (ctx.baseURL === "one_step_getter") {
+    return {
+      get result() {
+        return { kind: "balance", entries: [{ label: "ok", remaining: sum }] };
+      },
+    };
+  }
+  return {
+    get result() {
+      let extra = 0;
+      for (let j = 0; j < 20; j++) extra += j;
+      return { kind: "balance", entries: [{ label: "ok", remaining: sum + extra }] };
+    },
+  };
+}`
+		p := mustTestPlugin(t, "xlyra.test.exactstep", src)
+		p.SetMaxSteps(1000)
+		if _, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: "plain"}, nil); err != nil {
+			t.Fatalf("measure CallProbe(plain): %v", err)
+		}
+		baseSteps := p.Stats().StepsUsed
+		if baseSteps <= 0 {
+			t.Fatalf("baseSteps = %d, want > 0", baseSteps)
+		}
+
+		// Exact budget succeeds for plain object ToGo (0 JS steps in ToGo).
+		p.SetMaxSteps(baseSteps)
+		if _, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: "plain"}, nil); err != nil {
+			t.Fatalf("CallProbe(plain) at exact MaxSteps=%d: %v", baseSteps, err)
+		}
+
+		// Exact budget rejects a 1-step ToGo getter (zero overshoot!).
+		_, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: "one_step_getter"}, nil)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("CallProbe(one_step_getter) at MaxSteps=%d err = %#v, want step_limit", baseSteps, err)
+		}
+		wantExact := fmt.Sprintf("used %d > limit %d", baseSteps+1, baseSteps)
+		if !strings.Contains(call.Detail, wantExact) {
+			t.Fatalf("CallError.Detail = %q, want %q", call.Detail, wantExact)
+		}
+		if st := p.Stats(); st.StepLimitHits != 1 || st.StepsUsed != baseSteps+1 {
+			t.Fatalf("Stats() = %+v, want StepLimitHits=1 StepsUsed=%d", st, baseSteps+1)
+		}
+
+		// Multi-step getter tripping under shrunk rem reports full MaxSteps (not rem).
+		budget := baseSteps + 2
+		p.SetMaxSteps(budget)
+		_, err = p.CallProbe(context.Background(), ProbeContext{BaseURL: "multi_step_getter"}, nil)
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("CallProbe(multi_step_getter) err = %#v, want step_limit", err)
+		}
+		wantNormLimit := fmt.Sprintf("limit %d", budget)
+		if !strings.Contains(call.Detail, wantNormLimit) {
+			t.Fatalf("CallError.Detail = %q, want normalized %q", call.Detail, wantNormLimit)
+		}
+	})
+
+	// [P2-2] Exception StackTrace captured inside RunContext + UTF-8-safe capping & no duplication.
+	t.Run("p2_2_utf8_safe_detail_capping_and_no_duplication", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "xlyra.test.utf8err", kind: "quota_probe" };
+export function probe(ctx) {
+  if (ctx.baseURL === "long_msg") {
+    throw new Error("中".repeat(2000));
+  }
+  if (ctx.baseURL === "long_stack") {
+    const e = new Error("short");
+    e.stack = "🔥".repeat(2000);
+    throw e;
+  }
+  function 递归函数名称很长用于测试截断(n) {
+    if (n <= 0) return 0;
+    return 1 + 递归函数名称很长用于测试截断(n - 1);
+  }
+  return { result: { kind: "balance", entries: [{ label: "n", remaining: 递归函数名称很长用于测试截断(500) }] } };
+}`
+		p := mustTestPlugin(t, "xlyra.test.utf8err", src)
+
+		for _, mode := range []string{"long_msg", "long_stack"} {
+			_, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: mode}, nil)
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindException {
+				t.Fatalf("mode %s err = %#v, want %s", mode, err, KindException)
+			}
+			if len(call.Detail) > maxErrorDetailBytes {
+				t.Fatalf("mode %s len(Detail) = %d, want <= %d", mode, len(call.Detail), maxErrorDetailBytes)
+			}
+			if !utf8.ValidString(call.Detail) {
+				t.Fatalf("mode %s Detail is invalid UTF-8", mode)
+			}
+			if mode == "long_msg" && strings.Count(call.Detail, "Error: ") > 1 {
+				t.Fatalf("mode %s duplicated Error message in Detail", mode)
+			}
+		}
+
+		// StepLimitError with multibyte UTF-8 function names in deep recursion stack stays valid UTF-8 <= 4096.
+		p.SetMaxSteps(200)
+		_, err := p.CallProbe(context.Background(), ProbeContext{BaseURL: "deep_utf8_step"}, nil)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("deep_utf8_step err = %#v, want step_limit", err)
+		}
+		if len(call.Detail) > maxErrorDetailBytes || !utf8.ValidString(call.Detail) {
+			t.Fatalf("step_limit Detail len=%d validUTF8=%v", len(call.Detail), utf8.ValidString(call.Detail))
+		}
+	})
+
+	// [P2-4] newSession (Load) and exportMeta preserve JS/TS stack traces and wrap as *CallError.
+	t.Run("p2_4_load_and_exportMeta_preserve_ts_stacks", func(t *testing.T) {
+		loadErrTS := `export const meta = { apiVersion: 1, id: "acme.tsloaderr", kind: "quota_probe" } as const;
+function blowUpAtLoad(msg: string): never {
+  throw new Error(msg);
+}
+blowUpAtLoad("top-level-ts-boom");
+export function probe() { return { result: { kind: "balance", entries: [] } }; }
+`
+		_, err := NewPluginTS(testManifest("acme.tsloaderr", loadErrTS), loadErrTS, []Fixture{{Name: "unused"}}, 1)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindException {
+			t.Fatalf("NewPluginTS(load throw) err = %#v, want wrapped %s", err, KindException)
+		}
+		if errors.Unwrap(call) == nil {
+			t.Fatal("CallError.Unwrap() = nil on load exception")
+		}
+		if !strings.Contains(call.Detail, "top-level-ts-boom") || !strings.Contains(call.Detail, "blowUpAtLoad") || !strings.Contains(call.Detail, "acme.tsloaderr.ts:3:") {
+			t.Fatalf("load CallError.Detail =\n%s\nwant message + blowUpAtLoad + acme.tsloaderr.ts:3:", call.Detail)
+		}
+
+		metaErrTS := `function failMetaGetter(): never {
+  throw new Error("meta-getter-ts-boom");
+}
+export const meta = {
+  get id(): string {
+    return failMetaGetter();
+  },
+};
+export function probe() { return { result: { kind: "balance", entries: [] } }; }
+`
+		_, err = NewPluginTS(testManifest("acme.tsmetaerr", metaErrTS), metaErrTS, []Fixture{{Name: "unused"}}, 1)
+		if !errors.As(err, &call) || call.Kind != KindException {
+			t.Fatalf("NewPluginTS(meta throw) err = %#v, want wrapped %s", err, KindException)
+		}
+		if errors.Unwrap(call) == nil {
+			t.Fatal("CallError.Unwrap() = nil on meta exception")
+		}
+		if !strings.Contains(call.Detail, "meta-getter-ts-boom") || !strings.Contains(call.Detail, "failMetaGetter") || !strings.Contains(call.Detail, "acme.tsmetaerr.ts:2:") {
+			t.Fatalf("meta CallError.Detail =\n%s\nwant message + failMetaGetter + acme.tsmetaerr.ts:2:", call.Detail)
+		}
+	})
+
+	// [P2-5] s.env.ctx uses deadline-bounded callCtx so storage.* calls respect hook timeout.
+	t.Run("p2_5_storage_calls_respect_hook_timeout_ctx", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "acme.slowstore" };
+export function probe(ctx) {
+  if (ctx.baseURL === "catch") {
+    try { storage.get("k"); } catch (e) { return { result: { kind: "balance", entries: [{ label: "swallowed", remaining: 1 }] } }; }
+  }
+  storage.get("k");
+  return { result: { kind: "balance", entries: [] } };
+}
+export function createStreamFilter(ctx) {
+  if (ctx.model === "open") {
+    storage.get("k");
+  }
+  return {
+    onEvent() {
+      storage.get("k");
+      return {};
+    },
+    onFlush() {
+      storage.get("k");
+      return {};
+    },
+  };
+}`
+		manifest := Manifest{
+			ID: "acme.slowstore", Name: "slowstore", Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", License: "AGPL-3.0",
+			Permissions: []string{PermissionStorage},
+			SHA256:      map[string]string{"plugin.js": HashSource(src)},
+		}
+		p, err := NewPlugin(manifest, src, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin: %v", err)
+		}
+
+		// 1. callHook (uncaught & caught) with parent context.Background() (no parent deadline).
+		for _, mode := range []string{"uncaught", "catch"} {
+			store := &blockingStorage{}
+			ctx := WithCallStorage(context.Background(), store)
+			started := time.Now()
+			_, _, _, err := p.callHook(ctx, "probe", 25*time.Millisecond, 0, ProbeContext{BaseURL: mode}.asMap(), []any{})
+			if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+				t.Fatalf("callHook(%s) took %s, want ~25ms timeout", mode, elapsed)
+			}
+			var call *CallError
+			if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "timeout" {
+				t.Fatalf("callHook(%s) err = %#v, want %s (timeout)", mode, err, KindTimeout)
+			}
+			store.mu.Lock()
+			saw := store.sawDeadline
+			store.mu.Unlock()
+			if !saw {
+				t.Fatalf("callHook(%s): storage received context without deadline", mode)
+			}
+		}
+
+		// 2. OpenStreamFilter (5ms streamHookTimeout) with parent context.Background().
+		openStore := &blockingStorage{}
+		started := time.Now()
+		_, err = p.OpenStreamFilter(WithCallStorage(context.Background(), openStore), StreamTransformContext{Model: "open"})
+		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+			t.Fatalf("OpenStreamFilter took %s, want ~5ms timeout", elapsed)
+		}
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "timeout" {
+			t.Fatalf("OpenStreamFilter err = %#v, want %s (timeout)", err, KindTimeout)
+		}
+		openStore.mu.Lock()
+		sawOpen := openStore.sawDeadline
+		openStore.mu.Unlock()
+		if !sawOpen {
+			t.Fatal("OpenStreamFilter: storage received context without deadline")
+		}
+
+		// 3. OnEvent (5ms streamHookTimeout) with parent context.Background().
+		evStore := &blockingStorage{}
+		sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{Model: "ok"})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(ok): %v", err)
+		}
+		started = time.Now()
+		_, _, _, err = sess.OnEvent(WithCallStorage(context.Background(), evStore), StreamTransformEvent{Data: "x"})
+		sess.Close()
+		if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+			t.Fatalf("OnEvent took %s, want ~5ms timeout", elapsed)
+		}
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "timeout" {
+			t.Fatalf("OnEvent err = %#v, want %s (timeout)", err, KindTimeout)
+		}
+		evStore.mu.Lock()
+		sawEv := evStore.sawDeadline
+		evStore.mu.Unlock()
+		if !sawEv {
+			t.Fatal("OnEvent: storage received context without deadline")
+		}
+	})
 }

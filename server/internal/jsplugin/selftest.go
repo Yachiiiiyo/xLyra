@@ -224,7 +224,7 @@ func fixtureRef(fixture Fixture) string {
 
 func isValidSiteProviderFixtureHook(hook string) bool {
 	switch hook {
-	case "probe", "listModels", "check", "classify", "classifyError", "rewritePayload", HookTransformStream,
+	case "probe", "listModels", "check", "classify", "classifyError", "rewritePayload", HookTransformStream, HookCreateStreamFilter,
 		"parsePricing", "describeModels",
 		"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
 		HookSignRequest, "onEvent", "handle", "onSchedule":
@@ -299,6 +299,8 @@ func (p *Plugin) runHookFixture(ctx context.Context, fixture Fixture) error {
 		return p.runStandaloneSignFixture(ctx, fixture)
 	case HookTransformStream:
 		return p.runTransformStreamFixture(ctx, fixture)
+	case HookCreateStreamFilter:
+		return p.runCreateStreamFilterFixture(ctx, fixture)
 	case HookParseError:
 		return p.runStandaloneParseErrorFixture(ctx, fixture)
 	case HookInspectSegments:
@@ -410,6 +412,70 @@ func (p *Plugin) runTransformStreamFixture(ctx context.Context, fixture Fixture)
 		Protocol: fixture.Ctx.Protocol,
 	}, in)
 	return compareOneShot(res, err, fixture)
+}
+
+type streamFilterFixtureInput struct {
+	Events []StreamTransformEvent `ts:"events"`
+	Flush  *bool                  `ts:"flush,optional"`
+}
+
+type streamFilterFixtureResult struct {
+	Events []StreamTransformResult `ts:"events"`
+	Flush  *StreamTransformResult  `ts:"flush,optional"`
+}
+
+func decodeStreamFilterFixtureInput(input any) (streamFilterFixtureInput, error) {
+	if input == nil {
+		return streamFilterFixtureInput{}, fmt.Errorf("input is required")
+	}
+	if arr, ok := input.([]any); ok {
+		input = map[string]any{"events": arr}
+	}
+	var in streamFilterFixtureInput
+	if err := decodeInto(input, &in, "input"); err != nil {
+		return streamFilterFixtureInput{}, err
+	}
+	return in, nil
+}
+
+func (p *Plugin) runCreateStreamFilterFixture(ctx context.Context, fixture Fixture) error {
+	in, err := decodeStreamFilterFixtureInput(fixture.Input)
+	if err != nil {
+		return err
+	}
+	sess, err := p.OpenStreamFilter(ctx, StreamTransformContext{
+		SiteType: fixture.Ctx.SiteType,
+		Model:    fixture.Ctx.Model,
+		Protocol: fixture.Ctx.Protocol,
+	})
+	if err != nil {
+		return compareOneShot(nil, err, fixture)
+	}
+	defer sess.Close()
+
+	events := make([]StreamTransformResult, 0, len(in.Events))
+	stopped := false
+	for _, ev := range in.Events {
+		res, _, _, err := sess.OnEvent(ctx, ev)
+		if err != nil {
+			return compareOneShot(nil, err, fixture)
+		}
+		events = append(events, res)
+		if res.Done {
+			stopped = true
+			break
+		}
+	}
+	out := streamFilterFixtureResult{Events: events}
+	shouldFlush := (!stopped && (in.Flush == nil || *in.Flush)) || (stopped && in.Flush != nil && *in.Flush)
+	if shouldFlush {
+		flushRes, _, _, err := sess.OnFlush(ctx)
+		if err != nil {
+			return compareOneShot(nil, err, fixture)
+		}
+		out.Flush = &flushRes
+	}
+	return compareOneShot(out, nil, fixture)
 }
 
 func (p *Plugin) runScheduleFixtureHook(ctx context.Context, fixture Fixture, hook string) error {

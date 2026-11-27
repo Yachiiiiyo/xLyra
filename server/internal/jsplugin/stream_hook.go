@@ -58,6 +58,13 @@ func (p *Plugin) HasStreamFilter() bool {
 	return p.HasHook(HookCreateStreamFilter)
 }
 
+func (p *Plugin) streamHookBudget() time.Duration {
+	if p != nil && p.streamTimeout > 0 {
+		return p.streamTimeout
+	}
+	return streamHookTimeout
+}
+
 // OpenStreamFilter acquires one runtime from the plugin's hot pool and invokes
 // createStreamFilter(ctx) to create a stateful SSE filter session.
 func (p *Plugin) OpenStreamFilter(ctx context.Context, streamCtx StreamTransformContext) (*StreamFilterSession, error) {
@@ -76,7 +83,7 @@ func (p *Plugin) OpenStreamFilter(ctx context.Context, streamCtx StreamTransform
 	}
 	ctxArg := p.injectContextSettings(ctx, streamCtx)
 	sess.setMaxSteps(p.maxSteps.Load())
-	handle, _, _, discard, callErr := sess.openStreamFilter(ctx, streamHookTimeout, hook, p.buildCallEnv(ctx), ctxArg)
+	handle, _, _, discard, callErr := sess.openStreamFilter(ctx, p.streamHookBudget(), hook, p.buildCallEnv(ctx), ctxArg)
 	p.recordSessionStats(sess)
 	if callErr != nil {
 		targetPool.Release(sess, discard || fatalRuntime(callErr))
@@ -112,7 +119,7 @@ func (f *StreamFilterSession) OnEvent(ctx context.Context, event StreamTransform
 	}
 	started := time.Now()
 	f.sess.setMaxSteps(f.plugin.maxSteps.Load())
-	out, logs, dropped, discard, callErr := f.sess.callStreamFilter(ctx, streamHookTimeout, f.handle, false, f.plugin.buildCallEnv(ctx), event)
+	out, logs, dropped, discard, callErr := f.sess.callStreamFilter(ctx, f.plugin.streamHookBudget(), f.handle, false, f.plugin.buildCallEnv(ctx), event)
 	f.plugin.recordSessionStats(f.sess)
 	if discard || fatalRuntime(callErr) {
 		f.poisoned = true
@@ -155,7 +162,7 @@ func (f *StreamFilterSession) OnFlush(ctx context.Context) (StreamTransformResul
 	}
 	started := time.Now()
 	f.sess.setMaxSteps(f.plugin.maxSteps.Load())
-	out, logs, dropped, discard, callErr := f.sess.callStreamFilter(ctx, streamHookTimeout, f.handle, true, f.plugin.buildCallEnv(ctx), StreamTransformEvent{})
+	out, logs, dropped, discard, callErr := f.sess.callStreamFilter(ctx, f.plugin.streamHookBudget(), f.handle, true, f.plugin.buildCallEnv(ctx), StreamTransformEvent{})
 	f.plugin.recordSessionStats(f.sess)
 	if discard || fatalRuntime(callErr) {
 		f.poisoned = true

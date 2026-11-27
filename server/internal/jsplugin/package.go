@@ -238,6 +238,9 @@ type Plugin struct {
 	icEntries          atomic.Int64
 	pendingJobs        atomic.Int64
 	registerStackBytes atomic.Int64
+	// streamTimeout overrides streamHookTimeout in white-box tests that allocate
+	// tens of MiB under -race; zero uses streamHookTimeout.
+	streamTimeout time.Duration
 }
 
 type callStorageCtxKey struct{}
@@ -546,15 +549,13 @@ func newPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	}
 	validateM := manifest
 	if isTS {
-		if _, hasJS := manifest.SHA256["plugin.js"]; !hasJS {
-			if sum, hasTS := manifest.SHA256["plugin.ts"]; hasTS {
-				if !strings.EqualFold(sum, hashSource(source)) {
-					return nil, fmt.Errorf("plugin.ts sha256 does not match the manifest")
-				}
-				clonedSHA := maps.Clone(manifest.SHA256)
-				clonedSHA["plugin.js"] = sum
-				validateM.SHA256 = clonedSHA
+		if sum, hasTS := manifest.SHA256["plugin.ts"]; hasTS {
+			if !strings.EqualFold(sum, hashSource(source)) {
+				return nil, fmt.Errorf("plugin.ts sha256 does not match the manifest")
 			}
+			clonedSHA := maps.Clone(manifest.SHA256)
+			clonedSHA["plugin.js"] = sum
+			validateM.SHA256 = clonedSHA
 		}
 	}
 	if err := validateManifest(validateM, source); err != nil {
@@ -607,7 +608,7 @@ func newPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 			return nil, fmt.Errorf("%s: signRequest needs protocol.auth \"none\", so the credential is only used for signing", manifest.ID)
 		}
 	}
-	loaded, err := newSession(program)
+	loaded, err := newSession(program, MaxSteps)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
@@ -677,7 +678,7 @@ func newPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 		plugin.maxSteps.Store(MaxSteps)
 	}
 	pool, err := newPool(primaryResident, maxPool, func() (*session, error) {
-		return newSession(program)
+		return newSession(program, plugin.maxSteps.Load())
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
@@ -689,7 +690,7 @@ func newPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 			hotResident = resident
 		}
 		hotPool, err := newPool(hotResident, protocolPoolMax, func() (*session, error) {
-			return newSession(program)
+			return newSession(program, plugin.maxSteps.Load())
 		})
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", manifest.ID, err)

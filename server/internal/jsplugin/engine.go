@@ -319,15 +319,18 @@ type callEnv struct {
 
 // session is one runtime borrowed from a pool.
 type session struct {
-	rt                 *moejs.Runtime
-	logs               *callLog
-	env                callEnv
-	liveDebt           int64
-	callsSinceCheck    int
-	lastStepsUsed      int64
-	recordedAllocHits  int64
-	recordedStepHits   int64
-	recordedInterrupts int64
+	rt                  *moejs.Runtime
+	logs                *callLog
+	env                 callEnv
+	liveDebt            int64
+	callsSinceCheck     int
+	lastStepsUsed       int64
+	lastAllocatedBytes  int64
+	extraAllocLimitHits int64
+	extraStepLimitHits  int64
+	recordedAllocHits   int64
+	recordedStepHits    int64
+	recordedInterrupts  int64
 }
 
 func (s *session) setMaxSteps(n int64) {
@@ -409,9 +412,9 @@ func (s *session) checkLiveLimitFilter(allocDelta int64, h *streamFilterHandle) 
 	}
 	s.liveDebt = 0
 	s.callsSinceCheck = 0
+	var roots [3]moejs.Value
+	n := 0
 	if h != nil {
-		var roots [3]moejs.Value
-		n := 0
 		if h.filterObj.IsObject() {
 			roots[n] = h.filterObj
 			n++
@@ -424,28 +427,30 @@ func (s *session) checkLiveLimitFilter(allocDelta int64, h *streamFilterHandle) 
 			roots[n] = h.onFlushFn
 			n++
 		}
-		if n > 0 {
-			if err := s.rt.Realm().CheckLiveLimitWith(nil, roots[:n]...); err != nil {
-				return err
-			}
-			h.lastLive = s.rt.Stats().LiveBytes
-		}
 	}
-	return s.rt.CheckLiveLimit()
+	err := s.rt.CheckLiveLimitWith(roots[:n]...)
+	if h != nil {
+		h.lastLive = s.rt.Stats().LiveBytes
+	}
+	return err
 }
 
 func (s *session) stats() RuntimeStats {
 	st := s.rt.Stats()
+	allocatedBytes := st.AllocatedBytes
+	if s.lastAllocatedBytes > allocatedBytes {
+		allocatedBytes = s.lastAllocatedBytes
+	}
 	stepsUsed := st.StepsUsed
 	if s.lastStepsUsed > stepsUsed {
 		stepsUsed = s.lastStepsUsed
 	}
 	return RuntimeStats{
-		AllocatedBytes:     st.AllocatedBytes,
+		AllocatedBytes:     allocatedBytes,
 		LiveBytes:          st.LiveBytes,
-		AllocLimitHits:     st.AllocLimitHits,
+		AllocLimitHits:     addSaturating(st.AllocLimitHits, s.extraAllocLimitHits),
 		StepsUsed:          stepsUsed,
-		StepLimitHits:      st.StepLimitHits,
+		StepLimitHits:      addSaturating(st.StepLimitHits, s.extraStepLimitHits),
 		Interrupts:         st.Interrupts,
 		ICEntries:          st.ICEntries,
 		PendingJobs:        st.PendingJobs,
@@ -470,7 +475,7 @@ func (s *session) collectStatsDelta() (snap RuntimeStats, allocHitsDelta, stepHi
 	return snap, allocHitsDelta, stepHitsDelta, interruptDelta
 }
 
-func classifySessionError(err error, runCtx context.Context) error {
+func classifySessionError(err error, runCtx context.Context, capturedStack string) error {
 	if err == nil {
 		return nil
 	}
@@ -481,10 +486,10 @@ func classifySessionError(err error, runCtx context.Context) error {
 		return stepLimitCallError(err, nil, 0)
 	}
 	if errors.Is(err, moejs.ErrLiveLimit) {
-		return &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: err.Error(), Err: err}
+		return &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: clipUTF8Bytes(err.Error(), maxErrorDetailBytes), Err: err}
 	}
 	if errors.Is(err, moejs.ErrResultTooLarge) {
-		return &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err}
+		return &CallError{Kind: KindResponseTooLarge, Detail: clipUTF8Bytes(err.Error(), maxErrorDetailBytes), Err: err}
 	}
 	if reason, interrupted := interruptReason(err); interrupted {
 		if errors.Is(err, errHookTimeout) || (runCtx != nil && errors.Is(context.Cause(runCtx), errHookTimeout)) {
@@ -492,10 +497,16 @@ func classifySessionError(err error, runCtx context.Context) error {
 		}
 		return &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err}
 	}
-	return err
+	if runCtx != nil && errors.Is(context.Cause(runCtx), errHookTimeout) {
+		return &CallError{Kind: KindTimeout, Interrupt: "timeout", Detail: "interrupted: timeout", Err: errHookTimeout}
+	}
+	return wrapEngineError(err, capturedStack)
 }
 
-func newSession(p *program) (*session, error) {
+func newSession(p *program, maxSteps int64) (*session, error) {
+	if maxSteps < 0 {
+		maxSteps = 0
+	}
 	logs := &callLog{}
 	rt := moejs.NewRuntime(moejs.Options{
 		DisableDynamicCode: true,
@@ -505,7 +516,7 @@ func newSession(p *program) (*session, error) {
 		MaxResultBytes:     MaxResultBytes,
 		MaxResultNodes:     MaxResultNodes,
 		MaxLiveBytes:       MaxLiveBytes,
-		MaxSteps:           MaxSteps,
+		MaxSteps:           maxSteps,
 	})
 	sess := &session{rt: rt, logs: logs}
 	if err := installHost(sess); err != nil {
@@ -513,15 +524,20 @@ func newSession(p *program) (*session, error) {
 	}
 	loadCtx, cancel := context.WithTimeoutCause(context.Background(), loadHookTimeout, errHookTimeout)
 	defer cancel()
+	var excStack string
 	if err := rt.RunContext(loadCtx, func(rt *moejs.Runtime) error {
-		return rt.Load(p.mod)
+		err := rt.Load(p.mod)
+		if err != nil {
+			excStack = captureExceptionStack(rt, err)
+		}
+		return err
 	}); err != nil {
-		return nil, classifySessionError(err, loadCtx)
+		return nil, classifySessionError(err, loadCtx, excStack)
 	}
 	rt.ClearInterrupt()
 	rt.ReleaseCallData()
 	if err := rt.CheckLiveLimit(); err != nil {
-		return nil, classifySessionError(err, nil)
+		return nil, classifySessionError(err, nil, "")
 	}
 	return sess, nil
 }
@@ -1689,15 +1705,14 @@ func inspectInputToValue(r *moejs.Realm, in InspectSegmentsInput) (moejs.Value, 
 	return newObjectFromValue(r, tplInspectInput, findingsVal, segmentsVal)
 }
 
+const maxErrorDetailBytes = 4096
+
 func allocLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
-	detail := err.Error()
+	detail := clipUTF8Bytes(err.Error(), maxErrorDetailBytes)
 	var lim *moejs.AllocLimitError
 	if errors.As(err, &lim) && lim.Stack != "" {
-		stack := lim.Stack
-		if len(stack) > 4096 {
-			stack = stack[:4096]
-		}
-		detail += "\n" + stack
+		stack := clipUTF8Bytes(lim.Stack, maxErrorDetailBytes)
+		detail = clipUTF8Bytes(detail+"\n"+stack, maxErrorDetailBytes)
 	}
 	return &CallError{
 		Kind:        KindHeapLimit,
@@ -1710,14 +1725,11 @@ func allocLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
 }
 
 func stepLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
-	detail := err.Error()
+	detail := clipUTF8Bytes(err.Error(), maxErrorDetailBytes)
 	var lim *moejs.StepLimitError
 	if errors.As(err, &lim) && lim.Stack != "" {
-		stack := lim.Stack
-		if len(stack) > 4096 {
-			stack = stack[:4096]
-		}
-		detail += "\n" + stack
+		stack := clipUTF8Bytes(lim.Stack, maxErrorDetailBytes)
+		detail = clipUTF8Bytes(detail+"\n"+stack, maxErrorDetailBytes)
 	}
 	return &CallError{
 		Kind:        KindTimeout,
@@ -1729,17 +1741,99 @@ func stepLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
 	}
 }
 
-func runWithStepBudget(rt *moejs.Runtime, maxSteps int64, used *int64, fn func() error) error {
-	if maxSteps > 0 {
-		rem := maxSteps - *used
-		if rem <= 0 {
-			rem = 1
+func captureExceptionStack(rt *moejs.Runtime, err error) string {
+	var exc *moejs.Exception
+	if errors.As(err, &exc) && exc.Stack == "" && rt != nil {
+		return rt.StackTrace(exc)
+	}
+	return ""
+}
+
+func (s *session) runWithBudgets(maxAlloc int64, allocUsed *int64, maxSteps int64, stepsUsed *int64, fn func() error) error {
+	rt := s.rt
+	if maxAlloc > 0 {
+		if *allocUsed > maxAlloc {
+			s.extraAllocLimitHits++
+			return &moejs.AllocLimitError{Limit: maxAlloc, Used: *allocUsed}
 		}
-		rt.SetMaxSteps(rem)
+		remAlloc := maxAlloc - *allocUsed
+		if remAlloc <= 0 {
+			// SetMaxAllocBytes(0) disables the budget in moejs; use 1 so zero-alloc
+			// operations (e.g., plain ToGo) can still complete while any allocation
+			// either trips immediately or is caught by the post-check below.
+			remAlloc = 1
+		}
+		rt.SetMaxAllocBytes(remAlloc)
+		defer rt.SetMaxAllocBytes(maxAlloc)
+	}
+	if maxSteps > 0 {
+		if *stepsUsed > maxSteps {
+			s.extraStepLimitHits++
+			return &moejs.StepLimitError{Limit: maxSteps, Used: *stepsUsed}
+		}
+		remSteps := maxSteps - *stepsUsed
+		if remSteps <= 0 {
+			// SetMaxSteps(0) disables the budget in moejs; use 1 so zero-step
+			// operations (e.g., plain ToGo or data-property Get) can complete while
+			// any JS frame execution is rejected by the post-check below.
+			remSteps = 1
+		}
+		rt.SetMaxSteps(remSteps)
 		defer rt.SetMaxSteps(maxSteps)
 	}
+	prevAlloc := *allocUsed
+	prevSteps := *stepsUsed
 	err := fn()
-	*used = addSaturating(*used, rt.StepsUsed())
+	allocDelta := rt.AllocatedBytes()
+	stepDelta := rt.StepsUsed()
+	*allocUsed = addSaturating(prevAlloc, allocDelta)
+	*stepsUsed = addSaturating(prevSteps, stepDelta)
+
+	if errors.Is(err, moejs.ErrAllocLimit) {
+		if maxAlloc > 0 {
+			var lim *moejs.AllocLimitError
+			if errors.As(err, &lim) {
+				return &moejs.AllocLimitError{
+					Limit:     maxAlloc,
+					Used:      addSaturating(prevAlloc, lim.Used),
+					Requested: lim.Requested,
+					Stack:     lim.Stack,
+				}
+			}
+		}
+		return err
+	}
+	if errors.Is(err, moejs.ErrStepLimit) {
+		if maxSteps > 0 {
+			var lim *moejs.StepLimitError
+			if errors.As(err, &lim) {
+				return &moejs.StepLimitError{
+					Limit: maxSteps,
+					Used:  *stepsUsed,
+					Stack: lim.Stack,
+				}
+			}
+		}
+		return err
+	}
+	if _, interrupted := interruptReason(err); interrupted {
+		return err
+	}
+	if maxAlloc > 0 && *allocUsed > maxAlloc {
+		s.extraAllocLimitHits++
+		return &moejs.AllocLimitError{
+			Limit:     maxAlloc,
+			Used:      prevAlloc,
+			Requested: allocDelta,
+		}
+	}
+	if maxSteps > 0 && *stepsUsed > maxSteps {
+		s.extraStepLimitHits++
+		return &moejs.StepLimitError{
+			Limit: maxSteps,
+			Used:  *stepsUsed,
+		}
+	}
 	return err
 }
 
@@ -1748,14 +1842,12 @@ func (s *session) call(ctx context.Context, timeout time.Duration, hook moejs.Ho
 }
 
 func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook moejs.Hook, env callEnv, args []any) (any, []LogEntry, int, bool, error) {
+	s.lastStepsUsed = 0
+	s.lastAllocatedBytes = 0
 	if err := ctx.Err(); err != nil {
 		return nil, nil, 0, false, err
 	}
 	s.logs.reset()
-	s.lastStepsUsed = 0
-	env.ctx = ctx
-	s.env = env
-	defer func() { s.env = callEnv{} }()
 
 	values := make([]moejs.Value, len(args))
 	r := s.rt.Realm()
@@ -1773,7 +1865,8 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		}
 	}
 	argErr = r.FinishOutermost(argErr)
-	callAlloc := addSaturating(r.AllocatedBytes(), unchargedGoBytes)
+	allocUsed := r.AllocatedBytes()
+	s.lastAllocatedBytes = allocUsed
 	if argErr != nil {
 		s.rt.ReleaseCallData()
 		if errors.Is(argErr, moejs.ErrAllocLimit) {
@@ -1784,28 +1877,40 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 
 	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
 	defer cancel()
+	env.ctx = callCtx
+	s.env = env
+	defer func() { s.env = callEnv{} }()
 
 	maxSteps := s.rt.MaxSteps()
 	var totalSteps int64
 	var out any
-	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
-		result, callErr := rt.Call(hook, values...)
-		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
-		totalSteps = addSaturating(totalSteps, rt.StepsUsed())
-		if callErr != nil {
+	var excStack string
+	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) (runErr error) {
+		defer func() {
+			if runErr != nil {
+				excStack = captureExceptionStack(rt, runErr)
+			}
+		}()
+		var result moejs.Value
+		if callErr := s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
+			var err error
+			result, err = rt.Call(hook, values...)
+			return err
+		}); callErr != nil {
 			return callErr
 		}
 		if _, _, ok := moejs.PromiseResult(result); ok {
 			return errReturnedPromise
 		}
-		return runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+		return s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
 			var toGoErr error
 			out, toGoErr = rt.ToGo(result)
-			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
 			return toGoErr
 		})
 	})
 	s.lastStepsUsed = totalSteps
+	s.lastAllocatedBytes = allocUsed
+	callAlloc := addSaturating(allocUsed, unchargedGoBytes)
 	logs, dropped := s.logs.snapshot()
 	if ctx.Err() != nil {
 		return nil, logs, dropped, true, ctx.Err()
@@ -1820,13 +1925,16 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		s.rt.ClearInterrupt()
 		s.rt.ReleaseCallData()
 		discard := s.checkLiveLimit(callAlloc) != nil
-		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: clipUTF8Bytes(err.Error(), maxErrorDetailBytes), Err: err, Logs: logs, DroppedLogs: dropped}
 	}
 	if reason, interrupted := interruptReason(err); interrupted {
 		if errors.Is(err, errHookTimeout) || errors.Is(context.Cause(callCtx), errHookTimeout) {
 			reason = "timeout"
 		}
 		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	if err != nil && errors.Is(context.Cause(callCtx), errHookTimeout) {
+		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: "timeout", Detail: "interrupted: timeout", Err: errHookTimeout, Logs: logs, DroppedLogs: dropped}
 	}
 	s.rt.ClearInterrupt()
 	if errors.Is(err, errReturnedPromise) {
@@ -1835,7 +1943,7 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		return nil, logs, dropped, discard, &CallError{Kind: KindShape, Detail: "hook returned a promise", Logs: logs, DroppedLogs: dropped}
 	}
 	if err != nil {
-		wrapped := s.wrapEngineError(err)
+		wrapped := wrapEngineError(err, excStack)
 		if call, ok := wrapped.(*CallError); ok {
 			call.Logs = logs
 			call.DroppedLogs = dropped
@@ -1849,26 +1957,25 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 	}
 	s.rt.ReleaseCallData()
 	if liveErr := s.checkLiveLimit(callAlloc); liveErr != nil {
-		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: clipUTF8Bytes(liveErr.Error(), maxErrorDetailBytes), Err: liveErr, Logs: logs, DroppedLogs: dropped}
 	}
 	return out, logs, dropped, false, nil
 }
 
 func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, hook moejs.Hook, env callEnv, ctxArg any) (*streamFilterHandle, []LogEntry, int, bool, error) {
+	s.lastStepsUsed = 0
+	s.lastAllocatedBytes = 0
 	if err := ctx.Err(); err != nil {
 		return nil, nil, 0, false, err
 	}
 	s.logs.reset()
-	s.lastStepsUsed = 0
-	env.ctx = ctx
-	s.env = env
-	defer func() { s.env = callEnv{} }()
 
 	r := s.rt.Realm()
 	r.SetAllocBudget(MaxAllocBytes)
 	ctxVal, unchargedGoBytes, argErr := argToValue(r, ctxArg)
 	argErr = r.FinishOutermost(argErr)
-	callAlloc := addSaturating(r.AllocatedBytes(), unchargedGoBytes)
+	allocUsed := r.AllocatedBytes()
+	s.lastAllocatedBytes = allocUsed
 	if argErr != nil {
 		s.rt.ReleaseCallData()
 		if errors.Is(argErr, moejs.ErrAllocLimit) {
@@ -1879,16 +1986,27 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 
 	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
 	defer cancel()
+	env.ctx = callCtx
+	s.env = env
+	defer func() { s.env = callEnv{} }()
 
 	maxSteps := s.rt.MaxSteps()
 	var totalSteps int64
 	var handle *streamFilterHandle
 	var shapeErr *CallError
-	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
-		filterObj, callErr := rt.Call(hook, ctxVal)
-		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
-		totalSteps = addSaturating(totalSteps, rt.StepsUsed())
-		if callErr != nil {
+	var excStack string
+	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) (runErr error) {
+		defer func() {
+			if runErr != nil {
+				excStack = captureExceptionStack(rt, runErr)
+			}
+		}()
+		var filterObj moejs.Value
+		if callErr := s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
+			var err error
+			filterObj, err = rt.Call(hook, ctxVal)
+			return err
+		}); callErr != nil {
 			return callErr
 		}
 		if _, _, ok := moejs.PromiseResult(filterObj); ok {
@@ -1899,10 +2017,9 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 			return nil
 		}
 		var onEventFn moejs.Value
-		if getErr := runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+		if getErr := s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
 			var err error
 			onEventFn, err = rt.Get(filterObj, "onEvent")
-			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
 			return err
 		}); getErr != nil {
 			return getErr
@@ -1912,10 +2029,9 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 			return nil
 		}
 		var onFlushFn moejs.Value
-		if getErr := runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+		if getErr := s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
 			var err error
 			onFlushFn, err = rt.Get(filterObj, "onFlush")
-			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
 			return err
 		}); getErr != nil {
 			return getErr
@@ -1937,6 +2053,8 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 		return nil
 	})
 	s.lastStepsUsed = totalSteps
+	s.lastAllocatedBytes = allocUsed
+	callAlloc := addSaturating(allocUsed, unchargedGoBytes)
 	logs, dropped := s.logs.snapshot()
 	if ctx.Err() != nil {
 		return nil, logs, dropped, true, ctx.Err()
@@ -1951,13 +2069,16 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 		s.rt.ClearInterrupt()
 		s.rt.ReleaseCallData()
 		discard := s.checkLiveLimit(callAlloc) != nil
-		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: clipUTF8Bytes(err.Error(), maxErrorDetailBytes), Err: err, Logs: logs, DroppedLogs: dropped}
 	}
 	if reason, interrupted := interruptReason(err); interrupted {
 		if errors.Is(err, errHookTimeout) || errors.Is(context.Cause(callCtx), errHookTimeout) {
 			reason = "timeout"
 		}
 		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	if err != nil && errors.Is(context.Cause(callCtx), errHookTimeout) {
+		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: "timeout", Detail: "interrupted: timeout", Err: errHookTimeout, Logs: logs, DroppedLogs: dropped}
 	}
 	s.rt.ClearInterrupt()
 	if errors.Is(err, errReturnedPromise) {
@@ -1973,7 +2094,7 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 		return nil, logs, dropped, discard, shapeErr
 	}
 	if err != nil {
-		wrapped := s.wrapEngineError(err)
+		wrapped := wrapEngineError(err, excStack)
 		if call, ok := wrapped.(*CallError); ok {
 			call.Logs = logs
 			call.DroppedLogs = dropped
@@ -1988,22 +2109,21 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 	s.rt.ReleaseCallData()
 	if liveErr := s.checkLiveLimitFilter(callAlloc, handle); liveErr != nil {
 		handle.clear()
-		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: clipUTF8Bytes(liveErr.Error(), maxErrorDetailBytes), Err: liveErr, Logs: logs, DroppedLogs: dropped}
 	}
 	return handle, logs, dropped, false, nil
 }
 
 func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, handle *streamFilterHandle, isFlush bool, env callEnv, event StreamTransformEvent) (any, []LogEntry, int, bool, error) {
+	s.lastStepsUsed = 0
+	s.lastAllocatedBytes = 0
 	if err := ctx.Err(); err != nil {
 		return nil, nil, 0, false, err
 	}
 	s.logs.reset()
-	s.lastStepsUsed = 0
-	env.ctx = ctx
-	s.env = env
-	defer func() { s.env = callEnv{} }()
 
-	var callAlloc int64
+	var allocUsed int64
+	var unchargedGoBytes int64
 	var eventVal moejs.Value
 	fn := handle.onEventFn
 	if isFlush {
@@ -2011,11 +2131,11 @@ func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, h
 	} else {
 		r := s.rt.Realm()
 		r.SetAllocBudget(MaxAllocBytes)
-		var unchargedGoBytes int64
 		var argErr error
 		eventVal, unchargedGoBytes, argErr = argToValue(r, event)
 		argErr = r.FinishOutermost(argErr)
-		callAlloc = addSaturating(r.AllocatedBytes(), unchargedGoBytes)
+		allocUsed = r.AllocatedBytes()
+		s.lastAllocatedBytes = allocUsed
 		if argErr != nil {
 			s.rt.ReleaseCallData()
 			if errors.Is(argErr, moejs.ErrAllocLimit) {
@@ -2027,34 +2147,44 @@ func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, h
 
 	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
 	defer cancel()
+	env.ctx = callCtx
+	s.env = env
+	defer func() { s.env = callEnv{} }()
 
 	maxSteps := s.rt.MaxSteps()
 	var totalSteps int64
 	var out any
-	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
+	var excStack string
+	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) (runErr error) {
+		defer func() {
+			if runErr != nil {
+				excStack = captureExceptionStack(rt, runErr)
+			}
+		}()
 		var result moejs.Value
-		var callErr error
-		if isFlush {
-			result, callErr = rt.CallFunction(fn, handle.filterObj)
-		} else {
-			result, callErr = rt.CallFunction(fn, handle.filterObj, eventVal)
-		}
-		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
-		totalSteps = addSaturating(totalSteps, rt.StepsUsed())
-		if callErr != nil {
+		if callErr := s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
+			var err error
+			if isFlush {
+				result, err = rt.CallFunction(fn, handle.filterObj)
+			} else {
+				result, err = rt.CallFunction(fn, handle.filterObj, eventVal)
+			}
+			return err
+		}); callErr != nil {
 			return callErr
 		}
 		if _, _, ok := moejs.PromiseResult(result); ok {
 			return errReturnedPromise
 		}
-		return runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+		return s.runWithBudgets(MaxAllocBytes, &allocUsed, maxSteps, &totalSteps, func() error {
 			var toGoErr error
 			out, toGoErr = rt.ToGo(result)
-			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
 			return toGoErr
 		})
 	})
 	s.lastStepsUsed = totalSteps
+	s.lastAllocatedBytes = allocUsed
+	callAlloc := addSaturating(allocUsed, unchargedGoBytes)
 	logs, dropped := s.logs.snapshot()
 	if ctx.Err() != nil {
 		return nil, logs, dropped, true, ctx.Err()
@@ -2069,13 +2199,16 @@ func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, h
 		s.rt.ClearInterrupt()
 		s.rt.ReleaseCallData()
 		discard := s.checkLiveLimitFilter(callAlloc, handle) != nil
-		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: clipUTF8Bytes(err.Error(), maxErrorDetailBytes), Err: err, Logs: logs, DroppedLogs: dropped}
 	}
 	if reason, interrupted := interruptReason(err); interrupted {
 		if errors.Is(err, errHookTimeout) || errors.Is(context.Cause(callCtx), errHookTimeout) {
 			reason = "timeout"
 		}
 		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	if err != nil && errors.Is(context.Cause(callCtx), errHookTimeout) {
+		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: "timeout", Detail: "interrupted: timeout", Err: errHookTimeout, Logs: logs, DroppedLogs: dropped}
 	}
 	s.rt.ClearInterrupt()
 	if errors.Is(err, errReturnedPromise) {
@@ -2084,7 +2217,7 @@ func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, h
 		return nil, logs, dropped, discard, &CallError{Kind: KindShape, Detail: "hook returned a promise", Logs: logs, DroppedLogs: dropped}
 	}
 	if err != nil {
-		wrapped := s.wrapEngineError(err)
+		wrapped := wrapEngineError(err, excStack)
 		if call, ok := wrapped.(*CallError); ok {
 			call.Logs = logs
 			call.DroppedLogs = dropped
@@ -2098,7 +2231,7 @@ func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, h
 	}
 	s.rt.ReleaseCallData()
 	if liveErr := s.checkLiveLimitFilter(callAlloc, handle); liveErr != nil {
-		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
+		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: clipUTF8Bytes(liveErr.Error(), maxErrorDetailBytes), Err: liveErr, Logs: logs, DroppedLogs: dropped}
 	}
 	return out, logs, dropped, false, nil
 }
@@ -2123,15 +2256,19 @@ func (s *session) exportMeta() (map[string]any, error) {
 	metaCtx, cancel := context.WithTimeoutCause(context.Background(), loadHookTimeout, errHookTimeout)
 	defer cancel()
 	var out any
+	var excStack string
 	err := s.rt.RunContext(metaCtx, func(rt *moejs.Runtime) error {
 		var toGoErr error
 		out, toGoErr = rt.ToGo(value)
+		if toGoErr != nil {
+			excStack = captureExceptionStack(rt, toGoErr)
+		}
 		return toGoErr
 	})
 	s.rt.ClearInterrupt()
 	s.rt.ReleaseCallData()
 	if err != nil {
-		return nil, classifySessionError(err, metaCtx)
+		return nil, classifySessionError(err, metaCtx, excStack)
 	}
 	meta, ok := out.(map[string]any)
 	if !ok {
@@ -2163,40 +2300,38 @@ func fatalRuntime(err error) bool {
 	return errors.As(err, &internal)
 }
 
-func (s *session) wrapEngineError(err error) error {
+func wrapEngineError(err error, capturedStack string) error {
 	var call *CallError
 	if errors.As(err, &call) {
 		return call
 	}
 	var exception *moejs.Exception
 	if errors.As(err, &exception) {
-		detail := exception.Message()
-		if detail == "" {
-			detail = exception.Error()
+		rawDetail := exception.Message()
+		if rawDetail == "" {
+			rawDetail = exception.Error()
 		}
-		stack := exception.Stack
-		if stack != "" {
-			if len(stack) > 4096 {
-				stack = stack[:4096]
+		detail := clipUTF8Bytes(rawDetail, maxErrorDetailBytes)
+		if exception.Stack != "" {
+			if rawDetail == "" || strings.Contains(exception.Stack, rawDetail) {
+				detail = clipUTF8Bytes(exception.Stack, maxErrorDetailBytes)
+			} else {
+				stack := clipUTF8Bytes(exception.Stack, maxErrorDetailBytes)
+				detail = clipUTF8Bytes(detail+"\n"+stack, maxErrorDetailBytes)
 			}
-			detail += "\n" + stack
-		} else if s != nil && s.rt != nil {
-			if rtStack := s.rt.StackTrace(exception); rtStack != "" {
-				if len(rtStack) > 4096 {
-					rtStack = rtStack[:4096]
-				}
-				if detail == "" || strings.Contains(rtStack, detail) {
-					detail = rtStack
-				} else {
-					detail += "\n" + rtStack
-				}
+		} else if capturedStack != "" {
+			if rawDetail == "" || strings.Contains(capturedStack, rawDetail) {
+				detail = clipUTF8Bytes(capturedStack, maxErrorDetailBytes)
+			} else {
+				rtStack := clipUTF8Bytes(capturedStack, maxErrorDetailBytes)
+				detail = clipUTF8Bytes(detail+"\n"+rtStack, maxErrorDetailBytes)
 			}
 		}
 		return &CallError{Kind: KindException, Detail: detail, Err: err}
 	}
 	var internal *moejs.InternalError
 	if errors.As(err, &internal) {
-		return &CallError{Kind: KindInternal, Detail: internal.Error(), Err: err}
+		return &CallError{Kind: KindInternal, Detail: clipUTF8Bytes(internal.Error(), maxErrorDetailBytes), Err: err}
 	}
-	return &CallError{Kind: KindException, Detail: err.Error(), Err: err}
+	return &CallError{Kind: KindException, Detail: clipUTF8Bytes(err.Error(), maxErrorDetailBytes), Err: err}
 }
