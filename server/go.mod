@@ -28,7 +28,7 @@ require (
 )
 
 require (
-	github.com/Yachiiiiyo/moejs v0.1.0-yachiyo.3
+	github.com/Yachiiiiyo/moejs v0.1.0-yachiyo.4
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
