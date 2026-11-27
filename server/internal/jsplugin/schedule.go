@@ -173,7 +173,9 @@ func (p *Plugin) CallSchedule(ctx context.Context, ctxMap map[string]any, steps 
 		return ScheduleDecision{}, fmt.Errorf("%s hook is missing", HookOnSchedule)
 	}
 	ctxArg := p.injectContextSettings(ctx, ctxMap)
+	session.setMaxSteps(p.maxSteps.Load())
 	out, logs, dropped, discard, callErr := session.callWithEnv(ctx, scheduleHookTimeout, hook, p.buildCallEnv(ctx), []any{ctxArg, stepsAsValue(steps)})
+	p.recordSessionStats(session)
 	targetPool.Release(session, discard || fatalRuntime(callErr))
 	duration := time.Since(started).Milliseconds()
 	if callErr != nil {

@@ -486,6 +486,40 @@ func TestVerifyPrintsTopLevelIcon(t *testing.T) {
 	if !strings.Contains(out, "icon assets/icon.png 64x64 不透明 100% 亮度 1.00\n") {
 		t.Fatalf("verify output:\n%s", out)
 	}
+	if !strings.Contains(out, "\nanalysis functions=") || !strings.Contains(out, "instructions=") || !strings.Contains(out, "regexps=") || !strings.Contains(out, "globals=") {
+		t.Fatalf("verify output missing static analysis summary:\n%s", out)
+	}
+}
+
+func TestVerifyPrintsStaticAnalysisFlagsAndRegExps(t *testing.T) {
+	dir := newProject(t, jsplugin.KindQuotaProbe, "acme-analyze")
+	entry := filepath.Join(dir, "src", "index.ts")
+	rawSrc, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(string(rawSrc), "export function probe(", "export function _unusedAuditCheck(flag: boolean) { if (flag) { eval(\"1\"); } return /[0-9]+/.test(\"1\"); }\nexport function probe(", 1)
+	if patched == string(rawSrc) {
+		t.Fatal("scaffolded source did not contain export function probe(")
+	}
+	if err := os.WriteFile(entry, []byte(patched), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	built, err := buildProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, _, err := built.assemble()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() { err = verifyPackage(raw) })
+	if err != nil {
+		t.Fatalf("verifyPackage: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "analysis functions=") || !strings.Contains(out, "regexps=1") || !strings.Contains(out, "flags=eval") {
+		t.Fatalf("verify output missing expected analysis metrics/flags:\n%s", out)
+	}
 }
 
 func TestPackRejectsDarkTransparentIcon(t *testing.T) {

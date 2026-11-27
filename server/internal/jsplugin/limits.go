@@ -36,6 +36,9 @@ const (
 	MaxResultNodes int64 = 1 << 20
 	// MaxLiveBytes is the live JS heap limit checked after each call before returning a runtime to the pool.
 	MaxLiveBytes int64 = 16 << 20
+	// MaxSteps is the default per-call execution step budget passed to moejs.
+	// Zero disables the step budget by default; hosts and tests may override it per plugin via SetMaxSteps.
+	MaxSteps int64 = 0
 	// MaxStreamEventBytes bounds a single SSE frame data payload returned by transformStream.
 	MaxStreamEventBytes   = 1 << 20
 	maxRequestHeaders     = 32

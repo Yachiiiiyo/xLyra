@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -47,16 +49,104 @@ type RuntimeStats struct {
 	AllocatedBytes     int64
 	LiveBytes          int64
 	AllocLimitHits     int64
+	StepsUsed          int64
+	StepLimitHits      int64
 	Interrupts         int64
 	ICEntries          int
 	PendingJobs        int
 	RegisterStackBytes int64
 }
 
+// ModuleAnalysis is a pure-Go static security and complexity summary of a
+// compiled plugin module, computed directly from bytecode without executing code.
+type ModuleAnalysis struct {
+	Exports           []string
+	Imports           []string
+	Globals           []string
+	GlobalsRead       []string
+	GlobalsWritten    []string
+	UsesEval          bool
+	UsesFunctionCtor  bool
+	UsesDynamicImport bool
+	UsesImportMeta    bool
+	UsesAsync         bool
+	UsesGenerators    bool
+	UsesWith          bool
+	FunctionCount     int
+	InstructionCount  int
+	BytecodeWords     int
+	ConstantCount     int
+	RegExpCount       int
+	MaxRegs           int
+	MaxHandlers       int
+	MaxLine           int
+}
+
+func fromMoejsAnalysis(a moejs.ModuleAnalysis) ModuleAnalysis {
+	return ModuleAnalysis{
+		Exports:           slices.Clone(a.Exports),
+		Imports:           slices.Clone(a.Imports),
+		Globals:           slices.Clone(a.Globals),
+		GlobalsRead:       slices.Clone(a.GlobalsRead),
+		GlobalsWritten:    slices.Clone(a.GlobalsWritten),
+		UsesEval:          a.UsesEval,
+		UsesFunctionCtor:  a.UsesFunctionCtor,
+		UsesDynamicImport: a.UsesDynamicImport,
+		UsesImportMeta:    a.UsesImportMeta,
+		UsesAsync:         a.UsesAsync,
+		UsesGenerators:    a.UsesGenerators,
+		UsesWith:          a.UsesWith,
+		FunctionCount:     a.FunctionCount,
+		InstructionCount:  a.InstructionCount,
+		BytecodeWords:     a.BytecodeWords,
+		ConstantCount:     a.ConstantCount,
+		RegExpCount:       a.RegExpCount,
+		MaxRegs:           a.MaxRegs,
+		MaxHandlers:       a.MaxHandlers,
+		MaxLine:           a.MaxLine,
+	}
+}
+
+func cloneModuleAnalysis(a ModuleAnalysis) ModuleAnalysis {
+	a.Exports = slices.Clone(a.Exports)
+	a.Imports = slices.Clone(a.Imports)
+	a.Globals = slices.Clone(a.Globals)
+	a.GlobalsRead = slices.Clone(a.GlobalsRead)
+	a.GlobalsWritten = slices.Clone(a.GlobalsWritten)
+	return a
+}
+
+// AnalyzeSource compiles, verifies, and statically analyzes JavaScript ES
+// module source without executing any code.
+func AnalyzeSource(name, source string) (ModuleAnalysis, error) {
+	mod, err := moejs.Compile(name, source)
+	if err != nil {
+		return ModuleAnalysis{}, err
+	}
+	if err := mod.Verify(); err != nil {
+		return ModuleAnalysis{}, fmt.Errorf("bytecode verify: %w", err)
+	}
+	return fromMoejsAnalysis(mod.Analyze()), nil
+}
+
+// AnalyzeTypeScriptSource compiles (via in-parser type stripping), verifies,
+// and statically analyzes TypeScript ES module source without executing any code.
+func AnalyzeTypeScriptSource(name, source string) (ModuleAnalysis, error) {
+	mod, err := moejs.CompileTS(name, source)
+	if err != nil {
+		return ModuleAnalysis{}, err
+	}
+	if err := mod.Verify(); err != nil {
+		return ModuleAnalysis{}, fmt.Errorf("bytecode verify: %w", err)
+	}
+	return fromMoejsAnalysis(mod.Analyze()), nil
+}
+
 // program is one compiled plugin module. It is safe to load from many runtimes.
 type program struct {
-	mod   *moejs.Module
-	hooks map[string]moejs.Hook
+	mod      *moejs.Module
+	hooks    map[string]moejs.Hook
+	analysis ModuleAnalysis
 }
 
 // addOptionalHooks resolves the hooks a kind allows but does not require. A
@@ -130,6 +220,21 @@ func compileProgram(name, source string, hookNames ...string) (*program, error) 
 	if err != nil {
 		return nil, err
 	}
+	return buildProgram(mod, hookNames...)
+}
+
+func compileProgramTS(name, source string, hookNames ...string) (*program, error) {
+	mod, err := moejs.CompileTS(name, source)
+	if err != nil {
+		return nil, err
+	}
+	return buildProgram(mod, hookNames...)
+}
+
+func buildProgram(mod *moejs.Module, hookNames ...string) (*program, error) {
+	if err := mod.Verify(); err != nil {
+		return nil, fmt.Errorf("bytecode verify: %w", err)
+	}
 	if requests := mod.Requests(); len(requests) > 0 {
 		return nil, fmt.Errorf("module imports %q", requests[0])
 	}
@@ -141,7 +246,11 @@ func compileProgram(name, source string, hookNames ...string) (*program, error) 
 		}
 		hooks[hookName] = hook
 	}
-	return &program{mod: mod, hooks: hooks}, nil
+	return &program{
+		mod:      mod,
+		hooks:    hooks,
+		analysis: fromMoejsAnalysis(mod.Analyze()),
+	}, nil
 }
 
 type callLog struct {
@@ -210,11 +319,39 @@ type callEnv struct {
 
 // session is one runtime borrowed from a pool.
 type session struct {
-	rt              *moejs.Runtime
-	logs            *callLog
-	env             callEnv
-	liveDebt        int64
-	callsSinceCheck int
+	rt                 *moejs.Runtime
+	logs               *callLog
+	env                callEnv
+	liveDebt           int64
+	callsSinceCheck    int
+	lastStepsUsed      int64
+	recordedAllocHits  int64
+	recordedStepHits   int64
+	recordedInterrupts int64
+}
+
+func (s *session) setMaxSteps(n int64) {
+	s.rt.SetMaxSteps(n)
+}
+
+// streamFilterHandle holds opaque moejs values for one open StreamFilterSession.
+type streamFilterHandle struct {
+	filterObj moejs.Value
+	onEventFn moejs.Value
+	onFlushFn moejs.Value
+	hasFlush  bool
+	lastLive  int64
+}
+
+func (h *streamFilterHandle) clear() {
+	if h == nil {
+		return
+	}
+	h.filterObj = moejs.Undefined()
+	h.onEventFn = moejs.Undefined()
+	h.onFlushFn = moejs.Undefined()
+	h.hasFlush = false
+	h.lastLive = 0
 }
 
 func addSaturating(a, b int64) int64 {
@@ -244,17 +381,93 @@ func (s *session) checkLiveLimit(allocDelta int64) error {
 	return s.rt.CheckLiveLimit()
 }
 
+func (s *session) forceCheckLiveLimit() error {
+	limit := s.rt.MaxLiveBytes()
+	if limit <= 0 {
+		return nil
+	}
+	s.liveDebt = 0
+	s.callsSinceCheck = 0
+	return s.rt.CheckLiveLimit()
+}
+
+func (s *session) checkLiveLimitFilter(allocDelta int64, h *streamFilterHandle) error {
+	limit := s.rt.MaxLiveBytes()
+	if limit <= 0 {
+		return nil
+	}
+	if allocDelta > 0 {
+		s.liveDebt = addSaturating(s.liveDebt, allocDelta)
+	}
+	s.callsSinceCheck++
+	baseLive := s.rt.Stats().LiveBytes
+	if h != nil && h.lastLive > baseLive {
+		baseLive = h.lastLive
+	}
+	if s.callsSinceCheck < liveCheckCallInterval && addSaturating(baseLive, s.liveDebt) <= limit {
+		return nil
+	}
+	s.liveDebt = 0
+	s.callsSinceCheck = 0
+	if h != nil {
+		var roots [3]moejs.Value
+		n := 0
+		if h.filterObj.IsObject() {
+			roots[n] = h.filterObj
+			n++
+		}
+		if h.onEventFn.IsObject() {
+			roots[n] = h.onEventFn
+			n++
+		}
+		if h.hasFlush && h.onFlushFn.IsObject() {
+			roots[n] = h.onFlushFn
+			n++
+		}
+		if n > 0 {
+			if err := s.rt.Realm().CheckLiveLimitWith(nil, roots[:n]...); err != nil {
+				return err
+			}
+			h.lastLive = s.rt.Stats().LiveBytes
+		}
+	}
+	return s.rt.CheckLiveLimit()
+}
+
 func (s *session) stats() RuntimeStats {
 	st := s.rt.Stats()
+	stepsUsed := st.StepsUsed
+	if s.lastStepsUsed > stepsUsed {
+		stepsUsed = s.lastStepsUsed
+	}
 	return RuntimeStats{
 		AllocatedBytes:     st.AllocatedBytes,
 		LiveBytes:          st.LiveBytes,
 		AllocLimitHits:     st.AllocLimitHits,
+		StepsUsed:          stepsUsed,
+		StepLimitHits:      st.StepLimitHits,
 		Interrupts:         st.Interrupts,
 		ICEntries:          st.ICEntries,
 		PendingJobs:        st.PendingJobs,
 		RegisterStackBytes: st.RegisterStackBytes,
 	}
+}
+
+func (s *session) collectStatsDelta() (snap RuntimeStats, allocHitsDelta, stepHitsDelta, interruptDelta int64) {
+	snap = s.stats()
+	if snap.AllocLimitHits > s.recordedAllocHits {
+		allocHitsDelta = snap.AllocLimitHits - s.recordedAllocHits
+		s.recordedAllocHits = snap.AllocLimitHits
+	}
+	if snap.StepLimitHits > s.recordedStepHits {
+		stepHitsDelta = snap.StepLimitHits - s.recordedStepHits
+		s.recordedStepHits = snap.StepLimitHits
+	}
+	if snap.Interrupts > s.recordedInterrupts {
+		interruptDelta = snap.Interrupts - s.recordedInterrupts
+		s.recordedInterrupts = snap.Interrupts
+	}
+	return snap, allocHitsDelta, stepHitsDelta, interruptDelta
 }
 
 func classifySessionError(err error, runCtx context.Context) error {
@@ -263,6 +476,9 @@ func classifySessionError(err error, runCtx context.Context) error {
 	}
 	if errors.Is(err, moejs.ErrAllocLimit) {
 		return allocLimitCallError(err, nil, 0)
+	}
+	if errors.Is(err, moejs.ErrStepLimit) {
+		return stepLimitCallError(err, nil, 0)
 	}
 	if errors.Is(err, moejs.ErrLiveLimit) {
 		return &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: err.Error(), Err: err}
@@ -289,6 +505,7 @@ func newSession(p *program) (*session, error) {
 		MaxResultBytes:     MaxResultBytes,
 		MaxResultNodes:     MaxResultNodes,
 		MaxLiveBytes:       MaxLiveBytes,
+		MaxSteps:           MaxSteps,
 	})
 	sess := &session{rt: rt, logs: logs}
 	if err := installHost(sess); err != nil {
@@ -1492,6 +1709,40 @@ func allocLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
 	}
 }
 
+func stepLimitCallError(err error, logs []LogEntry, dropped int) *CallError {
+	detail := err.Error()
+	var lim *moejs.StepLimitError
+	if errors.As(err, &lim) && lim.Stack != "" {
+		stack := lim.Stack
+		if len(stack) > 4096 {
+			stack = stack[:4096]
+		}
+		detail += "\n" + stack
+	}
+	return &CallError{
+		Kind:        KindTimeout,
+		Interrupt:   "step_limit",
+		Detail:      detail,
+		Err:         err,
+		Logs:        logs,
+		DroppedLogs: dropped,
+	}
+}
+
+func runWithStepBudget(rt *moejs.Runtime, maxSteps int64, used *int64, fn func() error) error {
+	if maxSteps > 0 {
+		rem := maxSteps - *used
+		if rem <= 0 {
+			rem = 1
+		}
+		rt.SetMaxSteps(rem)
+		defer rt.SetMaxSteps(maxSteps)
+	}
+	err := fn()
+	*used = addSaturating(*used, rt.StepsUsed())
+	return err
+}
+
 func (s *session) call(ctx context.Context, timeout time.Duration, hook moejs.Hook, args []any) (any, []LogEntry, int, bool, error) {
 	return s.callWithEnv(ctx, timeout, hook, callEnv{}, args)
 }
@@ -1501,6 +1752,7 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		return nil, nil, 0, false, err
 	}
 	s.logs.reset()
+	s.lastStepsUsed = 0
 	env.ctx = ctx
 	s.env = env
 	defer func() { s.env = callEnv{} }()
@@ -1533,27 +1785,36 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
 	defer cancel()
 
+	maxSteps := s.rt.MaxSteps()
+	var totalSteps int64
 	var out any
 	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
 		result, callErr := rt.Call(hook, values...)
 		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+		totalSteps = addSaturating(totalSteps, rt.StepsUsed())
 		if callErr != nil {
 			return callErr
 		}
 		if _, _, ok := moejs.PromiseResult(result); ok {
 			return errReturnedPromise
 		}
-		var toGoErr error
-		out, toGoErr = rt.ToGo(result)
-		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
-		return toGoErr
+		return runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+			var toGoErr error
+			out, toGoErr = rt.ToGo(result)
+			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+			return toGoErr
+		})
 	})
+	s.lastStepsUsed = totalSteps
 	logs, dropped := s.logs.snapshot()
 	if ctx.Err() != nil {
 		return nil, logs, dropped, true, ctx.Err()
 	}
 	if errors.Is(err, moejs.ErrAllocLimit) {
 		return nil, logs, dropped, true, allocLimitCallError(err, logs, dropped)
+	}
+	if errors.Is(err, moejs.ErrStepLimit) {
+		return nil, logs, dropped, true, stepLimitCallError(err, logs, dropped)
 	}
 	if errors.Is(err, moejs.ErrResultTooLarge) {
 		s.rt.ClearInterrupt()
@@ -1574,7 +1835,7 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		return nil, logs, dropped, discard, &CallError{Kind: KindShape, Detail: "hook returned a promise", Logs: logs, DroppedLogs: dropped}
 	}
 	if err != nil {
-		wrapped := wrapEngineError(err)
+		wrapped := s.wrapEngineError(err)
 		if call, ok := wrapped.(*CallError); ok {
 			call.Logs = logs
 			call.DroppedLogs = dropped
@@ -1591,6 +1852,267 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
 	}
 	return out, logs, dropped, false, nil
+}
+
+func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, hook moejs.Hook, env callEnv, ctxArg any) (*streamFilterHandle, []LogEntry, int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, 0, false, err
+	}
+	s.logs.reset()
+	s.lastStepsUsed = 0
+	env.ctx = ctx
+	s.env = env
+	defer func() { s.env = callEnv{} }()
+
+	r := s.rt.Realm()
+	r.SetAllocBudget(MaxAllocBytes)
+	ctxVal, unchargedGoBytes, argErr := argToValue(r, ctxArg)
+	argErr = r.FinishOutermost(argErr)
+	callAlloc := addSaturating(r.AllocatedBytes(), unchargedGoBytes)
+	if argErr != nil {
+		s.rt.ReleaseCallData()
+		if errors.Is(argErr, moejs.ErrAllocLimit) {
+			return nil, nil, 0, true, allocLimitCallError(argErr, nil, 0)
+		}
+		return nil, nil, 0, false, argErr
+	}
+
+	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
+	defer cancel()
+
+	maxSteps := s.rt.MaxSteps()
+	var totalSteps int64
+	var handle *streamFilterHandle
+	var shapeErr *CallError
+	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
+		filterObj, callErr := rt.Call(hook, ctxVal)
+		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+		totalSteps = addSaturating(totalSteps, rt.StepsUsed())
+		if callErr != nil {
+			return callErr
+		}
+		if _, _, ok := moejs.PromiseResult(filterObj); ok {
+			return errReturnedPromise
+		}
+		if !filterObj.IsObject() {
+			shapeErr = shapeError("createStreamFilter must return an object")
+			return nil
+		}
+		var onEventFn moejs.Value
+		if getErr := runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+			var err error
+			onEventFn, err = rt.Get(filterObj, "onEvent")
+			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+			return err
+		}); getErr != nil {
+			return getErr
+		}
+		if !onEventFn.IsObject() || !onEventFn.AsObject().IsCallable() {
+			shapeErr = shapeError("createStreamFilter: onEvent must be a function")
+			return nil
+		}
+		var onFlushFn moejs.Value
+		if getErr := runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+			var err error
+			onFlushFn, err = rt.Get(filterObj, "onFlush")
+			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+			return err
+		}); getErr != nil {
+			return getErr
+		}
+		hasFlush := false
+		if !onFlushFn.IsUndefined() && !onFlushFn.IsNull() {
+			if !onFlushFn.IsObject() || !onFlushFn.AsObject().IsCallable() {
+				shapeErr = shapeError("createStreamFilter: onFlush must be a function")
+				return nil
+			}
+			hasFlush = true
+		}
+		handle = &streamFilterHandle{
+			filterObj: filterObj,
+			onEventFn: onEventFn,
+			onFlushFn: onFlushFn,
+			hasFlush:  hasFlush,
+		}
+		return nil
+	})
+	s.lastStepsUsed = totalSteps
+	logs, dropped := s.logs.snapshot()
+	if ctx.Err() != nil {
+		return nil, logs, dropped, true, ctx.Err()
+	}
+	if errors.Is(err, moejs.ErrAllocLimit) {
+		return nil, logs, dropped, true, allocLimitCallError(err, logs, dropped)
+	}
+	if errors.Is(err, moejs.ErrStepLimit) {
+		return nil, logs, dropped, true, stepLimitCallError(err, logs, dropped)
+	}
+	if errors.Is(err, moejs.ErrResultTooLarge) {
+		s.rt.ClearInterrupt()
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimit(callAlloc) != nil
+		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	if reason, interrupted := interruptReason(err); interrupted {
+		if errors.Is(err, errHookTimeout) || errors.Is(context.Cause(callCtx), errHookTimeout) {
+			reason = "timeout"
+		}
+		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	s.rt.ClearInterrupt()
+	if errors.Is(err, errReturnedPromise) {
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimit(callAlloc) != nil
+		return nil, logs, dropped, discard, &CallError{Kind: KindShape, Detail: "hook returned a promise", Logs: logs, DroppedLogs: dropped}
+	}
+	if shapeErr != nil {
+		shapeErr.Logs = logs
+		shapeErr.DroppedLogs = dropped
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimit(callAlloc) != nil
+		return nil, logs, dropped, discard, shapeErr
+	}
+	if err != nil {
+		wrapped := s.wrapEngineError(err)
+		if call, ok := wrapped.(*CallError); ok {
+			call.Logs = logs
+			call.DroppedLogs = dropped
+		}
+		if fatalRuntime(wrapped) {
+			return nil, logs, dropped, true, wrapped
+		}
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimit(callAlloc) != nil
+		return nil, logs, dropped, discard, wrapped
+	}
+	s.rt.ReleaseCallData()
+	if liveErr := s.checkLiveLimitFilter(callAlloc, handle); liveErr != nil {
+		handle.clear()
+		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
+	}
+	return handle, logs, dropped, false, nil
+}
+
+func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, handle *streamFilterHandle, isFlush bool, env callEnv, event StreamTransformEvent) (any, []LogEntry, int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, 0, false, err
+	}
+	s.logs.reset()
+	s.lastStepsUsed = 0
+	env.ctx = ctx
+	s.env = env
+	defer func() { s.env = callEnv{} }()
+
+	var callAlloc int64
+	var eventVal moejs.Value
+	fn := handle.onEventFn
+	if isFlush {
+		fn = handle.onFlushFn
+	} else {
+		r := s.rt.Realm()
+		r.SetAllocBudget(MaxAllocBytes)
+		var unchargedGoBytes int64
+		var argErr error
+		eventVal, unchargedGoBytes, argErr = argToValue(r, event)
+		argErr = r.FinishOutermost(argErr)
+		callAlloc = addSaturating(r.AllocatedBytes(), unchargedGoBytes)
+		if argErr != nil {
+			s.rt.ReleaseCallData()
+			if errors.Is(argErr, moejs.ErrAllocLimit) {
+				return nil, nil, 0, true, allocLimitCallError(argErr, nil, 0)
+			}
+			return nil, nil, 0, false, argErr
+		}
+	}
+
+	callCtx, cancel := context.WithTimeoutCause(ctx, timeout, errHookTimeout)
+	defer cancel()
+
+	maxSteps := s.rt.MaxSteps()
+	var totalSteps int64
+	var out any
+	err := s.rt.RunContext(callCtx, func(rt *moejs.Runtime) error {
+		var result moejs.Value
+		var callErr error
+		if isFlush {
+			result, callErr = rt.CallFunction(fn, handle.filterObj)
+		} else {
+			result, callErr = rt.CallFunction(fn, handle.filterObj, eventVal)
+		}
+		callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+		totalSteps = addSaturating(totalSteps, rt.StepsUsed())
+		if callErr != nil {
+			return callErr
+		}
+		if _, _, ok := moejs.PromiseResult(result); ok {
+			return errReturnedPromise
+		}
+		return runWithStepBudget(rt, maxSteps, &totalSteps, func() error {
+			var toGoErr error
+			out, toGoErr = rt.ToGo(result)
+			callAlloc = addSaturating(callAlloc, rt.AllocatedBytes())
+			return toGoErr
+		})
+	})
+	s.lastStepsUsed = totalSteps
+	logs, dropped := s.logs.snapshot()
+	if ctx.Err() != nil {
+		return nil, logs, dropped, true, ctx.Err()
+	}
+	if errors.Is(err, moejs.ErrAllocLimit) {
+		return nil, logs, dropped, true, allocLimitCallError(err, logs, dropped)
+	}
+	if errors.Is(err, moejs.ErrStepLimit) {
+		return nil, logs, dropped, true, stepLimitCallError(err, logs, dropped)
+	}
+	if errors.Is(err, moejs.ErrResultTooLarge) {
+		s.rt.ClearInterrupt()
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimitFilter(callAlloc, handle) != nil
+		return nil, logs, dropped, discard, &CallError{Kind: KindResponseTooLarge, Detail: err.Error(), Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	if reason, interrupted := interruptReason(err); interrupted {
+		if errors.Is(err, errHookTimeout) || errors.Is(context.Cause(callCtx), errHookTimeout) {
+			reason = "timeout"
+		}
+		return nil, logs, dropped, true, &CallError{Kind: KindTimeout, Interrupt: reason, Detail: "interrupted: " + reason, Err: err, Logs: logs, DroppedLogs: dropped}
+	}
+	s.rt.ClearInterrupt()
+	if errors.Is(err, errReturnedPromise) {
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimitFilter(callAlloc, handle) != nil
+		return nil, logs, dropped, discard, &CallError{Kind: KindShape, Detail: "hook returned a promise", Logs: logs, DroppedLogs: dropped}
+	}
+	if err != nil {
+		wrapped := s.wrapEngineError(err)
+		if call, ok := wrapped.(*CallError); ok {
+			call.Logs = logs
+			call.DroppedLogs = dropped
+		}
+		if fatalRuntime(wrapped) {
+			return nil, logs, dropped, true, wrapped
+		}
+		s.rt.ReleaseCallData()
+		discard := s.checkLiveLimitFilter(callAlloc, handle) != nil
+		return nil, logs, dropped, discard, wrapped
+	}
+	s.rt.ReleaseCallData()
+	if liveErr := s.checkLiveLimitFilter(callAlloc, handle); liveErr != nil {
+		return nil, logs, dropped, true, &CallError{Kind: KindHeapLimit, Interrupt: "live_limit", Detail: liveErr.Error(), Err: liveErr, Logs: logs, DroppedLogs: dropped}
+	}
+	return out, logs, dropped, false, nil
+}
+
+func (s *session) finishStreamFilter(handle *streamFilterHandle, poisoned bool) bool {
+	if handle != nil {
+		handle.clear()
+	}
+	if poisoned {
+		return true
+	}
+	s.rt.ClearInterrupt()
+	s.rt.ReleaseCallData()
+	return s.forceCheckLiveLimit() != nil
 }
 
 func (s *session) exportMeta() (map[string]any, error) {
@@ -1641,7 +2163,7 @@ func fatalRuntime(err error) bool {
 	return errors.As(err, &internal)
 }
 
-func wrapEngineError(err error) error {
+func (s *session) wrapEngineError(err error) error {
 	var call *CallError
 	if errors.As(err, &call) {
 		return call
@@ -1653,11 +2175,22 @@ func wrapEngineError(err error) error {
 			detail = exception.Error()
 		}
 		stack := exception.Stack
-		if len(stack) > 4096 {
-			stack = stack[:4096]
-		}
 		if stack != "" {
+			if len(stack) > 4096 {
+				stack = stack[:4096]
+			}
 			detail += "\n" + stack
+		} else if s != nil && s.rt != nil {
+			if rtStack := s.rt.StackTrace(exception); rtStack != "" {
+				if len(rtStack) > 4096 {
+					rtStack = rtStack[:4096]
+				}
+				if detail == "" || strings.Contains(rtStack, detail) {
+					detail = rtStack
+				} else {
+					detail += "\n" + rtStack
+				}
+			}
 		}
 		return &CallError{Kind: KindException, Detail: detail, Err: err}
 	}

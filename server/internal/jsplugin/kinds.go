@@ -203,7 +203,7 @@ func ScopeOfManifest(manifest Manifest, exports []string) Scope {
 	if manifest.DeclaresAutomation() {
 		return ScopeSubject
 	}
-	siteHooks := []string{"probe", "listModels", "check", "classify", "classifyError", "parsePricing", "rewritePayload", HookSignRequest, HookTransformStream}
+	siteHooks := []string{"probe", "listModels", "check", "classify", "classifyError", "parsePricing", "rewritePayload", HookSignRequest, HookTransformStream, HookCreateStreamFilter}
 	for _, name := range siteHooks {
 		if contains(exports, name) {
 			return ScopeSite

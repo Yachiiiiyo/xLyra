@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"xlyra/server/internal/store"
@@ -214,19 +215,29 @@ func (s ProtocolSection) AuthHeader() string {
 
 // Plugin is a loaded, compiled plugin of one kind.
 type Plugin struct {
-	Manifest       Manifest
-	program        *program
-	pool           *pool
-	hotPool        *pool
-	fixtures       []Fixture
-	gen            int64
-	source         string
-	packageSHA256  string
-	stateMu        sync.RWMutex
-	globalSettings map[string]any
-	defaultStorage StorageBackend
-	storageRepo    store.JSPluginStorageRepository
-	hasStorageRepo bool
+	Manifest           Manifest
+	program            *program
+	pool               *pool
+	hotPool            *pool
+	fixtures           []Fixture
+	gen                int64
+	source             string
+	packageSHA256      string
+	stateMu            sync.RWMutex
+	globalSettings     map[string]any
+	defaultStorage     StorageBackend
+	storageRepo        store.JSPluginStorageRepository
+	hasStorageRepo     bool
+	maxSteps           atomic.Int64
+	lastAllocatedBytes atomic.Int64
+	lastLiveBytes      atomic.Int64
+	allocLimitHits     atomic.Int64
+	lastStepsUsed      atomic.Int64
+	stepLimitHits      atomic.Int64
+	interrupts         atomic.Int64
+	icEntries          atomic.Int64
+	pendingJobs        atomic.Int64
+	registerStackBytes atomic.Int64
 }
 
 type callStorageCtxKey struct{}
@@ -335,6 +346,76 @@ func (p *Plugin) PackageSHA256() string {
 	return p.packageSHA256
 }
 
+// Analysis returns a copy of the static bytecode analysis computed when this
+// plugin was compiled.
+func (p *Plugin) Analysis() ModuleAnalysis {
+	if p == nil || p.program == nil {
+		return ModuleAnalysis{}
+	}
+	return cloneModuleAnalysis(p.program.analysis)
+}
+
+// SetMaxSteps configures the per-call execution step budget for this plugin.
+// Zero or negative disables the step budget.
+func (p *Plugin) SetMaxSteps(n int64) {
+	if p == nil {
+		return
+	}
+	if n < 0 {
+		n = 0
+	}
+	p.maxSteps.Store(n)
+}
+
+// MaxSteps returns the plugin's configured per-call execution step budget (0 if unlimited).
+func (p *Plugin) MaxSteps() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.maxSteps.Load()
+}
+
+// Stats returns the latest resource usage snapshot and cumulative limit/interrupt
+// counters observed across this plugin's runtime sessions.
+func (p *Plugin) Stats() RuntimeStats {
+	if p == nil {
+		return RuntimeStats{}
+	}
+	return RuntimeStats{
+		AllocatedBytes:     p.lastAllocatedBytes.Load(),
+		LiveBytes:          p.lastLiveBytes.Load(),
+		AllocLimitHits:     p.allocLimitHits.Load(),
+		StepsUsed:          p.lastStepsUsed.Load(),
+		StepLimitHits:      p.stepLimitHits.Load(),
+		Interrupts:         p.interrupts.Load(),
+		ICEntries:          int(p.icEntries.Load()),
+		PendingJobs:        int(p.pendingJobs.Load()),
+		RegisterStackBytes: p.registerStackBytes.Load(),
+	}
+}
+
+func (p *Plugin) recordSessionStats(sess *session) {
+	if p == nil || sess == nil {
+		return
+	}
+	snap, allocHits, stepHits, interrupts := sess.collectStatsDelta()
+	p.lastAllocatedBytes.Store(snap.AllocatedBytes)
+	p.lastLiveBytes.Store(snap.LiveBytes)
+	p.lastStepsUsed.Store(snap.StepsUsed)
+	p.icEntries.Store(int64(snap.ICEntries))
+	p.pendingJobs.Store(int64(snap.PendingJobs))
+	p.registerStackBytes.Store(snap.RegisterStackBytes)
+	if allocHits > 0 {
+		p.allocLimitHits.Add(allocHits)
+	}
+	if stepHits > 0 {
+		p.stepLimitHits.Add(stepHits)
+	}
+	if interrupts > 0 {
+		p.interrupts.Add(interrupts)
+	}
+}
+
 // ProbeType is the Go probe type this plugin replaces, such as "kimi".
 func (p *Plugin) ProbeType() string {
 	return p.Manifest.QuotaProbe.Replaces
@@ -416,7 +497,7 @@ func (p *Plugin) HasSeparateHotPool() bool {
 func isHotHookName(name string) bool {
 	switch name {
 	case "decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
-		"classify", "classifyError", "rewritePayload", "transformStream", HookInspectSegments:
+		"classify", "classifyError", "rewritePayload", HookTransformStream, HookCreateStreamFilter, HookInspectSegments:
 		return true
 	default:
 		return false
@@ -437,6 +518,17 @@ func classifyProgramHooks(hooks map[string]any) (hasHot, hasCold bool) {
 // NewPlugin compiles one module and checks its manifest. resident is the
 // number of runtimes kept warm; builtins use the default pool size.
 func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident int) (*Plugin, error) {
+	return newPlugin(manifest, source, fixtures, resident, false)
+}
+
+// NewPluginTS compiles a raw TypeScript module directly via moejs in-parser
+// type stripping (without esbuild) and applies the same manifest, meta, and
+// pool setup as NewPlugin.
+func NewPluginTS(manifest Manifest, tsSource string, fixtures []Fixture, resident int) (*Plugin, error) {
+	return newPlugin(manifest, tsSource, fixtures, resident, true)
+}
+
+func newPlugin(manifest Manifest, source string, fixtures []Fixture, resident int, isTS bool) (*Plugin, error) {
 	if manifest.Kind == KindQuotaProbe && manifest.QuotaProbe.BaseURLMode == "" {
 		manifest.QuotaProbe.BaseURLMode = "as_is"
 	}
@@ -452,7 +544,20 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 			manifest.Protocol.Auth = "bearer"
 		}
 	}
-	if err := validateManifest(manifest, source); err != nil {
+	validateM := manifest
+	if isTS {
+		if _, hasJS := manifest.SHA256["plugin.js"]; !hasJS {
+			if sum, hasTS := manifest.SHA256["plugin.ts"]; hasTS {
+				if !strings.EqualFold(sum, hashSource(source)) {
+					return nil, fmt.Errorf("plugin.ts sha256 does not match the manifest")
+				}
+				clonedSHA := maps.Clone(manifest.SHA256)
+				clonedSHA["plugin.js"] = sum
+				validateM.SHA256 = clonedSHA
+			}
+		}
+	}
+	if err := validateManifest(validateM, source); err != nil {
 		return nil, err
 	}
 	requiredHooks := kindHooksOf(manifest.Kind)
@@ -462,7 +567,13 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 	if manifest.DeclaresAutomation() {
 		requiredHooks = nil
 	}
-	program, err := compileProgram(manifest.ID+".js", source, requiredHooks...)
+	var program *program
+	var err error
+	if isTS {
+		program, err = compileProgramTS(manifest.ID+".ts", source, requiredHooks...)
+	} else {
+		program, err = compileProgram(manifest.ID+".js", source, requiredHooks...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", manifest.ID, err)
 	}
@@ -562,6 +673,9 @@ func NewPlugin(manifest Manifest, source string, fixtures []Fixture, resident in
 		primaryResident = probePoolResident
 	}
 	plugin := &Plugin{Manifest: manifest, program: program, fixtures: fixtures, gen: 1, source: source}
+	if MaxSteps > 0 {
+		plugin.maxSteps.Store(MaxSteps)
+	}
 	pool, err := newPool(primaryResident, maxPool, func() (*session, error) {
 		return newSession(program)
 	})
@@ -591,7 +705,7 @@ func KnownHookNames() []string {
 }
 
 var allKnownOptionalHooks = []string{
-	"probe", "listModels", "check", "classify", "classifyError", "rewritePayload", HookTransformStream,
+	"probe", "listModels", "check", "classify", "classifyError", "rewritePayload", HookTransformStream, HookCreateStreamFilter,
 	"parsePricing", "detect", "describeModels",
 	"startLogin", "pollLogin", "refreshTokens", "summarizeAccount",
 	"decodeRequest", "buildRequest", "parseResponse", HookParseError, HookSignRequest,
@@ -696,7 +810,9 @@ func (p *Plugin) CallProbe(ctx context.Context, probeCtx ProbeContext, steps []P
 		return Decision{}, fmt.Errorf("probe hook is missing")
 	}
 	ctxArg := p.injectContextSettings(ctx, probeCtx.asMap())
+	session.setMaxSteps(p.maxSteps.Load())
 	out, logs, dropped, discard, callErr := session.callWithEnv(ctx, probeHookTimeout, hook, p.buildCallEnv(ctx), []any{ctxArg, stepsAsValue(steps)})
+	p.recordSessionStats(session)
 	targetPool.Release(session, discard || fatalRuntime(callErr))
 	duration := time.Since(started).Milliseconds()
 	if callErr != nil {
@@ -1166,7 +1282,9 @@ func (p *Plugin) callHook(ctx context.Context, hookName string, timeout time.Dur
 	if err != nil {
 		return nil, nil, 0, annotate(p, err, hookName, step, time.Since(started).Milliseconds())
 	}
+	session.setMaxSteps(p.maxSteps.Load())
 	out, logs, dropped, discard, callErr := session.callWithEnv(ctx, timeout, hook, p.buildCallEnv(ctx), args)
+	p.recordSessionStats(session)
 	targetPool.Release(session, discard || fatalRuntime(callErr))
 	duration := time.Since(started).Milliseconds()
 	if discardLogsFromContext(ctx) {

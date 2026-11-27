@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -1285,5 +1287,708 @@ func testManifest(id, source string) Manifest {
 		XLyra: ">=1.14.0", Kind: "quota_probe", License: "AGPL-3.0",
 		QuotaProbe: QuotaProbeSection{BaseURLMode: "as_is"},
 		SHA256:     map[string]string{"plugin.js": HashSource(source)},
+	}
+}
+
+func TestStaticAnalysisAndBytecodeVerify(t *testing.T) {
+	t.Run("plugin_analysis_and_defensive_copy", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.analyze", kind: "quota_probe" };
+export function helper(text) {
+  const r1 = /\d+/g;
+  const r2 = /ok/i;
+  return r1.test(text) && r2.test(text) ? Math.max(1, JSON.parse("2")) : 0;
+}
+export function probe() {
+  if (false) {
+    globalScratch = 1;
+  }
+  log.info("checking");
+  return { result: { kind: "balance", entries: [{ label: "balance", remaining: helper("ok 12") }] } };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.analyze", source)
+		a := plugin.Analysis()
+		if !slices.Equal(a.Exports, []string{"helper", "meta", "probe"}) {
+			t.Fatalf("Exports = %v, want [helper meta probe]", a.Exports)
+		}
+		if len(a.Imports) != 0 {
+			t.Fatalf("Imports = %v, want empty", a.Imports)
+		}
+		for _, g := range []string{"JSON", "Math", "log"} {
+			if !slices.Contains(a.GlobalsRead, g) || !slices.Contains(a.Globals, g) {
+				t.Fatalf("GlobalsRead=%v Globals=%v missing %q", a.GlobalsRead, a.Globals, g)
+			}
+		}
+		if !slices.Contains(a.GlobalsWritten, "globalScratch") || !slices.Contains(a.Globals, "globalScratch") {
+			t.Fatalf("GlobalsWritten=%v Globals=%v missing globalScratch", a.GlobalsWritten, a.Globals)
+		}
+		if a.RegExpCount != 2 {
+			t.Fatalf("RegExpCount = %d, want 2", a.RegExpCount)
+		}
+		if a.FunctionCount < 3 || a.InstructionCount <= 0 || a.BytecodeWords < a.InstructionCount || a.MaxRegs <= 0 || a.MaxLine <= 0 {
+			t.Fatalf("unexpected metrics: %+v", a)
+		}
+		if a.UsesEval || a.UsesFunctionCtor || a.UsesDynamicImport || a.UsesImportMeta || a.UsesAsync || a.UsesGenerators || a.UsesWith {
+			t.Fatalf("unexpected capability flags: %+v", a)
+		}
+		// Mutating returned slices must not mutate stored plugin analysis.
+		a.Exports[0] = "mutated"
+		if plugin.Analysis().Exports[0] != "helper" {
+			t.Fatalf("Analysis() returned shared slice backing array: %v", plugin.Analysis().Exports)
+		}
+	})
+
+	t.Run("analyze_source_dynamic_code_flags", func(t *testing.T) {
+		src := `import dep from "./dep.js";
+export async function run(x) {
+  const f = new Function("return 1");
+  const u = import.meta.url;
+  const m = await import("./dyn.js");
+  return eval("1") + f() + (u ? 1 : 0) + (m ? 1 : 0) + (dep ? 1 : 0) + x;
+}
+export function* gen() { yield /abc/; }`
+		a, err := AnalyzeSource("audit.js", src)
+		if err != nil {
+			t.Fatalf("AnalyzeSource: %v", err)
+		}
+		if !slices.Equal(a.Exports, []string{"gen", "run"}) {
+			t.Fatalf("Exports = %v", a.Exports)
+		}
+		if !slices.Equal(a.Imports, []string{"./dep.js"}) {
+			t.Fatalf("Imports = %v", a.Imports)
+		}
+		if !a.UsesEval || !a.UsesFunctionCtor || !a.UsesDynamicImport || !a.UsesImportMeta || !a.UsesAsync || !a.UsesGenerators {
+			t.Fatalf("expected all capability flags set, got %+v", a)
+		}
+		if a.RegExpCount != 1 {
+			t.Fatalf("RegExpCount = %d, want 1", a.RegExpCount)
+		}
+	})
+
+	t.Run("analyze_typescript_source", func(t *testing.T) {
+		tsSrc := `import type { Unused } from "./types.ts";
+export type BalanceLabel = "balance";
+interface Entry { label: BalanceLabel; remaining: number; }
+export function makeEntry<T extends number>(n: T): Entry {
+  const re = /[0-9]+/;
+  const ok: boolean = re.test(String(n));
+  return { label: "balance" as const, remaining: ok ? Math.floor(n) : 0 };
+}`
+		a, err := AnalyzeTypeScriptSource("audit.ts", tsSrc)
+		if err != nil {
+			t.Fatalf("AnalyzeTypeScriptSource: %v", err)
+		}
+		if len(a.Imports) != 0 {
+			t.Fatalf("type-only import was not elided: %v", a.Imports)
+		}
+		if !slices.Equal(a.Exports, []string{"makeEntry"}) {
+			t.Fatalf("Exports = %v, want [makeEntry]", a.Exports)
+		}
+		if a.RegExpCount != 1 {
+			t.Fatalf("RegExpCount = %d, want 1", a.RegExpCount)
+		}
+		if !slices.Contains(a.GlobalsRead, "Math") || !slices.Contains(a.GlobalsRead, "String") {
+			t.Fatalf("GlobalsRead = %v, want Math and String", a.GlobalsRead)
+		}
+		if a.UsesEval || a.UsesFunctionCtor {
+			t.Fatalf("unexpected dynamic code flags: %+v", a)
+		}
+	})
+}
+
+func TestDeterministicStepBudget(t *testing.T) {
+	t.Run("normal_call_reports_steps_used", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.stepsok", kind: "quota_probe" };
+export function probe() {
+  let sum = 0;
+  for (let i = 0; i < 25; i++) sum += i;
+  return { result: { kind: "balance", entries: [{ label: "balance", remaining: sum }] } };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.stepsok", source)
+		plugin.SetMaxSteps(5000)
+		if plugin.MaxSteps() != 5000 {
+			t.Fatalf("MaxSteps() = %d, want 5000", plugin.MaxSteps())
+		}
+		decision, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if err != nil {
+			t.Fatalf("CallProbe: %v", err)
+		}
+		if decision.Result == nil || len(decision.Result.Entries) != 1 || *decision.Result.Entries[0].Remaining != 300 {
+			t.Fatalf("decision = %#v", decision.Result)
+		}
+		st := plugin.Stats()
+		if st.StepsUsed <= 0 || st.StepLimitHits != 0 {
+			t.Fatalf("plugin.Stats() = %+v, want StepsUsed > 0 and StepLimitHits == 0", st)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		var sessStats RuntimeStats
+		if idle > 0 {
+			sessStats = plugin.pool.idle[0].stats()
+		}
+		plugin.pool.mu.Unlock()
+		if total != 1 || idle != 1 {
+			t.Fatalf("pool total=%d idle=%d, want 1/1", total, idle)
+		}
+		if sessStats.StepsUsed <= 0 {
+			t.Fatalf("sess.stats() = %+v, want StepsUsed > 0", sessStats)
+		}
+	})
+
+	t.Run("infinite_loop_uncatchable_and_discards_session", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.steploop", kind: "quota_probe" };
+function spinForever() {
+  try {
+    for (;;) {}
+  } catch (e) {
+    return { result: { kind: "balance", entries: [{ label: "escaped", remaining: 1 }] } };
+  }
+}
+export function probe(ctx) {
+  if (ctx.baseURL === "ok") {
+    return { result: { kind: "balance", entries: [{ label: "balance", remaining: 42 }] } };
+  }
+  return spinForever();
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.steploop", source)
+		plugin.SetMaxSteps(400)
+		started := time.Now()
+		_, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		if elapsed := time.Since(started); elapsed > 400*time.Millisecond {
+			t.Fatalf("step limit took too long (%s), expected deterministic early abort", elapsed)
+		}
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("error = %#v, want %s (step_limit)", err, KindTimeout)
+		}
+		if !strings.Contains(call.Detail, "spinForever") || !strings.Contains(call.Detail, "probe") {
+			t.Fatalf("CallError.Detail = %q, want JS call stack with spinForever and probe", call.Detail)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after step limit total=%d idle=%d, want discarded", total, idle)
+		}
+		st := plugin.Stats()
+		if st.StepLimitHits != 1 || st.StepsUsed <= 400 {
+			t.Fatalf("plugin.Stats() = %+v, want StepLimitHits=1 and StepsUsed>400", st)
+		}
+		// Fresh runtime works cleanly after discard.
+		decision, err := plugin.CallProbe(context.Background(), ProbeContext{BaseURL: "ok"}, nil)
+		if err != nil {
+			t.Fatalf("follow-up CallProbe: %v", err)
+		}
+		if decision.Result == nil || *decision.Result.Entries[0].Remaining != 42 {
+			t.Fatalf("follow-up decision = %#v", decision.Result)
+		}
+	})
+
+	t.Run("deep_recursion_hits_step_limit", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.steprec", kind: "quota_probe" };
+function dive(n) {
+  try {
+    if (n <= 0) return 0;
+    return 1 + dive(n - 1);
+  } catch (e) {
+    return -1;
+  }
+}
+export function probe() {
+  return { result: { kind: "balance", entries: [{ label: "depth", remaining: dive(1000) }] } };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.steprec", source)
+		plugin.SetMaxSteps(20)
+		_, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("error = %#v, want %s (step_limit)", err, KindTimeout)
+		}
+		if !strings.Contains(call.Detail, "dive") || !strings.Contains(call.Detail, "probe") {
+			t.Fatalf("CallError.Detail = %q, want JS stack with dive and probe", call.Detail)
+		}
+		plugin.pool.mu.Lock()
+		total, idle := plugin.pool.total, len(plugin.pool.idle)
+		plugin.pool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after recursion step limit total=%d idle=%d, want discarded", total, idle)
+		}
+		if st := plugin.Stats(); st.StepLimitHits != 1 {
+			t.Fatalf("plugin.Stats() = %+v, want StepLimitHits=1", st)
+		}
+	})
+
+	t.Run("togo_getter_loop_hits_step_limit", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "xlyra.test.steptogo", kind: "quota_probe" };
+export function probe() {
+  return {
+    get result() {
+      for (;;) {}
+    }
+  };
+}`
+		plugin := mustTestPlugin(t, "xlyra.test.steptogo", source)
+		plugin.SetMaxSteps(200)
+		_, err := plugin.CallProbe(context.Background(), ProbeContext{}, nil)
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("error = %#v, want %s (step_limit)", err, KindTimeout)
+		}
+		if st := plugin.Stats(); st.StepLimitHits != 1 {
+			t.Fatalf("plugin.Stats() = %+v, want StepLimitHits=1", st)
+		}
+	})
+}
+
+func TestStatefulStreamFilterSession(t *testing.T) {
+	newStreamPlugin := func(t *testing.T, id, source string, settings []SettingSpec) *Plugin {
+		t.Helper()
+		manifest := Manifest{
+			ID: id, Name: id, Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+			XLyra: ">=1.14.0", License: "AGPL-3.0",
+			Settings: settings,
+			SHA256:   map[string]string{"plugin.js": HashSource(source)},
+		}
+		plugin, err := NewPlugin(manifest, source, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin(%s): %v", id, err)
+		}
+		return plugin
+	}
+
+	t.Run("cross_chunk_sse_reassembly_and_flush", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "acme.streamfilter" };
+export function createStreamFilter(ctx) {
+  let buf = "";
+  const prefix = (ctx.settings && ctx.settings.prefix) || "none";
+  return {
+    count: 0,
+    onEvent(ev) {
+      this.count += 1;
+      buf += ev.data;
+      const nl = buf.indexOf("\n");
+      if (nl < 0) {
+        return { drop: true };
+      }
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      const parsed = JSON.parse(line);
+      log.info("assembled", { count: this.count, model: ctx.model });
+      return {
+        event: "assembled",
+        data: prefix + ":" + ctx.siteType + ":" + ctx.protocol + ":" + parsed.text,
+      };
+    },
+    onFlush() {
+      if (!buf) return {};
+      const tail = buf;
+      buf = "";
+      log.info("flushed", { count: this.count });
+      return { event: "flush", data: "tail:" + tail + ":" + this.count, done: true };
+    },
+  };
+}`
+		plugin := newStreamPlugin(t, "acme.streamfilter", source, []SettingSpec{
+			{Key: "prefix", Type: SettingTypeString, Default: "v1"},
+		})
+		if !plugin.HasStreamFilter() {
+			t.Fatal("HasStreamFilter() = false, want true")
+		}
+		if got := ScopeOfManifest(plugin.Manifest, []string{HookCreateStreamFilter}); got != ScopeSite {
+			t.Fatalf("ScopeOfManifest = %q, want %q", got, ScopeSite)
+		}
+
+		sess, err := plugin.OpenStreamFilter(context.Background(), StreamTransformContext{
+			SiteType: "openai", Model: "gpt-4o", Protocol: "openai_chat",
+		})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter: %v", err)
+		}
+		defer sess.Close()
+
+		// 3 fragmented chunks spanning UTF-8 JSON + trailing tail for onFlush.
+		res1, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: `{"text":"你`})
+		if err != nil || !res1.Drop || res1.Data != nil {
+			t.Fatalf("frame 1 = %+v, err=%v, want drop=true", res1, err)
+		}
+		res2, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: `好,`})
+		if err != nil || !res2.Drop || res2.Data != nil {
+			t.Fatalf("frame 2 = %+v, err=%v, want drop=true", res2, err)
+		}
+		res3, logs3, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Event: "delta", Data: "世界\"}\nremainder"})
+		if err != nil {
+			t.Fatalf("frame 3 err = %v", err)
+		}
+		if res3.Event == nil || *res3.Event != "assembled" || res3.Data == nil || *res3.Data != "v1:openai:openai_chat:你好,世界" {
+			t.Fatalf("frame 3 = %+v", res3)
+		}
+		if len(logs3) != 1 || logs3[0].Message != "assembled" {
+			t.Fatalf("frame 3 logs = %#v", logs3)
+		}
+
+		flushRes, flushLogs, _, err := sess.OnFlush(context.Background())
+		if err != nil {
+			t.Fatalf("OnFlush err = %v", err)
+		}
+		if flushRes.Event == nil || *flushRes.Event != "flush" || flushRes.Data == nil || *flushRes.Data != "tail:remainder:3" || !flushRes.Done {
+			t.Fatalf("OnFlush = %+v", flushRes)
+		}
+		if len(flushLogs) != 1 || flushLogs[0].Message != "flushed" {
+			t.Fatalf("OnFlush logs = %#v", flushLogs)
+		}
+
+		// Close is idempotent and returns the borrowed runtime to its pool.
+		sess.Close()
+		sess.Close()
+		targetPool := plugin.poolForHook(HookCreateStreamFilter)
+		targetPool.mu.Lock()
+		total, idle := targetPool.total, len(targetPool.idle)
+		targetPool.mu.Unlock()
+		if total != 1 || idle != 1 {
+			t.Fatalf("pool after idempotent Close total=%d idle=%d, want 1/1", total, idle)
+		}
+
+		// Calls after Close fail cleanly.
+		if _, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: "late"}); err == nil {
+			t.Fatal("OnEvent after Close succeeded, want error")
+		}
+		if _, _, _, err := sess.OnFlush(context.Background()); err == nil {
+			t.Fatal("OnFlush after Close succeeded, want error")
+		}
+	})
+
+	t.Run("optional_onFlush_omitted_and_invalid_shapes_never_leak_pool", func(t *testing.T) {
+		noFlushSrc := `export const meta = { apiVersion: 1, id: "acme.noflush" };
+export function createStreamFilter() {
+  return { onEvent(ev) { return { data: "echo:" + ev.data }; } };
+}`
+		noFlush := newStreamPlugin(t, "acme.noflush", noFlushSrc, nil)
+		sess, err := noFlush.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(noFlush): %v", err)
+		}
+		res, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: "hi"})
+		if err != nil || res.Data == nil || *res.Data != "echo:hi" {
+			t.Fatalf("OnEvent = %+v, err=%v", res, err)
+		}
+		flushed, _, _, err := sess.OnFlush(context.Background())
+		if err != nil || flushed != (StreamTransformResult{}) {
+			t.Fatalf("OnFlush(omitted) = %+v, err=%v", flushed, err)
+		}
+		sess.Close()
+
+		badShapes := []struct {
+			name string
+			body string
+		}{
+			{"returns_primitive", `return 42;`},
+			{"returns_null", `return null;`},
+			{"missing_onEvent", `return {};`},
+			{"non_callable_onEvent", `return { onEvent: 123 };`},
+			{"non_callable_onFlush", `return { onEvent() { return {}; }, onFlush: "bad" };`},
+			{"returns_promise", `return Promise.resolve({ onEvent() { return {}; } });`},
+		}
+		for _, tc := range badShapes {
+			t.Run(tc.name, func(t *testing.T) {
+				src := `export const meta = { apiVersion: 1, id: "acme.badshape" };
+export function createStreamFilter() { ` + tc.body + ` }`
+				p := newStreamPlugin(t, "acme.badshape", src, nil)
+				targetPool := p.poolForHook(HookCreateStreamFilter)
+				_, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+				var call *CallError
+				if !errors.As(err, &call) || call.Kind != KindShape {
+					t.Fatalf("OpenStreamFilter(%s) err = %#v, want %s", tc.name, err, KindShape)
+				}
+				targetPool.mu.Lock()
+				total, idle := targetPool.total, len(targetPool.idle)
+				targetPool.mu.Unlock()
+				if total != 1 || idle != 1 {
+					t.Fatalf("pool leaked after %s: total=%d idle=%d, want 1/1", tc.name, total, idle)
+				}
+			})
+		}
+	})
+
+	t.Run("timeout_and_step_limit_inside_onEvent_discards_session", func(t *testing.T) {
+		source := `export const meta = { apiVersion: 1, id: "acme.streamhang" };
+export function createStreamFilter() {
+  return {
+    onEvent(ev) {
+      if (ev.data === "hang") {
+        for (;;) {}
+      }
+      return { data: ev.data };
+    },
+  };
+}`
+		// 1. Wall-clock timeout inside OnEvent discards session on Close.
+		p := newStreamPlugin(t, "acme.streamhang", source, nil)
+		sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter: %v", err)
+		}
+		if res, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: "ok"}); err != nil || res.Data == nil || *res.Data != "ok" {
+			t.Fatalf("initial OnEvent = %+v, err=%v", res, err)
+		}
+		_, _, _, err = sess.OnEvent(context.Background(), StreamTransformEvent{Data: "hang"})
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindTimeout {
+			t.Fatalf("OnEvent(hang) err = %#v, want %s", err, KindTimeout)
+		}
+		if _, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: "ok"}); err == nil {
+			t.Fatal("OnEvent on poisoned session succeeded, want error")
+		}
+		sess.Close()
+		targetPool := p.poolForHook(HookCreateStreamFilter)
+		targetPool.mu.Lock()
+		total, idle := targetPool.total, len(targetPool.idle)
+		targetPool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after OnEvent timeout total=%d idle=%d, want discarded", total, idle)
+		}
+
+		// 2. Step limit inside OnEvent hits step_limit deterministically and discards on Close.
+		p2 := newStreamPlugin(t, "acme.streamhang", source, nil)
+		p2.SetMaxSteps(200)
+		sess2, err := p2.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(step): %v", err)
+		}
+		_, _, _, err = sess2.OnEvent(context.Background(), StreamTransformEvent{Data: "hang"})
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "step_limit" {
+			t.Fatalf("OnEvent(step) err = %#v, want %s (step_limit)", err, KindTimeout)
+		}
+		sess2.Close()
+		if st := p2.Stats(); st.StepLimitHits != 1 {
+			t.Fatalf("Stats() = %+v, want StepLimitHits=1", st)
+		}
+		pool2 := p2.poolForHook(HookCreateStreamFilter)
+		pool2.mu.Lock()
+		total2, idle2 := pool2.total, len(pool2.idle)
+		pool2.mu.Unlock()
+		if total2 != 0 || idle2 != 0 {
+			t.Fatalf("pool after OnEvent step_limit total=%d idle=%d, want discarded", total2, idle2)
+		}
+	})
+
+	t.Run("live_heap_leak_inside_stateful_filter_caught_and_discarded", func(t *testing.T) {
+		// Closure-local accumulation inside stateful filter caught on OnEvent and discarded on Close.
+		closureLeakSrc := `export const meta = { apiVersion: 1, id: "acme.filterleak" };
+export function createStreamFilter() {
+  const buf = [];
+  return {
+    onEvent() {
+      buf.push(new Uint8Array(4 * 1024 * 1024));
+      return {};
+    },
+  };
+}`
+		p := newStreamPlugin(t, "acme.filterleak", closureLeakSrc, nil)
+		sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter: %v", err)
+		}
+		var hitErr error
+		for i := 0; i < 8; i++ {
+			_, _, _, err := sess.OnEvent(context.Background(), StreamTransformEvent{Data: "x"})
+			if err != nil {
+				hitErr = err
+				break
+			}
+		}
+		var call *CallError
+		if !errors.As(hitErr, &call) || call.Kind != KindHeapLimit || call.Interrupt != "live_limit" {
+			t.Fatalf("closure leak err = %#v, want %s (live_limit)", hitErr, KindHeapLimit)
+		}
+		sess.Close()
+		targetPool := p.poolForHook(HookCreateStreamFilter)
+		targetPool.mu.Lock()
+		total, idle := targetPool.total, len(targetPool.idle)
+		targetPool.mu.Unlock()
+		if total != 0 || idle != 0 {
+			t.Fatalf("pool after closure leak total=%d idle=%d, want discarded", total, idle)
+		}
+
+		// Module-level leak checked and discarded on Close() even when MaxLiveBytes is lowered before Close.
+		modLeakSrc := `export const meta = { apiVersion: 1, id: "acme.modleak" };
+const globalLeak = [];
+export function createStreamFilter() {
+  return {
+    onEvent() {
+      globalLeak.push(new Uint8Array(2 * 1024 * 1024));
+      return {};
+    },
+  };
+}`
+		pMod := newStreamPlugin(t, "acme.modleak", modLeakSrc, nil)
+		sessMod, err := pMod.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(modLeak): %v", err)
+		}
+		if _, _, _, err := sessMod.OnEvent(context.Background(), StreamTransformEvent{Data: "x"}); err != nil {
+			t.Fatalf("OnEvent(modLeak): %v", err)
+		}
+		// Lower MaxLiveBytes below the 2 MiB module-level leak before Close.
+		sessMod.mu.Lock()
+		sessMod.sess.rt.SetMaxLiveBytes(1 << 20)
+		sessMod.mu.Unlock()
+		sessMod.Close()
+		modPool := pMod.poolForHook(HookCreateStreamFilter)
+		modPool.mu.Lock()
+		mTotal, mIdle := modPool.total, len(modPool.idle)
+		modPool.mu.Unlock()
+		if mTotal != 0 || mIdle != 0 {
+			t.Fatalf("pool after Close() live check total=%d idle=%d, want discarded", mTotal, mIdle)
+		}
+	})
+
+	t.Run("concurrent_calls_idempotent_close_and_separate_hot_pool", func(t *testing.T) {
+		mixedSrc := `export const meta = { apiVersion: 1, id: "acme.mixedstream" };
+export function probe() {
+  return { result: { kind: "balance", entries: [{ label: "ok", remaining: 1 }] } };
+}
+export function createStreamFilter() {
+  let n = 0;
+  return {
+    onEvent(ev) {
+      n += 1;
+      return { data: ev.data + ":" + n };
+    },
+  };
+}`
+		p := newStreamPlugin(t, "acme.mixedstream", mixedSrc, nil)
+		if !p.HasSeparateHotPool() {
+			t.Fatal("mixed cold+hot plugin should allocate separate hotPool")
+		}
+		sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter: %v", err)
+		}
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				_, _, _, _ = sess.OnEvent(context.Background(), StreamTransformEvent{Data: fmt.Sprintf("e%d", idx)})
+				if idx%3 == 0 {
+					sess.Close()
+				}
+			}(i)
+		}
+		wg.Wait()
+		sess.Close()
+
+		p.hotPool.mu.Lock()
+		total, idle := p.hotPool.total, len(p.hotPool.idle)
+		p.hotPool.mu.Unlock()
+		if total != 1 || idle != 1 {
+			t.Fatalf("hotPool after concurrent OnEvent+Close total=%d idle=%d, want 1/1", total, idle)
+		}
+	})
+}
+
+func TestNewPluginTSDirectCompilation(t *testing.T) {
+	tsSource := `import type { UnusedType } from "./unused.ts";
+
+export type EntryKind = "balance";
+
+interface QuotaEntry {
+  label: string;
+  remaining: number;
+}
+
+const DEFAULT_META = {
+  apiVersion: 1,
+  id: "acme.tsplugin",
+  kind: "quota_probe",
+} as const satisfies { apiVersion: number; id: string; kind: string };
+
+export const meta = DEFAULT_META;
+
+function wrapEntry<T extends QuotaEntry>(entry: T): T {
+  return entry;
+}
+
+function failOnKnownLine(msg: string): never {
+  throw new Error(msg);
+}
+
+export function probe(ctx: { baseURL?: string }): { result: { kind: EntryKind; entries: QuotaEntry[] } } {
+  if (ctx.baseURL === "boom") {
+    failOnKnownLine("ts-boom");
+  }
+  const value: number = (40 + 2) as number;
+  return {
+    result: {
+      kind: "balance" as const,
+      entries: [wrapEntry<QuotaEntry>({ label: "balance", remaining: value })],
+    },
+  };
+}
+`
+	// Compute exact 1-based line number of `throw new Error(msg);` in tsSource.
+	wantLine := 0
+	for i, line := range strings.Split(tsSource, "\n") {
+		if strings.Contains(line, "throw new Error(msg);") {
+			wantLine = i + 1
+			break
+		}
+	}
+	if wantLine == 0 {
+		t.Fatal("failed to locate throw line in tsSource")
+	}
+
+	manifest := testManifest("acme.tsplugin", tsSource)
+	plugin, err := NewPluginTS(manifest, tsSource, []Fixture{{Name: "unused"}}, 1)
+	if err != nil {
+		t.Fatalf("NewPluginTS: %v", err)
+	}
+
+	// Verify static analysis excluded type-only exports/imports.
+	analysis := plugin.Analysis()
+	if len(analysis.Imports) != 0 {
+		t.Fatalf("TS Imports = %v, want empty", analysis.Imports)
+	}
+	if !slices.Equal(analysis.Exports, []string{"meta", "probe"}) {
+		t.Fatalf("TS Exports = %v, want [meta probe]", analysis.Exports)
+	}
+
+	// Normal call runs compiled TS directly without esbuild.
+	decision, err := plugin.CallProbe(context.Background(), ProbeContext{BaseURL: "https://example.com"}, nil)
+	if err != nil {
+		t.Fatalf("CallProbe(ok): %v", err)
+	}
+	if decision.Result == nil || len(decision.Result.Entries) != 1 || *decision.Result.Entries[0].Remaining != 42 {
+		t.Fatalf("decision = %#v, want remaining=42", decision.Result)
+	}
+
+	// Runtime error stack trace must point to exact original TypeScript line number.
+	_, err = plugin.CallProbe(context.Background(), ProbeContext{BaseURL: "boom"}, nil)
+	var call *CallError
+	if !errors.As(err, &call) || call.Kind != KindException {
+		t.Fatalf("CallProbe(boom) err = %#v, want %s", err, KindException)
+	}
+	wantFrame := fmt.Sprintf("acme.tsplugin.ts:%d:", wantLine)
+	if !strings.Contains(call.Detail, "ts-boom") || !strings.Contains(call.Detail, "failOnKnownLine") || !strings.Contains(call.Detail, wantFrame) {
+		t.Fatalf("CallError.Detail =\n%s\nwant frame containing %q", call.Detail, wantFrame)
+	}
+
+	// Also verify plugin.ts manifest sha256 key is accepted and bad hash is rejected.
+	tsHashManifest := manifest
+	tsHashManifest.SHA256 = map[string]string{"plugin.ts": HashSource(tsSource)}
+	if _, err := NewPluginTS(tsHashManifest, tsSource, []Fixture{{Name: "unused"}}, 1); err != nil {
+		t.Fatalf("NewPluginTS with plugin.ts sha256: %v", err)
+	}
+	badHashManifest := manifest
+	badHashManifest.SHA256 = map[string]string{"plugin.ts": "0000"}
+	if _, err := NewPluginTS(badHashManifest, tsSource, []Fixture{{Name: "unused"}}, 1); err == nil {
+		t.Fatal("NewPluginTS accepted mismatched plugin.ts sha256")
+	}
+
+	// Unsupported runtime-emitting TypeScript syntax (enum) returns a compile error.
+	enumSource := `export const meta = { apiVersion: 1, id: "acme.tsenum", kind: "quota_probe" };
+enum Mode { Fast = 1 }
+export function probe() { return { result: { kind: "balance", entries: [{ label: "m", remaining: Mode.Fast }] } }; }`
+	if _, err := NewPluginTS(testManifest("acme.tsenum", enumSource), enumSource, []Fixture{{Name: "unused"}}, 1); err == nil {
+		t.Fatal("NewPluginTS accepted unsupported enum syntax")
 	}
 }
