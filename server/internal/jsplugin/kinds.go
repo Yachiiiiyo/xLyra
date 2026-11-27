@@ -101,7 +101,7 @@ type kindSpec struct {
 
 var kindSpecs = []kindSpec{
 	{Name: KindQuotaProbe, Family: FamilyStepped, Hooks: []string{"probe"}, Timeout: probeHookTimeout, Credential: "api_key", Connected: true, Section: "quotaProbe", Scope: ScopeSite},
-	{Name: KindProtocol, Family: FamilyProtocol, Hooks: []string{"decodeRequest", "buildRequest", "parseResponse"}, OptionalHooks: []string{HookSignRequest, HookParseError}, Timeout: protocolHookTimeout, HotPath: true, Credential: "api_key", Connected: true, Scope: ScopeEndpoint},
+	{Name: KindProtocol, Family: FamilyProtocol, Hooks: []string{"decodeRequest", "buildRequest", "parseResponse"}, OptionalHooks: []string{HookSignRequest, HookParseError, HookTransformStream, HookCreateStreamFilter}, Timeout: protocolHookTimeout, HotPath: true, Credential: "api_key", Connected: true, Scope: ScopeEndpoint},
 	{Name: KindModelList, Family: FamilyStepped, Hooks: []string{"listModels"}, Timeout: probeHookTimeout, Credential: "api_key", Connected: true, Section: "site", Scope: ScopeSite},
 	{Name: KindCredentialCheck, Family: FamilyStepped, Hooks: []string{"check"}, Timeout: probeHookTimeout, Credential: "api_key", Connected: true, Section: "site", Scope: ScopeSite},
 	{Name: KindSiteDetect, Family: FamilyStepped, Hooks: []string{"detect"}, Timeout: probeHookTimeout, Credential: "none", Connected: true, Section: "site", Scope: ScopeGlobal},

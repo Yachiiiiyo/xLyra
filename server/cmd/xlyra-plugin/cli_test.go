@@ -173,8 +173,8 @@ func TestKindsListsSiteProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "site_provider") || !strings.Contains(out, "provider") {
-		t.Fatalf("kinds output missing site_provider:\n%s", out)
+	if !strings.Contains(out, "site_provider") || !strings.Contains(out, "provider") || !strings.Contains(out, "transformStream") || !strings.Contains(out, "createStreamFilter") {
+		t.Fatalf("kinds output missing expected site_provider/stream hooks:\n%s", out)
 	}
 }
 
@@ -212,7 +212,12 @@ func TestSDKTypesInSync(t *testing.T) {
 			t.Errorf("%s is stale; run `go generate ./cmd/xlyra-plugin` in server/", name)
 		}
 	}
-	for _, needle := range []string{"SiteProviderProbe", "SiteProviderListModels", "SiteProviderCheck", "SiteProviderClassify", "SiteProviderRewritePayload", "SiteProviderHooks", "RewritePayloadContext"} {
+	for _, needle := range []string{
+		"SiteProviderProbe", "SiteProviderListModels", "SiteProviderCheck", "SiteProviderClassify",
+		"SiteProviderRewritePayload", "SiteProviderTransformStream", "SiteProviderCreateStreamFilter",
+		"SiteProviderSignRequest", "SiteProviderParsePricing", "SiteProviderDescribeModels", "SiteProviderOnEvent",
+		"SiteProviderHooks", "RewritePayloadContext", "StreamFilter", "CreateStreamFilter",
+	} {
 		if !strings.Contains(want, needle) {
 			t.Errorf("generated types missing %s", needle)
 		}
@@ -498,7 +503,7 @@ func TestVerifyPrintsStaticAnalysisFlagsAndRegExps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	patched := strings.Replace(string(rawSrc), "export function probe(", "export function _unusedAuditCheck(flag: boolean) { if (flag) { eval(\"1\"); } return /[0-9]+/.test(\"1\"); }\nexport function probe(", 1)
+	patched := strings.Replace(string(rawSrc), "export function probe(", "export async function _unusedAsyncHelper() { return 1; }\nexport function _unusedAuditCheck(flag: boolean) { if (flag) { eval(\"1\"); } return /[0-9]+/.test(\"1\"); }\nexport function probe(", 1)
 	if patched == string(rawSrc) {
 		t.Fatal("scaffolded source did not contain export function probe(")
 	}
@@ -517,7 +522,7 @@ func TestVerifyPrintsStaticAnalysisFlagsAndRegExps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verifyPackage: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "analysis functions=") || !strings.Contains(out, "regexps=1") || !strings.Contains(out, "flags=eval") {
+	if !strings.Contains(out, "analysis functions=") || !strings.Contains(out, "regexps=1") || !strings.Contains(out, "flags=eval,async") {
 		t.Fatalf("verify output missing expected analysis metrics/flags:\n%s", out)
 	}
 }

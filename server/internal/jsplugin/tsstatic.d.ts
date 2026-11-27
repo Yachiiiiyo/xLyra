@@ -70,6 +70,13 @@ export interface ProtocolParsedResponse {
   error?: string;
 }
 
+export interface StreamFilter {
+  onEvent(event: StreamTransformEvent): StreamTransformResult | null | undefined | void;
+  onFlush?(): StreamTransformResult | null | undefined | void;
+}
+
+export type CreateStreamFilter = (ctx: StreamTransformContext) => StreamFilter;
+
 // ---- host API v2 (globals) ----
 
 declare global {

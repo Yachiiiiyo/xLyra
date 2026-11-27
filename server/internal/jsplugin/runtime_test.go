@@ -2035,20 +2035,21 @@ func (b *blockingStorage) Keys(ctx context.Context) ([]string, error) {
 	return nil, ctx.Err()
 }
 
-func TestPhase3AuditRegressions(t *testing.T) {
-	newStreamPlugin := func(t *testing.T, id, source string, fixtures []Fixture) *Plugin {
-		t.Helper()
-		manifest := Manifest{
-			ID: id, Name: id, Version: "1.0.0", APIVersion: 1, HostAPI: 2,
-			XLyra: ">=1.14.0", License: "AGPL-3.0",
-			SHA256: map[string]string{"plugin.js": HashSource(source)},
-		}
-		plugin, err := NewPlugin(manifest, source, fixtures, 1)
-		if err != nil {
-			t.Fatalf("NewPlugin(%s): %v", id, err)
-		}
-		return plugin
+func newStreamPlugin(t *testing.T, id, source string, fixtures []Fixture) *Plugin {
+	t.Helper()
+	manifest := Manifest{
+		ID: id, Name: id, Version: "1.0.0", APIVersion: 1, HostAPI: 2,
+		XLyra: ">=1.14.0", License: "AGPL-3.0",
+		SHA256: map[string]string{"plugin.js": HashSource(source)},
 	}
+	plugin, err := NewPlugin(manifest, source, fixtures, 1)
+	if err != nil {
+		t.Fatalf("NewPlugin(%s): %v", id, err)
+	}
+	return plugin
+}
+
+func TestPhase3AuditRegressions(t *testing.T) {
 
 	// [P1-1] Unified live-heap walk catches disjoint module + native-callback filter heaps
 	// and preserves combined LiveBytes in Plugin.Stats().
@@ -2804,6 +2805,540 @@ export function createStreamFilter(ctx) {
 		evStore.mu.Unlock()
 		if !sawEv {
 			t.Fatal("OnEvent: storage received context without deadline")
+		}
+	})
+}
+
+func TestPhase3R2AuditRegressions(t *testing.T) {
+	// [P1-1] session.stats() must not report stale AllocatedBytes/StepsUsed from an
+	// earlier non-fatal error (JS exception or returned promise) when a later call
+	// exits early before RunContext/beginAlloc.
+	t.Run("p1_1_no_stale_stats_after_nonfatal_error", func(t *testing.T) {
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		// 1. StreamFilterSession: OnEvent & OnFlush throw after allocating 4 MiB + looping,
+		//    then pre-cancelled OnEvent & OnFlush must reset Stats() to 0, 0.
+		sfSrc := `export const meta = { apiVersion: 1, id: "acme.r2stats.sf" };
+export function createStreamFilter(ctx) {
+  if (ctx.model === "throw_open") {
+    const b = new Uint8Array(4 * 1024 * 1024);
+    let s = 0;
+    for (let i = 0; i < 100; i++) s += i;
+    throw new Error("open-boom-" + b.length + "-" + s);
+  }
+  return {
+    onEvent() {
+      const b = new Uint8Array(4 * 1024 * 1024);
+      let s = 0;
+      for (let i = 0; i < 100; i++) s += i;
+      throw new Error("event-boom-" + b.length + "-" + s);
+    },
+    onFlush() {
+      const b = new Uint8Array(4 * 1024 * 1024);
+      let s = 0;
+      for (let i = 0; i < 100; i++) s += i;
+      throw new Error("flush-boom-" + b.length + "-" + s);
+    },
+  };
+}`
+		sfPlugin := newStreamPlugin(t, "acme.r2stats.sf", sfSrc, nil)
+		sfPlugin.streamTimeout = time.Second
+		sfPlugin.SetMaxSteps(10000)
+
+		// OpenStreamFilter throw followed by cancelled openStreamFilter on same session.
+		_, err := sfPlugin.OpenStreamFilter(context.Background(), StreamTransformContext{Model: "throw_open"})
+		var call *CallError
+		if !errors.As(err, &call) || call.Kind != KindException {
+			t.Fatalf("OpenStreamFilter(throw_open) err = %#v, want %s", err, KindException)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes < 4<<20 || st.StepsUsed < 100 {
+			t.Fatalf("Stats() after throwing open = %+v, want AllocatedBytes>=4MiB StepsUsed>=100", st)
+		}
+		hotPool := sfPlugin.poolForHook(HookCreateStreamFilter)
+		rawSess, err := hotPool.Acquire(context.Background())
+		if err != nil {
+			t.Fatalf("Acquire(hotPool): %v", err)
+		}
+		_, _, _, discard, err := rawSess.openStreamFilter(cancelled, time.Second, sfPlugin.program.hooks[HookCreateStreamFilter], callEnv{}, StreamTransformContext{})
+		sfPlugin.recordSessionStats(rawSess)
+		hotPool.Release(rawSess, discard)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("openStreamFilter(cancelled) err = %v, want context.Canceled", err)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes != 0 || st.StepsUsed != 0 {
+			t.Fatalf("Stats() after cancelled openStreamFilter = %+v, want AllocatedBytes=0 StepsUsed=0", st)
+		}
+
+		// Live StreamFilterSession: OnEvent throw -> OnEvent cancelled, OnFlush throw -> OnFlush cancelled.
+		sess, err := sfPlugin.OpenStreamFilter(context.Background(), StreamTransformContext{Model: "ok"})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(ok): %v", err)
+		}
+		defer sess.Close()
+
+		_, _, _, err = sess.OnEvent(context.Background(), StreamTransformEvent{Data: "x"})
+		if !errors.As(err, &call) || call.Kind != KindException {
+			t.Fatalf("OnEvent(throw) err = %#v, want %s", err, KindException)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes < 4<<20 || st.StepsUsed < 100 {
+			t.Fatalf("Stats() after throwing OnEvent = %+v, want AllocatedBytes>=4MiB StepsUsed>=100", st)
+		}
+		if _, _, _, err = sess.OnEvent(cancelled, StreamTransformEvent{Data: "x"}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("OnEvent(cancelled) err = %v, want context.Canceled", err)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes != 0 || st.StepsUsed != 0 {
+			t.Fatalf("Stats() after cancelled OnEvent = %+v, want AllocatedBytes=0 StepsUsed=0", st)
+		}
+
+		_, _, _, err = sess.OnFlush(context.Background())
+		if !errors.As(err, &call) || call.Kind != KindException {
+			t.Fatalf("OnFlush(throw) err = %#v, want %s", err, KindException)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes < 4<<20 || st.StepsUsed < 100 {
+			t.Fatalf("Stats() after throwing OnFlush = %+v, want AllocatedBytes>=4MiB StepsUsed>=100", st)
+		}
+		if _, _, _, err = sess.OnFlush(cancelled); !errors.Is(err, context.Canceled) {
+			t.Fatalf("OnFlush(cancelled) err = %v, want context.Canceled", err)
+		}
+		if st := sfPlugin.Stats(); st.AllocatedBytes != 0 || st.StepsUsed != 0 {
+			t.Fatalf("Stats() after cancelled OnFlush = %+v, want AllocatedBytes=0 StepsUsed=0", st)
+		}
+
+		// 2. callWithEnv: non-fatal JS exception and returned promise followed by cancelled call.
+		probeSrc := `export const meta = { apiVersion: 1, id: "xlyra.test.r2stats.probe", kind: "quota_probe" };
+export function probe(ctx) {
+  const b = new Uint8Array(4 * 1024 * 1024);
+  let s = 0;
+  for (let i = 0; i < 100; i++) s += i;
+  if (ctx.baseURL === "promise") {
+    return Promise.resolve({ error: String(b.length + s) });
+  }
+  throw new Error("probe-boom-" + b.length + "-" + s);
+}`
+		probePlugin := mustTestPlugin(t, "xlyra.test.r2stats.probe", probeSrc)
+		probePlugin.SetMaxSteps(10000)
+
+		for _, mode := range []string{"throw", "promise"} {
+			_, err := probePlugin.CallProbe(context.Background(), ProbeContext{BaseURL: mode}, nil)
+			if err == nil {
+				t.Fatalf("CallProbe(%s) unexpectedly succeeded", mode)
+			}
+			if st := probePlugin.Stats(); st.AllocatedBytes < 4<<20 || st.StepsUsed < 100 {
+				t.Fatalf("Stats() after %s = %+v, want AllocatedBytes>=4MiB StepsUsed>=100", mode, st)
+			}
+			s, err := probePlugin.pool.Acquire(context.Background())
+			if err != nil {
+				t.Fatalf("Acquire(%s): %v", mode, err)
+			}
+			_, _, _, discard, err := s.call(cancelled, probeHookTimeout, probePlugin.program.hooks["probe"], []any{ProbeContext{}.asMap(), []any{}})
+			probePlugin.recordSessionStats(s)
+			probePlugin.pool.Release(s, discard)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("call(cancelled after %s) err = %v, want context.Canceled", mode, err)
+			}
+			if st := probePlugin.Stats(); st.AllocatedBytes != 0 || st.StepsUsed != 0 {
+				t.Fatalf("Stats() after cancelled call (%s) = %+v, want AllocatedBytes=0 StepsUsed=0", mode, st)
+			}
+		}
+	})
+
+	// [P1-2] transformStream & createStreamFilter fixtures allow empty/whitespace data and payloads > 8 KiB
+	// up to MaxStreamEventBytes while rejecting invalid shapes, unknown fields, and CR/LF in event.
+	t.Run("p1_2_stream_fixtures_allow_empty_whitespace_and_large_data", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "acme.r2streamdata" };
+export function transformStream(ctx, ev) {
+  return { event: ev.event || "msg", data: String(ev.data.length) + ":" + ev.data.slice(0, 4) };
+}
+export function createStreamFilter() {
+  return {
+    onEvent(ev) {
+      return { event: ev.event || "msg", data: String(ev.data.length) + ":" + ev.data.slice(0, 4) };
+    },
+  };
+}`
+		large16K := strings.Repeat("a", 16*1024)
+		fixtures := []Fixture{
+			{
+				Name:   "transform_empty_data",
+				Hook:   HookTransformStream,
+				Input:  map[string]any{"data": ""},
+				Expect: fixtureExpectation{Result: map[string]any{"event": "msg", "data": "0:"}},
+			},
+			{
+				Name:   "transform_whitespace_data",
+				Hook:   HookTransformStream,
+				Input:  map[string]any{"event": "delta", "data": "  \t "},
+				Expect: fixtureExpectation{Result: map[string]any{"event": "delta", "data": "4:  \t "}},
+			},
+			{
+				Name:   "transform_16k_data",
+				Hook:   HookTransformStream,
+				Input:  map[string]any{"data": large16K},
+				Expect: fixtureExpectation{Result: map[string]any{"event": "msg", "data": "16384:aaaa"}},
+			},
+			{
+				Name: "filter_object_empty_ws_and_16k",
+				Hook: HookCreateStreamFilter,
+				Input: map[string]any{
+					"events": []any{
+						map[string]any{"data": ""},
+						map[string]any{"event": "delta", "data": " "},
+						map[string]any{"data": large16K},
+					},
+				},
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{
+							map[string]any{"event": "msg", "data": "0:"},
+							map[string]any{"event": "delta", "data": "1: "},
+							map[string]any{"event": "msg", "data": "16384:aaaa"},
+						},
+					},
+				},
+			},
+			{
+				Name: "filter_array_shorthand_empty_and_ws",
+				Hook: HookCreateStreamFilter,
+				Input: []any{
+					map[string]any{"data": ""},
+					map[string]any{"data": "   "},
+				},
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{
+							map[string]any{"event": "msg", "data": "0:"},
+							map[string]any{"event": "msg", "data": "3:   "},
+						},
+					},
+				},
+			},
+		}
+		p := newStreamPlugin(t, "acme.r2streamdata", src, fixtures)
+		if err := p.SelfTest(context.Background()); err != nil {
+			t.Fatalf("SelfTest(valid stream fixtures): %v", err)
+		}
+
+		// Negative validation cases must be rejected as shape errors.
+		badCases := []struct {
+			name  string
+			hook  string
+			input any
+			want  string
+		}{
+			{"transform_missing_data", HookTransformStream, map[string]any{}, "input.data: required"},
+			{"transform_nonstring_data", HookTransformStream, map[string]any{"data": 42}, "input.data: expected string"},
+			{"transform_oversized_data", HookTransformStream, map[string]any{"data": strings.Repeat("x", MaxStreamEventBytes+1)}, "longer than"},
+			{"transform_crlf_event", HookTransformStream, map[string]any{"event": "a\nb", "data": "x"}, "must not contain CR or LF"},
+			{"transform_cr_event", HookTransformStream, map[string]any{"event": "a\rb", "data": "x"}, "must not contain CR or LF"},
+			{"transform_oversized_event", HookTransformStream, map[string]any{"event": strings.Repeat("e", maxFieldBytes+1), "data": "x"}, "longer than"},
+			{"transform_unknown_key", HookTransformStream, map[string]any{"data": "x", "extra": true}, `unknown field "extra"`},
+			{"filter_unknown_top_key", HookCreateStreamFilter, map[string]any{"events": []any{}, "bogus": 1}, `unknown field "bogus"`},
+			{"filter_missing_events", HookCreateStreamFilter, map[string]any{}, "input.events: required"},
+			{"filter_nonarray_events", HookCreateStreamFilter, map[string]any{"events": "bad"}, "input.events: expected array"},
+			{"filter_null_event", HookCreateStreamFilter, map[string]any{"events": []any{nil}}, "must not be null"},
+			{"filter_event_oversized_data", HookCreateStreamFilter, map[string]any{"events": []any{map[string]any{"data": strings.Repeat("x", MaxStreamEventBytes+1)}}}, "longer than"},
+			{"filter_nonbool_flush", HookCreateStreamFilter, map[string]any{"events": []any{}, "flush": "yes"}, "input.flush: expected boolean"},
+		}
+		for _, tc := range badCases {
+			t.Run(tc.name, func(t *testing.T) {
+				err := p.RunFixture(context.Background(), Fixture{
+					Name:   tc.name,
+					Hook:   tc.hook,
+					Input:  tc.input,
+					Expect: fixtureExpectation{Result: map[string]any{}},
+				})
+				var call *CallError
+				if !errors.As(err, &call) || call.Kind != KindShape || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("RunFixture(%s) err = %v, want %s containing %q", tc.name, err, KindShape, tc.want)
+				}
+			})
+		}
+	})
+
+	// [P2-3] StreamFilterSession.HasFlush() and runCreateStreamFilterFixture omitting flush
+	// when the filter does not define onFlush.
+	t.Run("p2_3_createStreamFilter_fixture_omits_flush_when_no_onFlush", func(t *testing.T) {
+		var nilSess *StreamFilterSession
+		if nilSess.HasFlush() {
+			t.Fatal("nil StreamFilterSession.HasFlush() = true, want false")
+		}
+
+		noFlushSrc := `export const meta = { apiVersion: 1, id: "acme.r2noflush" };
+export function createStreamFilter() {
+  return {
+    onEvent(ev) { return { data: "nf:" + ev.data }; },
+  };
+}`
+		pNoFlush := newStreamPlugin(t, "acme.r2noflush", noFlushSrc, nil)
+		sess, err := pNoFlush.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(noFlush): %v", err)
+		}
+		if sess.HasFlush() {
+			sess.Close()
+			t.Fatal("HasFlush() = true on filter without onFlush")
+		}
+		sess.Close()
+		if sess.HasFlush() {
+			t.Fatal("HasFlush() = true after Close")
+		}
+
+		// Both default flush and explicit flush:true must leave result.flush absent/nil when onFlush is undefined.
+		for _, tc := range []struct {
+			name  string
+			input map[string]any
+		}{
+			{"default_flush", map[string]any{"events": []any{map[string]any{"data": "hi"}}}},
+			{"explicit_flush_true", map[string]any{"events": []any{map[string]any{"data": "hi"}}, "flush": true}},
+		} {
+			err := pNoFlush.RunFixture(context.Background(), Fixture{
+				Name:  tc.name,
+				Hook:  HookCreateStreamFilter,
+				Input: tc.input,
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{map[string]any{"data": "nf:hi"}},
+						"flush":  nil,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("RunFixture(%s) = %v, want nil (result.flush absent/null)", tc.name, err)
+			}
+		}
+
+		// Filter WITH onFlush reports HasFlush()=true while open, false after Close,
+		// invokes onFlush by default, and omits flush when input.flush is false.
+		withFlushSrc := `export const meta = { apiVersion: 1, id: "acme.r2withflush" };
+export function createStreamFilter() {
+  return {
+    onEvent(ev) { return { data: "wf:" + ev.data }; },
+    onFlush() { return { data: "flushed" }; },
+  };
+}`
+		pWithFlush := newStreamPlugin(t, "acme.r2withflush", withFlushSrc, nil)
+		sess2, err := pWithFlush.OpenStreamFilter(context.Background(), StreamTransformContext{})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(withFlush): %v", err)
+		}
+		if !sess2.HasFlush() {
+			sess2.Close()
+			t.Fatal("HasFlush() = false on filter with onFlush")
+		}
+		sess2.Close()
+		if sess2.HasFlush() {
+			t.Fatal("HasFlush() = true after Close on filter with onFlush")
+		}
+
+		if err := pWithFlush.RunFixture(context.Background(), Fixture{
+			Name:  "with_flush_default",
+			Hook:  HookCreateStreamFilter,
+			Input: map[string]any{"events": []any{map[string]any{"data": "hi"}}},
+			Expect: fixtureExpectation{
+				Result: map[string]any{
+					"events": []any{map[string]any{"data": "wf:hi"}},
+					"flush":  map[string]any{"data": "flushed"},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("RunFixture(with_flush_default): %v", err)
+		}
+		if err := pWithFlush.RunFixture(context.Background(), Fixture{
+			Name:  "with_flush_disabled",
+			Hook:  HookCreateStreamFilter,
+			Input: map[string]any{"events": []any{map[string]any{"data": "hi"}}, "flush": false},
+			Expect: fixtureExpectation{
+				Result: map[string]any{
+					"events": []any{map[string]any{"data": "wf:hi"}},
+					"flush":  nil,
+				},
+			},
+		}); err != nil {
+			t.Fatalf("RunFixture(with_flush_disabled): %v", err)
+		}
+	})
+
+	// [P2-4] Immediate cancel() after RunContext returns preserves genuine errHookTimeout
+	// while ensuring normal JS exceptions are never misclassified as KindTimeout.
+	t.Run("p2_4_immediate_cancel_preserves_timeout_and_avoids_late_flip", func(t *testing.T) {
+		src := `export const meta = { apiVersion: 1, id: "acme.r2cancel" };
+export function probe(ctx) {
+  if (ctx.baseURL === "timeout") {
+    for (;;) {}
+  }
+  throw new Error("normal-probe-exc");
+}
+export function createStreamFilter(ctx) {
+  if (ctx.model === "open_timeout") {
+    for (;;) {}
+  }
+  if (ctx.model === "open_throw") {
+    throw new Error("normal-open-exc");
+  }
+  return {
+    onEvent(ev) {
+      if (ev.data === "timeout") {
+        for (;;) {}
+      }
+      throw new Error("normal-event-exc");
+    },
+  };
+}`
+		p := newStreamPlugin(t, "acme.r2cancel", src, nil)
+		p.streamTimeout = 15 * time.Millisecond
+
+		// callWithEnv: timeout vs exception.
+		var call *CallError
+		_, _, _, err := p.callHook(context.Background(), "probe", 15*time.Millisecond, 0, ProbeContext{BaseURL: "timeout"}.asMap(), []any{})
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "timeout" {
+			t.Fatalf("callHook(timeout) err = %#v, want %s(timeout)", err, KindTimeout)
+		}
+		_, _, _, err = p.callHook(context.Background(), "probe", 50*time.Millisecond, 0, ProbeContext{BaseURL: "throw"}.asMap(), []any{})
+		if !errors.As(err, &call) || call.Kind != KindException || !strings.Contains(call.Detail, "normal-probe-exc") {
+			t.Fatalf("callHook(throw) err = %#v, want %s", err, KindException)
+		}
+
+		// openStreamFilter: timeout vs exception.
+		_, err = p.OpenStreamFilter(context.Background(), StreamTransformContext{Model: "open_timeout"})
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "timeout" {
+			t.Fatalf("OpenStreamFilter(timeout) err = %#v, want %s(timeout)", err, KindTimeout)
+		}
+		_, err = p.OpenStreamFilter(context.Background(), StreamTransformContext{Model: "open_throw"})
+		if !errors.As(err, &call) || call.Kind != KindException || !strings.Contains(call.Detail, "normal-open-exc") {
+			t.Fatalf("OpenStreamFilter(throw) err = %#v, want %s", err, KindException)
+		}
+
+		// callStreamFilter: exception (non-fatal) then timeout (fatal) on live session.
+		sess, err := p.OpenStreamFilter(context.Background(), StreamTransformContext{Model: "ok"})
+		if err != nil {
+			t.Fatalf("OpenStreamFilter(ok): %v", err)
+		}
+		defer sess.Close()
+		_, _, _, err = sess.OnEvent(context.Background(), StreamTransformEvent{Data: "throw"})
+		if !errors.As(err, &call) || call.Kind != KindException || !strings.Contains(call.Detail, "normal-event-exc") {
+			t.Fatalf("OnEvent(throw) err = %#v, want %s", err, KindException)
+		}
+		_, _, _, err = sess.OnEvent(context.Background(), StreamTransformEvent{Data: "timeout"})
+		if !errors.As(err, &call) || call.Kind != KindTimeout || call.Interrupt != "timeout" {
+			t.Fatalf("OnEvent(timeout) err = %#v, want %s(timeout)", err, KindTimeout)
+		}
+	})
+
+	// [P2-5] Explicit kind="protocol" plugins can declare transformStream and createStreamFilter
+	// fixtures when exported, while still rejecting unexported or disallowed hooks.
+	t.Run("p2_5_protocol_kind_accepts_stream_hook_fixtures", func(t *testing.T) {
+		info, ok := LookupKind(KindProtocol)
+		if !ok {
+			t.Fatal("LookupKind(protocol) not found")
+		}
+		if !contains(info.OptionalHooks, HookTransformStream) || !contains(info.OptionalHooks, HookCreateStreamFilter) {
+			t.Fatalf("protocol OptionalHooks = %v, want %s and %s included", info.OptionalHooks, HookTransformStream, HookCreateStreamFilter)
+		}
+
+		protoSrc := meta("acme.protostream", KindProtocol) + `
+export function decodeRequest(ctx, payload) { return { model: payload.model }; }
+export function buildRequest(ctx, payload) { return { path: "/v1/run", payload: { model: payload.model } }; }
+export function parseResponse(ctx, resp) { return { passthrough: true }; }
+export function transformStream(ctx, ev) {
+  return { event: ev.event || "data", data: "proto:" + ev.data };
+}
+export function createStreamFilter(ctx) {
+  let count = 0;
+  return {
+    onEvent(ev) {
+      count++;
+      return { data: count + ":" + ev.data };
+    },
+    onFlush() {
+      return { data: "done:" + count, done: true };
+    },
+  };
+}`
+		protoManifest := Manifest{
+			ID: "acme.protostream", Name: "protostream", Version: "1.0.0", APIVersion: 1, HostAPI: 2, Kind: KindProtocol,
+			Protocol: ProtocolSection{
+				Name: "protostream", DownstreamPath: "/v1/plugins/protostream/run", EndpointType: "plugin:acme.protostream",
+				Auth: "bearer", DefaultBaseURL: "https://api.example.com",
+			},
+			SHA256: map[string]string{"plugin.js": HashSource(protoSrc)},
+		}
+		fixtures := []Fixture{
+			{
+				Name:    "protocol_roundtrip",
+				File:    "fixtures/protocol.json",
+				Payload: map[string]any{"model": "m1"},
+				Expect: fixtureExpectation{
+					Decode:  map[string]any{"model": "m1"},
+					Request: map[string]any{"path": "/v1/run", "payload": map[string]any{"model": "m1"}},
+				},
+			},
+			{
+				Name:   "protocol_transform_stream",
+				File:   "fixtures/stream.json",
+				Hook:   HookTransformStream,
+				Input:  map[string]any{"data": "hello"},
+				Expect: fixtureExpectation{Result: map[string]any{"event": "data", "data": "proto:hello"}},
+			},
+			{
+				Name: "protocol_create_stream_filter",
+				File: "fixtures/filter.json",
+				Hook: HookCreateStreamFilter,
+				Input: map[string]any{
+					"events": []any{
+						map[string]any{"data": "a"},
+						map[string]any{"data": "b"},
+					},
+				},
+				Expect: fixtureExpectation{
+					Result: map[string]any{
+						"events": []any{
+							map[string]any{"data": "1:a"},
+							map[string]any{"data": "2:b"},
+						},
+						"flush": map[string]any{"data": "done:2", "done": true},
+					},
+				},
+			},
+		}
+		p, err := NewPlugin(protoManifest, protoSrc, fixtures, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin(protocol with stream hooks): %v", err)
+		}
+		if err := p.SelfTest(context.Background()); err != nil {
+			t.Fatalf("SelfTest(protocol with stream hooks): %v", err)
+		}
+
+		// Non-stream hooks on explicit kind="protocol" remain rejected.
+		for _, hook := range []string{"decodeRequest", "probe"} {
+			err := p.RunFixture(context.Background(), Fixture{Name: "bad_" + hook, File: "fixtures/bad.json", Hook: hook})
+			if err == nil || !strings.Contains(err.Error(), "hook is not allowed for protocol fixtures") {
+				t.Fatalf("RunFixture(protocol hook=%s) err = %v, want hook not allowed", hook, err)
+			}
+		}
+
+		// Explicit kind="protocol" without stream exports must reject stream fixtures as not exported.
+		plainSrc := meta("acme.protoplain", KindProtocol) + `
+export function decodeRequest(ctx, payload) { return { model: payload.model }; }
+export function buildRequest(ctx, payload) { return { path: "/v1/run", payload: {} }; }
+export function parseResponse(ctx, resp) { return { passthrough: true }; }
+`
+		plainManifest := protoManifest
+		plainManifest.ID = "acme.protoplain"
+		plainManifest.Name = "protoplain"
+		plainManifest.Protocol.Name = "protoplain"
+		plainManifest.Protocol.DownstreamPath = "/v1/plugins/protoplain/run"
+		plainManifest.Protocol.EndpointType = "plugin:acme.protoplain"
+		plainManifest.SHA256 = map[string]string{"plugin.js": HashSource(plainSrc)}
+		plainPlugin, err := NewPlugin(plainManifest, plainSrc, nil, 1)
+		if err != nil {
+			t.Fatalf("NewPlugin(plain protocol): %v", err)
+		}
+		for _, hook := range []string{HookTransformStream, HookCreateStreamFilter} {
+			err := plainPlugin.RunFixture(context.Background(), Fixture{Name: "unexported_" + hook, File: "fixtures/unexp.json", Hook: hook})
+			if err == nil || !strings.Contains(err.Error(), "is not exported") {
+				t.Fatalf("RunFixture(plain protocol hook=%s) err = %v, want not exported", hook, err)
+			}
 		}
 	})
 }

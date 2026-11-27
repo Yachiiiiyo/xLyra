@@ -58,6 +58,16 @@ func (p *Plugin) HasStreamFilter() bool {
 	return p.HasHook(HookCreateStreamFilter)
 }
 
+// HasFlush reports whether the open stream filter defines an onFlush method.
+func (f *StreamFilterSession) HasFlush() bool {
+	if f == nil {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.closed && f.handle != nil && f.handle.hasFlush
+}
+
 func (p *Plugin) streamHookBudget() time.Duration {
 	if p != nil && p.streamTimeout > 0 {
 		return p.streamTimeout

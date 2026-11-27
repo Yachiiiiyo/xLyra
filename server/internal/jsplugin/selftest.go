@@ -234,11 +234,18 @@ func isValidSiteProviderFixtureHook(hook string) bool {
 	}
 }
 
-// checkFixtureHook enforces the site_provider hook field. Other single-hook kinds reject a hook.
+// checkFixtureHook enforces the site_provider hook field. Other single-hook kinds reject a hook,
+// except kind=protocol may declare transformStream or createStreamFilter fixtures when exported.
 func (p *Plugin) checkFixtureHook(fixture Fixture) error {
 	ref := fixtureRef(fixture)
 	if !p.Manifest.DeclaresSiteType() && p.Manifest.Kind != "" {
 		if fixture.Hook != "" {
+			if p.Manifest.Kind == KindProtocol && (fixture.Hook == HookTransformStream || fixture.Hook == HookCreateStreamFilter) {
+				if !p.HasHook(fixture.Hook) {
+					return fmt.Errorf("%s: hook %q is not exported", ref, fixture.Hook)
+				}
+				return nil
+			}
 			return fmt.Errorf("%s: hook is not allowed for %s fixtures", ref, p.Manifest.Kind)
 		}
 		return nil
@@ -401,9 +408,54 @@ func (p *Plugin) runEventFixtureHook(ctx context.Context, fixture Fixture, hook 
 	return compareOneShot(out, err, fixture)
 }
 
+func decodeStreamTransformEvent(raw any, path string) (StreamTransformEvent, error) {
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return StreamTransformEvent{}, shapeError("%s: expected object", path)
+	}
+	for key := range obj {
+		switch key {
+		case "data", "event":
+		default:
+			return StreamTransformEvent{}, shapeError("%s: unknown field %q", path, key)
+		}
+	}
+	dataPath := joinPath(path, "data")
+	rawData, hasData := obj["data"]
+	if !hasData || rawData == nil {
+		return StreamTransformEvent{}, shapeError("%s: required", dataPath)
+	}
+	data, ok := rawData.(string)
+	if !ok {
+		return StreamTransformEvent{}, shapeError("%s: expected string", dataPath)
+	}
+	if len(data) > MaxStreamEventBytes {
+		return StreamTransformEvent{}, shapeError("%s: longer than %d bytes", dataPath, MaxStreamEventBytes)
+	}
+	var eventName string
+	if rawEvent, hasEvent := obj["event"]; hasEvent && rawEvent != nil {
+		eventPath := joinPath(path, "event")
+		ev, ok := rawEvent.(string)
+		if !ok {
+			return StreamTransformEvent{}, shapeError("%s: expected string", eventPath)
+		}
+		if len(ev) > maxFieldBytes {
+			return StreamTransformEvent{}, shapeError("%s: longer than %d bytes", eventPath, maxFieldBytes)
+		}
+		if strings.ContainsAny(ev, "\r\n") {
+			return StreamTransformEvent{}, shapeError("%s: must not contain CR or LF", eventPath)
+		}
+		eventName = ev
+	}
+	return StreamTransformEvent{Event: eventName, Data: data}, nil
+}
+
 func (p *Plugin) runTransformStreamFixture(ctx context.Context, fixture Fixture) error {
-	var in StreamTransformEvent
-	if err := decodeFixtureInput(fixture.Input, &in); err != nil {
+	if fixture.Input == nil {
+		return fmt.Errorf("input is required")
+	}
+	in, err := decodeStreamTransformEvent(fixture.Input, "input")
+	if err != nil {
 		return err
 	}
 	res, _, _, err := p.CallTransformStream(ctx, StreamTransformContext{
@@ -415,8 +467,8 @@ func (p *Plugin) runTransformStreamFixture(ctx context.Context, fixture Fixture)
 }
 
 type streamFilterFixtureInput struct {
-	Events []StreamTransformEvent `ts:"events"`
-	Flush  *bool                  `ts:"flush,optional"`
+	Events []StreamTransformEvent
+	Flush  *bool
 }
 
 type streamFilterFixtureResult struct {
@@ -431,9 +483,46 @@ func decodeStreamFilterFixtureInput(input any) (streamFilterFixtureInput, error)
 	if arr, ok := input.([]any); ok {
 		input = map[string]any{"events": arr}
 	}
-	var in streamFilterFixtureInput
-	if err := decodeInto(input, &in, "input"); err != nil {
-		return streamFilterFixtureInput{}, err
+	obj, ok := input.(map[string]any)
+	if !ok {
+		return streamFilterFixtureInput{}, shapeError("input: expected object")
+	}
+	for key := range obj {
+		switch key {
+		case "events", "flush":
+		default:
+			return streamFilterFixtureInput{}, shapeError("input: unknown field %q", key)
+		}
+	}
+	rawEvents, hasEvents := obj["events"]
+	if !hasEvents || rawEvents == nil {
+		return streamFilterFixtureInput{}, shapeError("input.events: required")
+	}
+	items, ok := rawEvents.([]any)
+	if !ok {
+		return streamFilterFixtureInput{}, shapeError("input.events: expected array")
+	}
+	if len(items) > defaultMaxItems {
+		return streamFilterFixtureInput{}, shapeError("input.events: more than %d items", defaultMaxItems)
+	}
+	events := make([]StreamTransformEvent, len(items))
+	for i, item := range items {
+		if item == nil {
+			return streamFilterFixtureInput{}, shapeError("input.events[%d]: must not be null", i)
+		}
+		ev, err := decodeStreamTransformEvent(item, fmt.Sprintf("input.events[%d]", i))
+		if err != nil {
+			return streamFilterFixtureInput{}, err
+		}
+		events[i] = ev
+	}
+	in := streamFilterFixtureInput{Events: events}
+	if rawFlush, hasFlush := obj["flush"]; hasFlush && rawFlush != nil {
+		flag, ok := rawFlush.(bool)
+		if !ok {
+			return streamFilterFixtureInput{}, shapeError("input.flush: expected boolean")
+		}
+		in.Flush = &flag
 	}
 	return in, nil
 }
@@ -468,7 +557,7 @@ func (p *Plugin) runCreateStreamFilterFixture(ctx context.Context, fixture Fixtu
 	}
 	out := streamFilterFixtureResult{Events: events}
 	shouldFlush := (!stopped && (in.Flush == nil || *in.Flush)) || (stopped && in.Flush != nil && *in.Flush)
-	if shouldFlush {
+	if shouldFlush && sess.HasFlush() {
 		flushRes, _, _, err := sess.OnFlush(ctx)
 		if err != nil {
 			return compareOneShot(nil, err, fixture)

@@ -38,8 +38,12 @@ func scopeText(scope jsplugin.Scope) string {
 		return "enable (applies to every site)"
 	case jsplugin.ScopeEndpoint:
 		return "enable, then assign a /v1/plugins/<slug> path"
+	case jsplugin.ScopeSubject:
+		return "enable, then bind to an object"
 	case jsplugin.ScopeSiteType:
 		return "enable after a trusted signature and host confirmation (applies to its site type)"
+	case jsplugin.ScopeGatewayPipeline:
+		return "enable, then bind to API keys"
 	}
 	return string(scope)
 }

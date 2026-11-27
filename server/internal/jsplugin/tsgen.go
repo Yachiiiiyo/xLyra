@@ -166,7 +166,7 @@ func TypeDeclarations() (string, error) {
 // gatewayPipelineHookTypes names the hook of a gatewayPipeline plugin.
 const gatewayPipelineHookTypes = `// ---- gateway_pipeline hooks ----
 
-export type InspectSegments = (ctx: InspectSegmentsContext, input: InspectSegmentsInput) => InspectSegmentsResult;
+export type InspectSegments = (ctx: InspectSegmentsContext, input: InspectSegmentsInput) => InspectSegmentsResult | null | undefined | void;
 
 export interface GatewayPipelineHooks {
   inspectSegments?: InspectSegments;
@@ -181,7 +181,12 @@ export type SiteProviderListModels = (ctx: ProbeContext, steps: ProbeStep[]) => 
 export type SiteProviderCheck = (ctx: ProbeContext, steps: ProbeStep[]) => CredentialCheckDecision;
 export type SiteProviderClassify = (ctx: ErrorClassifyContext, input: ErrorClassifyInput) => ErrorClassifyResult;
 export type SiteProviderRewritePayload = (ctx: RewritePayloadContext, payload: Record<string, unknown>) => Record<string, unknown>;
-export type SiteProviderTransformStream = (ctx: StreamTransformContext, event: StreamTransformEvent) => StreamTransformResult;
+export type SiteProviderTransformStream = (ctx: StreamTransformContext, event: StreamTransformEvent) => StreamTransformResult | null | undefined | void;
+export type SiteProviderCreateStreamFilter = (ctx: StreamTransformContext) => StreamFilter;
+export type SiteProviderSignRequest = (ctx: ProtocolBuildContext, req: ProtocolSignInput) => SignRequestResult;
+export type SiteProviderParsePricing = (ctx: PricingParseContext, payload: any) => PricingParseResult;
+export type SiteProviderDescribeModels = (ctx: ModelMetadataContext, input: ModelMetadataInput) => ModelMetadataResult;
+export type SiteProviderOnEvent = (ctx: AutomationContext, event: AutomationEvent) => AutomationResult;
 
 export type AccountLoginDecision = SteppedDecision<AccountLoginResult>;
 export type AccountRefreshDecision = SteppedDecision<AccountRefreshResult>;
@@ -197,12 +202,19 @@ export interface SiteProviderHooks {
   listModels?: SiteProviderListModels;
   check?: SiteProviderCheck;
   classify?: SiteProviderClassify;
+  classifyError?: SiteProviderClassify;
   rewritePayload?: SiteProviderRewritePayload;
   transformStream?: SiteProviderTransformStream;
+  createStreamFilter?: SiteProviderCreateStreamFilter;
+  signRequest?: SiteProviderSignRequest;
+  parsePricing?: SiteProviderParsePricing;
+  describeModels?: SiteProviderDescribeModels;
   startLogin?: SiteProviderStartLogin;
   pollLogin?: SiteProviderPollLogin;
   refreshTokens?: SiteProviderRefreshTokens;
   summarizeAccount?: SiteProviderSummarizeAccount;
+  onEvent?: SiteProviderOnEvent;
+  handle?: SiteProviderOnEvent;
   onSchedule?: SiteProviderOnSchedule;
 }
 `

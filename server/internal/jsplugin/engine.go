@@ -324,6 +324,7 @@ type session struct {
 	env                 callEnv
 	liveDebt            int64
 	callsSinceCheck     int
+	hasCallStats        bool
 	lastStepsUsed       int64
 	lastAllocatedBytes  int64
 	extraAllocLimitHits int64
@@ -438,11 +439,9 @@ func (s *session) checkLiveLimitFilter(allocDelta int64, h *streamFilterHandle) 
 func (s *session) stats() RuntimeStats {
 	st := s.rt.Stats()
 	allocatedBytes := st.AllocatedBytes
-	if s.lastAllocatedBytes > allocatedBytes {
-		allocatedBytes = s.lastAllocatedBytes
-	}
 	stepsUsed := st.StepsUsed
-	if s.lastStepsUsed > stepsUsed {
+	if s.hasCallStats {
+		allocatedBytes = s.lastAllocatedBytes
 		stepsUsed = s.lastStepsUsed
 	}
 	return RuntimeStats{
@@ -525,14 +524,16 @@ func newSession(p *program, maxSteps int64) (*session, error) {
 	loadCtx, cancel := context.WithTimeoutCause(context.Background(), loadHookTimeout, errHookTimeout)
 	defer cancel()
 	var excStack string
-	if err := rt.RunContext(loadCtx, func(rt *moejs.Runtime) error {
+	loadErr := rt.RunContext(loadCtx, func(rt *moejs.Runtime) error {
 		err := rt.Load(p.mod)
 		if err != nil {
 			excStack = captureExceptionStack(rt, err)
 		}
 		return err
-	}); err != nil {
-		return nil, classifySessionError(err, loadCtx, excStack)
+	})
+	cancel()
+	if loadErr != nil {
+		return nil, classifySessionError(loadErr, loadCtx, excStack)
 	}
 	rt.ClearInterrupt()
 	rt.ReleaseCallData()
@@ -1842,6 +1843,7 @@ func (s *session) call(ctx context.Context, timeout time.Duration, hook moejs.Ho
 }
 
 func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook moejs.Hook, env callEnv, args []any) (any, []LogEntry, int, bool, error) {
+	s.hasCallStats = true
 	s.lastStepsUsed = 0
 	s.lastAllocatedBytes = 0
 	if err := ctx.Err(); err != nil {
@@ -1908,6 +1910,7 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 			return toGoErr
 		})
 	})
+	cancel()
 	s.lastStepsUsed = totalSteps
 	s.lastAllocatedBytes = allocUsed
 	callAlloc := addSaturating(allocUsed, unchargedGoBytes)
@@ -1963,6 +1966,7 @@ func (s *session) callWithEnv(ctx context.Context, timeout time.Duration, hook m
 }
 
 func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, hook moejs.Hook, env callEnv, ctxArg any) (*streamFilterHandle, []LogEntry, int, bool, error) {
+	s.hasCallStats = true
 	s.lastStepsUsed = 0
 	s.lastAllocatedBytes = 0
 	if err := ctx.Err(); err != nil {
@@ -2052,6 +2056,7 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 		}
 		return nil
 	})
+	cancel()
 	s.lastStepsUsed = totalSteps
 	s.lastAllocatedBytes = allocUsed
 	callAlloc := addSaturating(allocUsed, unchargedGoBytes)
@@ -2115,6 +2120,7 @@ func (s *session) openStreamFilter(ctx context.Context, timeout time.Duration, h
 }
 
 func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, handle *streamFilterHandle, isFlush bool, env callEnv, event StreamTransformEvent) (any, []LogEntry, int, bool, error) {
+	s.hasCallStats = true
 	s.lastStepsUsed = 0
 	s.lastAllocatedBytes = 0
 	if err := ctx.Err(); err != nil {
@@ -2182,6 +2188,7 @@ func (s *session) callStreamFilter(ctx context.Context, timeout time.Duration, h
 			return toGoErr
 		})
 	})
+	cancel()
 	s.lastStepsUsed = totalSteps
 	s.lastAllocatedBytes = allocUsed
 	callAlloc := addSaturating(allocUsed, unchargedGoBytes)
@@ -2265,6 +2272,7 @@ func (s *session) exportMeta() (map[string]any, error) {
 		}
 		return toGoErr
 	})
+	cancel()
 	s.rt.ClearInterrupt()
 	s.rt.ReleaseCallData()
 	if err != nil {

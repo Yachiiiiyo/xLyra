@@ -69,6 +69,9 @@ func formatAnalysisSummary(a jsplugin.ModuleAnalysis) string {
 	if a.UsesWith {
 		flags = append(flags, "with")
 	}
+	if a.UsesAsync {
+		flags = append(flags, "async")
+	}
 	if len(flags) > 0 {
 		line += " flags=" + strings.Join(flags, ",")
 	}
